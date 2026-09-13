@@ -2,7 +2,12 @@ package com.ceos24.cgv.store.domain;
 
 import com.ceos24.cgv.theater.domain.Theater;
 import jakarta.persistence.*;
+import lombok.AccessLevel;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
 
+@Getter
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
 @Entity
 public class Store {
 
@@ -10,10 +15,11 @@ public class Store {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @JoinColumn
+    @JoinColumn(nullable = false)
     @OneToOne(fetch = FetchType.LAZY)
     private Theater theater;
 
+    @jakarta.persistence.Column(length = 50)
     private String name;
 
 }
