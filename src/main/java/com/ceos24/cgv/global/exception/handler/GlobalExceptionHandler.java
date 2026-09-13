@@ -3,6 +3,7 @@ package com.ceos24.cgv.global.exception.handler;
 
 import com.ceos24.cgv.global.apiPayload.response.ErrorResponse;
 import com.ceos24.cgv.global.apiPayload.code.ErrorCode;
+import com.ceos24.cgv.global.exception.BusinessException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -24,6 +25,13 @@ import org.springframework.web.servlet.resource.NoResourceFoundException;
 @Slf4j
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    @ExceptionHandler(BusinessException.class)
+    protected ResponseEntity<ErrorResponse> handleBusinessException(BusinessException ex) {
+        ErrorCode code = ex.getErrorCode();
+
+        return ResponseEntity.status(code.getStatus()).body(ErrorResponse.of(code));
+    }
 
     /**
      * [Exception] API 호출 시 '객체' 혹은 '파라미터' 데이터 값이 유효하지 않은 경우

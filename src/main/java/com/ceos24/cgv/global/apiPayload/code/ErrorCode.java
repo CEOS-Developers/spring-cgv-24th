@@ -56,7 +56,16 @@ public enum ErrorCode {
     UNSUPPORTED_MEDIA_TYPE(415, "G014", "지원하지 않는 Content-Type입니다."),
 
     // 서버가 처리 할 방법을 모르는 경우 발생
-    INTERNAL_SERVER_ERROR(500, "G999", "Internal Server Error Exception");
+    INTERNAL_SERVER_ERROR(500, "G999", "Internal Server Error Exception"),
+
+
+    /**
+     * ********************************** 영화 관련 오류 **********************************************
+     */
+    MOVIE_NOT_FOUND(404, "M001", "존재하지 않는 영화입니다."),
+
+
+    ;
 
     /**
      * ******************************* Error Code Constructor ***************************************
