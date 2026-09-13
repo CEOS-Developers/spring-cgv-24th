@@ -11,6 +11,11 @@ import lombok.NoArgsConstructor;
 @Entity
 public class FavoriteTheater {
 
+    public FavoriteTheater(Theater theater, Member member) {
+        this.theater = theater;
+        this.member = member;
+    }
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
