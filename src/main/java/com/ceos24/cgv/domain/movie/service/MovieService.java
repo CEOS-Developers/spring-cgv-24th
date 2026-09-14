@@ -49,4 +49,12 @@ public class MovieService {
 
         return MovieResponse.from(movie);
     }
+
+    // 영화 삭제
+    @Transactional
+    public void deleteMovie(Long movieId) {
+        Movie movie = movieRepository.findById(movieId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.MOVIE_NOT_FOUND));
+        movieRepository.delete(movie);
+    }
 }

@@ -22,15 +22,15 @@ public class MovieController {
 
     /**
      * 영화 생성
+     *
      * @param request
-     * @return
-     *  ResponseEntity<ApiResponse>
-     *  ├── HTTP 상태: 201
-     *  ├── 헤더
-     *  └── 본문: ApiResponse<Long>
-     *      ├── result: 영화 ID (Long)
-     *      ├── resultCode: 201
-     *      └── resultMsg: "INSERT_SUCCESS"
+     * @return ResponseEntity<ApiResponse>
+     * ├── HTTP 상태: 201
+     * ├── 헤더
+     * └── 본문: ApiResponse<Long>
+     * ├── result: 영화 ID (Long)
+     * ├── resultCode: 201
+     * └── resultMsg: "INSERT_SUCCESS"
      */
     @PostMapping
     public ResponseEntity<ApiResponse<Long>> createMovie(
@@ -80,6 +80,23 @@ public class MovieController {
 
         ApiResponse<MovieResponse> body = new ApiResponse<>(
                 response,
+                code.getStatus(),
+                code.getMessage()
+        );
+
+        return ResponseEntity.status(code.getStatus()).body(body);
+    }
+
+    // 영화 삭제
+    @DeleteMapping("/{movieId}")
+    public ResponseEntity<ApiResponse<Void>> deleteMovie(
+            @PathVariable("movieId") Long movieId
+    ) {
+        movieService.deleteMovie(movieId);
+        SuccessCode code = SuccessCode.DELETE_SUCCESS;
+
+        ApiResponse<Void> body = new ApiResponse<>(
+                null,
                 code.getStatus(),
                 code.getMessage()
         );
