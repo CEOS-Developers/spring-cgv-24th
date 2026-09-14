@@ -66,6 +66,9 @@ public enum ErrorCode {
 
     CINEMA_NOT_FOUND(404, "C001", "존재하지 않는 영화관입니다."),
 
+    AUDITORIUM_TYPE_NOT_FOUND(404,"AT001","존재하지 않는 상영관 타입입니다."),
+
+    AUDITORIUM_NAME_DUPLICATED(409,"A001","해당 영화관에 같은 이름의 상영관이 이미 존재합니다."),
 
     ;
 

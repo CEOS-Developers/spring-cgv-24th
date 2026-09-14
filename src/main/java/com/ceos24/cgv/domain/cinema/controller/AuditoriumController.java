@@ -1,0 +1,55 @@
+package com.ceos24.cgv.domain.cinema.controller;
+
+import com.ceos24.cgv.domain.cinema.dto.request.AuditoriumCreateRequest;
+import com.ceos24.cgv.domain.cinema.dto.response.AuditoriumResponse;
+import com.ceos24.cgv.domain.cinema.service.AuditoriumService;
+import com.ceos24.cgv.global.apiPayload.code.SuccessCode;
+import com.ceos24.cgv.global.apiPayload.response.ApiResponse;
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+import java.net.URI;
+import java.util.List;
+
+@RestController
+@RequiredArgsConstructor
+@RequestMapping("/api/cinemas/{cinemaId}/auditoriums")
+public class AuditoriumController {
+
+    private final AuditoriumService auditoriumService;
+
+    @PostMapping
+    public ResponseEntity<ApiResponse<Long>> createAuditorium(
+            @PathVariable("cinema_id") Long cinemaId,
+            @Valid @RequestBody AuditoriumCreateRequest request
+    ) {
+        Long auditoriumId = auditoriumService.createAuditorium(cinemaId, request);
+        SuccessCode code = SuccessCode.INSERT_SUCCESS;
+        ApiResponse<Long> body = new ApiResponse<>(
+                auditoriumId,
+                code.getStatus(),
+                code.getMessage()
+        );
+
+        return ResponseEntity.created(URI.create(
+                "/api/cinemas/" + cinemaId + "/auditoriums/" + auditoriumId
+        )).body(body);
+    }
+
+    @GetMapping
+    public ResponseEntity<ApiResponse<List<AuditoriumResponse>>> getAuditoriums(
+            @PathVariable("cinema_id") Long cinemaId
+    ) {
+        List<AuditoriumResponse> auditoriums = auditoriumService.getAuditoriums(cinemaId);
+        SuccessCode code = SuccessCode.SELECT_SUCCESS;
+        ApiResponse<List<AuditoriumResponse>> body = new ApiResponse<>(
+                auditoriums,
+                code.getStatus(),
+                code.getMessage()
+        );
+
+        return ResponseEntity.status(code.getStatus()).body(body);
+    }
+}
