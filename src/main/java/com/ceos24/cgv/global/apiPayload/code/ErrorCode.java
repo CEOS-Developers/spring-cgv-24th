@@ -64,6 +64,8 @@ public enum ErrorCode {
      */
     MOVIE_NOT_FOUND(404, "M001", "존재하지 않는 영화입니다."),
 
+    CINEMA_NOT_FOUND(404, "C001", "존재하지 않는 영화관입니다."),
+
 
     ;
 
