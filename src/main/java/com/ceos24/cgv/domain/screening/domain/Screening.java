@@ -29,5 +29,6 @@ public class Screening {
 
     private LocalDateTime startTime;
     private LocalDateTime endTime;
+
     private Long availableSeats;
 }
