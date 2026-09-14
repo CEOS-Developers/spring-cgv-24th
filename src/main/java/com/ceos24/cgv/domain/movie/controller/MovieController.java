@@ -1,6 +1,7 @@
 package com.ceos24.cgv.domain.movie.controller;
 
 import com.ceos24.cgv.domain.movie.dto.response.GetMovieResponse;
+import com.ceos24.cgv.domain.movie.dto.response.GetScreeningResponse;
 import com.ceos24.cgv.domain.movie.service.MovieService;
 import com.ceos24.cgv.global.common.ApiResponse;
 import lombok.RequiredArgsConstructor;
@@ -20,5 +21,10 @@ public class MovieController {
     @GetMapping("/theaters/{theaterId}/movies")
     public ResponseEntity<ApiResponse<GetMovieResponse>> getMovies(@PathVariable Long theaterId){
         return ResponseEntity.ok(ApiResponse.success(movieService.getMovies(theaterId)));
+    }
+
+    @GetMapping("/theaters/{theaterId}/screenings")
+    public ResponseEntity<ApiResponse<GetScreeningResponse>> getScreenings(@PathVariable Long theaterId){
+        return ResponseEntity.ok(ApiResponse.success(movieService.getScreenings(theaterId)));
     }
 }

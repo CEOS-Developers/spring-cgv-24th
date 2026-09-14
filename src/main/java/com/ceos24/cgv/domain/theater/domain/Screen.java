@@ -20,4 +20,6 @@ public class Screen {
 
     @Enumerated(EnumType.STRING)
     private ScreenType screenType;
+
+    private String name;
 }
