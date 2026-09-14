@@ -48,6 +48,7 @@ public class Reservation extends BaseTimeEntity {
         this.reservedAt = LocalDateTime.now();
     }
 
+    // screening을 부모 값에서 가져와 부모-자식 불일치를 구조적으로 차단한다.
     public void addSeat(int rowNum, int colNum, int paidPrice) {
         ReservationSeat seat = ReservationSeat.builder()
                 .reservation(this)
@@ -59,6 +60,8 @@ public class Reservation extends BaseTimeEntity {
         this.seats.add(seat);
     }
 
+    // orphanRemoval에 의해 좌석 행이 삭제된다.
+    // 유니크 제약이 걸려 있어 행이 남으면 해당 좌석을 재판매할 수 없기 때문이다.
     public void cancel() {
         if (this.status == ReservationStatus.CANCELLED) {
             throw new IllegalStateException("이미 취소된 예매입니다.");

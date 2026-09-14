@@ -33,6 +33,7 @@ public class ReservationSeat extends BaseTimeEntity {
     @Column(name = "col_num", nullable = false)
     private int colNum;
 
+    // 예매 시점 가격. 회차 가격이 바뀌어도 과거 결제 금액은 유지되어야 한다.
     @Column(nullable = false)
     private int paidPrice;
 

@@ -45,6 +45,7 @@ public class Purchase extends BaseTimeEntity {
         this.purchasedAt = LocalDateTime.now();
     }
 
+    // 자식 항목 합계와 어긋나지 않도록 이 메서드 안에서만 총액을 갱신한다.
     public void addItem(Product product, int quantity, int unitPrice) {
         PurchaseProduct item = PurchaseProduct.builder()
                 .purchase(this)
