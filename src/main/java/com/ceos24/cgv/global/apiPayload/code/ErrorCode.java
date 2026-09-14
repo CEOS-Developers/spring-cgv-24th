@@ -66,9 +66,16 @@ public enum ErrorCode {
 
     CINEMA_NOT_FOUND(404, "C001", "존재하지 않는 영화관입니다."),
 
-    AUDITORIUM_TYPE_NOT_FOUND(404,"AT001","존재하지 않는 상영관 타입입니다."),
+    AUDITORIUM_TYPE_NOT_FOUND(404, "AT001", "존재하지 않는 상영관 타입입니다."),
 
-    AUDITORIUM_NAME_DUPLICATED(409,"A001","해당 영화관에 같은 이름의 상영관이 이미 존재합니다."),
+    AUDITORIUM_NAME_DUPLICATED(409, "A001", "해당 영화관에 같은 이름의 상영관이 이미 존재합니다."),
+
+    AUDITORIUM_NOT_FOUND(404, "A002", "존재하지 않는 상영관입니다."),
+
+    INVALID_SCREENING_TIME(400, "S001", "상영 종료 시간은 시작 시간보다 뒤여야 합니다."),
+
+    SCREENING_TIME_CONFLICT(409, "S002", "해당 상영관에 시간이 겹치는 상영 일정이 존재합니다."),
+
 
     ;
 

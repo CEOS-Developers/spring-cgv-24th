@@ -22,7 +22,7 @@ public class AuditoriumController {
 
     @PostMapping
     public ResponseEntity<ApiResponse<Long>> createAuditorium(
-            @PathVariable("cinema_id") Long cinemaId,
+            @PathVariable("cinemaId") Long cinemaId,
             @Valid @RequestBody AuditoriumCreateRequest request
     ) {
         Long auditoriumId = auditoriumService.createAuditorium(cinemaId, request);
@@ -40,7 +40,7 @@ public class AuditoriumController {
 
     @GetMapping
     public ResponseEntity<ApiResponse<List<AuditoriumResponse>>> getAuditoriums(
-            @PathVariable("cinema_id") Long cinemaId
+            @PathVariable("cinemaId") Long cinemaId
     ) {
         List<AuditoriumResponse> auditoriums = auditoriumService.getAuditoriums(cinemaId);
         SuccessCode code = SuccessCode.SELECT_SUCCESS;
