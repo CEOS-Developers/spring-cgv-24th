@@ -1,1 +1,3 @@
-spring.application.name=spring-cgv-24th
+spring:
+  application:
+    name: spring-cgv-24th
