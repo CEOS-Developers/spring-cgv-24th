@@ -21,8 +21,8 @@ public class Purchase extends BaseTimeEntity {
     private Long id;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "member_id", nullable = false)
-    private Member member;
+    @JoinColumn(name = "user_id", nullable = false)
+    private User user;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "branch_id", nullable = false)
@@ -38,8 +38,8 @@ public class Purchase extends BaseTimeEntity {
     private List<PurchaseProduct> items = new ArrayList<>();
 
     @Builder
-    private Purchase(Member member, Branch branch) {
-        this.member = member;
+    private Purchase(User user, Branch branch) {
+        this.user = user;
         this.branch = branch;
         this.totalPrice = 0;
         this.purchasedAt = LocalDateTime.now();

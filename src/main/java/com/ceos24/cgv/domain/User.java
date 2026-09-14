@@ -10,12 +10,13 @@ import java.time.LocalDate;
 
 @Getter
 @Entity
+@Table(name = "users")
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
-public class Member extends BaseTimeEntity {
+public class User extends BaseTimeEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    @Column(name = "member_id")
+    @Column(name = "user_id")
     private Long id;
 
     @Column(nullable = false, unique = true, length = 50)
@@ -31,7 +32,7 @@ public class Member extends BaseTimeEntity {
     private LocalDate birthDate;
 
     @Builder
-    private Member(String loginId, String password, String name, LocalDate birthDate) {
+    private User(String loginId, String password, String name, LocalDate birthDate) {
         this.loginId = loginId;
         this.password = password;
         this.name = name;

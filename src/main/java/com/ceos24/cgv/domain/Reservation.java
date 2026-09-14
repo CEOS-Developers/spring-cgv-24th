@@ -23,8 +23,8 @@ public class Reservation extends BaseTimeEntity {
     private Long id;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "member_id", nullable = false)
-    private Member member;
+    @JoinColumn(name = "user_id", nullable = false)
+    private User user;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "screening_id", nullable = false)
@@ -43,8 +43,8 @@ public class Reservation extends BaseTimeEntity {
     private List<ReservationSeat> seats = new ArrayList<>();
 
     @Builder
-    private Reservation(Member member, Screening screening) {
-        this.member = member;
+    private Reservation(User user, Screening screening) {
+        this.user = user;
         this.screening = screening;
         this.status = ReservationStatus.RESERVED;
         this.reservedAt = LocalDateTime.now();

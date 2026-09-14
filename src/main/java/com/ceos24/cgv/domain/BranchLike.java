@@ -9,8 +9,8 @@ import lombok.NoArgsConstructor;
 @Getter
 @Entity
 @Table(uniqueConstraints = @UniqueConstraint(
-        name = "uk_branch_like_member_branch",
-        columnNames = {"member_id", "branch_id"}))
+        name = "uk_branch_like_user_branch",
+        columnNames = {"user_id", "branch_id"}))
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class BranchLike extends BaseTimeEntity {
 
@@ -20,16 +20,16 @@ public class BranchLike extends BaseTimeEntity {
     private Long id;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "member_id", nullable = false)
-    private Member member;
+    @JoinColumn(name = "user_id", nullable = false)
+    private User user;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "branch_id", nullable = false)
     private Branch branch;
 
     @Builder
-    private BranchLike(Member member, Branch branch) {
-        this.member = member;
+    private BranchLike(User user, Branch branch) {
+        this.user = user;
         this.branch = branch;
     }
 }
