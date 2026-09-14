@@ -15,8 +15,8 @@ public class Seat {
     private Long id;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "screen_type_id", nullable = false)
-    private ScreenType screenType;
+    @JoinColumn(name = "screen_id", nullable = false)
+    private Screen screen;
 
     @Column(nullable = false)
     private Integer rowNum;
@@ -24,13 +24,13 @@ public class Seat {
     @Column(nullable = false)
     private Integer colNum;
 
-    private Seat(ScreenType screenType, Integer rowNum, Integer colNum) {
-        this.screenType = screenType;
+    private Seat(Screen screen, Integer rowNum, Integer colNum) {
+        this.screen = screen;
         this.rowNum = rowNum;
         this.colNum = colNum;
     }
 
-    public static Seat create(ScreenType screenType, Integer rowNum, Integer colNum) {
-        return new Seat(screenType, rowNum, colNum);
+    public static Seat create(Screen screen, Integer rowNum, Integer colNum) {
+        return new Seat(screen, rowNum, colNum);
     }
 }
