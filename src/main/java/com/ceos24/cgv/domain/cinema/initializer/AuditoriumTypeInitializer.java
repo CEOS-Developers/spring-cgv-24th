@@ -11,7 +11,6 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 @Component
-@Profile("local") // local 프로필에서만 실행
 @RequiredArgsConstructor
 public class AuditoriumTypeInitializer implements ApplicationRunner {
 
