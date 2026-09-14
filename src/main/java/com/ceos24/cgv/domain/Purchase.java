@@ -1,0 +1,58 @@
+package com.ceos24.cgv.domain;
+
+import jakarta.persistence.*;
+import lombok.AccessLevel;
+import lombok.Builder;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
+
+@Getter
+@Entity
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
+public class Purchase extends BaseTimeEntity {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Column(name = "purchase_id")
+    private Long id;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "member_id", nullable = false)
+    private Member member;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "branch_id", nullable = false)
+    private Branch branch;
+
+    @Column(nullable = false)
+    private int totalPrice;
+
+    @Column(nullable = false)
+    private LocalDateTime purchasedAt;
+
+    @OneToMany(mappedBy = "purchase", cascade = CascadeType.ALL, orphanRemoval = true)
+    private List<PurchaseProduct> items = new ArrayList<>();
+
+    @Builder
+    private Purchase(Member member, Branch branch) {
+        this.member = member;
+        this.branch = branch;
+        this.totalPrice = 0;
+        this.purchasedAt = LocalDateTime.now();
+    }
+
+    public void addItem(Product product, int quantity, int unitPrice) {
+        PurchaseProduct item = PurchaseProduct.builder()
+                .purchase(this)
+                .product(product)
+                .quantity(quantity)
+                .unitPrice(unitPrice)
+                .build();
+        this.items.add(item);
+        this.totalPrice += unitPrice * quantity;
+    }
+}
