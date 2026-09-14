@@ -23,6 +23,7 @@ public enum ErrorCode {
 
     // 예매
     SEAT_OUT_OF_RANGE(HttpStatus.BAD_REQUEST, "좌석이 상영관 범위를 벗어났습니다."),
+    DUPLICATE_SEAT_IN_REQUEST(HttpStatus.BAD_REQUEST, "요청 안에 중복된 좌석이 있습니다."),
     SEAT_ALREADY_RESERVED(HttpStatus.CONFLICT, "이미 예매된 좌석입니다."),
     ALREADY_CANCELLED(HttpStatus.CONFLICT, "이미 취소된 예매입니다."),
 
