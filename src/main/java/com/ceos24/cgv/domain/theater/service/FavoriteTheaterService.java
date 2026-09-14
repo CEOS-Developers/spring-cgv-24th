@@ -23,9 +23,6 @@ public class FavoriteTheaterService {
         Theater theater = theaterRepository.findById(theaterId).orElseThrow();
         Member member = memberRepository.findById(memberId).orElseThrow();
         FavoriteTheater favoriteTheater = new FavoriteTheater(theater, member);
-        System.out.println("memberId : " + favoriteTheater.getMember().getId());
-        System.out.println("theaterId : " + favoriteTheater.getTheater().getId());
-
         favoriteTheaterRepository.save(favoriteTheater);
     }
 }
