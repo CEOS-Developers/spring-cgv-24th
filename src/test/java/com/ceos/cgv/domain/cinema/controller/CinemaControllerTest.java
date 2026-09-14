@@ -58,4 +58,13 @@ class CinemaControllerTest {
                 .andExpect(jsonPath("$.name").value("강남점"))
                 .andExpect(jsonPath("$.address").value("서울시 강남구"));
     }
+
+    @Test
+    void 존재하지_않는_영화관을_조회하면_404를_반환한다() throws Exception{
+        given(cinemaService.findById(999L))
+                .willThrow(new IllegalArgumentException("영화관을 찾을 수 없습니다."));
+
+        mockMvc.perform(get("/api/v1/cinemas/{cinemaId}", 999L))
+                .andExpect(status().isNotFound());
+    }
 }
