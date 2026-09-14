@@ -1,5 +1,7 @@
 package com.ceos24.cgv.domain;
 
+import com.ceos24.cgv.global.exception.CustomException;
+import com.ceos24.cgv.global.exception.ErrorCode;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Builder;
@@ -64,7 +66,7 @@ public class Reservation extends BaseTimeEntity {
     // 유니크 제약이 걸려 있어 행이 남으면 해당 좌석을 재판매할 수 없기 때문이다.
     public void cancel() {
         if (this.status == ReservationStatus.CANCELLED) {
-            throw new IllegalStateException("이미 취소된 예매입니다.");
+            throw new CustomException(ErrorCode.ALREADY_CANCELLED);
         }
         this.status = ReservationStatus.CANCELLED;
         this.cancelledAt = LocalDateTime.now();

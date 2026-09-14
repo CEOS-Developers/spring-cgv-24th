@@ -1,5 +1,7 @@
 package com.ceos24.cgv.domain;
 
+import com.ceos24.cgv.global.exception.CustomException;
+import com.ceos24.cgv.global.exception.ErrorCode;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Builder;
@@ -39,7 +41,7 @@ public class Stock extends BaseTimeEntity {
 
     public void decrease(int amount) {
         if (this.quantity < amount) {
-            throw new IllegalStateException("재고가 부족합니다.");
+            throw new CustomException(ErrorCode.OUT_OF_STOCK);
         }
         this.quantity -= amount;
     }
