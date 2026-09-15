@@ -21,5 +21,5 @@ public class Seat {
 
     private Long seatNumber;
 
-    private boolean isReserved;
+    private Boolean isReserved;
 }
