@@ -13,6 +13,11 @@ import lombok.NoArgsConstructor;
 @Entity
 public class Theater {
 
+    public Theater(String name, String address) {
+        this.name = name;
+        this.address = address;
+    }
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
