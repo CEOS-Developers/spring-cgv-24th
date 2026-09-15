@@ -6,7 +6,6 @@ import com.ceos24.cgv.global.code.GeneralErrorCode;
 import com.ceos24.cgv.global.exception.GeneralException;
 import jakarta.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -18,7 +17,7 @@ import java.util.List;
 
 @Slf4j
 @RestControllerAdvice(annotations = RestController.class)
-public class ExceptionAdvice {
+public class GlobalExceptionHandler {
 
     /**
      * 직접 정의한 비즈니스 예외 처리
