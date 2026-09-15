@@ -39,4 +39,11 @@ public class MovieStatistics {
                                          Double eggScore, Integer reviewCount) {
         return new MovieStatistics(movie, audienceCount, reservationRate, eggScore, reviewCount);
     }
+
+    public void update(Integer audienceCount, Double reservationRate, Double eggScore, Integer reviewCount) {
+        if (audienceCount != null) this.audienceCount = audienceCount;
+        if (reservationRate != null) this.reservationRate = reservationRate;
+        if (eggScore != null) this.eggScore = eggScore;
+        if (reviewCount != null) this.reviewCount = reviewCount;
+    }
 }

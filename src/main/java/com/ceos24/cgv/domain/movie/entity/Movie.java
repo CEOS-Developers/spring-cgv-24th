@@ -57,4 +57,16 @@ public class Movie {
                                AgeRating ageRating, MovieStatus status, LocalDate openDate, LocalDate closeDate) {
         return new Movie(title, genre, runningTime, description, ageRating, status, openDate, closeDate);
     }
+
+    public void update(String title, String genre, Integer runningTime, String description,
+                       AgeRating ageRating, MovieStatus status, LocalDate openDate, LocalDate closeDate) {
+        if (title != null) this.title = title;
+        if (genre != null) this.genre = genre;
+        if (runningTime != null) this.runningTime = runningTime;
+        if (description != null) this.description = description;
+        if (ageRating != null) this.ageRating = ageRating;
+        if (status != null) this.status = status;
+        if (openDate != null) this.openDate = openDate;
+        if (closeDate != null) this.closeDate = closeDate;
+    }
 }
