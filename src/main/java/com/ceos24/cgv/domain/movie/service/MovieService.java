@@ -92,7 +92,7 @@ public class MovieService {
 
         Optional<MovieStatistics> statistics = movieStatisticsRepository.findByMovieId(id);
 
-        List<PersonResponse> persons = moviePersonRepository.findByMovieId(id).stream()
+        List<PersonResponse> persons = moviePersonRepository.findByMovieIdWithPerson(id).stream()
                 .map(PersonResponse::from)
                 .toList();
 
