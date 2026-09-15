@@ -20,7 +20,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -42,16 +44,24 @@ public class MovieService {
     }
 
     public List<MovieListResponse> findAll() {
-        return movieRepository.findAll().stream()
-                .map(movie -> {
-                    String moviePosterUrl = movieImageRepository.findByMovieId(movie.getId()).stream()
-                            .filter(image -> image.getType() == MovieImageType.POSTER)
-                            .findFirst()
-                            .map(MovieImage::getMovieImageUrl)
-                            .orElse(null);
+        List<Movie> movies = movieRepository.findAll();
+        List<Long> movieIds = movies.stream().map(Movie::getId).toList();
 
-                    MovieStatistics statistics = movieStatisticsRepository.findByMovieId(movie.getId())
-                            .orElse(null);
+        Map<Long, String> posterUrlByMovieId = movieImageRepository.findByMovieIdIn(movieIds).stream()
+                .filter(image -> image.getType() == MovieImageType.POSTER)
+                .collect(Collectors.toMap(
+                        image -> image.getMovie().getId(),
+                        MovieImage::getMovieImageUrl,
+                        (existing, duplicate) -> existing
+                ));
+
+        Map<Long, MovieStatistics> statisticsByMovieId = movieStatisticsRepository.findByMovieIdIn(movieIds).stream()
+                .collect(Collectors.toMap(stat -> stat.getMovie().getId(), stat -> stat));
+
+        return movies.stream()
+                .map(movie -> {
+                    String moviePosterUrl = posterUrlByMovieId.get(movie.getId());
+                    MovieStatistics statistics = statisticsByMovieId.get(movie.getId());
 
                     return MovieListResponse.of(
                             movie, moviePosterUrl,
