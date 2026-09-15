@@ -21,13 +21,20 @@ public class Theater {
 
     private String address;
 
-    private Theater(String name, String region, String address) {
+    @Lob
+    private String description;
+
+    private String theaterImageUrl;
+
+    private Theater(String name, String region, String address, String description, String theaterImageUrl) {
         this.name = name;
         this.region = region;
         this.address = address;
+        this.description = description;
+        this.theaterImageUrl = theaterImageUrl;
     }
 
-    public static Theater create(String name, String region, String address) {
-        return new Theater(name, region, address);
+    public static Theater create(String name, String region, String address, String description, String theaterImageUrl) {
+        return new Theater(name, region, address, description, theaterImageUrl);
     }
 }
