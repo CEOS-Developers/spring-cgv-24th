@@ -5,6 +5,7 @@ import com.ceos24.cgv.domain.movie.service.MovieStatisticsService;
 import com.ceos24.cgv.global.apiPayload.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
@@ -20,7 +21,7 @@ public class MovieStatisticsController {
     @PatchMapping
     public ApiResponse<Long> createOrUpdateStatistics(
             @PathVariable Long movieId,
-            @RequestBody MovieStatisticsRequest request
+            @Valid @RequestBody MovieStatisticsRequest request
     ) {
         Long statisticsId = movieStatisticsService.createOrUpdate(movieId, request);
         return ApiResponse.onSuccess(statisticsId);

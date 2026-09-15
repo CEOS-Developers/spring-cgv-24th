@@ -46,7 +46,7 @@ public class MovieController {
     @PatchMapping("/{movieId}")
     public ApiResponse<Void> updateMovie(
             @PathVariable Long movieId,
-            @RequestBody MovieUpdateRequest request
+            @Valid @RequestBody MovieUpdateRequest request
     ) {
         movieService.update(movieId, request);
         return ApiResponse.onSuccess(null);
