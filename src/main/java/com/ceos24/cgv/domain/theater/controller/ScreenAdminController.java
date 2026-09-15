@@ -1,0 +1,26 @@
+package com.ceos24.cgv.domain.theater.controller;
+
+import com.ceos24.cgv.domain.theater.dto.request.ScreenCreateRequest;
+import com.ceos24.cgv.domain.theater.service.ScreenAdminService;
+import com.ceos24.cgv.global.common.ApiResponse;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+@RequestMapping("/api/admin")
+@RequiredArgsConstructor
+@RestController
+public class ScreenAdminController {
+
+    private final ScreenAdminService screenAdminService;
+
+    @PostMapping("/theaters/{theaterId}/screens")
+    public ResponseEntity<ApiResponse<Void>> createScreen(
+            @PathVariable Long theaterId,
+            @RequestBody ScreenCreateRequest request
+    ) {
+        screenAdminService.createScreen(theaterId, request);
+        return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.success(null));
+    }
+}

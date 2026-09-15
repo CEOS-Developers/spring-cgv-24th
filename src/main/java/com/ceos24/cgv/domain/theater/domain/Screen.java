@@ -10,6 +10,12 @@ import lombok.NoArgsConstructor;
 @Entity
 public class Screen {
 
+    public Screen(Theater theater, ScreenType screenType, String name) {
+        this.theater = theater;
+        this.screenType = screenType;
+        this.name = name;
+    }
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -22,5 +28,4 @@ public class Screen {
     private ScreenType screenType;
 
     private String name;
-    private Long seats;
 }
