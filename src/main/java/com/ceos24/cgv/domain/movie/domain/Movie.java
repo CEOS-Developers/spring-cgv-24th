@@ -14,6 +14,10 @@ import lombok.NoArgsConstructor;
 @Entity
 public class Movie {
 
+    public Movie(String title) {
+        this.title = title;
+    }
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;

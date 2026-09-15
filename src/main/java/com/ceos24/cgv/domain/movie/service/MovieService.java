@@ -5,8 +5,10 @@ import com.ceos24.cgv.domain.movie.dto.MovieInfo;
 import com.ceos24.cgv.domain.movie.dto.ScheduleTimeInfo;
 import com.ceos24.cgv.domain.movie.dto.ScreenScheduleInfo;
 import com.ceos24.cgv.domain.movie.dto.ScreeningMovieInfo;
+import com.ceos24.cgv.domain.movie.dto.request.CreateMovieRequest;
 import com.ceos24.cgv.domain.movie.dto.response.GetMovieResponse;
 import com.ceos24.cgv.domain.movie.dto.response.GetScreeningResponse;
+import com.ceos24.cgv.domain.movie.repository.MovieRepository;
 import com.ceos24.cgv.domain.screening.domain.Screening;
 import com.ceos24.cgv.domain.screening.repository.ScreeningRepository;
 import com.ceos24.cgv.domain.theater.domain.Screen;
@@ -22,6 +24,7 @@ import java.util.stream.Collectors;
 @Service
 public class MovieService {
 
+    private final MovieRepository movieRepository;
     private final ScreeningRepository screeningRepository;
 
     @Transactional(readOnly = true)
@@ -30,6 +33,11 @@ public class MovieService {
                 screeningRepository.findDistinctMoviesByTheaterId(theaterId).stream()
                 .map(MovieInfo::from).toList()
         );
+    }
+
+    @Transactional
+    public void createMovie(CreateMovieRequest request) {
+        movieRepository.save(new Movie(request.title()));
     }
 
     @Transactional(readOnly = true)
