@@ -76,7 +76,15 @@ public enum ErrorCode {
 
     SCREENING_TIME_CONFLICT(409, "S002", "해당 상영관에 시간이 겹치는 상영 일정이 존재합니다."),
 
+    USER_NOT_FOUND(404, "U001", "존재하지 않는 사용자입니다."),
 
+    MOVIE_ALREADY_FAVORITED(409, "MF001", "이미 찜한 영화입니다."),
+
+    MOVIE_FAVORITE_NOT_FOUND(404, "MF002", "영화 찜 기록이 존재하지 않습니다."),
+
+    CINEMA_ALREADY_FAVORITED(409, "CF001", "이미 찜한 영화관입니다."),
+
+    CINEMA_FAVORITE_NOT_FOUND(404, "CF002", "영화관 찜 기록이 존재하지 않습니다."),
     ;
 
     /**
