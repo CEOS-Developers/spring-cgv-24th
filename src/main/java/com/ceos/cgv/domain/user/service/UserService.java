@@ -2,6 +2,8 @@ package com.ceos.cgv.domain.user.service;
 
 import com.ceos.cgv.domain.user.entity.User;
 import com.ceos.cgv.domain.user.repository.UserRepository;
+import com.ceos.cgv.global.exception.BusinessException;
+import com.ceos.cgv.global.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -12,6 +14,6 @@ public class UserService {
 
     public User findById(Long userId){
         return userRepository.findById(userId)
-                .orElseThrow(()-> new IllegalArgumentException("사용자를 찾을 수 없습니다."));
+                .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
     }
 }
