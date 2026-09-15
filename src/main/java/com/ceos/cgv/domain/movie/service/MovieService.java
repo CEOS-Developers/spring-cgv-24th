@@ -1,6 +1,7 @@
 package com.ceos.cgv.domain.movie.service;
 
 import com.ceos.cgv.domain.movie.entity.Movie;
+import com.ceos.cgv.domain.movie.dto.MovieCreateRequest;
 import com.ceos.cgv.domain.movie.repository.MovieRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -19,5 +20,20 @@ public class MovieService {
     public Movie findById(Long movieId){
         return movieRepository.findById(movieId)
                 .orElseThrow(()-> new IllegalArgumentException("영화를 찾을 수 없습니다."));
+    }
+
+    public Movie create(MovieCreateRequest request) {
+        Movie movie = new Movie(
+                request.title(),
+                request.description(),
+                request.runningTime(),
+                request.releaseDate(),
+                request.ageRating()
+        );
+        return movieRepository.save(movie);
+    }
+
+    public void delete(Long movieId) {
+        movieRepository.delete(findById(movieId));
     }
 }
