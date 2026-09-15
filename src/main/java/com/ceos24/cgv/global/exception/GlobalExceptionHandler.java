@@ -6,6 +6,7 @@ import com.ceos24.cgv.global.apiPayload.code.status.GlobalErrorStatus;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -129,7 +130,20 @@ public class GlobalExceptionHandler {
                 .body(ApiResponse.onFailure(errorReason.getCode(), message, null));
     }
 
-    // 7. 그 외 모든 예외
+    // 7. DB 제약 위반 (동시 요청으로 인한 중복 삽입, FK 참조 중인 데이터 삭제 시도 등)
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ResponseEntity<ApiResponse<Object>> handleDataIntegrityViolationException(
+            DataIntegrityViolationException e, HttpServletRequest request) {
+        log.warn("데이터 무결성 제약 위반 - URI: {}", request.getRequestURI(), e);
+
+        ErrorReasonDTO errorReason = GlobalErrorStatus._CONFLICT.getReasonHttpStatus();
+
+        return ResponseEntity
+                .status(errorReason.getHttpStatus())
+                .body(ApiResponse.onFailure(errorReason.getCode(), errorReason.getMessage(), null));
+    }
+
+    // 8. 그 외 모든 예외
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiResponse<Object>> handleException(Exception e, HttpServletRequest request) {
         log.error("서버 내부 오류 발생 - URI: {}", request.getRequestURI(), e);
