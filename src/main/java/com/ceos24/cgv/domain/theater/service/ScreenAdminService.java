@@ -20,7 +20,7 @@ public class ScreenAdminService {
     @Transactional
     public void createScreen(Long theaterId, ScreenCreateRequest request) {
         Theater theater = theaterRepository.findById(theaterId).orElseThrow();
-        Screen screen = new Screen(theater,request.screenType(), request.name());
+        Screen screen = new Screen(theater,request.screenType(), request.name(), request.totalSeats());
         screenRepository.save(screen);
     }
 }

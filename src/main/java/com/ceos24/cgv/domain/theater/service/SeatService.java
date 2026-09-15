@@ -2,6 +2,9 @@ package com.ceos24.cgv.domain.theater.service;
 
 import com.ceos24.cgv.domain.screening.domain.Screening;
 import com.ceos24.cgv.domain.screening.repository.ScreeningRepository;
+import com.ceos24.cgv.domain.theater.domain.Screen;
+import com.ceos24.cgv.domain.theater.domain.ScreenType;
+import com.ceos24.cgv.domain.theater.domain.Seat;
 import com.ceos24.cgv.domain.theater.dto.SeatInfo;
 import com.ceos24.cgv.domain.theater.dto.response.GetSeatResponse;
 import com.ceos24.cgv.domain.theater.repository.SeatRepository;
@@ -9,6 +12,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
 import java.util.List;
 
 @RequiredArgsConstructor
@@ -22,5 +26,16 @@ public class SeatService {
         List<SeatInfo> seatInfoList = seatRepository.findByScreeningId(screeningId).stream()
                 .map(SeatInfo::from).toList();
         return new GetSeatResponse(screeningId, seatInfoList);
+    }
+
+    @Transactional
+    public void createSeats(Screening screening) {
+        Screen screen = screening.getScreen();
+        List<Seat> newSeats = new ArrayList<>();
+        for (int i = 0; i < screen.getTotalSeats(); i++) {
+            Seat seat = new Seat(screening, (long)i+1, false);
+            newSeats.add(seat);
+        }
+        seatRepository.saveAll(newSeats);
     }
 }

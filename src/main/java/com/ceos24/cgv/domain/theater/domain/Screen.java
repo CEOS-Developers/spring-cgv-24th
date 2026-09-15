@@ -10,10 +10,11 @@ import lombok.NoArgsConstructor;
 @Entity
 public class Screen {
 
-    public Screen(Theater theater, ScreenType screenType, String name) {
+    public Screen(Theater theater, ScreenType screenType, String name, Long totalSeats) {
         this.theater = theater;
         this.screenType = screenType;
         this.name = name;
+        this.totalSeats = totalSeats;
     }
 
     @Id
@@ -28,4 +29,6 @@ public class Screen {
     private ScreenType screenType;
 
     private String name;
+
+    private Long totalSeats;
 }

@@ -11,6 +11,12 @@ import lombok.NoArgsConstructor;
 @Entity
 public class Seat {
 
+    public Seat(Screening screening, Long seatNumber, Boolean isReserved) {
+        this.screening = screening;
+        this.seatNumber = seatNumber;
+        this.isReserved = isReserved;
+    }
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;

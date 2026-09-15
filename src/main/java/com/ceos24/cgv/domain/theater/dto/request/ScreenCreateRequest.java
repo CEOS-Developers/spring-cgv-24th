@@ -4,6 +4,7 @@ import com.ceos24.cgv.domain.theater.domain.ScreenType;
 
 public record ScreenCreateRequest (
     ScreenType screenType,
-    String name
+    String name,
+    Long totalSeats
 ){
 }

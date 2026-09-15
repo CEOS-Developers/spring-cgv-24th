@@ -15,6 +15,13 @@ import lombok.NoArgsConstructor;
 @Entity
 public class Screening {
 
+    public Screening(Movie movie, Screen screen, LocalDateTime startTime, LocalDateTime endTime) {
+        this.movie = movie;
+        this.screen = screen;
+        this.startTime = startTime;
+        this.endTime = endTime;
+    }
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -29,6 +36,4 @@ public class Screening {
 
     private LocalDateTime startTime;
     private LocalDateTime endTime;
-
-    private Long availableSeats;
 }
