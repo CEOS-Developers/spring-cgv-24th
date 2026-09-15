@@ -102,7 +102,20 @@ public enum ErrorCode {
 
     RESERVATION_ACCESS_DENIED(403, "R006", "해당 예매에 접근할 수 없습니다."),
 
-    SCREENING_ALREADY_STARTED(409, "R007", "이미 시작된 상영 회차는 예매할 수 없습니다.")
+    SCREENING_ALREADY_STARTED(409, "R007", "이미 시작된 상영 회차는 예매할 수 없습니다."),
+
+    PRODUCT_NOT_FOUND(404, "P001", "존재하지 않는 상품이 포함되어 있습니다."),
+
+    PRODUCT_NOT_AVAILABLE_AT_CINEMA(404, "P002", "해당 영화관에서 판매하지 않는 상품이 포함되어 있습니다."),
+
+    INSUFFICIENT_STOCK(409, "P003", "상품 재고가 부족합니다."),
+
+    DUPLICATE_PRODUCT_REQUEST(400, "P004", "중복된 상품이 포함되어 있습니다."),
+
+    PURCHASE_NOT_FOUND(404, "P005", "존재하지 않는 구매 내역입니다."),
+
+    PURCHASE_ACCESS_DENIED(403, "P006", "해당 구매 내역에 접근할 수 없습니다.")
+
     ;
 
     /**
