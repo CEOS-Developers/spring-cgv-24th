@@ -71,7 +71,7 @@ public class MovieService {
                                                 s.getId(),
                                                 s.getStartTime(),
                                                 s.getEndTime(),
-                                                45L)).toList();
+                                                screen.getTotalSeats())).toList();
                                 return new ScreenScheduleInfo(screen.getId(), screen.getName(),
                                         scheduleInfos);
                             })

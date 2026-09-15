@@ -1,0 +1,32 @@
+package com.ceos24.cgv.domain.screening.service;
+
+import com.ceos24.cgv.domain.movie.domain.Movie;
+import com.ceos24.cgv.domain.movie.dto.MovieInfo;
+import com.ceos24.cgv.domain.screening.domain.Screening;
+import com.ceos24.cgv.domain.screening.dto.ScreeningInfo;
+import com.ceos24.cgv.domain.screening.repository.ScreeningRepository;
+import com.ceos24.cgv.domain.theater.domain.Screen;
+import com.ceos24.cgv.domain.theater.dto.ScreenInfo;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@RequiredArgsConstructor
+@Service
+public class ScreeningService {
+
+    private final ScreeningRepository screeningRepository;
+
+    @Transactional(readOnly = true)
+    public ScreeningInfo getScreeningInfo(Long screeningId) {
+        Screening screening = screeningRepository.findById(screeningId).orElseThrow();
+        Movie movie = screening.getMovie();
+        Screen screen = screening.getScreen();
+        return new ScreeningInfo(
+                MovieInfo.from(movie),
+                ScreenInfo.from(screen),
+                screening.getStartTime(),
+                screening.getEndTime()
+        );
+    }
+}
