@@ -2,6 +2,8 @@ package com.ceos.cgv.domain.cinema.controller;
 
 import com.ceos.cgv.domain.cinema.entity.Cinema;
 import com.ceos.cgv.domain.cinema.service.CinemaService;
+import com.ceos.cgv.global.exception.BusinessException;
+import com.ceos.cgv.global.exception.ErrorCode;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
@@ -62,9 +64,10 @@ class CinemaControllerTest {
     @Test
     void 존재하지_않는_영화관을_조회하면_404를_반환한다() throws Exception{
         given(cinemaService.findById(999L))
-                .willThrow(new IllegalArgumentException("영화관을 찾을 수 없습니다."));
+                .willThrow(new BusinessException(ErrorCode.CINEMA_NOT_FOUND));
 
         mockMvc.perform(get("/api/v1/cinemas/{cinemaId}", 999L))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("CINEMA_NOT_FOUND"));
     }
 }

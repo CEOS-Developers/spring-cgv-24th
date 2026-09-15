@@ -66,7 +66,10 @@ class MovieControllerIntegrationTest {
                                   "ageRating": "ALL"
                                 }
                                 """))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"))
+                .andExpect(jsonPath("$.message").isNotEmpty());
     }
 
     @Test
@@ -96,6 +99,16 @@ class MovieControllerIntegrationTest {
         mockMvc.perform(get("/api/v1/movies/{movieId}", movieId))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.status").value(404))
-                .andExpect(jsonPath("$.message").exists());
+                .andExpect(jsonPath("$.message").exists())
+                .andExpect(jsonPath("$.code").value("MOVIE_NOT_FOUND"));
+    }
+
+    @Test
+    void 없는_영화를_조회하면_명확한_오류_코드를_반환한다() throws Exception {
+        mockMvc.perform(get("/api/v1/movies/{movieId}", 999_999L))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.status").value(404))
+                .andExpect(jsonPath("$.code").value("MOVIE_NOT_FOUND"))
+                .andExpect(jsonPath("$.message").isNotEmpty());
     }
 }
