@@ -25,16 +25,16 @@ public class User extends BaseTimeEntity {
     @Column(nullable = false)
     private String nickname;
 
-    private String profileImageUrl;
+    private String userProfileImageUrl;
 
-    private User(String loginId, String password, String nickname, String profileImageUrl) {
+    private User(String loginId, String password, String nickname, String userProfileImageUrl) {
         this.loginId = loginId;
         this.password = password;
         this.nickname = nickname;
-        this.profileImageUrl = profileImageUrl;
+        this.userProfileImageUrl = userProfileImageUrl;
     }
 
-    public static User create(String loginId, String password, String nickname, String profileImageUrl) {
-        return new User(loginId, password, nickname, profileImageUrl);
+    public static User create(String loginId, String password, String nickname, String userProfileImageUrl) {
+        return new User(loginId, password, nickname, userProfileImageUrl);
     }
 }

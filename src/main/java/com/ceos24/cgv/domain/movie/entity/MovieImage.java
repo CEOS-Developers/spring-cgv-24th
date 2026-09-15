@@ -20,19 +20,19 @@ public class MovieImage {
     private Movie movie;
 
     @Column(nullable = false)
-    private String imageUrl;
+    private String movieImageUrl;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private MovieImageType type;
 
-    private MovieImage(Movie movie, String imageUrl, MovieImageType type) {
+    private MovieImage(Movie movie, String movieImageUrl, MovieImageType type) {
         this.movie = movie;
-        this.imageUrl = imageUrl;
+        this.movieImageUrl = movieImageUrl;
         this.type = type;
     }
 
-    public static MovieImage create(Movie movie, String imageUrl, MovieImageType type) {
-        return new MovieImage(movie, imageUrl, type);
+    public static MovieImage create(Movie movie, String movieImageUrl, MovieImageType type) {
+        return new MovieImage(movie, movieImageUrl, type);
     }
 }

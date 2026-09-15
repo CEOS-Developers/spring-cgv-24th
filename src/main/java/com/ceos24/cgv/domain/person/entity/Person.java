@@ -17,14 +17,14 @@ public class Person {
     @Column(nullable = false)
     private String name;
 
-    private String profileImageUrl;
+    private String personProfileImageUrl;
 
-    private Person(String name, String profileImageUrl) {
+    private Person(String name, String personProfileImageUrl) {
         this.name = name;
-        this.profileImageUrl = profileImageUrl;
+        this.personProfileImageUrl = personProfileImageUrl;
     }
 
-    public static Person create(String name, String profileImageUrl) {
-        return new Person(name, profileImageUrl);
+    public static Person create(String name, String personProfileImageUrl) {
+        return new Person(name, personProfileImageUrl);
     }
 }
