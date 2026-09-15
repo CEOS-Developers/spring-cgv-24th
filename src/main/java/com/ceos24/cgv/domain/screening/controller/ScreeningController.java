@@ -2,6 +2,7 @@ package com.ceos24.cgv.domain.screening.controller;
 
 import com.ceos24.cgv.domain.screening.dto.request.ScreeningCreateRequest;
 import com.ceos24.cgv.domain.screening.dto.response.ScreeningResponse;
+import com.ceos24.cgv.domain.screening.dto.response.SeatResponse;
 import com.ceos24.cgv.domain.screening.service.ScreeningService;
 import com.ceos24.cgv.global.apiPayload.code.SuccessCode;
 import com.ceos24.cgv.global.apiPayload.response.ApiResponse;
@@ -50,6 +51,23 @@ public class ScreeningController {
                 code.getStatus(),
                 code.getMessage()
         );
+
+        return ResponseEntity.status(code.getStatus()).body(body);
+    }
+
+    @GetMapping("/screenings/{screeningId}/seats")
+    public ResponseEntity<ApiResponse<List<SeatResponse>>> getSeatsByScreening(
+            @PathVariable("screeningId") Long screeningId
+    ) {
+        List<SeatResponse> seats = screeningService.getSeatsByScreening(screeningId);
+
+        SuccessCode code = SuccessCode.SELECT_SUCCESS;
+
+        ApiResponse<List<SeatResponse>> body = new ApiResponse<>(
+                        seats,
+                        code.getStatus(),
+                        code.getMessage()
+                );
 
         return ResponseEntity.status(code.getStatus()).body(body);
     }

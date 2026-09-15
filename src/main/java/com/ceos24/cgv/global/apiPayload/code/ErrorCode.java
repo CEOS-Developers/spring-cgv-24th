@@ -85,6 +85,24 @@ public enum ErrorCode {
     CINEMA_ALREADY_FAVORITED(409, "CF001", "이미 찜한 영화관입니다."),
 
     CINEMA_FAVORITE_NOT_FOUND(404, "CF002", "영화관 찜 기록이 존재하지 않습니다."),
+
+    SCREENING_NOT_FOUND(404, "S003", "존재하지 않는 상영정보입니다."),
+
+    SEAT_NOT_FOUND(404, "SE001", "존재하지 않는 좌석이 포함되어 있습니다."),
+
+    RESERVATION_NOT_FOUND(404, "R001", "존재하지 않는 예매입니다."),
+
+    SEAT_NOT_IN_SCREENING_AUDITORIUM(400, "R002", "해당 상영 회차의 상영관 좌석이 아닙니다."),
+
+    SEAT_ALREADY_RESERVED(409, "R003", "이미 예매된 좌석이 포함되어 있습니다."),
+
+    DUPLICATE_SEAT_REQUEST(400, "R004", "중복된 좌석이 포함되어 있습니다."),
+
+    RESERVATION_ALREADY_CANCELLED(409, "R005", "이미 취소된 예매입니다."),
+
+    RESERVATION_ACCESS_DENIED(403, "R006", "해당 예매에 접근할 수 없습니다."),
+
+    SCREENING_ALREADY_STARTED(409, "R007", "이미 시작된 상영 회차는 예매할 수 없습니다.")
     ;
 
     /**
