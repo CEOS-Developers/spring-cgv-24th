@@ -7,6 +7,8 @@ import com.ceos24.cgv.global.apiPayload.code.status.SuccessStatus;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 @Tag(name = "MovieLike", description = "영화 찜 관련 API")
@@ -19,12 +21,14 @@ public class MovieLikeController {
 
     @Operation(summary = "영화 찜하기 API", description = "특정 영화를 찜합니다.")
     @PostMapping
-    public ApiResponse<MovieLikeResponse> likeMovie(
+    public ResponseEntity<ApiResponse<MovieLikeResponse>> likeMovie(
             @PathVariable Long movieId,
             @RequestParam Long userId
     ) {
         MovieLikeResponse response = movieLikeService.like(userId, movieId);
-        return ApiResponse.onSuccess(SuccessStatus.CREATED, response);
+        return ResponseEntity
+                .status(HttpStatus.CREATED)
+                .body(ApiResponse.onSuccess(SuccessStatus.CREATED, response));
     }
 
     @Operation(summary = "영화 찜 취소 API", description = "찜한 영화를 취소합니다.")

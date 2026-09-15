@@ -11,6 +11,8 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -25,9 +27,11 @@ public class MovieController {
 
     @Operation(summary = "영화 생성 API", description = "새로운 영화 데이터를 생성합니다.")
     @PostMapping
-    public ApiResponse<Long> createMovie(@Valid @RequestBody MovieCreateRequest request) {
+    public ResponseEntity<ApiResponse<Long>> createMovie(@Valid @RequestBody MovieCreateRequest request) {
         Long movieId = movieService.create(request);
-        return ApiResponse.onSuccess(SuccessStatus.CREATED, movieId);
+        return ResponseEntity
+                .status(HttpStatus.CREATED)
+                .body(ApiResponse.onSuccess(SuccessStatus.CREATED, movieId));
     }
 
     @Operation(summary = "영화 목록 조회 API", description = "전체 영화 목록을 조회합니다.")

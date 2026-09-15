@@ -8,6 +8,8 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 @Tag(name = "MovieImage", description = "영화 이미지 관련 API")
@@ -20,11 +22,13 @@ public class MovieImageController {
 
     @Operation(summary = "영화 이미지 등록 API", description = "특정 영화에 포스터 또는 스틸컷 이미지를 등록합니다.")
     @PostMapping
-    public ApiResponse<Long> createMovieImage(
+    public ResponseEntity<ApiResponse<Long>> createMovieImage(
             @PathVariable Long movieId,
             @Valid @RequestBody MovieImageCreateRequest request
     ) {
         Long imageId = movieImageService.create(movieId, request);
-        return ApiResponse.onSuccess(SuccessStatus.CREATED, imageId);
+        return ResponseEntity
+                .status(HttpStatus.CREATED)
+                .body(ApiResponse.onSuccess(SuccessStatus.CREATED, imageId));
     }
 }
