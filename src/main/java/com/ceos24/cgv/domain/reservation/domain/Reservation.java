@@ -15,6 +15,12 @@ import java.time.LocalDateTime;
 @Entity
 public class Reservation {
 
+    public Reservation(Member member, Seat seat) {
+        this.member = member;
+        this.seat = seat;
+        createdAt = LocalDateTime.now();
+    }
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;

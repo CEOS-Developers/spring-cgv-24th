@@ -1,21 +1,26 @@
 package com.ceos24.cgv.domain.reservation.controller;
 
 
+import com.ceos24.cgv.domain.reservation.service.ReservationService;
+import com.ceos24.cgv.global.common.ApiResponse;
 import lombok.RequiredArgsConstructor;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestHeader;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
 
 @RequiredArgsConstructor
-@RequestMapping("api/reservations")
+@RequestMapping("api")
 @RestController
 public class ReservationController {
 
-    @PostMapping
-    public void reserveSeat(
-            @RequestHeader("X-Member-Id") Long memberId
-    ) {
+    private final ReservationService reservationService;
 
+    @PostMapping("/screenings/{screeningId}/seats/{seatNumber}")
+    public ResponseEntity<ApiResponse<Void>> reserveSeat(
+            @RequestHeader("X-Member-Id") Long memberId,
+            @PathVariable Long screeningId,
+            @PathVariable Long seatNumber
+    ) {
+        reservationService.reserveSeat(memberId, screeningId, seatNumber);
+        return ResponseEntity.ok(ApiResponse.success(null));
     }
 }

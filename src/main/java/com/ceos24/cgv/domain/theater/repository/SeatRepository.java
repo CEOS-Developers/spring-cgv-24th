@@ -8,4 +8,6 @@ import java.util.List;
 public interface SeatRepository extends JpaRepository<Seat, Long> {
 
     List<Seat> findByScreeningId(Long screeningId);
+
+    Seat findByScreeningIdAndSeatNumber(Long screeningId, Long seatNumber);
 }

@@ -28,4 +28,8 @@ public class Seat {
     private Long seatNumber;
 
     private Boolean isReserved;
+
+    public void reserveSeat() {
+        this.isReserved = true;
+    }
 }
