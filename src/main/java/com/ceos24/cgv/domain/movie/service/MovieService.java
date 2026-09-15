@@ -28,6 +28,14 @@ public class MovieService {
     private final ScreeningRepository screeningRepository;
 
     @Transactional(readOnly = true)
+    public GetMovieResponse getAllMovies() {
+        return new GetMovieResponse(
+                movieRepository.findAll().stream()
+                        .map(MovieInfo::from).toList()
+        );
+    }
+
+    @Transactional(readOnly = true)
     public GetMovieResponse getMovies(Long theaterId) {
         return new GetMovieResponse(
                 screeningRepository.findDistinctMoviesByTheaterId(theaterId).stream()
@@ -35,10 +43,6 @@ public class MovieService {
         );
     }
 
-    @Transactional
-    public void createMovie(CreateMovieRequest request) {
-        movieRepository.save(new Movie(request.title()));
-    }
 
     @Transactional(readOnly = true)
     public GetScreeningResponse getScreenings(Long theaterId) {

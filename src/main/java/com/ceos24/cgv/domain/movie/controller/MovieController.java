@@ -18,6 +18,11 @@ public class MovieController {
 
     private final MovieService movieService;
 
+    @GetMapping("/movies")
+    public ResponseEntity<ApiResponse<GetMovieResponse>> getAllMovies(){
+        return ResponseEntity.ok(ApiResponse.success(movieService.getAllMovies()));
+    }
+
     @GetMapping("/theaters/{theaterId}/movies")
     public ResponseEntity<ApiResponse<GetMovieResponse>> getMovies(@PathVariable Long theaterId){
         return ResponseEntity.ok(ApiResponse.success(movieService.getMovies(theaterId)));
