@@ -16,6 +16,7 @@ public enum ErrorCode {
     DUPLICATE_SEAT_IN_REQUEST(HttpStatus.BAD_REQUEST, "요청에 같은 좌석이 중복되어 있습니다."),
     SEAT_ALREADY_RESERVED(HttpStatus.CONFLICT, "이미 예매된 좌석입니다."),
     DUPLICATE_LIKE(HttpStatus.CONFLICT, "이미 찜한 항목입니다."),
+    LIKE_NOT_FOUND(HttpStatus.NOT_FOUND, "찜 정보를 찾을 수 없습니다."),
     STOCK_NOT_ENOUGH(HttpStatus.CONFLICT, "상품 재고가 부족합니다.");
 
     private final HttpStatus httpStatus;
