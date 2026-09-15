@@ -1,18 +1,19 @@
 package com.ceos24.spring_cgv.domain.movie.entity;
 
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
-import jakarta.persistence.Id;
-import jakarta.persistence.Table;
+import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 @Entity
-@Table(name = "cinema")
+@Table(
+        name = "cinema",
+        uniqueConstraints = @UniqueConstraint(
+                name = "uk_cinema_region_address",
+                columnNames = {"region", "address"}
+        )
+)
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Cinema {
@@ -30,6 +31,11 @@ public class Cinema {
 
     @Builder
     private Cinema(String region, String address) {
+        this.region = region;
+        this.address = address;
+    }
+
+    public void update(String region, String address) {
         this.region = region;
         this.address = address;
     }
