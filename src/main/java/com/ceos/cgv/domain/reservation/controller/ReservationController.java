@@ -33,12 +33,14 @@ public class ReservationController {
     }
 
     @GetMapping("/{reservationId}")
+    // TODO: Spring Security 도입 후 로그인 사용자와 예매 소유자가 일치하는지 검증필요
     public ResponseEntity<ApiResponse<ReservationResponse>> findById(@PathVariable Long reservationId) {
         return ResponseEntity.ok(ApiResponse.success(ReservationResponse.from(
                 reservationService.findById(reservationId))));
     }
 
     @DeleteMapping("/{reservationId}")
+    // TODO: Spring Security 도입 후 본인 예매만 취소할 수 있도록 소유권을 검증필요
     public ResponseEntity<Void> cancel(@PathVariable Long reservationId) {
         reservationService.cancel(reservationId);
         return ResponseEntity.noContent().build();

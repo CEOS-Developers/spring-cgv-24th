@@ -30,6 +30,7 @@ public class FoodOrderController {
     }
 
     @GetMapping("/{orderId}")
+    // TODO: Spring Security 도입 후 로그인 사용자와 주문 소유자가 일치하는지 필요
     public ResponseEntity<ApiResponse<FoodOrderResponse>> findById(@PathVariable Long orderId) {
         return ResponseEntity.ok(ApiResponse.success(FoodOrderResponse.from(foodOrderService.findById(orderId))));
     }
