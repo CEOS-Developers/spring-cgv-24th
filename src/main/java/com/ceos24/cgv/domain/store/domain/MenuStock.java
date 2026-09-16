@@ -1,7 +1,6 @@
 package com.ceos24.cgv.domain.store.domain;
 
 import jakarta.persistence.*;
-
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;

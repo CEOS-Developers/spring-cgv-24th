@@ -18,9 +18,7 @@ public class ScreeningController {
     private final ScreeningService screeningService;
 
     @GetMapping("/screenings/{screeningId}")
-    public ResponseEntity<ApiResponse<ScreeningInfo>> getScreeningInfo(
-            @PathVariable Long screeningId
-    ) {
+    public ResponseEntity<ApiResponse<ScreeningInfo>> getScreeningInfo(@PathVariable Long screeningId) {
         return ResponseEntity.ok(ApiResponse.success(screeningService.getScreeningInfo(screeningId)));
     }
 }

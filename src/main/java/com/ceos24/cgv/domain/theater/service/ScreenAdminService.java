@@ -1,7 +1,6 @@
 package com.ceos24.cgv.domain.theater.service;
 
 import com.ceos24.cgv.domain.theater.domain.Screen;
-import com.ceos24.cgv.domain.theater.domain.ScreenType;
 import com.ceos24.cgv.domain.theater.domain.Theater;
 import com.ceos24.cgv.domain.theater.dto.request.ScreenCreateRequest;
 import com.ceos24.cgv.domain.theater.repository.ScreenRepository;
@@ -20,7 +19,7 @@ public class ScreenAdminService {
     @Transactional
     public void createScreen(Long theaterId, ScreenCreateRequest request) {
         Theater theater = theaterRepository.findById(theaterId).orElseThrow();
-        Screen screen = new Screen(theater,request.screenType(), request.name(), request.totalSeats());
+        Screen screen = new Screen(theater, request.screenType(), request.name(), request.totalSeats());
         screenRepository.save(screen);
     }
 }

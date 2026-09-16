@@ -17,9 +17,7 @@ public class ScreenAdminController {
 
     @PostMapping("/theaters/{theaterId}/screens")
     public ResponseEntity<ApiResponse<Void>> createScreen(
-            @PathVariable Long theaterId,
-            @RequestBody ScreenCreateRequest request
-    ) {
+            @PathVariable Long theaterId, @RequestBody ScreenCreateRequest request) {
         screenAdminService.createScreen(theaterId, request);
         return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.success(null));
     }

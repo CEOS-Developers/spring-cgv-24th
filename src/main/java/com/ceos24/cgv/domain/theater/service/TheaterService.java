@@ -15,7 +15,7 @@ public class TheaterService {
 
     @Transactional(readOnly = true)
     public GetTheaterResponse getTheaters() {
-        return new GetTheaterResponse(theaterRepository.findAll().stream()
-                .map(TheaterInfo::from).toList());
+        return new GetTheaterResponse(
+                theaterRepository.findAll().stream().map(TheaterInfo::from).toList());
     }
 }

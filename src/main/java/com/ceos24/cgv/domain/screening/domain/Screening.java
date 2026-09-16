@@ -3,9 +3,7 @@ package com.ceos24.cgv.domain.screening.domain;
 import com.ceos24.cgv.domain.movie.domain.Movie;
 import com.ceos24.cgv.domain.theater.domain.Screen;
 import jakarta.persistence.*;
-
 import java.time.LocalDateTime;
-
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;

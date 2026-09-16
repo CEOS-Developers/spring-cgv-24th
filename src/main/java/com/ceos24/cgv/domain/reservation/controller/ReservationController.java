@@ -1,6 +1,5 @@
 package com.ceos24.cgv.domain.reservation.controller;
 
-
 import com.ceos24.cgv.domain.reservation.service.ReservationService;
 import com.ceos24.cgv.global.common.ApiResponse;
 import lombok.RequiredArgsConstructor;
@@ -18,8 +17,7 @@ public class ReservationController {
     public ResponseEntity<ApiResponse<Void>> reserveSeat(
             @RequestHeader("X-Member-Id") Long memberId,
             @PathVariable Long screeningId,
-            @PathVariable Long seatNumber
-    ) {
+            @PathVariable Long seatNumber) {
         reservationService.reserveSeat(memberId, screeningId, seatNumber);
         return ResponseEntity.ok(ApiResponse.success(null));
     }

@@ -23,10 +23,6 @@ public class ScreeningService {
         Movie movie = screening.getMovie();
         Screen screen = screening.getScreen();
         return new ScreeningInfo(
-                MovieInfo.from(movie),
-                ScreenInfo.from(screen),
-                screening.getStartTime(),
-                screening.getEndTime()
-        );
+                MovieInfo.from(movie), ScreenInfo.from(screen), screening.getStartTime(), screening.getEndTime());
     }
 }

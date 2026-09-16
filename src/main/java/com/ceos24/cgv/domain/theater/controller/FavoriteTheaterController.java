@@ -16,8 +16,7 @@ public class FavoriteTheaterController {
 
     @PostMapping("/favorite")
     public ResponseEntity<ApiResponse<Void>> addFavoriteTheater(
-            @PathVariable Long theaterId,
-            @RequestHeader("X-Member-Id") Long memberId) {
+            @PathVariable Long theaterId, @RequestHeader("X-Member-Id") Long memberId) {
 
         favoriteTheaterService.addFavoriteTheater(theaterId, memberId);
 

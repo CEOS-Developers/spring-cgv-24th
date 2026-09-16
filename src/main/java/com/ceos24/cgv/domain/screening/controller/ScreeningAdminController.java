@@ -19,11 +19,8 @@ public class ScreeningAdminController {
     private final ScreeningAdminService screeningAdminService;
 
     @PostMapping("/screenings")
-    public ResponseEntity<ApiResponse<Void>> createScreening(
-            @RequestBody CreateScreeningRequest request
-    ) {
+    public ResponseEntity<ApiResponse<Void>> createScreening(@RequestBody CreateScreeningRequest request) {
         screeningAdminService.createScreening(request);
         return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.success(null));
     }
-
 }

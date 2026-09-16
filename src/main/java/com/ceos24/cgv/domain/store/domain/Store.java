@@ -21,5 +21,4 @@ public class Store {
 
     @jakarta.persistence.Column(length = 50)
     private String name;
-
 }

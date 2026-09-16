@@ -15,9 +15,7 @@ public class SeatController {
     private final SeatService seatService;
 
     @GetMapping("/api/screenings/{screeningId}/seats")
-    public ResponseEntity<ApiResponse<GetSeatResponse>> getSeats(
-            @PathVariable Long screeningId
-    ) {
+    public ResponseEntity<ApiResponse<GetSeatResponse>> getSeats(@PathVariable Long screeningId) {
         return ResponseEntity.ok(ApiResponse.success(seatService.getSeats(screeningId)));
     }
 }

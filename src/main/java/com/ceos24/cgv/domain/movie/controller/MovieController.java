@@ -19,17 +19,17 @@ public class MovieController {
     private final MovieService movieService;
 
     @GetMapping("/movies")
-    public ResponseEntity<ApiResponse<GetMovieResponse>> getAllMovies(){
+    public ResponseEntity<ApiResponse<GetMovieResponse>> getAllMovies() {
         return ResponseEntity.ok(ApiResponse.success(movieService.getAllMovies()));
     }
 
     @GetMapping("/theaters/{theaterId}/movies")
-    public ResponseEntity<ApiResponse<GetMovieResponse>> getMovies(@PathVariable Long theaterId){
+    public ResponseEntity<ApiResponse<GetMovieResponse>> getMovies(@PathVariable Long theaterId) {
         return ResponseEntity.ok(ApiResponse.success(movieService.getMovies(theaterId)));
     }
 
     @GetMapping("/theaters/{theaterId}/screenings")
-    public ResponseEntity<ApiResponse<GetScreeningResponse>> getScreenings(@PathVariable Long theaterId){
+    public ResponseEntity<ApiResponse<GetScreeningResponse>> getScreenings(@PathVariable Long theaterId) {
         return ResponseEntity.ok(ApiResponse.success(movieService.getScreenings(theaterId)));
     }
 }

@@ -18,9 +18,7 @@ public class MovieAdminController {
     private final MovieAdminService movieAdminService;
 
     @PostMapping("/movies")
-    public ResponseEntity<ApiResponse<Void>> createMovie(
-            @RequestBody CreateMovieRequest request
-    ) {
+    public ResponseEntity<ApiResponse<Void>> createMovie(@RequestBody CreateMovieRequest request) {
         movieAdminService.createMovie(request);
         return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.success(null));
     }

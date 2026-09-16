@@ -18,9 +18,7 @@ public class ScreenController {
     private final ScreenService screenService;
 
     @GetMapping("/theaters/{theaterId}/screens")
-    public ResponseEntity<ApiResponse<GetScreenResponse>> getScreens(
-            @PathVariable Long theaterId
-            ){
+    public ResponseEntity<ApiResponse<GetScreenResponse>> getScreens(@PathVariable Long theaterId) {
         return ResponseEntity.ok(ApiResponse.success(screenService.getScreens(theaterId)));
     }
 }

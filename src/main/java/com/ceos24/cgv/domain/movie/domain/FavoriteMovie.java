@@ -2,7 +2,6 @@ package com.ceos24.cgv.domain.movie.domain;
 
 import com.ceos24.cgv.domain.member.domain.Member;
 import jakarta.persistence.*;
-
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;

@@ -1,6 +1,5 @@
 package com.ceos24.cgv.domain.theater.controller;
 
-import com.ceos24.cgv.domain.theater.domain.Theater;
 import com.ceos24.cgv.domain.theater.dto.request.CreateTheaterRequest;
 import com.ceos24.cgv.domain.theater.service.TheaterAdminService;
 import com.ceos24.cgv.global.common.ApiResponse;

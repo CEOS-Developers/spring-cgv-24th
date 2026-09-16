@@ -25,7 +25,7 @@ public class ScreeningAdminService {
     public void createScreening(CreateScreeningRequest request) {
         Movie movie = movieRepository.findById(request.movieId()).orElseThrow();
         Screen screen = screenRepository.findById(request.screenId()).orElseThrow();
-        Screening screening = new Screening(movie, screen, request.startTime(),  request.endTime());
+        Screening screening = new Screening(movie, screen, request.startTime(), request.endTime());
         screeningRepository.save(screening);
         seatService.createSeats(screening);
     }
