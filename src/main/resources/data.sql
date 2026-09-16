@@ -1,0 +1,26 @@
+INSERT INTO cgv_db.movies (release_date, running_time, movie_id, poster_url, description, title, content_rating_code) VALUES ('2026-08-05', 172, 1, 'https://cdn.cgv.co.kr/cgvpomsfilm/Movie/Thumbnail/Poster/030001/30001323/30001323_320.jpg', '이 시대 영화계 최고의 거장 크리스토퍼 놀란 감독의 새로운 신화
+인류 최고의 고전 [오디세이아]가 스크린에 펼쳐진다!
+
+10년간 이어진 트로이 전쟁을 승리로 이끈 영웅 \'오디세우스\'(맷 데이먼)는
+왕의 부재를 틈타 침탈과 권력 다툼이 벌어진 왕국에서
+그를 기다리고 있는 아내 \'페넬로페\'(앤 해서웨이)와
+아들 \'텔레마코스\'(톰 홀랜드)에게 돌아가기 위한 여정에 나선다.
+그러나 신들의 분노를 산 그의 귀환 앞에는 거대한 폭풍과 괴물들,
+그리고 거스를 수 없는 운명의 시련이 기다리고 있는데…
+
+"누구도 나의 귀향을 막을 수 없어. 신들조차도"', '오디세이', 'RATE_15');
+INSERT INTO cgv_db.movies (release_date, running_time, movie_id, poster_url, description, title, content_rating_code) VALUES ('2026-09-16', 132, 2, 'https://cdn.cgv.co.kr/cgvpomsfilm/Movie/Thumbnail/Poster/030001/30001399/30001399_320.jpg', '올가을, 다시 출근합니다
+
+창업 3년 만에 100억대 매출을 달성하며 브랜드 ‘WOO22’(우투투)를
+패션 업계의 다크호스로 성장시킨 젊은 CEO ‘선우’(한소희).
+성공을 향해 쉼 없이 달려온 열정 과부하 상태의 그녀 앞에
+막내로 입사한 실버 인턴 ‘기호’(최민식)가 나타난다.
+
+경력 37년 사회생활 만렙의 베테랑이지만,
+낯선 디지털 업무 환경과 자유분방한 문화에 좀처럼 적응하지 못하던 ‘기호’.
+그러나 특유의 성실함과 인간미 넘치는 소통이 ‘선우’의 마음을 움직이고
+모든 점에서 전혀 다른 두 사람은 서로에게 없는 시선과 경험을 나누며
+쉼 없이 달리던 일상에 뜻밖의 온기를 더하는데…', '인턴', 'RATE_12');
+INSERT INTO cgv_db.movies (release_date, running_time, movie_id, poster_url, description, title, content_rating_code) VALUES ('2026-09-23', 131, 3, 'https://cdn.cgv.co.kr/cgvpomsfilm/Movie/Thumbnail/Poster/030001/30001314/30001314_320.jpg', '1974년 8월 15일,
+대한민국을 충격에 빠뜨린 영부인 저격사건의
+의혹과 배후를 추적하는 이야기', '암살자(들)', 'RATE_12');
