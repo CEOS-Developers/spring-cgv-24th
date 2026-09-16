@@ -36,3 +36,23 @@ INSERT INTO cgv_db.movie_genres (genre_id, movie_genre_id, movie_id) VALUES (3, 
 INSERT INTO cgv_db.movie_genres (genre_id, movie_genre_id, movie_id) VALUES (2, 4, 2);
 INSERT INTO cgv_db.movie_genres (genre_id, movie_genre_id, movie_id) VALUES (2, 5, 3);
 INSERT INTO cgv_db.movie_genres (genre_id, movie_genre_id, movie_id) VALUES (4, 6, 3);
+
+INSERT INTO cgv_db.regions (region_id, name) VALUES (1, '서울');
+INSERT INTO cgv_db.regions (region_id, name) VALUES (2, '경기');
+INSERT INTO cgv_db.regions (region_id, name) VALUES (3, '인천');
+INSERT INTO cgv_db.regions (region_id, name) VALUES (4, '강원');
+INSERT INTO cgv_db.regions (region_id, name) VALUES (5, '대전/충청');
+INSERT INTO cgv_db.regions (region_id, name) VALUES (6, '대구');
+INSERT INTO cgv_db.regions (region_id, name) VALUES (7, '부산/울산');
+INSERT INTO cgv_db.regions (region_id, name) VALUES (8, '경상');
+INSERT INTO cgv_db.regions (region_id, name) VALUES (9, '광주/전라/제주');
+
+INSERT INTO cgv_db.cinemas (cinema_id, region_id, name, address) VALUES (1, 1, '강남', '서울특별시 강남구 강남대로 438 스타플렉스 4');
+INSERT INTO cgv_db.cinemas (cinema_id, region_id, name, address) VALUES (2, 1, '압구정', '서울특별시 강남구 압구정로30길 45');
+INSERT INTO cgv_db.cinemas (cinema_id, region_id, name, address) VALUES (3, 2, '광교', '경기도 수원시 영통구 광교호수공원로 320');
+
+INSERT INTO cgv_db.screen_types (column_count, row_count, screen_type_id, name) VALUES (7, 8, 1, '일반관');
+INSERT INTO cgv_db.screen_types (column_count, row_count, screen_type_id, name) VALUES (12, 12, 2, '특별관');
+
+INSERT INTO cgv_db.screens (cinema_id, screen_id, screen_type_id, name) VALUES (1, 1, 1, '1관');
+INSERT INTO cgv_db.screens (cinema_id, screen_id, screen_type_id, name) VALUES (1, 2, 2, '2관');
