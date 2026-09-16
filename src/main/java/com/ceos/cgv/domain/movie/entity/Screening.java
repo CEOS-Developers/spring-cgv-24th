@@ -11,6 +11,7 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import lombok.AccessLevel;
+import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
@@ -38,6 +39,7 @@ public class Screening {
     @JoinColumn(name = "screen_id", nullable = false)
     private Screen screen;
 
+    @Builder
     public Screening(Movie movie, Screen screen, LocalDateTime startAt) {
         this.movie = movie;
         this.screen = screen;

@@ -55,11 +55,16 @@ public class ReservationService {
             }
         }
 
-        Reservation reservation = new Reservation(user, screening);
+        Reservation reservation = Reservation.builder()
+                .user(user)
+                .screening(screening)
+                .build();
         for (ReservedSeatRequest seat : request.seats()) {
-            reservation.addReservedSeat(new ReservedSeat(
-                    reservation, seat.seatRow(), seat.seatNumber()
-            ));
+            reservation.addReservedSeat(ReservedSeat.builder()
+                    .reservation(reservation)
+                    .seatRow(seat.seatRow())
+                    .seatNumber(seat.seatNumber())
+                    .build());
         }
         return reservationRepository.save(reservation);
     }

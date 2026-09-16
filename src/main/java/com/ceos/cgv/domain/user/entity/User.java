@@ -2,6 +2,7 @@ package com.ceos.cgv.domain.user.entity;
 
 import jakarta.persistence.*;
 import lombok.AccessLevel;
+import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
@@ -21,5 +22,9 @@ public class User {
     @Column(nullable = false, unique = true, length = 100)
     private String email;
 
-
+    @Builder
+    public User(String name, String email) {
+        this.name = name;
+        this.email = email;
+    }
 }

@@ -28,7 +28,10 @@ public class MovieLikeService {
         if (movieLikeRepository.existsByUser_IdAndMovie_Id(userId, movieId)) {
             throw new BusinessException(ErrorCode.DUPLICATE_LIKE);
         }
-        movieLikeRepository.save(new MovieLike(user, movie));
+        movieLikeRepository.save(MovieLike.builder()
+                .user(user)
+                .movie(movie)
+                .build());
     }
 
     @Transactional

@@ -10,6 +10,7 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import lombok.AccessLevel;
+import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
@@ -34,6 +35,7 @@ public class ReservedSeat {
     @Column(name = "seat_number", nullable = false)
     private Integer seatNumber;
 
+    @Builder
     public ReservedSeat(Reservation reservation, String seatRow, Integer seatNumber) {
         this.reservation = reservation;
         this.seatRow = seatRow;

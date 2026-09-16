@@ -29,6 +29,10 @@ public class InventoryService {
         if (inventoryRepository.existsByCinema_IdAndProduct_Id(request.cinemaId(), request.productId())) {
             throw new BusinessException(ErrorCode.DUPLICATE_INVENTORY);
         }
-        return inventoryRepository.save(new Inventory(cinema, product, request.stockQuantity()));
+        return inventoryRepository.save(Inventory.builder()
+                .cinema(cinema)
+                .product(product)
+                .stockQuantity(request.stockQuantity())
+                .build());
     }
 }

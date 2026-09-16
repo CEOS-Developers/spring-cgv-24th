@@ -3,6 +3,7 @@ package com.ceos.cgv.domain.movie.entity;
 import com.ceos.cgv.domain.movie.enums.AgeRating;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
+import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
@@ -35,6 +36,7 @@ public class Movie {
     @Column(name = "age_rating", nullable = false)
     private AgeRating ageRating;
 
+    @Builder
     public Movie(
             String title,
             String description,

@@ -2,6 +2,7 @@ package com.ceos.cgv.domain.cinema.entity;
 
 import jakarta.persistence.*;
 import lombok.AccessLevel;
+import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
@@ -20,4 +21,10 @@ public class Cinema {
 
     @Column(nullable = false, columnDefinition = "TEXT")
     private String address;
+
+    @Builder
+    public Cinema(String name, String address) {
+        this.name = name;
+        this.address = address;
+    }
 }

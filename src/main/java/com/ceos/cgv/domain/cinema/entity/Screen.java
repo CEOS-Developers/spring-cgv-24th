@@ -13,6 +13,7 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import lombok.AccessLevel;
+import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
@@ -41,6 +42,7 @@ public class Screen {
     @Column(name = "seats_per_row", nullable = false)
     private Integer seatsPerRow;
 
+    @Builder
     public Screen(Cinema cinema, ScreenType screenType, Integer rowCount, Integer seatsPerRow) {
         this.cinema = cinema;
         this.screenType = screenType;

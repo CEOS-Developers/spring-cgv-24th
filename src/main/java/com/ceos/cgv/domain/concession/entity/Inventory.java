@@ -14,6 +14,7 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 import lombok.AccessLevel;
+import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
@@ -41,6 +42,7 @@ public class Inventory {
     @Column(name = "stock_quantity", nullable = false)
     private Integer stockQuantity;
 
+    @Builder
     public Inventory(Cinema cinema, Product product, Integer stockQuantity) {
         this.cinema = cinema;
         this.product = product;

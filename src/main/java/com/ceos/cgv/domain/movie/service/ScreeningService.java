@@ -26,7 +26,11 @@ public class ScreeningService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.MOVIE_NOT_FOUND));
         Screen screen = screenRepository.findById(request.screenId())
                 .orElseThrow(() -> new BusinessException(ErrorCode.SCREEN_NOT_FOUND));
-        return screeningRepository.save(new Screening(movie, screen, request.startAt()));
+        return screeningRepository.save(Screening.builder()
+                .movie(movie)
+                .screen(screen)
+                .startAt(request.startAt())
+                .build());
     }
 
     public List<Screening> findAllByMovieId(Long movieId) {

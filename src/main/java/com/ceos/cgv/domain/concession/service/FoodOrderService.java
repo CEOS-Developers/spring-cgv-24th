@@ -64,10 +64,18 @@ public class FoodOrderService {
             orderLines.add(new OrderLine(product, inventory, item.getValue()));
         }
 
-        FoodOrder order = new FoodOrder(user, cinema, totalPrice);
+        FoodOrder order = FoodOrder.builder()
+                .user(user)
+                .cinema(cinema)
+                .totalPrice(totalPrice)
+                .build();
         for (OrderLine line : orderLines) {
             line.inventory().decrease(line.quantity());
-            order.addItem(new OrderItem(order, line.product(), line.quantity()));
+            order.addItem(OrderItem.builder()
+                    .foodOrder(order)
+                    .product(line.product())
+                    .quantity(line.quantity())
+                    .build());
         }
         return foodOrderRepository.save(order);
     }

@@ -16,12 +16,12 @@ public class ScreenService {
 
     public Screen create(ScreenCreateRequest request) {
         Cinema cinema = cinemaService.findById(request.cinemaId());
-        Screen screen = new Screen(
-                cinema,
-                request.screenType(),
-                request.rowCount(),
-                request.seatsPerRow()
-        );
+        Screen screen = Screen.builder()
+                .cinema(cinema)
+                .screenType(request.screenType())
+                .rowCount(request.rowCount())
+                .seatsPerRow(request.seatsPerRow())
+                .build();
         return screenRepository.save(screen);
     }
 }

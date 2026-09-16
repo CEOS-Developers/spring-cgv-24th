@@ -16,7 +16,11 @@ public class ProductService {
     private final ProductRepository productRepository;
 
     public Product create(ProductCreateRequest request) {
-        return productRepository.save(new Product(request.name(), request.price(), request.description()));
+        return productRepository.save(Product.builder()
+                .name(request.name())
+                .price(request.price())
+                .description(request.description())
+                .build());
     }
 
     public List<Product> findAll() {

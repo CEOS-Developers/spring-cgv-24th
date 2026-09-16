@@ -25,13 +25,13 @@ public class MovieService {
     }
 
     public Movie create(MovieCreateRequest request) {
-        Movie movie = new Movie(
-                request.title(),
-                request.description(),
-                request.runningTime(),
-                request.releaseDate(),
-                request.ageRating()
-        );
+        Movie movie = Movie.builder()
+                .title(request.title())
+                .description(request.description())
+                .runningTime(request.runningTime())
+                .releaseDate(request.releaseDate())
+                .ageRating(request.ageRating())
+                .build();
         return movieRepository.save(movie);
     }
 

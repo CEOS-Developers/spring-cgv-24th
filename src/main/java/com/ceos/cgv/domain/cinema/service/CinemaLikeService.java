@@ -28,7 +28,10 @@ public class CinemaLikeService {
         if (cinemaLikeRepository.existsByUser_IdAndCinema_Id(userId, cinemaId)) {
             throw new BusinessException(ErrorCode.DUPLICATE_LIKE);
         }
-        cinemaLikeRepository.save(new CinemaLike(user, cinema));
+        cinemaLikeRepository.save(CinemaLike.builder()
+                .user(user)
+                .cinema(cinema)
+                .build());
     }
 
     @Transactional

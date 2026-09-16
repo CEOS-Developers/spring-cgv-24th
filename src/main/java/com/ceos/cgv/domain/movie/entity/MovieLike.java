@@ -12,6 +12,7 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 import lombok.AccessLevel;
+import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
@@ -36,6 +37,7 @@ public class MovieLike {
     @JoinColumn(name = "movie_id", nullable = false)
     private Movie movie;
 
+    @Builder
     public MovieLike(User user, Movie movie) {
         this.user = user;
         this.movie = movie;

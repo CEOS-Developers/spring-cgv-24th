@@ -10,6 +10,7 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import lombok.AccessLevel;
+import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
@@ -38,6 +39,7 @@ public class OrderItem {
     @Column(name = "unit_price", nullable = false)
     private Long unitPrice;
 
+    @Builder
     public OrderItem(FoodOrder foodOrder, Product product, Integer quantity) {
         this.foodOrder = foodOrder;
         this.product = product;
