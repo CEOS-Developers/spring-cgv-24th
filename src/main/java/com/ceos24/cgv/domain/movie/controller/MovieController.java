@@ -5,6 +5,8 @@ import com.ceos24.cgv.domain.movie.dto.response.MovieResponse;
 import com.ceos24.cgv.domain.movie.service.MovieService;
 import com.ceos24.cgv.global.apiPayload.code.SuccessCode;
 import com.ceos24.cgv.global.apiPayload.response.ApiResponse;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -13,6 +15,10 @@ import org.springframework.web.bind.annotation.*;
 import java.net.URI;
 import java.util.List;
 
+@Tag(
+        name = "영화",
+        description = "영화 등록, 목록 조회, 상세 조회 및 삭제 API"
+)
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/api/movies")
@@ -32,6 +38,10 @@ public class MovieController {
      * ├── resultCode: 201
      * └── resultMsg: "INSERT_SUCCESS"
      */
+    @Operation(
+            summary = "영화 등록",
+            description = "영화 이름과 개봉일을 입력하여 새로운 영화를 등록합니다."
+    )
     @PostMapping
     public ResponseEntity<ApiResponse<Long>> createMovie(
             @Valid @RequestBody MovieCreateRequest request
@@ -56,6 +66,10 @@ public class MovieController {
     }
 
     // 영화 목록 조회
+    @Operation(
+            summary = "영화 목록 조회",
+            description = "등록된 모든 영화를 ID 오름차순으로 조회합니다."
+    )
     @GetMapping
     public ResponseEntity<ApiResponse<List<MovieResponse>>> getMovies() {
         List<MovieResponse> responses = movieService.getMovies();
@@ -71,6 +85,10 @@ public class MovieController {
     }
 
     // 영화 조회
+    @Operation(
+            summary = "영화 상세 조회",
+            description = "영화 ID를 이용하여 특정 영화의 상세 정보를 조회합니다."
+    )
     @GetMapping("/{movieId}")
     public ResponseEntity<ApiResponse<MovieResponse>> getMovie(
             @PathVariable("movieId") Long movieId
@@ -88,6 +106,10 @@ public class MovieController {
     }
 
     // 영화 삭제
+    @Operation(
+            summary = "영화 삭제",
+            description = "영화 ID에 해당하는 영화를 삭제합니다."
+    )
     @DeleteMapping("/{movieId}")
     public ResponseEntity<ApiResponse<Void>> deleteMovie(
             @PathVariable("movieId") Long movieId
