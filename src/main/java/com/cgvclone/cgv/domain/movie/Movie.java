@@ -1,14 +1,18 @@
 package com.cgvclone.cgv.domain.movie;
 
+import com.cgvclone.cgv.domain.movie_genre.MovieGenre;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
+import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.OneToMany;
 import jakarta.persistence.Table;
 import java.time.LocalDate;
+import java.util.List;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -40,4 +44,7 @@ public class Movie {
 
     @Column(length = 500)
     private String posterUrl;
+
+    @OneToMany(mappedBy = "movie", fetch = FetchType.LAZY)
+    private List<MovieGenre> movieGenres;
 }
