@@ -3,6 +3,7 @@ package com.ceos.cgv.domain.reservation.entity;
 import com.ceos.cgv.domain.movie.entity.Screening;
 import com.ceos.cgv.domain.reservation.enums.ReservationStatus;
 import com.ceos.cgv.domain.user.entity.User;
+import com.ceos.cgv.global.entity.BaseTimeEntity;
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -20,7 +21,6 @@ import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -28,7 +28,7 @@ import java.util.List;
 @Table(name = "reservations")
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
-public class Reservation {
+public class Reservation extends BaseTimeEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -47,17 +47,14 @@ public class Reservation {
     @Column(nullable = false)
     private ReservationStatus status;
 
-    @Column(name = "created_at", nullable = false)
-    private LocalDateTime createdAt;
-
     @OneToMany(mappedBy = "reservation", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<ReservedSeat> reservedSeats = new ArrayList<>();
 
+    @lombok.Builder
     public Reservation(User user, Screening screening) {
         this.user = user;
         this.screening = screening;
         this.status = ReservationStatus.RESERVED;
-        this.createdAt = LocalDateTime.now();
     }
 
     public void addReservedSeat(ReservedSeat reservedSeat) {

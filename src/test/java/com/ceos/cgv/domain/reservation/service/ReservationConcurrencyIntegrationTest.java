@@ -86,7 +86,7 @@ class ReservationConcurrencyIntegrationTest {
                         );
                         firstLockAcquired.countDown();
 
-                        jdbcTemplate.update("INSERT INTO reservations (reservation_id, user_id, screening_id, status, created_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)",
+                        jdbcTemplate.update("INSERT INTO reservations (reservation_id, user_id, screening_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
                                 EXISTING_RESERVATION_ID, USER_ID, SCREENING_ID, "RESERVED");
                         jdbcTemplate.update("INSERT INTO reserved_seats (reserved_seat_id, reservation_id, seat_row, seat_number) VALUES (?, ?, ?, ?)",
                                 EXISTING_RESERVED_SEAT_ID, EXISTING_RESERVATION_ID, "A", 1);
