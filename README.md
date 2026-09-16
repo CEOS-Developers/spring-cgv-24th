@@ -38,7 +38,7 @@ CGV 서비스를 구성하기 위해 크게 다음과 같은 데이터를 관리
 > 아래 부분에 최종 ERD 이미지를 첨부합니다.
 
 ```md
-![CGV ERD](docs/cgv-erd.png)
+![CGV ERD](cgv-erd.png)
 ```
 
 는 다음과 같습니다.
@@ -651,4 +651,6 @@ Favorites와 Likes의 분리
 
 이번 ERD 설계와 JPA Entity 구현을 통해 단순한 테이블 설계를 넘어 **서비스의 요구사항을 데이터 모델로 표현하는 과정**을 경험할 수 있었습니다.
 
+
+[2주차 실습 정리](https://www.notion.so/CEOS-2-3dade222d8e480a29f3fd1494b1cb96e?source=copy_link)
 
