@@ -1,5 +1,40 @@
 
-# 1. DB 설계 소개
+# 1. DB 설계 설명
+
+## 1-1. 테이블별 역할
+
+| 테이블 | 역할 |
+|---|---|
+| member | 회원 |
+| theater | 영화관 |
+| screen | 상영관 (영화관에 속함) |
+| screening | 상영 회차 (영화 + 상영관 + 시간) |
+| seat | 좌석 (상영 회차에 속함) |
+| reservation | 좌석 예약 |
+| movie | 영화 |
+| store | 매장 (영화관에 속함) |
+| menu | 메뉴 |
+| menu_stock | 매장별 메뉴 재고 |
+| orders / order_item | 주문 / 주문 항목 |
+| favorite_movie / favorite_theater | 찜한 영화 / 찜한 영화관 |
+
+## 1-2. 테이블 관계
+
+- theater 1 : N screen 1 : N screening 1 : N seat
+- screening N : 1 movie
+- seat 1 : 1 reservation N : 1 member
+- theater 1 : 1 store
+- store N : M menu (menu_stock으로 연결)
+- member N : 1 orders 1 : N order_item N : 1 menu
+- member N : M movie (favorite_movie), member N : M theater (favorite_theater)
+
+## 1-3. 핵심 설계 포인트
+
+1. seat를 screen이 아닌 screening에 종속시킴 —> 같은 물리적 좌석도 회차마다 예약 상태가 달라야 하므로
+2. reservation.seat_id에 UNIQUE 제약 —> 동시 예약 경쟁 상황에서도 하나의 좌석에 하나의 예약만 존재하도록 DB 레벨에서 중복 예약을 차단
+3. store.theater_id에 UNIQUE 제약 — 영화관 하나당 매장 하나라는 비즈니스 규칙을 DB 제약으로 강제
+4. menu-store를 menu_stock 중간 테이블로 연결 — 같은 메뉴라도 매장마다 재고가 다르므로, 재고를 매장 단위로 독립 관리하기 위해 중간 테이블을 둠
+5. order_item에 price, quantity를 별도 저장 — 메뉴를 참조만 하지 않고 주문 시점의 가격·수량을 저장해, 이후 메뉴 가격이 바뀌어도 과거 주문 내역이 변하지 않도록 설계
 
 
 # 2. 추가 학습 내용 정리
