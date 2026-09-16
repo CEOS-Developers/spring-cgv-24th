@@ -56,3 +56,8 @@ INSERT INTO cgv_db.screen_types (column_count, row_count, screen_type_id, name) 
 
 INSERT INTO cgv_db.screens (cinema_id, screen_id, screen_type_id, name) VALUES (1, 1, 1, '1관');
 INSERT INTO cgv_db.screens (cinema_id, screen_id, screen_type_id, name) VALUES (1, 2, 2, '2관');
+
+INSERT INTO cgv_db.users (created_at, user_id, name, email, password) VALUES ('2026-09-16 22:59:24.000000', 1, '이나경', 'rinarina0429@ewha.ac.kr', 'rina');
+
+INSERT INTO cgv_db.showtimes (movie_id, screen_id, showtime_id, start_time) VALUES (1, 1, 1, '2026-09-16 23:00:15.000000');
+INSERT INTO cgv_db.showtimes (movie_id, screen_id, showtime_id, start_time) VALUES (2, 2, 2, '2026-08-16 23:00:24.000000');
