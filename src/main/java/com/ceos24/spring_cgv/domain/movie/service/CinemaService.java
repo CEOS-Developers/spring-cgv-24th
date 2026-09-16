@@ -29,6 +29,7 @@ public class CinemaService {
     @Transactional
     public CinemaResponse createCinema(CinemaCreateRequest request) {
 
+        // 같은 지역과 주소가 존재하는지 검사한다.
         if (cinemaRepository.existsByRegionAndAddress(request.region(), request.address())) {
             throw new CinemaException(CinemaErrorCode.CINEMA_ALREADY_EXISTS);
         }
@@ -77,7 +78,7 @@ public class CinemaService {
         Cinema cinema = cinemaRepository.findById(cinemaId)
                 .orElseThrow(() -> new CinemaException(CinemaErrorCode.CINEMA_NOT_FOUND));
 
-        // 자기 자신은 제외하고 중복을 검사한다.
+        // 자신 제외 같은 지역과 주소가 존재하는지 검사한다.
         if (cinemaRepository.existsByRegionAndAddressAndIdNot(request.region(), request.address(), cinemaId)) {
             throw new CinemaException(CinemaErrorCode.CINEMA_ALREADY_EXISTS);
         }
