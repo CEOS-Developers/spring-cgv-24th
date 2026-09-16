@@ -69,7 +69,8 @@ member.setName("변경된 이름");
 em.flush();  // 이 시점에 즉시 UPDATE 쿼리 실행 (commit 전이라도)
 ```
 
-그리고, 이때 스냅샷도 함께 업데이트된다
+이때 Dirty Checking의 기준이 되는 스냅샷도 flush된 값으로 함께 갱신된다. 
+그래야 이후 다시 dirty checking을 할 때 방금 flush한 값을 기준으로 비교할 수 있다.
 
 ### ② 트랜잭션 commit 시
 
@@ -191,7 +192,7 @@ public class OrderEditor {
 Hibernate Proxy는 데이터 접근 시점 제어가,
 Spring AOP Proxy는 메서드 호출 가로채기가 목적이라는 점에서 근본적으로 다르다.
 
-### 2-4-4. 양방향 매핑 + `@OneToOne` + `nullable=true`에서 프록시 문제
+### 2-4-2. 양방향 매핑 + `@OneToOne` + `nullable=true`에서 프록시 문제
 
 ```java
 @Entity
