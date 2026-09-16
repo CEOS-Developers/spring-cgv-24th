@@ -102,7 +102,7 @@ SnackItem
 
 ## 1. ERD
 
-ERD Cloud 링크
+https://www.erdcloud.com/d/2LXYJEwkeevufXZwr
 
 ---
 
