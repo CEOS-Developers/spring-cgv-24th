@@ -24,3 +24,15 @@ INSERT INTO cgv_db.movies (release_date, running_time, movie_id, poster_url, des
 INSERT INTO cgv_db.movies (release_date, running_time, movie_id, poster_url, description, title, content_rating_code) VALUES ('2026-09-23', 131, 3, 'https://cdn.cgv.co.kr/cgvpomsfilm/Movie/Thumbnail/Poster/030001/30001314/30001314_320.jpg', '1974년 8월 15일,
 대한민국을 충격에 빠뜨린 영부인 저격사건의
 의혹과 배후를 추적하는 이야기', '암살자(들)', 'RATE_12');
+
+INSERT INTO cgv_db.genres (genre_id, name) VALUES (1, '액션');
+INSERT INTO cgv_db.genres (genre_id, name) VALUES (2, '드라마');
+INSERT INTO cgv_db.genres (genre_id, name) VALUES (3, '어드벤처');
+INSERT INTO cgv_db.genres (genre_id, name) VALUES (4, '범죄');
+
+INSERT INTO cgv_db.movie_genres (genre_id, movie_genre_id, movie_id) VALUES (1, 1, 1);
+INSERT INTO cgv_db.movie_genres (genre_id, movie_genre_id, movie_id) VALUES (2, 2, 1);
+INSERT INTO cgv_db.movie_genres (genre_id, movie_genre_id, movie_id) VALUES (3, 3, 1);
+INSERT INTO cgv_db.movie_genres (genre_id, movie_genre_id, movie_id) VALUES (2, 4, 2);
+INSERT INTO cgv_db.movie_genres (genre_id, movie_genre_id, movie_id) VALUES (2, 5, 3);
+INSERT INTO cgv_db.movie_genres (genre_id, movie_genre_id, movie_id) VALUES (4, 6, 3);

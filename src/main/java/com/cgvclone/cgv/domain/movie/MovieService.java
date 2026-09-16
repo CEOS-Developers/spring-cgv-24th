@@ -1,5 +1,6 @@
 package com.cgvclone.cgv.domain.movie;
 
+import com.cgvclone.cgv.domain.movie.dto.MovieDetailResponse;
 import com.cgvclone.cgv.domain.movie.dto.MovieListResponse;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
@@ -16,5 +17,11 @@ public class MovieService {
     public MovieListResponse getMovies() {
         List<Movie> movies = movieRepository.findAll();
         return MovieListResponse.from(movies);
+    }
+
+    public MovieDetailResponse getMovie(Long movieId) {
+        Movie movie = movieRepository.findById(movieId)
+                .orElseThrow(() -> new IllegalArgumentException("Movie not found"));
+        return MovieDetailResponse.from(movie);
     }
 }
