@@ -7,6 +7,8 @@ import com.ceos24.cgv.domain.screening.dto.ScreeningInfo;
 import com.ceos24.cgv.domain.screening.repository.ScreeningRepository;
 import com.ceos24.cgv.domain.theater.domain.Screen;
 import com.ceos24.cgv.domain.theater.dto.ScreenInfo;
+import com.ceos24.cgv.global.exception.BusinessException;
+import com.ceos24.cgv.global.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -19,7 +21,8 @@ public class ScreeningService {
 
     @Transactional(readOnly = true)
     public ScreeningInfo getScreeningInfo(Long screeningId) {
-        Screening screening = screeningRepository.findById(screeningId).orElseThrow();
+        Screening screening = screeningRepository.findById(screeningId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.SCREENING_NOT_FOUND));
         Movie movie = screening.getMovie();
         Screen screen = screening.getScreen();
         return new ScreeningInfo(

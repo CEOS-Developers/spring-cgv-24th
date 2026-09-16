@@ -12,6 +12,8 @@ import com.ceos24.cgv.domain.store.domain.MenuStock;
 import com.ceos24.cgv.domain.store.domain.Store;
 import com.ceos24.cgv.domain.store.repository.MenuStockRepository;
 import com.ceos24.cgv.domain.store.repository.StoreRepository;
+import com.ceos24.cgv.global.exception.BusinessException;
+import com.ceos24.cgv.global.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -32,17 +34,17 @@ public class OrderService {
     @Transactional
     public void createOrder(Long memberId, CreateOrderRequest request) {
         Member member = memberRepository.findById(memberId)
-                .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 회원입니다."));
+                .orElseThrow(() -> new BusinessException(ErrorCode.MEMBER_NOT_FOUND));
 
         Store store = storeRepository.findById(request.storeId())
-                .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 스토어입니다."));
+                .orElseThrow(() -> new BusinessException(ErrorCode.STORE_NOT_FOUND));
 
         long totalPrice = 0L;
         List<MenuStock> menuStocks = new ArrayList<>();
         
         for (OrderItemRequest itemRequest : request.items()) {
             MenuStock menuStock = menuStockRepository.findByStoreIdAndMenuId(request.storeId(), itemRequest.menuId())
-                    .orElseThrow(() -> new IllegalArgumentException("해당 스토어에 존재하지 않는 메뉴입니다."));
+                    .orElseThrow(() -> new BusinessException(ErrorCode.MENU_NOT_FOUND));
             
             menuStock.decreaseStock(itemRequest.quantity());
             

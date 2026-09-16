@@ -1,0 +1,30 @@
+package com.ceos24.cgv.global.exception;
+
+import lombok.Getter;
+import lombok.RequiredArgsConstructor;
+
+@Getter
+@RequiredArgsConstructor
+public enum ErrorCode {
+
+    // Common / Member
+    MEMBER_NOT_FOUND(404, "존재하지 않는 회원입니다."),
+    
+    // Store / Order
+    STORE_NOT_FOUND(404, "존재하지 않는 스토어입니다."),
+    MENU_NOT_FOUND(404, "해당 스토어에 존재하지 않는 메뉴입니다."),
+    OUT_OF_STOCK(400, "재고가 부족합니다."),
+    
+    // Reservation / Theater
+    THEATER_NOT_FOUND(404, "존재하지 않는 극장입니다."),
+    RESERVATION_NOT_FOUND(404, "존재하지 않는 예매이거나 권한이 없습니다."),
+    SEAT_NOT_FOUND(404, "존재하지 않는 좌석입니다."),
+    SCREENING_NOT_FOUND(404, "존재하지 않는 상영 일정입니다."),
+    SCREEN_NOT_FOUND(404, "존재하지 않는 상영관입니다."),
+    
+    // Movie
+    MOVIE_NOT_FOUND(404, "존재하지 않는 영화입니다.");
+
+    private final int status;
+    private final String message;
+}

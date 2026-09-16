@@ -6,6 +6,8 @@ import com.ceos24.cgv.domain.store.dto.response.MenuStockInfo;
 import com.ceos24.cgv.domain.store.dto.response.StoreResponse;
 import com.ceos24.cgv.domain.store.repository.MenuStockRepository;
 import com.ceos24.cgv.domain.store.repository.StoreRepository;
+import com.ceos24.cgv.global.exception.BusinessException;
+import com.ceos24.cgv.global.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -22,7 +24,7 @@ public class StoreService {
     @Transactional(readOnly = true)
     public StoreResponse getStoreInfo(Long theaterId) {
         Store store = storeRepository.findByTheaterId(theaterId)
-                .orElseThrow(() -> new IllegalArgumentException("해당 극장에 스토어가 존재하지 않습니다."));
+                .orElseThrow(() -> new BusinessException(ErrorCode.STORE_NOT_FOUND));
 
         List<MenuStock> menuStocks = menuStockRepository.findByStoreIdWithMenu(store.getId());
 

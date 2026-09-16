@@ -6,6 +6,8 @@ import com.ceos24.cgv.domain.movie.domain.FavoriteMovie;
 import com.ceos24.cgv.domain.movie.domain.Movie;
 import com.ceos24.cgv.domain.movie.repository.FavoriteMovieRepository;
 import com.ceos24.cgv.domain.movie.repository.MovieRepository;
+import com.ceos24.cgv.global.exception.BusinessException;
+import com.ceos24.cgv.global.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -21,8 +23,10 @@ public class FavoriteMovieService {
     @Transactional
     public void addFavoriteMovie(Long movieId, Long memberId) {
 
-        Movie movie = movieRepository.findById(movieId).orElseThrow();
-        Member member = memberRepository.findById(memberId).orElseThrow();
+        Movie movie = movieRepository.findById(movieId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.MOVIE_NOT_FOUND));
+        Member member = memberRepository.findById(memberId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.MEMBER_NOT_FOUND));
 
         favoriteMovieRepository.save(new FavoriteMovie(movie, member));
     }

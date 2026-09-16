@@ -6,6 +6,8 @@ import com.ceos24.cgv.domain.theater.domain.FavoriteTheater;
 import com.ceos24.cgv.domain.theater.domain.Theater;
 import com.ceos24.cgv.domain.theater.repository.FavoriteTheaterRepository;
 import com.ceos24.cgv.domain.theater.repository.TheaterRepository;
+import com.ceos24.cgv.global.exception.BusinessException;
+import com.ceos24.cgv.global.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -20,8 +22,8 @@ public class FavoriteTheaterService {
 
     @Transactional
     public void addFavoriteTheater(Long theaterId, Long memberId) {
-        Theater theater = theaterRepository.findById(theaterId).orElseThrow();
-        Member member = memberRepository.findById(memberId).orElseThrow();
+        Theater theater = theaterRepository.findById(theaterId).orElseThrow(() -> new BusinessException(ErrorCode.THEATER_NOT_FOUND));
+        Member member = memberRepository.findById(memberId).orElseThrow(() -> new BusinessException(ErrorCode.MEMBER_NOT_FOUND));
         FavoriteTheater favoriteTheater = new FavoriteTheater(theater, member);
         favoriteTheaterRepository.save(favoriteTheater);
     }

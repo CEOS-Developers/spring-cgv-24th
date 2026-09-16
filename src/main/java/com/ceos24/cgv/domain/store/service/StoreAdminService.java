@@ -8,6 +8,8 @@ import com.ceos24.cgv.domain.store.repository.MenuRepository;
 import com.ceos24.cgv.domain.store.repository.MenuStockRepository;
 import com.ceos24.cgv.domain.store.repository.StoreRepository;
 import com.ceos24.cgv.domain.theater.domain.Theater;
+import com.ceos24.cgv.global.exception.BusinessException;
+import com.ceos24.cgv.global.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -30,7 +32,8 @@ public class StoreAdminService {
 
         List<MenuStock> menuStocks = new ArrayList<>();
         request.menuItems().forEach(item -> {
-                    Menu menu = menuRepository.findById(item.menuId()).orElseThrow();
+                    Menu menu = menuRepository.findById(item.menuId())
+                            .orElseThrow(() -> new BusinessException(ErrorCode.MENU_NOT_FOUND));
                     menuStocks.add(new MenuStock(menu, store, item.stock()));
                 });
         menuStockRepository.saveAll(menuStocks);

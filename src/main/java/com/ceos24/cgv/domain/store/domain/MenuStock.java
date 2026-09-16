@@ -4,6 +4,8 @@ import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import com.ceos24.cgv.global.exception.BusinessException;
+import com.ceos24.cgv.global.exception.ErrorCode;
 
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
@@ -32,7 +34,7 @@ public class MenuStock {
 
     public void decreaseStock(Long quantity) {
         if (this.stock < quantity) {
-            throw new IllegalArgumentException("재고가 부족합니다.");
+            throw new BusinessException(ErrorCode.OUT_OF_STOCK);
         }
         this.stock -= quantity;
     }
