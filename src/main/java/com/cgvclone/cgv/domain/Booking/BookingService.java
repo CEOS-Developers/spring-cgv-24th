@@ -1,6 +1,7 @@
 package com.cgvclone.cgv.domain.Booking;
 
 import com.cgvclone.cgv.domain.Booking.dto.BookingCreateRequest;
+import com.cgvclone.cgv.domain.Booking.dto.SeatRequest;
 import com.cgvclone.cgv.domain.User.User;
 import com.cgvclone.cgv.domain.User.UserRepository;
 import com.cgvclone.cgv.domain.showtime.Showtime;
@@ -29,7 +30,19 @@ public class BookingService {
         Showtime showtime = showtimeRepository.findById(request.showtimeId())
                 .orElseThrow(() -> new IllegalArgumentException("Showtime not found"));
 
-        // TODO: 이미 누군가 예매한 좌석인지 검증하는 로직 추가 필요
+        List<BookingSeat> bookedSeats = bookingSeatRepository.findBookedSeatsByShowtimeId(showtime.getShowtimeId());
+
+        for (SeatRequest requestedSeat : request.seats()) {
+            boolean isAlreadyBooked = bookedSeats.stream()
+                    .anyMatch(booked ->
+                            booked.getRowNo().equals(requestedSeat.rowNo()) &&
+                                    booked.getColumnNo().equals(requestedSeat.columnNo())
+                    );
+            if (isAlreadyBooked) {
+                throw new IllegalStateException(
+                        "이미 예매된 좌석입니다: " + requestedSeat.rowNo() + "행 " + requestedSeat.columnNo() + "열");
+            }
+        }
 
         Booking booking = Booking.builder()
                 .user(user)
