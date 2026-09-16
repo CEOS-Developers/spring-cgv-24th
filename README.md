@@ -1,8 +1,10 @@
 ## 🎬 CGV 클론코딩 서비스 소개
 
-CGV의 핵심 서비스를 클론코딩한 프로젝트입니다. 영화관 조회/찜, 영화 조회/찜, 영화 예매 및 취소, 매점 구매 6가지 핵심 기능을 구현했으며, 실제 CGV 서비스 화면을 참고하여 DB 모델링을 진행했습니다.
+CGV의 핵심 서비스를 클론코딩한 프로젝트입니다.  
+영화관 조회/찜, 영화 조회/찜, 영화 예매 및 취소, 매점 구매 6가지 핵심 기능을 구현했으며, 실제 CGV 서비스 화면을 참고하여 DB 모델링을 진행했습니다.
 
-## ERD
+<details>
+<summary><h2>ERD</h2></summary>
 
 ![img_1.png](img_1.png)
 📎 [ERDCloud에서 보기](https://www.erdcloud.com/d/W8KHbPARz5j4dP2Ay)
@@ -126,3 +128,450 @@ DB 제약만으로는 표현할 수 없어 서비스 계층에서 별도로 검�
 - **사건이 발생한 절대 시점**(User.createdAt, Reservation.reservedAt, Order.orderedAt 등) → `Instant` 사용
 - **사람이 인지하는 로컬 시각**(Schedule.startTime/endTime — "9/14 19:30 상영") → `LocalDateTime` 사용
 - **날짜만 의미 있는 값**(Movie.openDate/closeDate) → `LocalDate` 사용
+
+</details>
+
+<br>
+
+<details>
+<summary><h2>❓ 질문 정리</h2></summary>
+
+### 1. `@JoinColumn`을 명시하지 않으면 어떻게 될까?
+
+`@JoinColumn`을 생략해도 JPA가 기본 규칙에 따라 외래 키 컬럼명을 생성합니다.
+
+예를 들어 `Member`에 다음과 같은 필드가 있다면 다음과 같이 동작합니다.
+
+```java
+@ManyToOne
+private Team team;
+```
+
+기본적으로 **필드명 + `_` + 참조하는 PK 컬럼명**을 조합하여 `team_id`와 같은 형태의 외래 키를 사용합니다.
+
+따라서 생략해도 동작하지만, 실제 테이블의 컬럼명을 명확히 표현하고 예상하지 못한 매핑을 방지하려면 `@JoinColumn(name = "team_id")`처럼 직접 명시하는 편이 좋습니다.
+
+---
+
+### 2. 양방향 매핑이 항상 좋을까?
+
+항상 좋은 것은 아닙니다.
+
+양방향 매핑을 사용하면 `Member -> Team`뿐만 아니라 `Team -> Member`로도 객체를 탐색할 수 있어 편리합니다. 하지만 양쪽 객체의 상태를 항상 동기화해야 한다는 문제가 있습니다.
+
+예를 들어 다음과 같습니다.
+
+```java
+team.getMembers().add(member);
+```
+
+만 호출하고
+
+```java
+member.setTeam(team);
+```
+
+을 호출하지 않았다면 객체상으로는 `Team`에 `Member`가 존재하지만, `Member`에서는 `Team`이 `null`인 불일치 상태가 될 수 있습니다.
+
+또한 엔티티를 그대로 JSON으로 변환하면 서로를 계속 참조하면서 순환 참조 문제가 발생할 수 있습니다.
+
+따라서 기본적으로 단방향으로 설계하고, 반대 방향 탐색이 실제로 필요한 경우에만 양방향 관계를 추가하는 편이 좋습니다. 양방향으로 설계한다면 연관관계 편의 메서드를 함께 만들어 양쪽 상태를 동기화하는 것이 좋습니다.
+
+---
+
+### 3. PK 참조 vs UUID 참조
+
+둘 중 하나만 선택하기보다는 **내부 DB에서는 Long PK를 사용하고, 외부 API에서는 UUID 같은 별도의 식별자를 사용하는 방식**이 적절합니다.
+
+```java
+@Id
+@GeneratedValue(strategy = GenerationType.IDENTITY)
+private Long id;
+
+@Column(nullable = false, unique = true, updatable = false)
+private String publicId;
+```
+
+Long 타입 PK는 크기가 작고 인덱스 관리에도 유리하기 때문에 내부 PK/FK로 사용하기 좋습니다.
+
+반대로 API에서 `/members/1`, `/members/2`처럼 PK를 그대로 노출하면 다른 리소스의 ID를 쉽게 추측할 수 있고, DB의 내부 식별자가 외부에 그대로 드러난다는 단점이 있습니다.
+
+따라서 내부 연관관계에서는 Long PK를 사용하고, 사용자에게 노출되는 값은 UUID/ULID 같은 별도의 식별자로 분리하는 방식이 역할도 명확하고 관리하기 편합니다.
+
+---
+
+### 4. `Team.members`만 수정하면 DB에도 반영될까?
+
+반영되지 않습니다.
+
+```java
+@OneToMany(mappedBy = "team")
+private List<Member> members;
+```
+
+여기서 `mappedBy`가 붙은 `Team.members`는 연관관계의 주인이 아닙니다.
+
+실제 외래 키인 `team_id`는 `Member` 테이블이 가지고 있기 때문에 DB의 연관관계를 변경하려면 연관관계의 주인인 `Member.team`을 변경해야 합니다.
+
+따라서 아래처럼 컬렉션에만 추가하면 다음과 같은 문제가 있습니다.
+
+```java
+team.getMembers().add(member);
+```
+
+메모리상의 `Team.members`는 변경되지만 외래 키는 변경되지 않습니다.
+
+따라서 보통 다음과 같이 양쪽을 함께 변경하는 연관관계 편의 메서드를 만들어 사용합니다.
+
+```java
+public void setTeam(Team team) {
+    this.team = team;
+    team.getMembers().add(this);
+}
+```
+
+---
+
+### 5. `mappedBy` 없이 양쪽 모두에 `@JoinColumn`을 걸면 어떻게 될까?
+
+양쪽 모두 같은 외래 키를 관리하려고 하기 때문에 문제가 발생할 수 있습니다.
+
+예를 들어 `Member.team`과 `Team.members` 모두 `team_id`를 관리한다고 선언하면 JPA는 두 매핑을 하나의 양방향 관계가 아니라 각각 외래 키를 관리하는 독립적인 관계로 인식할 수 있습니다.
+
+이 상태에서 양쪽에 서로 다른 값을 넣으면 다음과 같은 문제가 발생합니다.
+
+```java
+member.setTeam(teamA);
+teamB.getMembers().add(member);
+```
+
+`Member` 쪽에서는 `team_id = teamA.id`를, `Team` 쪽에서는 `team_id = teamB.id`를 반영하려 하므로 서로 충돌하는 상태가 됩니다.
+
+같은 값을 넣더라도 불필요한 SQL이 발생하거나 매핑 충돌의 원인이 될 수 있습니다.
+
+따라서 양방향 관계에서는 **외래 키를 가진 쪽을 연관관계의 주인으로 두고, 반대쪽에는 `mappedBy`를 지정하는 방식**이 가장 명확합니다.
+
+---
+
+## Proxy 관련 질문
+
+### 6-1. Proxy란?
+
+Proxy는 실제 객체를 바로 가져오는 대신 실제 객체를 대신하는 **대리 객체**입니다.
+
+JPA에서 지연 로딩을 사용하면 연관된 엔티티를 처음부터 모두 조회하지 않고 우선 Proxy 객체를 넣어둘 수 있습니다.
+
+```java
+Member member = em.find(Member.class, 1L);
+
+// LAZY인 경우 이 시점에는 Team의 실제 데이터가
+// 아직 조회되지 않았을 수 있다.
+Team team = member.getTeam();
+```
+
+이후 실제 데이터가 필요한 시점에 Proxy가 초기화되면서 DB 조회가 발생합니다.
+
+즉 Proxy를 이용하면 객체의 연관관계는 유지하면서 실제 데이터는 필요한 시점에 조회할 수 있습니다. 이것이 지연 로딩의 핵심입니다.
+
+---
+
+### 6-2. Proxy와 N+1 문제는 어떤 관계가 있을까?
+
+Proxy를 사용한 지연 로딩은 **조회 시점을 늦춰줄 뿐, 필요한 쿼리의 개수를 자동으로 줄여주지는 않습니다.**
+
+예를 들어 Member 100개를 한 번의 쿼리로 조회한 뒤 다음 코드처럼 연관 엔티티에 접근할 수 있습니다.
+
+```java
+for (Member member : members) {
+    System.out.println(member.getTeam().getName());
+}
+```
+
+각 Member의 Team 데이터에 접근하면 Proxy가 하나씩 초기화되면서 추가 쿼리가 계속 발생할 수 있습니다.
+
+결국
+
+- Member 목록 조회 1번
+- 연관 데이터 조회 최대 N번
+
+위와 같은 N+1 문제가 발생할 수 있습니다.
+
+따라서 `LAZY`로 설정하는 것만으로 N+1 문제가 해결되지는 않으며, 필요한 경우 fetch join, `@EntityGraph`, Batch Fetching 같은 방법을 함께 사용해야 합니다.
+
+---
+
+### 6-3. Hibernate Proxy와 Spring AOP Proxy의 차이는?
+
+둘 다 Proxy라는 이름을 사용하지만 목적은 다릅니다.
+
+**Hibernate Proxy**는 JPA의 지연 로딩을 구현하기 위해 사용됩니다. 연관 엔티티를 바로 조회하지 않고 대리 객체를 두었다가 실제 값이 필요할 때 DB에서 조회합니다.
+
+반면 **Spring AOP Proxy**는 객체의 메서드 호출을 가로채 앞뒤에 부가 기능을 적용하기 위해 사용합니다. 대표적으로 `@Transactional`이 있습니다.
+
+예를 들어 다음과 같습니다.
+
+```java
+@Transactional
+public void reserve() {
+    ...
+}
+```
+
+를 호출하면 Spring AOP Proxy가 메서드 호출을 가로채 트랜잭션 시작과 종료 처리를 수행합니다.
+
+정리하면 Hibernate Proxy는 **엔티티의 지연 로딩**, Spring AOP Proxy는 **메서드 호출에 부가 기능을 적용하는 것**이 주요 목적이라는 차이가 있습니다.
+
+---
+
+### 6-4. 양방향 매핑 + `@OneToOne` + `nullable=true`에서 Proxy 문제가 발생하는 이유는?
+
+세션 자료에는 당시 상황의 전체 코드가 나와 있지 않기 때문에, `@OneToOne`의 일반적인 Lazy Loading 문제를 기준으로 정리했습니다.
+
+특히 양방향 `@OneToOne`에서 연관관계의 주인이 아닌 쪽은 자신의 테이블에 FK가 없습니다.
+
+이때 관계가 optional, 즉 `nullable=true`라면 Hibernate 입장에서는 **연관된 객체가 실제로 존재하는지, 아니면 `null`인지 현재 엔티티의 정보만으로 판단하기 어렵습니다.**
+
+Proxy를 생성하려면 연관 객체가 존재한다는 전제가 필요하지만, 실제로는 관계 자체가 없어 `null`일 수도 있습니다. 이를 확인하려면 결국 반대쪽 테이블을 조회해야 합니다.
+
+따라서 이러한 `@OneToOne` 구조에서는 기대한 것처럼 단순하게 지연 로딩이 동작하지 않거나 추가 조회가 발생할 수 있습니다.
+
+즉 `@OneToOne`에서 `LAZY`를 사용한다고 해서 모든 방향에서 무조건 Proxy만 생성되고 조회가 미뤄지는 것은 아니라는 점에 주의해야 합니다.
+
+---
+
+### 7. 그럼 항상 지연 로딩이 좋을까?
+
+항상 좋은 것은 아닙니다.
+
+연관 데이터를 거의 항상 같이 사용하는 상황이라면 매번 따로 조회하는 것보다 한 번에 가져오는 방식이 더 효율적일 수도 있습니다.
+
+다만 엔티티 자체의 FetchType을 `EAGER`로 설정하면 필요하지 않은 상황에서도 항상 연관 엔티티를 조회하게 되어 예상하지 못한 N+1 문제가 발생할 수 있습니다.
+
+따라서 기본적인 연관관계는 `LAZY`로 두고,
+
+```java
+select m
+from Member m
+join fetch m.team
+```
+
+처럼 **실제로 연관 데이터가 필요한 쿼리에서 fetch join이나 EntityGraph 등을 통해 함께 조회하도록 명시하는 방식**이 더 유연합니다.
+
+---
+
+### 8. fetch join과 페이징을 같이 사용하면 어떤 문제가 발생할까?
+
+`ManyToOne`처럼 단일 객체를 fetch join하는 경우보다 `OneToMany` 같은 **컬렉션 fetch join에서 문제가 발생합니다.**
+
+예를 들어 Team 하나에 Member가 여러 명 있다면 SQL JOIN 결과에서는 Team 데이터가 Member 수만큼 중복됩니다.
+
+```text
+TeamA - Member1
+TeamA - Member2
+TeamA - Member3
+TeamB - Member4
+...
+```
+
+이 상태에서 DB의 `LIMIT`, `OFFSET`을 바로 적용하면 의도한 "Team 10개"가 아니라 "JOIN 결과 row 10개"를 기준으로 데이터가 잘리게 됩니다.
+
+따라서 Hibernate는 상황에 따라 데이터를 먼저 조회한 뒤 메모리에서 페이징을 수행할 수 있으며, 데이터가 많아지면 성능 저하와 메모리 사용량 증가 문제가 발생할 수 있습니다.
+
+따라서 컬렉션 fetch join과 페이징이 함께 필요한 경우에는 보통 다음과 같은 방법을 사용합니다.
+
+1. 먼저 부모 엔티티의 ID를 페이징해서 가져오고
+2. 해당 ID들을 기준으로 연관 데이터를 다시 조회하거나
+3. Batch Fetching을 이용하는 방식
+
+위와 같은 방법으로 해결할 수 있습니다.
+
+---
+
+### 9. Dirty Checking의 UPDATE는 모든 컬럼을 업데이트하는데 개선이 필요할까?
+
+Hibernate는 기본적으로 Dirty Checking으로 변경된 엔티티를 발견하면 UPDATE문에 여러 컬럼을 함께 포함시킬 수 있습니다.
+
+예를 들어 `username`만 수정했더라도 다음과 같은 형태의 쿼리가 생성될 수 있습니다.
+
+```sql
+UPDATE member
+SET username = ?, email = ?, age = ?
+WHERE id = ?
+```
+
+이 방식은 UPDATE SQL의 형태가 일정하여 SQL을 재사용하기 쉽다는 장점이 있으므로 무조건 나쁜 것은 아닙니다.
+
+하지만 컬럼이 많은 테이블에서 일부 값만 자주 변경된다면 불필요한 컬럼까지 UPDATE문에 포함될 수 있습니다.
+
+Hibernate에서는 이 경우 `@DynamicUpdate`를 사용할 수 있습니다.
+
+```java
+@Entity
+@DynamicUpdate
+public class Member {
+    ...
+}
+```
+
+그러면 실제로 변경된 컬럼을 기준으로 UPDATE SQL을 생성합니다.
+
+다만 수정되는 컬럼에 따라 SQL 형태가 달라질 수 있으므로 모든 엔티티에 무조건 적용하기보다는 컬럼 수와 수정 패턴을 고려하여 필요한 곳에 적용하는 것이 적절합니다.
+
+---
+
+### 10. flush는 언제 발생할까?
+
+대표적으로 다음과 같은 상황에서 발생합니다.
+
+- `em.flush()`를 직접 호출한 경우
+- 트랜잭션이 commit되기 직전
+- JPQL 쿼리를 실행하기 전 필요한 경우
+
+flush는 영속성 컨텍스트를 비우는 것이 아니라 **영속성 컨텍스트의 변경 내용을 DB와 동기화하는 과정**입니다.
+
+따라서 flush가 실행되어도 1차 캐시에 있던 엔티티가 사라지지 않습니다. 영속성 컨텍스트를 실제로 비우는 작업은 `clear()`입니다.
+
+---
+
+### 11. 영속성 컨텍스트와 EntityManager, EntityManager와 Transaction은 항상 1:1일까?
+
+항상 1:1로 대응하는 것은 아닙니다.
+
+JPA에서 EntityManager는 영속성 컨텍스트를 통해 엔티티를 관리하지만, 실제 관계는 환경과 영속성 컨텍스트의 생명주기에 따라 달라질 수 있습니다.
+
+특히 Spring에서는 Repository가 싱글톤이어도 요청이나 트랜잭션마다 서로 다른 실제 EntityManager를 사용할 수 있습니다. Repository에 실제 EntityManager 하나를 고정해서 넣는 것이 아니라, 현재 트랜잭션에 맞는 EntityManager로 연결해주는 Proxy를 주입하기 때문입니다.
+
+또한 하나의 EntityManager에서도 순차적으로 여러 트랜잭션을 수행할 수 있으며, extended persistence context처럼 하나의 영속성 컨텍스트가 여러 트랜잭션에 걸쳐 유지되는 경우도 있습니다.
+
+따라서 개념적으로 무조건
+
+```text
+영속성 컨텍스트 : EntityManager : Transaction = 1 : 1 : 1
+```
+
+이라고 고정해서 생각하기보다는 각각의 생명주기가 다를 수 있다고 이해하는 것이 적절합니다.
+
+---
+
+## 추가로 생각해보기
+
+### 12-1. `SimpleJpaRepository`는 싱글톤인데 EntityManager를 생성자 주입받아도 괜찮을까?
+
+Repository가 싱글톤이기 때문에 EntityManager도 하나만 주입되어 여러 요청이 같은 EntityManager를 공유하는 것처럼 보일 수 있습니다.
+
+하지만 실제로 Spring이 주입하는 것은 **특정 EntityManager 자체가 아니라 EntityManager를 대신하는 Proxy**입니다.
+
+```text
+SimpleJpaRepository
+        ↓
+EntityManager Proxy
+        ↓
+현재 Transaction에 연결된 실제 EntityManager
+```
+
+Repository 객체 자체는 싱글톤으로 하나만 존재하지만, 메서드가 실행될 때 Proxy가 현재 트랜잭션에 연결된 실제 EntityManager를 찾아 작업을 위임합니다.
+
+따라서 여러 요청이 싱글톤 Repository를 동시에 사용해도 동일한 실제 EntityManager 하나를 무조건 공유하는 구조는 아닙니다.
+
+---
+
+### 12-2. fetch join에서 `distinct`를 사용하지 않으면 어떤 문제가 생길까?
+
+특히 `OneToMany` 컬렉션을 fetch join하면 JOIN 결과에서 부모 엔티티가 자식 개수만큼 반복될 수 있습니다.
+
+예를 들어 TeamA에 Member가 3명이라면 SQL 결과는 다음과 같습니다.
+
+```text
+TeamA - Member1
+TeamA - Member2
+TeamA - Member3
+```
+
+조회하려는 Team은 하나이지만 SQL 결과에서는 3개의 row가 생성됩니다.
+
+이 때문에 JPA/Hibernate 버전과 조회 방식에 따라 조회 결과에서 동일한 부모 엔티티 참조가 중복되는 문제가 발생할 수 있습니다.
+
+JPQL에서는 이런 경우 다음과 같이 작성할 수 있습니다.
+
+```java
+select distinct t
+from Team t
+join fetch t.members
+```
+
+위와 같이 `distinct`를 사용할 수 있습니다.
+
+다만 `distinct`를 사용한다고 해서 JOIN으로 발생하는 row 자체가 없어지는 것은 아닙니다. 컬렉션 fetch join 자체가 결과 row 수를 증가시킬 수 있으므로 데이터 양이 많은 경우에는 이 점도 함께 고려해야 합니다.
+
+---
+
+### 12-3. fetch join 관련 에러 3가지
+
+#### a. `HHH000104: firstResult/maxResults specified with collection fetch; applying in memory!`
+
+컬렉션 fetch join과 페이징을 동시에 사용했을 때 발생할 수 있는 경고입니다.
+
+JOIN으로 인해 하나의 부모 엔티티가 여러 row로 만들어지기 때문에 DB에서 단순하게 `LIMIT/OFFSET`을 적용하면 부모 엔티티 기준의 정확한 페이지를 만들기 어렵습니다.
+
+따라서 Hibernate가 DB에서 페이징하지 않고 데이터를 가져온 뒤 메모리에서 페이징할 수 있으며, 데이터가 많으면 심각한 성능 문제가 발생할 수 있습니다.
+
+**해결 방법**
+- 컬렉션 fetch join과 직접적인 페이징을 피합니다.
+- 부모 엔티티를 먼저 페이징한 뒤 별도 쿼리로 연관 데이터를 조회합니다.
+- Batch Fetching을 활용합니다.
+
+---
+
+#### b. `query specified join fetching, but the owner of the fetched association was not present in the select list`
+
+fetch join의 대상이 되는 연관관계의 **owner가 SELECT 결과에 포함되어 있지 않을 때** 발생합니다.
+
+fetch join은 조회한 엔티티의 연관 데이터를 함께 채워주는 기능이기 때문에, 정작 해당 엔티티를 SELECT하지 않으면 fetch한 데이터를 넣어줄 대상이 없습니다.
+
+예를 들어 다음과 같은 형태에서 발생할 수 있습니다.
+
+```java
+select t
+from Member m
+join fetch m.team t
+```
+
+위 쿼리는 Member의 `team`을 fetch하면서 정작 owner인 Member를 조회 결과에서 제외한 경우입니다.
+
+따라서 다음과 같이 owner인 Member를 조회해야 합니다.
+
+```java
+select m
+from Member m
+join fetch m.team
+```
+
+DTO Projection이 목적이라면 fetch join 대신 일반 join을 사용하는 방법도 있습니다.
+
+---
+
+#### c. `MultipleBagFetchException: cannot simultaneously fetch multiple bags`
+
+Hibernate에서 `List` 형태의 여러 컬렉션을 동시에 fetch join하려고 할 때 발생할 수 있습니다.
+
+예를 들어 다음과 같습니다.
+
+```java
+Team -> List<Member>
+Team -> List<Project>
+```
+
+두 컬렉션을 동시에 fetch join하면 SQL에서는 Member와 Project가 곱해지면서 Cartesian Product 형태가 됩니다.
+
+Member가 10명이고 Project가 10개라면 하나의 Team에 대해 최대 100개의 row가 만들어질 수 있습니다.
+
+Hibernate는 이런 결과에서 여러 Bag 컬렉션을 정상적으로 구성하기 어렵기 때문에 `MultipleBagFetchException`을 발생시킵니다.
+
+**해결 방법**
+- 여러 컬렉션을 한 번에 fetch join하지 않고 쿼리를 나눕니다.
+- 필요한 경우 컬렉션 중 하나를 `Set` 등 다른 구조로 변경할 수 있는지 검토합니다.
+- Batch Fetching을 사용해 여러 컬렉션을 나눠서 로딩합니다.
+
+단순히 `distinct`를 추가한다고 해결되는 문제는 아닙니다.
+
+</details>
