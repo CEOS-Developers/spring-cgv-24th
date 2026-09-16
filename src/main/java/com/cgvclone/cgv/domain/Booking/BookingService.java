@@ -21,6 +21,7 @@ public class BookingService {
     private final BookingSeatRepository bookingSeatRepository;
 
     public void createBooking(BookingCreateRequest request) {
+        // TODO: 인증인가 스터디 후 User 지정 필요
         Long currentUserId = 1L;
         User user = userRepository.findById(currentUserId)
                 .orElseThrow(() -> new IllegalArgumentException("User not found"));
