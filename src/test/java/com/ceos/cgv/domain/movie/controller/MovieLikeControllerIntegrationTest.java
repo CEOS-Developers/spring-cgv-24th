@@ -9,7 +9,6 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -33,16 +32,14 @@ class MovieLikeControllerIntegrationTest {
     }
 
     @Test
-    void 영화_찜은_중복으로_생성할_수_없고_취소할_수_있다() throws Exception {
+    void 영화_찜은_한번의_POST로_추가와_취소를_토글한다() throws Exception {
         mockMvc.perform(post("/api/v1/movies/{movieId}/likes", 72).param("userId", "71"))
-                .andExpect(status().isCreated());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data").value(true));
 
         mockMvc.perform(post("/api/v1/movies/{movieId}/likes", 72).param("userId", "71"))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.code").value("DUPLICATE_LIKE"));
-
-        mockMvc.perform(delete("/api/v1/movies/{movieId}/likes", 72).param("userId", "71"))
-                .andExpect(status().isNoContent());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data").value(false));
     }
 
     @Test
@@ -53,15 +50,13 @@ class MovieLikeControllerIntegrationTest {
     }
 
     @Test
-    void 영화관도_찜하고_취소할_수_있다() throws Exception {
+    void 영화관_찜도_한번의_POST로_추가와_취소를_토글한다() throws Exception {
         mockMvc.perform(post("/api/v1/cinemas/{cinemaId}/likes", 73).param("userId", "71"))
-                .andExpect(status().isCreated());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data").value(true));
 
         mockMvc.perform(post("/api/v1/cinemas/{cinemaId}/likes", 73).param("userId", "71"))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.code").value("DUPLICATE_LIKE"));
-
-        mockMvc.perform(delete("/api/v1/cinemas/{cinemaId}/likes", 73).param("userId", "71"))
-                .andExpect(status().isNoContent());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data").value(false));
     }
 }

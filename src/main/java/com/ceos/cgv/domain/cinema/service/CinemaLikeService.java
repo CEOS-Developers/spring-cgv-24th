@@ -12,6 +12,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Optional;
+
 @Service
 @RequiredArgsConstructor
 public class CinemaLikeService {
@@ -20,24 +22,22 @@ public class CinemaLikeService {
     private final CinemaLikeRepository cinemaLikeRepository;
 
     @Transactional
-    public void create(Long userId, Long cinemaId) {
+    public boolean toggle(Long userId, Long cinemaId) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
         Cinema cinema = cinemaRepository.findById(cinemaId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.CINEMA_NOT_FOUND));
-        if (cinemaLikeRepository.existsByUser_IdAndCinema_Id(userId, cinemaId)) {
-            throw new BusinessException(ErrorCode.DUPLICATE_LIKE);
+
+        Optional<CinemaLike> existingLike = cinemaLikeRepository.findByUser_IdAndCinema_Id(userId, cinemaId);
+        if (existingLike.isPresent()) {
+            cinemaLikeRepository.delete(existingLike.get());
+            return false;
         }
+
         cinemaLikeRepository.save(CinemaLike.builder()
                 .user(user)
                 .cinema(cinema)
                 .build());
-    }
-
-    @Transactional
-    public void delete(Long userId, Long cinemaId) {
-        CinemaLike cinemaLike = cinemaLikeRepository.findByUser_IdAndCinema_Id(userId, cinemaId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.LIKE_NOT_FOUND));
-        cinemaLikeRepository.delete(cinemaLike);
+        return true;
     }
 }

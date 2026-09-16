@@ -12,6 +12,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Optional;
+
 @Service
 @RequiredArgsConstructor
 public class MovieLikeService {
@@ -20,24 +22,22 @@ public class MovieLikeService {
     private final MovieLikeRepository movieLikeRepository;
 
     @Transactional
-    public void create(Long userId, Long movieId) {
+    public boolean toggle(Long userId, Long movieId) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
         Movie movie = movieRepository.findById(movieId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.MOVIE_NOT_FOUND));
-        if (movieLikeRepository.existsByUser_IdAndMovie_Id(userId, movieId)) {
-            throw new BusinessException(ErrorCode.DUPLICATE_LIKE);
+
+        Optional<MovieLike> existingLike = movieLikeRepository.findByUser_IdAndMovie_Id(userId, movieId);
+        if (existingLike.isPresent()) {
+            movieLikeRepository.delete(existingLike.get());
+            return false;
         }
+
         movieLikeRepository.save(MovieLike.builder()
                 .user(user)
                 .movie(movie)
                 .build());
-    }
-
-    @Transactional
-    public void delete(Long userId, Long movieId) {
-        MovieLike movieLike = movieLikeRepository.findByUser_IdAndMovie_Id(userId, movieId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.LIKE_NOT_FOUND));
-        movieLikeRepository.delete(movieLike);
+        return true;
     }
 }
