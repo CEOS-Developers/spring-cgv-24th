@@ -1,5 +1,6 @@
 package com.ceos24.springboot.theater.dto;
 
+import com.ceos24.springboot.theater.domain.ScreenType;
 import com.ceos24.springboot.theater.domain.Screening;
 import com.ceos24.springboot.theater.domain.ScreeningType;
 
@@ -13,7 +14,18 @@ public record ScreeningResponse(
         LocalDate screeningDate,
         LocalTime startTime,
         LocalTime endTime,
-        ScreeningType screeningType
+        ScreeningType screeningType,
+
+//        여기 리펙토링
+        String movieTitle,
+
+        Long theaterId,
+        String theaterName,
+
+        String screenName,
+        ScreenType screenType
+
+
 ) {
 
     public static ScreeningResponse from(Screening screening) {
@@ -24,7 +36,17 @@ public record ScreeningResponse(
                 screening.getScreeningDate(),
                 screening.getStartTime(),
                 screening.getEndTime(),
-                screening.getScreeningType()
+                screening.getScreeningType(),
+
+                screening.getMovie().getTitleKr(),
+
+                screening.getScreen().getTheater().getTheaterId(),
+                screening.getScreen().getTheater().getTheaterName(),
+
+                screening.getScreen().getScreenName(),
+                screening.getScreen().getScreenType()
+
+
         );
     }
 }

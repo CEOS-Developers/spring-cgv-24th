@@ -19,4 +19,9 @@ public interface ScreeningRepository
             Long movieId,
             Long screenId
     );
+
+    // 특정 영화관의 모든 상영회차 조회
+    List<Screening> findByScreen_Theater_TheaterId(Long theaterId);
+
+
 }

@@ -3,6 +3,8 @@ package com.ceos24.springboot.movie.controller;
 import com.ceos24.springboot.movie.dto.MovieCreateRequest;
 import com.ceos24.springboot.movie.dto.MovieResponse;
 import com.ceos24.springboot.movie.service.MovieService;
+import com.ceos24.springboot.theater.dto.ScreeningResponse;
+import com.ceos24.springboot.theater.service.ScreeningService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -19,6 +21,7 @@ import java.util.List;
 public class MovieController {
 
     private final MovieService movieService;
+    private final ScreeningService screeningService;
 
     // 영화 등록
     @Operation(summary = "영화 등록", description = "새로운 영화를 등록합니다.")
@@ -51,5 +54,19 @@ public class MovieController {
         MovieResponse response = movieService.getMovie(movieId);
 
         return ResponseEntity.ok(response);
+    }
+
+//    영화별 상영회차 조회
+    @Operation(
+            summary = "영화별 상영회차 조회",
+            description = "선택한 영화의 상영회차를 조회합니다."
+    )
+    @GetMapping("/{movieId}/screenings")
+    public ResponseEntity<List<ScreeningResponse>> getMovieScreenings(
+            @PathVariable Long movieId
+    ) {
+        return ResponseEntity.ok(
+                screeningService.getScreeningsByMovie(movieId)
+        );
     }
 }

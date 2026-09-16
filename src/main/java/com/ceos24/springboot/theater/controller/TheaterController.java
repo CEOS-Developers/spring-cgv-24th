@@ -2,8 +2,10 @@ package com.ceos24.springboot.theater.controller;
 
 
 import com.ceos24.springboot.theater.domain.Region;
+import com.ceos24.springboot.theater.dto.ScreeningResponse;
 import com.ceos24.springboot.theater.dto.TheaterCreateRequest;
 import com.ceos24.springboot.theater.dto.TheaterResponse;
+import com.ceos24.springboot.theater.service.ScreeningService;
 import com.ceos24.springboot.theater.service.TheaterService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -21,6 +23,7 @@ import java.util.List;
 public class TheaterController {
 
     private final TheaterService theaterService;
+    private final ScreeningService screeningService;
 
     // 영화관 등록
     @Operation(summary = "영화관 등록", description = "새로운 영화관을 등록합니다.")
@@ -64,6 +67,20 @@ public class TheaterController {
     ) {
         return ResponseEntity.ok(
                 theaterService.getTheater(theaterId)
+        );
+    }
+
+//   영화관 내 상영회차 조회
+    @Operation(
+            summary = "영화관별 상영회차 조회",
+            description = "선택한 영화관의 상영 영화와 상영회차를 조회합니다."
+    )
+    @GetMapping("/{theaterId}/screenings")
+    public ResponseEntity<List<ScreeningResponse>> getTheaterScreenings(
+            @PathVariable Long theaterId
+    ) {
+        return ResponseEntity.ok(
+                screeningService.getScreeningsByTheater(theaterId)
         );
     }
 }

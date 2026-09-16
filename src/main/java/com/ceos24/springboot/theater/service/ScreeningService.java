@@ -8,9 +8,11 @@ import com.ceos24.springboot.theater.dto.ScreeningCreateRequest;
 import com.ceos24.springboot.theater.dto.ScreeningResponse;
 import com.ceos24.springboot.theater.repository.ScreenRepository;
 import com.ceos24.springboot.theater.repository.ScreeningRepository;
+import com.ceos24.springboot.theater.repository.TheaterRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
 
 import java.util.List;
 
@@ -22,6 +24,12 @@ public class ScreeningService {
     private final ScreeningRepository screeningRepository;
     private final ScreenRepository screenRepository;
     private final MovieRepository movieRepository;
+
+    // 추가
+    private final TheaterRepository theaterRepository;
+
+
+
 
     // 상영회차 등록
     @Transactional
@@ -58,15 +66,46 @@ public class ScreeningService {
         return ScreeningResponse.from(savedScreening);
     }
 
-    // 특정 영화의 상영회차
+
+    // 특정 영화의 상영회차 조회
     public List<ScreeningResponse> getScreeningsByMovie(
             Long movieId
     ) {
-        return screeningRepository.findByMovie_MovieId(movieId)
+
+        movieRepository.findById(movieId)
+                .orElseThrow(() ->
+                        new IllegalArgumentException(
+                                "해당 영화를 찾을 수 없습니다."
+                        )
+                );
+
+        return screeningRepository
+                .findByMovie_MovieId(movieId)
                 .stream()
                 .map(ScreeningResponse::from)
                 .toList();
     }
+
+
+    // 추가: 특정 영화관의 상영회차 조회
+    public List<ScreeningResponse> getScreeningsByTheater(
+            Long theaterId
+    ) {
+
+        theaterRepository.findById(theaterId)
+                .orElseThrow(() ->
+                        new IllegalArgumentException(
+                                "해당 영화관을 찾을 수 없습니다."
+                        )
+                );
+
+        return screeningRepository
+                .findByScreen_Theater_TheaterId(theaterId)
+                .stream()
+                .map(ScreeningResponse::from)
+                .toList();
+    }
+
 
     // 특정 상영관의 상영회차
     public List<ScreeningResponse> getScreeningsByScreen(
@@ -77,6 +116,7 @@ public class ScreeningService {
                 .map(ScreeningResponse::from)
                 .toList();
     }
+
 
     // 특정 영화 + 특정 상영관의 상영회차
     public List<ScreeningResponse> getScreenings(
@@ -92,4 +132,6 @@ public class ScreeningService {
                 .map(ScreeningResponse::from)
                 .toList();
     }
+
+
 }
