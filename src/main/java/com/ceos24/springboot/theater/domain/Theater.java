@@ -2,6 +2,7 @@ package com.ceos24.springboot.theater.domain;
 
 import jakarta.persistence.*;
 import lombok.AccessLevel;
+import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
@@ -16,8 +17,23 @@ public class Theater {
     @Column(name = "theater_id")
     private Long theaterId;
 
-    private String name;
+    @Column(name = "theater_name")
+    private String theaterName;
 
-    private String region;
+    @Enumerated(EnumType.STRING)
+    @Column(name = "region")
+    private Region region;
+
+    // Theater 객체를 만듦.
+    @Builder
+    public Theater(
+            String theaterName,
+            Region region
+
+    ) {
+        this.theaterName = theaterName;
+        this.region = region;
+
+    }
 
 }
