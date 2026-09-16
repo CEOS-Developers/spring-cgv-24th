@@ -29,4 +29,11 @@ public class MenuStock {
     private Store store;
 
     private Long stock;
+
+    public void decreaseStock(Long quantity) {
+        if (this.stock < quantity) {
+            throw new IllegalArgumentException("재고가 부족합니다.");
+        }
+        this.stock -= quantity;
+    }
 }
