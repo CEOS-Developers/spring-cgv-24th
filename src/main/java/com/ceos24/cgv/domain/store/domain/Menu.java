@@ -13,6 +13,11 @@ import lombok.NoArgsConstructor;
 @Entity
 public class Menu {
 
+    public Menu(String name, Long price) {
+        this.name = name;
+        this.price = price;
+    }
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
