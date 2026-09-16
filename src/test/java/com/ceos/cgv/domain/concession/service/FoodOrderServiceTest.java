@@ -22,6 +22,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -29,6 +30,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.mockito.BDDMockito.then;
 
 @ExtendWith(MockitoExtension.class)
 class FoodOrderServiceTest {
@@ -57,7 +59,7 @@ class FoodOrderServiceTest {
         Inventory inventory = new Inventory(cinema, product, 5);
         given(userRepository.findById(1L)).willReturn(Optional.of(user));
         given(cinemaRepository.findById(2L)).willReturn(Optional.of(cinema));
-        given(productRepository.findById(3L)).willReturn(Optional.of(product));
+        given(productRepository.findAllById(Set.of(3L))).willReturn(List.of(product));
         given(inventoryRepository.findByCinema_IdAndProduct_Id(2L, 3L)).willReturn(Optional.of(inventory));
         given(foodOrderRepository.save(any(FoodOrder.class))).willAnswer(invocation -> invocation.getArgument(0));
 
@@ -68,6 +70,7 @@ class FoodOrderServiceTest {
         assertThat(result.getTotalPrice()).isEqualTo(2400L);
         assertThat(result.getItems()).hasSize(1);
         assertThat(inventory.getStockQuantity()).isEqualTo(3);
+        then(productRepository).should().findAllById(Set.of(3L));
     }
 
     @Test
@@ -80,7 +83,7 @@ class FoodOrderServiceTest {
         Inventory inventory = new Inventory(cinema, product, 1);
         given(userRepository.findById(1L)).willReturn(Optional.of(user));
         given(cinemaRepository.findById(2L)).willReturn(Optional.of(cinema));
-        given(productRepository.findById(3L)).willReturn(Optional.of(product));
+        given(productRepository.findAllById(Set.of(3L))).willReturn(List.of(product));
         given(inventoryRepository.findByCinema_IdAndProduct_Id(2L, 3L)).willReturn(Optional.of(inventory));
 
         assertThatThrownBy(() -> foodOrderService.create(new FoodOrderCreateRequest(

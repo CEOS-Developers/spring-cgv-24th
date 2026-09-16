@@ -23,6 +23,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -46,10 +47,14 @@ public class FoodOrderService {
         }
 
         List<OrderLine> orderLines = new ArrayList<>();
+        Map<Long, Product> productsById = productRepository.findAllById(quantitiesByProduct.keySet()).stream()
+                .collect(Collectors.toMap(Product::getId, product -> product));
         long totalPrice = 0;
         for (Map.Entry<Long, Integer> item : quantitiesByProduct.entrySet()) {
-            Product product = productRepository.findById(item.getKey())
-                    .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND));
+            Product product = productsById.get(item.getKey());
+            if (product == null) {
+                throw new BusinessException(ErrorCode.PRODUCT_NOT_FOUND);
+            }
             Inventory inventory = inventoryRepository.findByCinema_IdAndProduct_Id(cinema.getId(), product.getId())
                     .orElseThrow(() -> new BusinessException(ErrorCode.INVENTORY_NOT_FOUND));
             if (inventory.getStockQuantity() < item.getValue()) {
