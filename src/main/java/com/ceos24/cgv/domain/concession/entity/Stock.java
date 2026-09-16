@@ -41,4 +41,8 @@ public class Stock {
     public static Stock create(Theater theater, Item item, Integer quantity) {
         return new Stock(theater, item, quantity);
     }
+
+    public void update(Integer quantity) {
+        this.quantity = quantity;
+    }
 }
