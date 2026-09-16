@@ -8,6 +8,10 @@ import lombok.NoArgsConstructor;
 @Entity
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
+@Table(uniqueConstraints = @UniqueConstraint(
+        name = "uk_screen_row_col",
+        columnNames = {"screen_id", "row_num", "col_num"}
+))
 public class Seat {
 
     @Id
