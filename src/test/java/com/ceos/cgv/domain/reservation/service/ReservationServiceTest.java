@@ -52,7 +52,7 @@ class ReservationServiceTest {
         when(screen.getSeatsPerRow()).thenReturn(12);
         given(userRepository.findById(1L)).willReturn(Optional.of(user));
         given(screeningRepository.findById(8L)).willReturn(Optional.of(screening));
-        given(reservedSeatRepository.existsByScreening_IdAndSeatRowAndSeatNumberAndReservation_Status(
+        given(reservedSeatRepository.existsByReservation_Screening_IdAndSeatRowAndSeatNumberAndReservation_Status(
                 8L, "A", 1, ReservationStatus.RESERVED
         )).willReturn(true);
         ReservationCreateRequest request = new ReservationCreateRequest(

@@ -45,7 +45,7 @@ public class ReservationService {
                 throw new BusinessException(ErrorCode.DUPLICATE_SEAT_IN_REQUEST);
             }
             boolean alreadyReserved = reservedSeatRepository
-                    .existsByScreening_IdAndSeatRowAndSeatNumberAndReservation_Status(
+                    .existsByReservation_Screening_IdAndSeatRowAndSeatNumberAndReservation_Status(
                             screening.getId(), seat.seatRow(), seat.seatNumber(), ReservationStatus.RESERVED
                     );
             if (alreadyReserved) {
@@ -56,7 +56,7 @@ public class ReservationService {
         Reservation reservation = new Reservation(user, screening);
         for (ReservedSeatRequest seat : request.seats()) {
             reservation.addReservedSeat(new ReservedSeat(
-                    reservation, screening, seat.seatRow(), seat.seatNumber()
+                    reservation, seat.seatRow(), seat.seatNumber()
             ));
         }
         return reservationRepository.save(reservation);
