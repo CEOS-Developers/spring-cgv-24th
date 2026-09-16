@@ -9,6 +9,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
+@Transactional
 public class MovieService {
 
     private final MovieRepository movieRepository;
@@ -19,6 +20,7 @@ public class MovieService {
         return MovieListResponse.from(movies);
     }
 
+    @Transactional(readOnly = true)
     public MovieDetailResponse getMovie(Long movieId) {
         Movie movie = movieRepository.findById(movieId)
                 .orElseThrow(() -> new IllegalArgumentException("Movie not found"));
