@@ -36,8 +36,8 @@ class MovieControllerIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(request))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.movieId").isNumber())
-                .andExpect(jsonPath("$.title").value("테스트 영화 CRUD"))
+                .andExpect(jsonPath("$.data.movieId").isNumber())
+                .andExpect(jsonPath("$.data.title").value("테스트 영화 CRUD"))
                 .andReturn()
                 .getResponse()
                 .getHeader("Location");
@@ -45,12 +45,12 @@ class MovieControllerIntegrationTest {
 
         mockMvc.perform(get("/api/v1/movies"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[?(@.movieId == " + movieId + ")]").exists());
+                .andExpect(jsonPath("$.data[?(@.movieId == " + movieId + ")]").exists());
 
         mockMvc.perform(get("/api/v1/movies/{movieId}", movieId))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.description").value("통합 테스트 설명"))
-                .andExpect(jsonPath("$.ageRating").value("ALL"));
+                .andExpect(jsonPath("$.data.description").value("통합 테스트 설명"))
+                .andExpect(jsonPath("$.data.ageRating").value("ALL"));
     }
 
     @Test

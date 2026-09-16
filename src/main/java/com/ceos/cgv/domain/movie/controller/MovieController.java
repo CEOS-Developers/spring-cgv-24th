@@ -3,6 +3,7 @@ package com.ceos.cgv.domain.movie.controller;
 import com.ceos.cgv.domain.movie.dto.MovieCreateRequest;
 import com.ceos.cgv.domain.movie.dto.MovieResponse;
 import com.ceos.cgv.domain.movie.service.MovieService;
+import com.ceos.cgv.global.common.dto.ApiResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -24,22 +25,20 @@ public class MovieController {
     private final MovieService movieService;
 
     @PostMapping
-    public ResponseEntity<MovieResponse> create(@Valid @RequestBody MovieCreateRequest request) {
+    public ResponseEntity<ApiResponse<MovieResponse>> create(@Valid @RequestBody MovieCreateRequest request) {
         MovieResponse response = MovieResponse.from(movieService.create(request));
         return ResponseEntity.created(URI.create("/api/v1/movies/" + response.movieId()))
-                .body(response);
+                .body(ApiResponse.created(response));
     }
 
     @GetMapping
-    public List<MovieResponse> findAll() {
-        return movieService.findAll().stream()
-                .map(MovieResponse::from)
-                .toList();
+    public ResponseEntity<ApiResponse<List<MovieResponse>>> findAll() {
+        return ResponseEntity.ok(ApiResponse.success(movieService.findAll(), MovieResponse::from));
     }
 
     @GetMapping("/{movieId}")
-    public MovieResponse findById(@PathVariable Long movieId) {
-        return MovieResponse.from(movieService.findById(movieId));
+    public ResponseEntity<ApiResponse<MovieResponse>> findById(@PathVariable Long movieId) {
+        return ResponseEntity.ok(ApiResponse.success(MovieResponse.from(movieService.findById(movieId))));
     }
 
     @DeleteMapping("/{movieId}")

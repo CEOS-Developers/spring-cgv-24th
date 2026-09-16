@@ -82,8 +82,8 @@ class ReservationControllerIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(request))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.status").value("RESERVED"))
-                .andExpect(jsonPath("$.seats[0].seatRow").value("A"))
+                .andExpect(jsonPath("$.data.status").value("RESERVED"))
+                .andExpect(jsonPath("$.data.seats[0].seatRow").value("A"))
                 .andReturn()
                 .getResponse()
                 .getHeader("Location");
@@ -100,7 +100,7 @@ class ReservationControllerIntegrationTest {
 
         mockMvc.perform(get("/api/v1/reservations/{reservationId}", reservationId))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("CANCELED"));
+                .andExpect(jsonPath("$.data.status").value("CANCELED"));
 
         mockMvc.perform(post("/api/v1/reservations")
                         .contentType(MediaType.APPLICATION_JSON)

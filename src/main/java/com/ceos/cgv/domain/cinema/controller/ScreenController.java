@@ -3,6 +3,7 @@ package com.ceos.cgv.domain.cinema.controller;
 import com.ceos.cgv.domain.cinema.dto.ScreenCreateRequest;
 import com.ceos.cgv.domain.cinema.dto.ScreenResponse;
 import com.ceos.cgv.domain.cinema.service.ScreenService;
+import com.ceos.cgv.global.common.dto.ApiResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -20,9 +21,9 @@ public class ScreenController {
     private final ScreenService screenService;
 
     @PostMapping
-    public ResponseEntity<ScreenResponse> create(@Valid @RequestBody ScreenCreateRequest request) {
+    public ResponseEntity<ApiResponse<ScreenResponse>> create(@Valid @RequestBody ScreenCreateRequest request) {
         ScreenResponse response = ScreenResponse.from(screenService.create(request));
         return ResponseEntity.created(URI.create("/api/v1/screens/" + response.screenId()))
-                .body(response);
+                .body(ApiResponse.created(response));
     }
 }

@@ -58,8 +58,8 @@ class ScreeningControllerIntegrationTest {
                                 }
                                 """))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.rowCount").value(10))
-                .andExpect(jsonPath("$.seatsPerRow").value(12))
+                .andExpect(jsonPath("$.data.rowCount").value(10))
+                .andExpect(jsonPath("$.data.seatsPerRow").value(12))
                 .andReturn()
                 .getResponse()
                 .getHeader("Location");
@@ -78,10 +78,10 @@ class ScreeningControllerIntegrationTest {
 
         mockMvc.perform(get("/api/v1/movies/{movieId}/screenings", movie.getId()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].movieId").value(movie.getId()))
-                .andExpect(jsonPath("$[0].screenId").value(screenId))
-                .andExpect(jsonPath("$[0].startAt").value("2026-09-20T12:30:00"))
-                .andExpect(jsonPath("$[0].screenType").value("GENERAL"));
+                .andExpect(jsonPath("$.data[0].movieId").value(movie.getId()))
+                .andExpect(jsonPath("$.data[0].screenId").value(screenId))
+                .andExpect(jsonPath("$.data[0].startAt").value("2026-09-20T12:30:00"))
+                .andExpect(jsonPath("$.data[0].screenType").value("GENERAL"));
     }
 
     @Test

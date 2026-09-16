@@ -3,6 +3,7 @@ package com.ceos.cgv.domain.reservation.controller;
 import com.ceos.cgv.domain.reservation.dto.ReservationCreateRequest;
 import com.ceos.cgv.domain.reservation.dto.ReservationResponse;
 import com.ceos.cgv.domain.reservation.service.ReservationService;
+import com.ceos.cgv.global.common.dto.ApiResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -23,17 +24,18 @@ public class ReservationController {
     private final ReservationService reservationService;
 
     @PostMapping
-    public ResponseEntity<ReservationResponse> create(
+    public ResponseEntity<ApiResponse<ReservationResponse>> create(
             @Valid @RequestBody ReservationCreateRequest request
     ) {
         ReservationResponse response = ReservationResponse.from(reservationService.create(request));
         return ResponseEntity.created(URI.create("/api/v1/reservations/" + response.reservationId()))
-                .body(response);
+                .body(ApiResponse.created(response));
     }
 
     @GetMapping("/{reservationId}")
-    public ReservationResponse findById(@PathVariable Long reservationId) {
-        return ReservationResponse.from(reservationService.findById(reservationId));
+    public ResponseEntity<ApiResponse<ReservationResponse>> findById(@PathVariable Long reservationId) {
+        return ResponseEntity.ok(ApiResponse.success(ReservationResponse.from(
+                reservationService.findById(reservationId))));
     }
 
     @DeleteMapping("/{reservationId}")

@@ -72,9 +72,9 @@ class FoodOrderControllerIntegrationTest {
     void 상품_메뉴는_영화관과_상관없이_공통으로_조회된다() throws Exception {
         mockMvc.perform(get("/api/v1/products"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].productId").value(94))
-                .andExpect(jsonPath("$[0].name").value("팝콘"))
-                .andExpect(jsonPath("$[0].price").value(1200));
+                .andExpect(jsonPath("$.data[0].productId").value(94))
+                .andExpect(jsonPath("$.data[0].name").value("팝콘"))
+                .andExpect(jsonPath("$.data[0].price").value(1200));
     }
 
     @Test
@@ -85,7 +85,7 @@ class FoodOrderControllerIntegrationTest {
                                 {"name": "콜라", "price": 900, "description": "음료"}
                                 """))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.name").value("콜라"))
+                .andExpect(jsonPath("$.data.name").value("콜라"))
                 .andReturn()
                 .getResponse()
                 .getHeader("Location");
@@ -97,7 +97,7 @@ class FoodOrderControllerIntegrationTest {
                                 {"cinemaId": 92, "productId": %d, "stockQuantity": 4}
                                 """.formatted(productId)))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.stockQuantity").value(4));
+                .andExpect(jsonPath("$.data.stockQuantity").value(4));
 
         mockMvc.perform(post("/api/v1/inventories")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -121,8 +121,8 @@ class FoodOrderControllerIntegrationTest {
                                 }
                                 """))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.totalPrice").value(2400))
-                .andExpect(jsonPath("$.items[0].quantity").value(2))
+                .andExpect(jsonPath("$.data.totalPrice").value(2400))
+                .andExpect(jsonPath("$.data.items[0].quantity").value(2))
                 .andReturn()
                 .getResponse()
                 .getHeader("Location");
@@ -130,8 +130,8 @@ class FoodOrderControllerIntegrationTest {
 
         mockMvc.perform(get("/api/v1/food-orders/{orderId}", orderId))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.totalPrice").value(2400))
-                .andExpect(jsonPath("$.items[0].productName").value("팝콘"));
+                .andExpect(jsonPath("$.data.totalPrice").value(2400))
+                .andExpect(jsonPath("$.data.items[0].productName").value("팝콘"));
 
         Integer selectedCinemaStock = jdbcTemplate.queryForObject(
                 "SELECT stock_quantity FROM inventories WHERE cinema_id = 92 AND product_id = 94", Integer.class

@@ -39,9 +39,9 @@ class CinemaControllerTest {
 
         mockMvc.perform(get("/api/v1/cinemas"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].cinemaId").value(1))
-                .andExpect(jsonPath("$[0].name").value("강남점"))
-                .andExpect(jsonPath("$[0].address").value("서울시 강남구"));
+                .andExpect(jsonPath("$.data[0].cinemaId").value(1))
+                .andExpect(jsonPath("$.data[0].name").value("강남점"))
+                .andExpect(jsonPath("$.data[0].address").value("서울시 강남구"));
     }
 
     @Test
@@ -56,9 +56,9 @@ class CinemaControllerTest {
 
         mockMvc.perform(get("/api/v1/cinemas/{cinemaId}", 1L))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.cinemaId").value(1))
-                .andExpect(jsonPath("$.name").value("강남점"))
-                .andExpect(jsonPath("$.address").value("서울시 강남구"));
+                .andExpect(jsonPath("$.data.cinemaId").value(1))
+                .andExpect(jsonPath("$.data.name").value("강남점"))
+                .andExpect(jsonPath("$.data.address").value("서울시 강남구"));
     }
 
     @Test

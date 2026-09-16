@@ -3,6 +3,7 @@ package com.ceos.cgv.domain.movie.controller;
 import com.ceos.cgv.domain.movie.dto.ScreeningCreateRequest;
 import com.ceos.cgv.domain.movie.dto.ScreeningResponse;
 import com.ceos.cgv.domain.movie.service.ScreeningService;
+import com.ceos.cgv.global.common.dto.ApiResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -23,16 +24,15 @@ public class ScreeningController {
     private final ScreeningService screeningService;
 
     @PostMapping("/screenings")
-    public ResponseEntity<ScreeningResponse> create(@Valid @RequestBody ScreeningCreateRequest request) {
+    public ResponseEntity<ApiResponse<ScreeningResponse>> create(@Valid @RequestBody ScreeningCreateRequest request) {
         ScreeningResponse response = ScreeningResponse.from(screeningService.create(request));
         return ResponseEntity.created(URI.create("/api/v1/screenings/" + response.screeningId()))
-                .body(response);
+                .body(ApiResponse.created(response));
     }
 
     @GetMapping("/movies/{movieId}/screenings")
-    public List<ScreeningResponse> findAllByMovieId(@PathVariable Long movieId) {
-        return screeningService.findAllByMovieId(movieId).stream()
-                .map(ScreeningResponse::from)
-                .toList();
+    public ResponseEntity<ApiResponse<List<ScreeningResponse>>> findAllByMovieId(@PathVariable Long movieId) {
+        return ResponseEntity.ok(ApiResponse.success(
+                screeningService.findAllByMovieId(movieId), ScreeningResponse::from));
     }
 }

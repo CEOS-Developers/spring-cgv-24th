@@ -3,6 +3,7 @@ package com.ceos.cgv.domain.concession.controller;
 import com.ceos.cgv.domain.concession.dto.FoodOrderCreateRequest;
 import com.ceos.cgv.domain.concession.dto.FoodOrderResponse;
 import com.ceos.cgv.domain.concession.service.FoodOrderService;
+import com.ceos.cgv.global.common.dto.ApiResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -22,14 +23,14 @@ public class FoodOrderController {
     private final FoodOrderService foodOrderService;
 
     @PostMapping
-    public ResponseEntity<FoodOrderResponse> create(@Valid @RequestBody FoodOrderCreateRequest request) {
+    public ResponseEntity<ApiResponse<FoodOrderResponse>> create(@Valid @RequestBody FoodOrderCreateRequest request) {
         FoodOrderResponse response = FoodOrderResponse.from(foodOrderService.create(request));
         return ResponseEntity.created(URI.create("/api/v1/food-orders/" + response.orderId()))
-                .body(response);
+                .body(ApiResponse.created(response));
     }
 
     @GetMapping("/{orderId}")
-    public FoodOrderResponse findById(@PathVariable Long orderId) {
-        return FoodOrderResponse.from(foodOrderService.findById(orderId));
+    public ResponseEntity<ApiResponse<FoodOrderResponse>> findById(@PathVariable Long orderId) {
+        return ResponseEntity.ok(ApiResponse.success(FoodOrderResponse.from(foodOrderService.findById(orderId))));
     }
 }

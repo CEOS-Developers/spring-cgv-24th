@@ -2,7 +2,9 @@ package com.ceos.cgv.domain.cinema.controller;
 
 import com.ceos.cgv.domain.cinema.dto.CinemaResponse;
 import com.ceos.cgv.domain.cinema.service.CinemaService;
+import com.ceos.cgv.global.common.dto.ApiResponse;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -17,15 +19,12 @@ public class CinemaController {
     private final CinemaService cinemaService;
 
     @GetMapping
-    public List<CinemaResponse> findAll(){
-        return cinemaService.findAll()
-                .stream()
-                .map(CinemaResponse::from)
-                .toList();
+    public ResponseEntity<ApiResponse<List<CinemaResponse>>> findAll(){
+        return ResponseEntity.ok(ApiResponse.success(cinemaService.findAll(), CinemaResponse::from));
     }
 
     @GetMapping("/{cinemaId}")
-    public CinemaResponse findById(@PathVariable Long cinemaId) {
-        return CinemaResponse.from(cinemaService.findById(cinemaId));
+    public ResponseEntity<ApiResponse<CinemaResponse>> findById(@PathVariable Long cinemaId) {
+        return ResponseEntity.ok(ApiResponse.success(CinemaResponse.from(cinemaService.findById(cinemaId))));
     }
 }

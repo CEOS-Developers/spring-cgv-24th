@@ -3,6 +3,7 @@ package com.ceos.cgv.domain.concession.controller;
 import com.ceos.cgv.domain.concession.dto.ProductCreateRequest;
 import com.ceos.cgv.domain.concession.dto.ProductResponse;
 import com.ceos.cgv.domain.concession.service.ProductService;
+import com.ceos.cgv.global.common.dto.ApiResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -22,14 +23,14 @@ public class ProductController {
     private final ProductService productService;
 
     @PostMapping
-    public ResponseEntity<ProductResponse> create(@Valid @RequestBody ProductCreateRequest request) {
+    public ResponseEntity<ApiResponse<ProductResponse>> create(@Valid @RequestBody ProductCreateRequest request) {
         ProductResponse response = ProductResponse.from(productService.create(request));
         return ResponseEntity.created(URI.create("/api/v1/products/" + response.productId()))
-                .body(response);
+                .body(ApiResponse.created(response));
     }
 
     @GetMapping
-    public List<ProductResponse> findAll() {
-        return productService.findAll().stream().map(ProductResponse::from).toList();
+    public ResponseEntity<ApiResponse<List<ProductResponse>>> findAll() {
+        return ResponseEntity.ok(ApiResponse.success(productService.findAll(), ProductResponse::from));
     }
 }
