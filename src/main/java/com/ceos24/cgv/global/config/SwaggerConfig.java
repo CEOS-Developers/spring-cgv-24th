@@ -18,7 +18,7 @@ public class SwaggerConfig {
     public OpenAPI swagger() {
         Info info = new Info()
                 .title("CGV 클론코딩 API")
-                .description("ceos-23rd CGV 클론코딩 스웨거")
+                .description("ceos-24th CGV 클론코딩 스웨거")
                 .version("1.0.0");
 
         String jwtSchemeName = "JWT TOKEN";
