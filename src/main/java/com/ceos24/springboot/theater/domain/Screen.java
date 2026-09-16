@@ -2,6 +2,7 @@ package com.ceos24.springboot.theater.domain;
 
 import jakarta.persistence.*;
 import lombok.AccessLevel;
+import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
@@ -32,6 +33,21 @@ public class Screen {
     @Column(name = "row_count")
     private Integer rowCount;
 
-    @Column(name = "column_count")
-    private Integer columnCount;
+    @Column(name = "col_count")
+    private Integer colCount;
+
+    @Builder
+    public Screen(
+            Theater theater,
+            String screenName,
+            ScreenType screenType,
+            Integer rowCount,
+            Integer colCount
+    ) {
+        this.theater = theater;
+        this.screenName = screenName;
+        this.screenType = screenType;
+        this.rowCount = rowCount;
+        this.colCount = this.colCount;
+    }
 }
