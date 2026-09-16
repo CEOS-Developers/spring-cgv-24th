@@ -1,6 +1,8 @@
 package com.ceos.cgv.domain.cinema.controller;
 
 import com.ceos.cgv.domain.cinema.service.CinemaLikeService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -14,10 +16,13 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/v1/cinemas/{cinemaId}/likes")
 @RequiredArgsConstructor
+@Tag(name = "영화관 찜", description = "영화관 찜 및 취소")
 public class CinemaLikeController {
     private final CinemaLikeService cinemaLikeService;
 
     @PostMapping
+    @Operation(summary = "영화관 찜")
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "201", description = "영화관 찜 성공")
     public ResponseEntity<Void> create(
             @PathVariable Long cinemaId,
             @RequestParam Long userId
@@ -27,6 +32,8 @@ public class CinemaLikeController {
     }
 
     @DeleteMapping
+    @Operation(summary = "영화관 찜 취소")
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "204", description = "영화관 찜 취소 성공")
     public ResponseEntity<Void> delete(
             @PathVariable Long cinemaId,
             @RequestParam Long userId
