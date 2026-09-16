@@ -3,6 +3,7 @@ package com.ceos24.springboot.theater.domain;
 import com.ceos24.springboot.movie.domain.Movie;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
+import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
@@ -40,4 +41,23 @@ public class Screening {
     @Enumerated(EnumType.STRING)
     @Column(name = "screening_type", length = 10)
     private ScreeningType screeningType;
+
+
+    @Builder
+    public Screening(
+            Screen screen,
+            Movie movie,
+            LocalDate screeningDate,
+            LocalTime startTime,
+            LocalTime endTime,
+            ScreeningType screeningType
+    ) {
+        this.screen = screen;
+        this.movie = movie;
+        this.screeningDate = screeningDate;
+        this.startTime = startTime;
+        this.endTime = endTime;
+        this.screeningType = screeningType;
+    }
+
 }
