@@ -1,6 +1,5 @@
 package com.ceos24.spring_cgv.domain.reservation.entity;
 
-import com.ceos24.spring_cgv.domain.movie.entity.Seat;
 import com.ceos24.spring_cgv.domain.movie.entity.Screening;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -21,8 +20,8 @@ import lombok.NoArgsConstructor;
 @Table(
         name = "reservation_seat",
         uniqueConstraints = @UniqueConstraint(
-                name = "uk_reservation_seat_screening_seat",
-                columnNames = {"screening_id", "seat_id"}
+                name = "uk_reservation_seat_screening_row_number",
+                columnNames = {"screening_id", "seat_row", "seat_number"}
         )
 )
 @Getter
@@ -42,14 +41,21 @@ public class ReservationSeat {
     @JoinColumn(name = "screening_id", nullable = false)
     private Screening screening;
 
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "seat_id", nullable = false)
-    private Seat seat;
+    @Column(name = "seat_row", nullable = false)
+    private Integer seatRow;
+
+    @Column(name = "seat_number", nullable = false)
+    private Integer seatNumber;
+
+    @Column(name = "price", nullable = false)
+    private Integer price;
 
     @Builder
-    private ReservationSeat(Reservation reservation, Screening screening, Seat seat) {
+    private ReservationSeat(Reservation reservation, Screening screening, Integer seatRow, Integer seatNumber, Integer price) {
         this.reservation = reservation;
         this.screening = screening;
-        this.seat = seat;
+        this.seatRow = seatRow;
+        this.seatNumber = seatNumber;
+        this.price = price;
     }
 }

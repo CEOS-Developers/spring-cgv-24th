@@ -36,10 +36,14 @@ public class PurchaseItem {
     @Column(name = "quantity", nullable = false)
     private Integer quantity;
 
+    @Column(name = "unit_price", nullable = false)
+    private Integer unitPrice;
+
     @Builder
-    private PurchaseItem(Purchase purchase, Menu menu, Integer quantity) {
+    private PurchaseItem(Purchase purchase, Menu menu, Integer quantity, Integer unitPrice) {
         this.purchase = purchase;
         this.menu = menu;
         this.quantity = quantity;
+        this.unitPrice = unitPrice;
     }
 }
