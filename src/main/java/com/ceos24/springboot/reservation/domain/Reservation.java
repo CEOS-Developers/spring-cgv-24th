@@ -4,6 +4,7 @@ import com.ceos24.springboot.theater.domain.Screening;
 import com.ceos24.springboot.user.domain.User;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
+import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
@@ -54,4 +55,29 @@ public class Reservation {
 
     @Column(name = "reservation_at")
     private LocalDateTime reservationAt;
+
+    @Builder
+    public Reservation(
+            User user,
+            Screening screening,
+            Integer childCount,
+            Integer youthCount,
+            Integer adultCount,
+            Integer seniorCount,
+            String seatNumbers,
+            Integer totalPrice,
+            ReservationStatus status,
+            LocalDateTime reservationAt
+    ) {
+        this.user = user;
+        this.screening = screening;
+        this.childCount = childCount;
+        this.youthCount = youthCount;
+        this.adultCount = adultCount;
+        this.seniorCount = seniorCount;
+        this.seatNumbers = seatNumbers;
+        this.totalPrice = totalPrice;
+        this.status = status;
+        this.reservationAt = reservationAt;
+    }
 }
