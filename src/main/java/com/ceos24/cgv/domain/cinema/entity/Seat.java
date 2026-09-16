@@ -12,8 +12,8 @@ import lombok.Getter;
                         name = "uk_seat_auditorium_position",
                         columnNames = {
                                 "auditorium_id",
-                                "row_number",
-                                "column_number"
+                                "seat_row_number",
+                                "seat_column_number"
                         }
                 )
         }
@@ -28,11 +28,11 @@ public class Seat {
     @JoinColumn(name = "auditorium_id", nullable = false)
     private Auditorium auditorium;
 
-    @Column(name = "row_number", nullable = false)
+    @Column(name = "seat_row_number", nullable = false)
     @Min(value = 1, message = "좌석 행 번호는 1 이상이어야 합니다.")
     private int rowNumber;
 
-    @Column(name = "column_number", nullable = false)
+    @Column(name = "seat_column_number", nullable = false)
     @Min(value = 1, message = "좌석 열 개수는 1 이상이어야 합니다.")
     private int columnNumber;
 
