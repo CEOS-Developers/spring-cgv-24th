@@ -7,6 +7,6 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import java.util.Optional;
 
 public interface FoodOrderRepository extends JpaRepository<FoodOrder, Long> {
-    @EntityGraph(attributePaths = "items")
+    @EntityGraph(attributePaths = {"items", "items.product"})
     Optional<FoodOrder> findWithItemsById(Long orderId);
 }
