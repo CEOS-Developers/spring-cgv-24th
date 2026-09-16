@@ -40,7 +40,7 @@ public class ReservationSeat {
         this.seat = seat;
     }
 
-    public static ReservationSeat create(Reservation reservation, Schedule schedule, Seat seat) {
-        return new ReservationSeat(reservation, schedule, seat);
+    public static ReservationSeat create(Reservation reservation, Seat seat) {
+        return new ReservationSeat(reservation, reservation.getSchedule(), seat);
     }
 }

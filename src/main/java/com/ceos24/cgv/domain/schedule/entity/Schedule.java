@@ -46,4 +46,14 @@ public class Schedule {
     public static Schedule create(Movie movie, Screen screen, LocalDateTime startTime, LocalDateTime endTime, Integer price) {
         return new Schedule(movie, screen, startTime, endTime, price);
     }
+
+    // 상영 시작 전인지 (예매 가능 여부)
+    public boolean isBeforeStart(LocalDateTime now) {
+        return now.isBefore(this.startTime);
+    }
+
+    // 상영 시작 20분 전까지인지 (취소 가능 여부)
+    public boolean isBeforeCancelDeadline(LocalDateTime now) {
+        return now.isBefore(this.startTime.minusMinutes(20));
+    }
 }
