@@ -2,6 +2,7 @@ package com.ceos24.springboot.movie.domain;
 
 import jakarta.persistence.*;
 import lombok.AccessLevel;
+import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
@@ -40,4 +41,24 @@ public class Movie {
 
     @Column(name = "cast_members", length = 255)
     private String castMembers;
+
+//    Movie 객체를 만듦.
+    @Builder
+    public Movie(
+            String titleKr,
+            String titleEn,
+            Integer runtimeMinutes,
+            AgeRating ageRating,
+            LocalDate releaseDate,
+            String director,
+            String castMembers
+    ) {
+        this.titleKr = titleKr;
+        this.titleEn = titleEn;
+        this.runtimeMinutes = runtimeMinutes;
+        this.ageRating = ageRating;
+        this.releaseDate = releaseDate;
+        this.director = director;
+        this.castMembers = castMembers;
+    }
 }
