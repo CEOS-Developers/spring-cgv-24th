@@ -35,4 +35,35 @@ public class ReservationController {
                 .status(HttpStatus.CREATED)
                 .body(response);
     }
+
+    // 예매 확인
+    @Operation(
+            summary = "예매 확인",
+            description = "reservationId를 이용해 예매 정보를 조회합니다."
+    )
+    @GetMapping("/{reservationId}")
+    public ResponseEntity<ReservationResponse> getReservation(
+            @PathVariable Long reservationId
+    ) {
+
+        return ResponseEntity.ok(
+                reservationService.getReservation(reservationId)
+        );
+    }
+
+
+    // 예매 취소
+    @Operation(
+            summary = "예매 취소",
+            description = "reservationId를 이용해 기존 예매를 취소합니다."
+    )
+    @PatchMapping("/{reservationId}/cancel")
+    public ResponseEntity<ReservationResponse> cancelReservation(
+            @PathVariable Long reservationId
+    ) {
+
+        return ResponseEntity.ok(
+                reservationService.cancelReservation(reservationId)
+        );
+    }
 }

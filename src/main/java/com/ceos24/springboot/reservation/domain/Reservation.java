@@ -80,4 +80,13 @@ public class Reservation {
         this.status = status;
         this.reservationAt = reservationAt;
     }
+
+    // 예매 취소
+    public void cancel() {
+        if (this.status == ReservationStatus.Cancled) {
+            throw new IllegalArgumentException("이미 취소된 예매입니다.");
+        }
+
+        this.status = ReservationStatus.Cancled;
+    }
 }

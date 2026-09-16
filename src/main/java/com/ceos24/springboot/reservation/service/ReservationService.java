@@ -163,4 +163,36 @@ public class ReservationService {
 
         return TimeType.Normal;
     }
+
+    // 예매 확인
+    public ReservationResponse getReservation(Long reservationId) {
+
+        Reservation reservation = reservationRepository.findById(reservationId)
+                .orElseThrow(() ->
+                        new IllegalArgumentException(
+                                "해당 예매를 찾을 수 없습니다. reservationId="
+                                        + reservationId
+                        )
+                );
+
+        return ReservationResponse.from(reservation);
+    }
+
+
+    // 예매 취소
+    @Transactional
+    public ReservationResponse cancelReservation(Long reservationId) {
+
+        Reservation reservation = reservationRepository.findById(reservationId)
+                .orElseThrow(() ->
+                        new IllegalArgumentException(
+                                "해당 예매를 찾을 수 없습니다. reservationId="
+                                        + reservationId
+                        )
+                );
+
+        reservation.cancel();
+
+        return ReservationResponse.from(reservation);
+    }
 }
