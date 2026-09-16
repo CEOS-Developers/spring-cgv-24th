@@ -1,3 +1,5 @@
 package com.ceos24.cgv.domain.theater.dto.request;
 
-public record CreateTheaterRequest(String name, String address) {}
+import com.ceos24.cgv.domain.store.dto.request.CreateStoreRequest;
+
+public record CreateTheaterRequest(String name, String address, CreateStoreRequest createStoreRequest) {}

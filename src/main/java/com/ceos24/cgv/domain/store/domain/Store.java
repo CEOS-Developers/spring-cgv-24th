@@ -11,6 +11,11 @@ import lombok.NoArgsConstructor;
 @Entity
 public class Store {
 
+    public Store(Theater theater, String name) {
+        this.theater = theater;
+        this.name = name;
+    }
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;

@@ -10,6 +10,12 @@ import lombok.NoArgsConstructor;
 @Entity
 public class MenuStock {
 
+    public MenuStock(Menu menu, Store store, Long stock) {
+        this.menu = menu;
+        this.store = store;
+        this.stock = stock;
+    }
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
