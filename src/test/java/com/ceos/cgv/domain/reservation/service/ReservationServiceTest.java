@@ -51,10 +51,10 @@ class ReservationServiceTest {
         when(screen.getRowCount()).thenReturn(10);
         when(screen.getSeatsPerRow()).thenReturn(12);
         given(userRepository.findById(1L)).willReturn(Optional.of(user));
-        given(screeningRepository.findById(8L)).willReturn(Optional.of(screening));
-        given(reservedSeatRepository.existsByReservation_Screening_IdAndSeatRowAndSeatNumberAndReservation_Status(
+        given(screeningRepository.findByIdWithLock(8L)).willReturn(Optional.of(screening));
+        given(reservedSeatRepository.findIdByReservationScreeningIdAndSeatRowAndSeatNumberAndReservationStatus(
                 8L, "A", 1, ReservationStatus.RESERVED
-        )).willReturn(true);
+        )).willReturn(Optional.of(100L));
         ReservationCreateRequest request = new ReservationCreateRequest(
                 1L, 8L, List.of(new ReservedSeatRequest("A", 1))
         );

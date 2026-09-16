@@ -16,6 +16,7 @@ import com.ceos.cgv.global.exception.BusinessException;
 import com.ceos.cgv.global.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.HashSet;
@@ -29,11 +30,11 @@ public class ReservationService {
     private final ReservationRepository reservationRepository;
     private final ReservedSeatRepository reservedSeatRepository;
 
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public Reservation create(ReservationCreateRequest request) {
         User user = userRepository.findById(request.userId())
                 .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
-        Screening screening = screeningRepository.findById(request.screeningId())
+        Screening screening = screeningRepository.findByIdWithLock(request.screeningId())
                 .orElseThrow(() -> new BusinessException(ErrorCode.SCREENING_NOT_FOUND));
         Screen screen = screening.getScreen();
 
@@ -45,9 +46,10 @@ public class ReservationService {
                 throw new BusinessException(ErrorCode.DUPLICATE_SEAT_IN_REQUEST);
             }
             boolean alreadyReserved = reservedSeatRepository
-                    .existsByReservation_Screening_IdAndSeatRowAndSeatNumberAndReservation_Status(
+                    .findIdByReservationScreeningIdAndSeatRowAndSeatNumberAndReservationStatus(
                             screening.getId(), seat.seatRow(), seat.seatNumber(), ReservationStatus.RESERVED
-                    );
+                    )
+                    .isPresent();
             if (alreadyReserved) {
                 throw new BusinessException(ErrorCode.SEAT_ALREADY_RESERVED);
             }
