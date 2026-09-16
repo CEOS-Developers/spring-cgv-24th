@@ -7,3 +7,4 @@ public interface StoreOrderRepository
         extends JpaRepository<StoreOrder, Long> {
     //    주문 생성 및 주문내역 조회
 }
+

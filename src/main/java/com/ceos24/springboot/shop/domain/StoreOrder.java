@@ -4,6 +4,7 @@ import com.ceos24.springboot.theater.domain.Theater;
 import com.ceos24.springboot.user.domain.User;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
+import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import org.hibernate.annotations.CreationTimestamp;
@@ -36,4 +37,15 @@ public class StoreOrder {
     @CreationTimestamp
     @Column(name = "order_at", updatable = false)
     private LocalDateTime orderAt;
+
+    @Builder
+    public StoreOrder(
+            User user,
+            Theater theater,
+            Integer totalAmount
+    ) {
+        this.user = user;
+        this.theater = theater;
+        this.totalAmount = totalAmount;
+    }
 }

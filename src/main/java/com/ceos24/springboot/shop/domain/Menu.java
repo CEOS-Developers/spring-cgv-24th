@@ -1,5 +1,6 @@
 package com.ceos24.springboot.shop.domain;
 
+import com.ceos24.springboot.theater.domain.Theater;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -22,4 +23,6 @@ public class Menu {
 
     @Column(name = "menu_price")
     private Integer menuPrice;
+
+
 }

@@ -2,6 +2,7 @@ package com.ceos24.springboot.shop.domain;
 
 import jakarta.persistence.*;
 import lombok.AccessLevel;
+import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
@@ -27,4 +28,15 @@ public class OrderItem {
 
     @Column(name = "quantity")
     private Integer quantity;
+
+    @Builder
+    public OrderItem(
+            StoreOrder order,
+            Menu menu,
+            Integer quantity
+    ) {
+        this.order = order;
+        this.menu = menu;
+        this.quantity = quantity;
+    }
 }
