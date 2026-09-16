@@ -60,7 +60,7 @@ class FoodOrderServiceTest {
         given(userRepository.findById(1L)).willReturn(Optional.of(user));
         given(cinemaRepository.findById(2L)).willReturn(Optional.of(cinema));
         given(productRepository.findAllById(Set.of(3L))).willReturn(List.of(product));
-        given(inventoryRepository.findByCinema_IdAndProduct_Id(2L, 3L)).willReturn(Optional.of(inventory));
+        given(inventoryRepository.findByCinema_IdAndProduct_IdForUpdate(2L, 3L)).willReturn(Optional.of(inventory));
         given(foodOrderRepository.save(any(FoodOrder.class))).willAnswer(invocation -> invocation.getArgument(0));
 
         FoodOrder result = foodOrderService.create(new FoodOrderCreateRequest(
@@ -84,7 +84,7 @@ class FoodOrderServiceTest {
         given(userRepository.findById(1L)).willReturn(Optional.of(user));
         given(cinemaRepository.findById(2L)).willReturn(Optional.of(cinema));
         given(productRepository.findAllById(Set.of(3L))).willReturn(List.of(product));
-        given(inventoryRepository.findByCinema_IdAndProduct_Id(2L, 3L)).willReturn(Optional.of(inventory));
+        given(inventoryRepository.findByCinema_IdAndProduct_IdForUpdate(2L, 3L)).willReturn(Optional.of(inventory));
 
         assertThatThrownBy(() -> foodOrderService.create(new FoodOrderCreateRequest(
                 1L, 2L, List.of(new FoodOrderItemRequest(3L, 2))

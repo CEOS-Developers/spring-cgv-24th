@@ -55,7 +55,7 @@ public class FoodOrderService {
             if (product == null) {
                 throw new BusinessException(ErrorCode.PRODUCT_NOT_FOUND);
             }
-            Inventory inventory = inventoryRepository.findByCinema_IdAndProduct_Id(cinema.getId(), product.getId())
+            Inventory inventory = inventoryRepository.findByCinema_IdAndProduct_IdForUpdate(cinema.getId(), product.getId())
                     .orElseThrow(() -> new BusinessException(ErrorCode.INVENTORY_NOT_FOUND));
             if (inventory.getStockQuantity() < item.getValue()) {
                 throw new BusinessException(ErrorCode.STOCK_NOT_ENOUGH);
