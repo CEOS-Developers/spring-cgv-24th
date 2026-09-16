@@ -26,4 +26,15 @@ public class ReservationService {
         Reservation reservation = new Reservation(member, seat);
         reservationRepository.save(reservation);
     }
+
+    @Transactional
+    public void cancelReservation(Long memberId, Long screeningId, Long seatNumber) {
+        Reservation reservation = reservationRepository.findReservationToCancel(memberId, screeningId, seatNumber)
+                .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 예매이거나 권한이 없습니다."));
+
+        Seat seat = reservation.getSeat();
+        seat.cancelReservation();
+
+        reservationRepository.delete(reservation);
+    }
 }

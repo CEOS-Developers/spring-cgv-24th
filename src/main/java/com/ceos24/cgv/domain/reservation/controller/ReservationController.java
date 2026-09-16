@@ -21,4 +21,13 @@ public class ReservationController {
         reservationService.reserveSeat(memberId, screeningId, seatNumber);
         return ResponseEntity.ok(ApiResponse.success(null));
     }
+
+    @DeleteMapping("/screenings/{screeningId}/seats/{seatNumber}")
+    public ResponseEntity<ApiResponse<Void>> cancelReservation(
+            @RequestHeader("X-Member-Id") Long memberId,
+            @PathVariable Long screeningId,
+            @PathVariable Long seatNumber) {
+        reservationService.cancelReservation(memberId, screeningId, seatNumber);
+        return ResponseEntity.ok(ApiResponse.success(null));
+    }
 }

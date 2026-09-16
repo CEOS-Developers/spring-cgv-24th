@@ -32,4 +32,8 @@ public class Seat {
     public void reserveSeat() {
         this.isReserved = true;
     }
+
+    public void cancelReservation() {
+        this.isReserved = false;
+    }
 }
