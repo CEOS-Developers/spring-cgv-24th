@@ -27,4 +27,9 @@ public interface SnackStockRepository
             @Param("theaterId") Long theaterId,
             @Param("snackItemIds") List<Long> snackItemIds
     );
+
+    List<SnackStock> findAllForPurchase(
+            @Param("theaterId") Long theaterId,
+            @Param("snackItemIds") List<Long> snackItemIds
+    );
 }
