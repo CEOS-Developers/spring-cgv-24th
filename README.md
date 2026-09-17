@@ -1,5 +1,6 @@
 
 # 1. DB 설계 설명
+![Screenshot 2026-09-17 at 9.55.10 AM.png](../../../../var/folders/1r/y6j08w3d7m1_jrkghm0gcnym0000gn/T/TemporaryItems/NSIRD_screencaptureui_izTbSp/Screenshot%202026-09-17%20at%209.55.10%20AM.png)
 
 ## 1-1. 테이블별 역할
 
