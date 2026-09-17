@@ -9,7 +9,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-@Tag(name = "좌석", description = "좌석 API")
+@Tag(name = "좌석", description = "좌석 관련 API")
 @RequiredArgsConstructor
 @RequestMapping()
 @RestController

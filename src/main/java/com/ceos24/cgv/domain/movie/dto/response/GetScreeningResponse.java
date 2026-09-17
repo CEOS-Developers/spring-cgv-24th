@@ -6,5 +6,5 @@ import java.util.List;
 
 @Schema(description = "상영 스케줄 조회 응답 DTO")
 public record GetScreeningResponse(
-        @Schema(description = "극장 ID", example = "1") Long theaterId,
+        @Schema(description = "영화관 ID", example = "1") Long theaterId,
         @Schema(description = "영화별 상영 정보 목록") List<ScreeningMovieInfo> movies) {}

@@ -10,7 +10,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-@Tag(name = "상영관 관리자", description = "상영관 관리자 API")
+@Tag(name = "상영관 어드민", description = "상영관 어드민 관련 API")
 @RequestMapping("/api/admin")
 @RequiredArgsConstructor
 @RestController
@@ -18,7 +18,7 @@ public class ScreenAdminController {
 
     private final ScreenAdminService screenAdminService;
 
-    @Operation(summary = "상영관 생성", description = "특정 극장에 새로운 상영관을 생성합니다.")
+    @Operation(summary = "상영관 생성", description = "특정 영화관에 새로운 상영관을 생성합니다.")
     @PostMapping("/theaters/{theaterId}/screens")
     public ResponseEntity<ApiResponse<Void>> createScreen(
             @PathVariable Long theaterId, @RequestBody ScreenCreateRequest request) {

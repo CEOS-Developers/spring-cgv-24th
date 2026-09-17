@@ -7,6 +7,6 @@ import io.swagger.v3.oas.annotations.media.Schema;
 
 @Schema(description = "상영관 목록 조회 응답 DTO")
 public record GetScreenResponse(
-        @Schema(description = "극장 ID", example = "1") Long theaterId, 
+        @Schema(description = "영화관 ID", example = "1") Long theaterId, 
         @Schema(description = "상영관 목록") List<ScreenInfo> screens
 ) {}

@@ -12,7 +12,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-@Tag(name = "상영관", description = "상영관 API")
+@Tag(name = "상영관", description = "상영관 관련 API")
 @RequestMapping("/api")
 @RequiredArgsConstructor
 @RestController
@@ -20,7 +20,7 @@ public class ScreenController {
 
     private final ScreenService screenService;
 
-    @Operation(summary = "상영관 목록 조회", description = "특정 극장의 상영관 목록을 조회합니다.")
+    @Operation(summary = "상영관 목록 조회", description = "특정 영화관의 상영관 목록을 조회합니다.")
     @GetMapping("/theaters/{theaterId}/screens")
     public ResponseEntity<ApiResponse<GetScreenResponse>> getScreens(@PathVariable Long theaterId) {
         return ResponseEntity.ok(ApiResponse.success(screenService.getScreens(theaterId)));

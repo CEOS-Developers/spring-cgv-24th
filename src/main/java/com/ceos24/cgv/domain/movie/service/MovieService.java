@@ -68,12 +68,12 @@ public class MovieService {
      *     ]
      *   }
      *
-     * @param theaterId 조회할 극장의 ID
-     * @return 극장 ID와 영화별 상영 시간표가 포함된 응답 객체
+     * @param theaterId 조회할 영화관의 ID
+     * @return 영화관 ID와 영화별 상영 시간표가 포함된 응답 객체
      */
     @Transactional(readOnly = true)
     public GetScreeningResponse getScreenings(Long theaterId) {
-        // 1. 특정 극장의 전체 상영 일정을 조회
+        // 1. 특정 영화관의 전체 상영 일정을 조회
         List<Screening> screenings = screeningRepository.findAllByTheaterIdWithDetails(theaterId);
 
         // 2. 상영 일정 리스트를 영화'를 기준으로 그룹핑

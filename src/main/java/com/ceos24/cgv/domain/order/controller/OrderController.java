@@ -10,7 +10,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-@Tag(name = "Order", description = "주문 관련 API")
+@Tag(name = "주문", description = "주문 관련 API")
 @RequiredArgsConstructor
 @RequestMapping("/api")
 @RestController

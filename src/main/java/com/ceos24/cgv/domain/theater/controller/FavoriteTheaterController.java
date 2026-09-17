@@ -10,7 +10,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-@Tag(name = "찜한 극장", description = "찜한 극장 API")
+@Tag(name = "찜한 영화관", description = "찜한 영화관 관련 API")
 @RestController
 @RequestMapping("/api")
 @RequiredArgsConstructor
@@ -18,7 +18,7 @@ public class FavoriteTheaterController {
 
     private final FavoriteTheaterService favoriteTheaterService;
 
-    @Operation(summary = "찜한 극장 추가", description = "해당 회원의 찜한 극장을 추가합니다.")
+    @Operation(summary = "찜한 영화관 추가", description = "해당 회원의 찜한 영화관을 추가합니다.")
     @PostMapping("/theaters/{theaterId}/favorite")
     public ResponseEntity<ApiResponse<Void>> addFavoriteTheater(
             @PathVariable Long theaterId,
@@ -27,7 +27,7 @@ public class FavoriteTheaterController {
         return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.success(null));
     }
 
-    @Operation(summary = "찜한 극장 삭제", description = "등록된 찜한 극장을 삭제합니다.")
+    @Operation(summary = "찜한 영화관 삭제", description = "등록된 찜한 영화관을 삭제합니다.")
     @DeleteMapping("/favoriteTheaters/{favoriteTheaterId}")
     public ResponseEntity<ApiResponse<Void>> deleteFavoriteTheater(
             @PathVariable Long favoriteTheaterId,
@@ -36,7 +36,7 @@ public class FavoriteTheaterController {
         return ResponseEntity.ok(ApiResponse.success(null));
     }
 
-    @Operation(summary = "찜한 극장 목록 조회", description = "사용자가 찜한 극장 목록을 조회합니다.")
+    @Operation(summary = "찜한 영화관 목록 조회", description = "사용자가 찜한 영화관 목록을 조회합니다.")
     @GetMapping("/favoriteTheaters")
     public ResponseEntity<ApiResponse<GetTheaterResponse>> getAllFavoriteTheaters(
             @RequestHeader("X-Member-Id") Long memberId) {

@@ -27,13 +27,13 @@ public class MovieController {
         return ResponseEntity.ok(ApiResponse.success(movieService.getAllMovies()));
     }
 
-    @Operation(summary = "극장별 영화 조회", description = "특정 극장에서 상영하는 영화 목록을 조회합니다.")
+    @Operation(summary = "영화관별 영화 조회", description = "특정 영화관에서 상영하는 영화 목록을 조회합니다.")
     @GetMapping("/theaters/{theaterId}/movies")
     public ResponseEntity<ApiResponse<GetMovieResponse>> getMovies(@PathVariable Long theaterId) {
         return ResponseEntity.ok(ApiResponse.success(movieService.getMovies(theaterId)));
     }
 
-    @Operation(summary = "극장별 상영 시간표 조회", description = "특정 극장의 상영 시간표를 조회합니다.")
+    @Operation(summary = "영화관별 상영 시간표 조회", description = "특정 영화관의 상영 시간표를 조회합니다.")
     @GetMapping("/theaters/{theaterId}/screenings")
     public ResponseEntity<ApiResponse<GetScreeningResponse>> getScreenings(@PathVariable Long theaterId) {
         return ResponseEntity.ok(ApiResponse.success(movieService.getScreenings(theaterId)));

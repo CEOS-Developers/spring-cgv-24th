@@ -11,7 +11,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-@Tag(name = "극장", description = "극장 API")
+@Tag(name = "영화관", description = "영화관 관련 API")
 @RequestMapping("/api/theaters")
 @RequiredArgsConstructor
 @RestController
@@ -19,7 +19,7 @@ public class TheaterController {
 
     private final TheaterService theaterService;
 
-    @Operation(summary = "극장 목록 조회", description = "전체 극장 목록을 조회합니다.")
+    @Operation(summary = "영화관 목록 조회", description = "전체 영화관 목록을 조회합니다.")
     @GetMapping
     public ResponseEntity<ApiResponse<GetTheaterResponse>> getTheaters() {
         return ResponseEntity.ok(ApiResponse.success(theaterService.getTheaters()));

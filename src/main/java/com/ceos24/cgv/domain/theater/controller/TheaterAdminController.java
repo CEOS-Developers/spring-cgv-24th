@@ -13,7 +13,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-@Tag(name = "극장 관리자", description = "극장 관리자 API")
+@Tag(name = "영화관 어드민", description = "영화관 어드민 관련 API")
 @RequestMapping("/api/admin")
 @RequiredArgsConstructor
 @RestController
@@ -21,7 +21,7 @@ public class TheaterAdminController {
 
     private final TheaterAdminService theaterAdminService;
 
-    @Operation(summary = "극장 생성", description = "새로운 극장을 생성합니다.")
+    @Operation(summary = "영화관 생성", description = "새로운 영화관을 생성합니다.")
     @PostMapping("/theaters")
     public ResponseEntity<ApiResponse<Void>> createTheater(@RequestBody CreateTheaterRequest request) {
         theaterAdminService.createTheater(request);

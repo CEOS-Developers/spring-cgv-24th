@@ -5,9 +5,9 @@ import io.swagger.v3.oas.annotations.media.Schema;
 
 import java.util.List;
 
-@Schema(description = "스토어 생성 요청 DTO")
+@Schema(description = "매장 생성 요청 DTO")
 public record CreateStoreRequest(
-        @Schema(description = "스토어 이름", example = "CGV 매점")
+        @Schema(description = "매장 이름", example = "CGV 매점")
         String name,
         @Schema(description = "메뉴 항목 목록")
         List<MenuItem> menuItems

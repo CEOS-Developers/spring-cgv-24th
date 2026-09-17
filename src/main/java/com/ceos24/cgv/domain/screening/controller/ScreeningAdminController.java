@@ -16,7 +16,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/api/admin")
-@Tag(name = "상영 관리", description = "관리자용 상영 관리 API")
+@Tag(name = "상영 어드민", description = "상영 어드민 관련 API")
 public class ScreeningAdminController {
 
     private final ScreeningAdminService screeningAdminService;
