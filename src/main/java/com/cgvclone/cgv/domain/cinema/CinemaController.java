@@ -32,7 +32,7 @@ public class CinemaController {
     }
 
     @PostMapping("/{cinemaId}/keep")
-    public ResponseEntity<Void> keepMovie(@PathVariable Long cinemaId) {
+    public ResponseEntity<Void> keepCinema(@PathVariable Long cinemaId) {
         cinemaKeepingService.keepCinema(cinemaId);
         return ResponseEntity
                 .status(CREATED)
