@@ -3,7 +3,7 @@ package com.cgvclone.cgv.domain.booking;
 import com.cgvclone.cgv.common.exception.ErrorCode;
 import com.cgvclone.cgv.common.exception.GlobalException;
 import com.cgvclone.cgv.domain.User.User;
-import com.cgvclone.cgv.domain.User.UserRepository;
+import com.cgvclone.cgv.domain.User.UserService;
 import com.cgvclone.cgv.domain.booking.dto.BookingCreateRequest;
 import com.cgvclone.cgv.domain.booking.dto.SeatRequest;
 import com.cgvclone.cgv.domain.showtime.Showtime;
@@ -20,15 +20,14 @@ import org.springframework.transaction.annotation.Transactional;
 public class BookingService {
 
     private final BookingRepository bookingRepository;
-    private final UserRepository userRepository;
+    private final UserService userService;
     private final ShowtimeRepository showtimeRepository;
     private final BookingSeatRepository bookingSeatRepository;
 
     public void createBooking(BookingCreateRequest request) {
         // TODO: 인증인가 스터디 후 User 지정 필요
         Long currentUserId = 1L;
-        User user = userRepository.findById(currentUserId)
-                .orElseThrow(() -> new GlobalException(ErrorCode.USER_NOT_FOUND));
+        User user = userService.getUser(currentUserId);
 
         Showtime showtime = showtimeRepository.findById(request.showtimeId())
                 .orElseThrow(() -> new GlobalException(ErrorCode.SHOWTIME_NOT_FOUND));
