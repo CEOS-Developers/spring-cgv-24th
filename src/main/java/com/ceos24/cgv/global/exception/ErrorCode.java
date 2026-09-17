@@ -7,7 +7,11 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public enum ErrorCode {
 
-    // Common / Member
+    // Common
+    FORBIDDEN_ERROR(409, "허용되지 않는 요청입니다."),
+
+
+    // Member
     MEMBER_NOT_FOUND(404, "존재하지 않는 회원입니다."),
     
     // Store / Order
@@ -22,8 +26,10 @@ public enum ErrorCode {
     SCREENING_NOT_FOUND(404, "존재하지 않는 상영 일정입니다."),
     SCREEN_NOT_FOUND(404, "존재하지 않는 상영관입니다."),
     
-    // Movie
-    MOVIE_NOT_FOUND(404, "존재하지 않는 영화입니다.");
+    // Movie / FavoriteMovie
+    MOVIE_NOT_FOUND(404, "존재하지 않는 영화입니다."),
+    FAVORITE_MOVIE_ALREADY_EXIST(409, "이미 찜한 영화입니다."),
+    FAVORITE_MOVIE_NOT_FOUND(404, "찜한 영화가 존재하지 않습니다.");
 
     private final int status;
     private final String message;

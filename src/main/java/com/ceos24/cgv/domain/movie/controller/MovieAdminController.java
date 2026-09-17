@@ -13,15 +13,15 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-@Tag(name = "영화 관리자", description = "영화 관리자 관련 API")
+@Tag(name = "영화 어드민", description = "영화 어드민 관련 API")
 @RestController
-@RequestMapping("/api/admin")
 @RequiredArgsConstructor
 public class MovieAdminController {
+
     private final MovieAdminService movieAdminService;
 
-    @Operation(summary = "영화 생성", description = "새로운 영화를 생성합니다.")
-    @PostMapping("/movies")
+    @Operation(summary = "영화 등록", description = "새로운 영화를 등록합니다.")
+    @PostMapping("/api/admin/movies")
     public ResponseEntity<ApiResponse<Void>> createMovie(@RequestBody CreateMovieRequest request) {
         movieAdminService.createMovie(request);
         return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.success(null));
