@@ -1,5 +1,7 @@
 package com.cgvclone.cgv.domain.cinema_keeping;
 
+import com.cgvclone.cgv.common.exception.ErrorCode;
+import com.cgvclone.cgv.common.exception.GlobalException;
 import com.cgvclone.cgv.domain.User.User;
 import com.cgvclone.cgv.domain.User.UserService;
 import com.cgvclone.cgv.domain.cinema.Cinema;
@@ -17,6 +19,12 @@ public class CinemaKeepingService {
     private final UserService userService;
     private final CinemaService cinemaService;
 
+    @Transactional(readOnly = true)
+    public CinemaKeeping getCinemaKeeping(User user, Cinema cinema) {
+        return cinemaKeepingRepository.findByUserAndCinema(user, cinema)
+                .orElseThrow(() -> new GlobalException(ErrorCode.CINEMA_KEEPING_NOT_FOUND));
+    }
+
     public void keepCinema(Long cinemaId) {
         // TODO: 인증인가 스터디 후 User 지정 필요
         Long currentUserId = 1L;
@@ -30,5 +38,17 @@ public class CinemaKeepingService {
                 .build();
 
         cinemaKeepingRepository.save(cinemaKeeping);
+    }
+
+    public void cancelCinemaKeeping(Long cinemaId) {
+        // TODO: 인증인가 스터디 후 User 지정 필요
+        Long currentUserId = 1L;
+        User user = userService.getUser(currentUserId);
+
+        Cinema cinema = cinemaService.getCinemaEntity(cinemaId);
+
+        CinemaKeeping cinemaKeeping = getCinemaKeeping(user, cinema);
+
+        cinemaKeepingRepository.delete(cinemaKeeping);
     }
 }
