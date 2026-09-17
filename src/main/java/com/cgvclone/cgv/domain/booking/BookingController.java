@@ -1,6 +1,7 @@
 package com.cgvclone.cgv.domain.booking;
 
 import static org.springframework.http.HttpStatus.CREATED;
+import static org.springframework.http.HttpStatus.NO_CONTENT;
 
 import com.cgvclone.cgv.domain.booking.dto.BookingCreateRequest;
 import lombok.RequiredArgsConstructor;
@@ -30,7 +31,7 @@ public class BookingController {
     public ResponseEntity<Void> cancelBooking(@PathVariable Long bookingId) {
         bookingService.cancelBooking(bookingId);
         return ResponseEntity
-                .status(CREATED)
+                .status(NO_CONTENT)
                 .build();
     }
 }
