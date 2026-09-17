@@ -21,6 +21,7 @@ public enum ErrorCode {
     AUDITORIUM_TYPE_NOT_FOUND(HttpStatus.NOT_FOUND, "AUDITORIUM_TYPE404", "상영관 유형을 찾을 수 없습니다."),
     SCREENING_NOT_FOUND(HttpStatus.NOT_FOUND, "SCREENING404", "상영 회차를 찾을 수 없습니다."),
     SCREENING_OVERLAP(HttpStatus.CONFLICT, "SCREENING409", "상영관의 다른 회차와 시간이 겹칩니다."),
+    SCREENING_ALREADY_STARTED(HttpStatus.CONFLICT, "SCREENING_STARTED409", "이미 시작된 상영 회차는 예매할 수 없습니다."),
 
     // 예매
     MEMBER_NOT_FOUND(HttpStatus.NOT_FOUND, "MEMBER404", "회원을 찾을 수 없습니다."),
@@ -29,6 +30,7 @@ public enum ErrorCode {
     RESERVATION_NOT_FOUND(HttpStatus.NOT_FOUND, "RESERVATION404", "예매를 찾을 수 없습니다."),
     RESERVATION_FORBIDDEN(HttpStatus.FORBIDDEN, "RESERVATION403", "본인의 예매만 취소할 수 있습니다."),
     RESERVATION_ALREADY_CANCELLED(HttpStatus.CONFLICT, "RESERVATION409", "이미 취소된 예매입니다."),
+    RESERVATION_CANCELLATION_CLOSED(HttpStatus.CONFLICT, "RESERVATION_CLOSED409", "상영 시작 후에는 예매를 취소할 수 없습니다."),
 
     // 영화관 찜
     THEATER_FAVORITE_NOT_FOUND(HttpStatus.NOT_FOUND, "THEATER_FAVORITE404", "영화관 찜을 찾을 수 없습니다."),

@@ -11,6 +11,7 @@ import com.spring_cgv_24th.domain.screening.repository.ScreeningRepository;
 import com.spring_cgv_24th.domain.screening.repository.ScreeningSeatRepository;
 import com.spring_cgv_24th.global.exception.CustomException;
 import com.spring_cgv_24th.global.exception.ErrorCode;
+import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -27,6 +28,7 @@ public class ReservationService {
     private final ScreeningRepository screeningRepository;
     private final ScreeningSeatRepository screeningSeatRepository;
     private final ReservationRepository reservationRepository;
+    private final Clock clock;
 
     @Transactional
     public ReservationResDTO createReservation(ReservationReqDTO.CreateReservationDTO request) {
@@ -38,6 +40,7 @@ public class ReservationService {
 
         Screening screening = screeningRepository.findById(request.screeningId())
                 .orElseThrow(() -> new CustomException(ErrorCode.SCREENING_NOT_FOUND));
+        requireBeforeStart(screening, ErrorCode.SCREENING_ALREADY_STARTED);
 
         // 서로 겹치는 좌석 요청도 항상 같은 ID 순서로 잠근다. 동시성 문제 방지
         List<ScreeningSeat> seats = new ArrayList<>();
@@ -50,6 +53,9 @@ public class ReservationService {
             }
             seats.add(seat);
         }
+
+        // 좌석 잠금을 기다리는 동안 상영이 시작될 수 있으므로 저장 직전에 다시 확인한다.
+        requireBeforeStart(screening, ErrorCode.SCREENING_ALREADY_STARTED);
 
         Reservation reservation = reservationRepository.save(Reservation.builder()
                 .screening(screening)
@@ -66,10 +72,21 @@ public class ReservationService {
         if (reservation.getStatus() == ReservationStatus.CANCELLED) {
             throw new CustomException(ErrorCode.RESERVATION_ALREADY_CANCELLED);
         }
+        requireBeforeStart(reservation.getScreening(), ErrorCode.RESERVATION_CANCELLATION_CLOSED);
 
         // 현재 이 예매가 점유한 좌석만 해제하고 상태를 함께 변경한다.
-        screeningSeatRepository.findAllByReservationIdForUpdate(reservationId)
-                .forEach(ScreeningSeat::release);
-        reservation.cancel(LocalDateTime.now());
+        List<ScreeningSeat> seats = screeningSeatRepository.findAllByReservationIdForUpdate(reservationId);
+        LocalDateTime cancelledAt = requireBeforeStart(
+                reservation.getScreening(), ErrorCode.RESERVATION_CANCELLATION_CLOSED);
+        seats.forEach(ScreeningSeat::release);
+        reservation.cancel(cancelledAt);
+    }
+
+    private LocalDateTime requireBeforeStart(Screening screening, ErrorCode errorCode) {
+        LocalDateTime now = LocalDateTime.now(clock);
+        if (!now.isBefore(screening.getStartsAt())) {
+            throw new CustomException(errorCode);
+        }
+        return now;
     }
 }
