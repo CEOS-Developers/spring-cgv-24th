@@ -8,6 +8,7 @@ import lombok.NoArgsConstructor;
 
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
+@Table(uniqueConstraints = @UniqueConstraint(columnNames = {"theater_id", "member_id"}))
 @Entity
 public class FavoriteTheater {
 
@@ -20,11 +21,11 @@ public class FavoriteTheater {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @JoinColumn(nullable = false)
+    @JoinColumn(nullable = false, name = "theater_id")
     @ManyToOne(fetch = FetchType.LAZY)
     private Theater theater;
 
-    @JoinColumn(nullable = false)
+    @JoinColumn(nullable = false, name = "member_id")
     @ManyToOne(fetch = FetchType.LAZY)
     private Member member;
 }
