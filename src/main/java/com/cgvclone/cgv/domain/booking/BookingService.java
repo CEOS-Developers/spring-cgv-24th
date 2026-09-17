@@ -37,18 +37,7 @@ public class BookingService {
 
         Showtime showtime = showtimeService.getShowtime(request.showtimeId());
 
-        List<BookingSeat> bookedSeats = bookingSeatRepository.findBookedSeatsByShowtimeId(showtime.getShowtimeId());
-
-        for (SeatRequest requestedSeat : request.seats()) {
-            boolean isAlreadyBooked = bookedSeats.stream()
-                    .anyMatch(booked ->
-                            booked.getRowNo().equals(requestedSeat.rowNo()) &&
-                                    booked.getColumnNo().equals(requestedSeat.columnNo())
-                    );
-            if (isAlreadyBooked) {
-                throw new GlobalException(ErrorCode.SEAT_ALREADY_BOOKED);
-            }
-        }
+        validateSeatsAvailable(showtime.getShowtimeId(), request.seats());
 
         Booking booking = Booking.builder()
                 .user(user)
@@ -69,5 +58,20 @@ public class BookingService {
     public void cancelBooking(Long bookingId) {
         Booking booking = getBooking(bookingId);
         booking.cancel(LocalDateTime.now());
+    }
+
+    private void validateSeatsAvailable(Long showtimeId, List<SeatRequest> requestedSeats) {
+        List<BookingSeat> bookedSeats = bookingSeatRepository.findBookedSeatsByShowtimeId(showtimeId);
+
+        for (SeatRequest requestedSeat : requestedSeats) {
+            boolean isAlreadyBooked = bookedSeats.stream()
+                    .anyMatch(booked ->
+                            booked.getRowNo().equals(requestedSeat.rowNo()) &&
+                                    booked.getColumnNo().equals(requestedSeat.columnNo())
+                    );
+            if (isAlreadyBooked) {
+                throw new GlobalException(ErrorCode.SEAT_ALREADY_BOOKED);
+            }
+        }
     }
 }
