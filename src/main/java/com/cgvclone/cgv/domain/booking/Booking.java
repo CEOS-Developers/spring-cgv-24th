@@ -1,5 +1,6 @@
 package com.cgvclone.cgv.domain.booking;
 
+import com.cgvclone.cgv.common.BaseEntity;
 import com.cgvclone.cgv.domain.User.User;
 import com.cgvclone.cgv.domain.showtime.Showtime;
 import jakarta.persistence.CascadeType;
@@ -27,7 +28,7 @@ import lombok.NoArgsConstructor;
 @Table(name = "bookings")
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
-public class Booking {
+public class Booking extends BaseEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
