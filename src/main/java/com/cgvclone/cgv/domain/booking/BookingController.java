@@ -1,10 +1,11 @@
-package com.cgvclone.cgv.domain.Booking;
+package com.cgvclone.cgv.domain.booking;
 
 import static org.springframework.http.HttpStatus.CREATED;
 
-import com.cgvclone.cgv.domain.Booking.dto.BookingCreateRequest;
+import com.cgvclone.cgv.domain.booking.dto.BookingCreateRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -20,6 +21,14 @@ public class BookingController {
     @PostMapping
     public ResponseEntity<Void> createBooking(@RequestBody BookingCreateRequest request) {
         bookingService.createBooking(request);
+        return ResponseEntity
+                .status(CREATED)
+                .build();
+    }
+
+    @PostMapping("/{bookingId}/cancel")
+    public ResponseEntity<Void> cancelBooking(@PathVariable Long bookingId) {
+        bookingService.cancelBooking(bookingId);
         return ResponseEntity
                 .status(CREATED)
                 .build();

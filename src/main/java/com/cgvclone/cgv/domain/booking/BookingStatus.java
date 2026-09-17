@@ -1,4 +1,4 @@
-package com.cgvclone.cgv.domain.Booking;
+package com.cgvclone.cgv.domain.booking;
 
 public enum BookingStatus {
     BOOKED,

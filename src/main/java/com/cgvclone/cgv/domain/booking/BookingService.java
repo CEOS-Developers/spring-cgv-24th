@@ -1,11 +1,12 @@
-package com.cgvclone.cgv.domain.Booking;
+package com.cgvclone.cgv.domain.booking;
 
-import com.cgvclone.cgv.domain.Booking.dto.BookingCreateRequest;
-import com.cgvclone.cgv.domain.Booking.dto.SeatRequest;
+import com.cgvclone.cgv.domain.booking.dto.BookingCreateRequest;
+import com.cgvclone.cgv.domain.booking.dto.SeatRequest;
 import com.cgvclone.cgv.domain.User.User;
 import com.cgvclone.cgv.domain.User.UserRepository;
 import com.cgvclone.cgv.domain.showtime.Showtime;
 import com.cgvclone.cgv.domain.showtime.ShowtimeRepository;
+import java.time.LocalDateTime;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -58,5 +59,12 @@ public class BookingService {
                         .build())
                 .toList();
         bookingSeatRepository.saveAll(bookingSeats);
+    }
+
+    public void cancelBooking(Long bookingId) {
+        Booking booking = bookingRepository.findById(bookingId)
+                .orElseThrow(() -> new IllegalArgumentException("Booking not found"));
+
+        booking.cancel(LocalDateTime.now());
     }
 }

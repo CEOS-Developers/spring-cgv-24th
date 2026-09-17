@@ -1,4 +1,4 @@
-package com.cgvclone.cgv.domain.Booking;
+package com.cgvclone.cgv.domain.booking;
 
 import java.util.List;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -10,6 +10,6 @@ public interface BookingSeatRepository extends JpaRepository<BookingSeat, Long> 
     @Query("SELECT bs FROM BookingSeat bs " +
             "JOIN bs.booking b " +
             "WHERE b.showtime.showtimeId = :showtimeId " +
-            "AND b.status = 'BOOKED'")
+            "AND bs.status = 'BOOKED'")
     List<BookingSeat> findBookedSeatsByShowtimeId(@Param("showtimeId") Long showtimeId);
 }

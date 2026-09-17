@@ -1,4 +1,4 @@
-package com.cgvclone.cgv.domain.Booking;
+package com.cgvclone.cgv.domain.booking;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 

@@ -1,4 +1,4 @@
-package com.cgvclone.cgv.domain.Booking.dto;
+package com.cgvclone.cgv.domain.booking.dto;
 
 import java.util.List;
 

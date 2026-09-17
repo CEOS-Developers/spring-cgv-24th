@@ -1,7 +1,5 @@
-package com.cgvclone.cgv.domain.Booking;
+package com.cgvclone.cgv.domain.booking;
 
-import com.cgvclone.cgv.domain.User.User;
-import com.cgvclone.cgv.domain.showtime.Showtime;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -13,40 +11,44 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
-import java.time.LocalDateTime;
 import lombok.AccessLevel;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 @Entity
-@Table(name = "bookings")
+@Table(name = "booking_seats")
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
-public class Booking {
+public class BookingSeat {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long bookingId;
+    private Long bookingSeatId;
+
+    @Column(nullable = false)
+    private Integer rowNo;
+
+    @Column(nullable = false)
+    private Integer columnNo;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 30)
     private BookingStatus status;
 
-    private LocalDateTime canceledAt;
-
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "user_id", nullable = false)
-    private User user;
-
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "showtime_id", nullable = false)
-    private Showtime showtime;
+    @JoinColumn(name = "booking_id", nullable = false)
+    private Booking booking;
 
     @Builder
-    public Booking(User user, Showtime showtime) {
-        this.user = user;
-        this.showtime = showtime;
+    public BookingSeat(Integer rowNo, Integer columnNo, Booking booking) {
+        this.rowNo = rowNo;
+        this.columnNo = columnNo;
+        this.booking = booking;
         this.status = BookingStatus.BOOKED;
+    }
+
+    public void cancel() {
+        this.status = BookingStatus.CANCELLED;
     }
 }
