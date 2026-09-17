@@ -20,6 +20,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 @RequiredArgsConstructor
 @Service
@@ -39,28 +41,43 @@ public class OrderService {
         Store store = storeRepository.findById(request.storeId())
                 .orElseThrow(() -> new BusinessException(ErrorCode.STORE_NOT_FOUND));
 
+
+        List<Long> menuIds = request.items().stream()
+                .map(OrderItemRequest::menuId).distinct().toList();
+
+        List<MenuStock> menuStocks = menuStockRepository.findAllByStoreIdAndMenuIdIn(request.storeId(), menuIds);
+
+        if (menuStocks.size() != menuIds.size()) {
+            throw new BusinessException(ErrorCode.MENU_NOT_FOUND);
+        }
+
+        Map<Long, MenuStock> menuStockMap = menuStocks.stream()
+                .collect(Collectors.toMap(
+                        ms -> ms.getMenu().getId(),
+                        ms -> ms
+                ));
+
         long totalPrice = 0L;
-        List<MenuStock> menuStocks = new ArrayList<>();
         
         for (OrderItemRequest itemRequest : request.items()) {
-            MenuStock menuStock = menuStockRepository.findByStoreIdAndMenuId(request.storeId(), itemRequest.menuId())
-                    .orElseThrow(() -> new BusinessException(ErrorCode.MENU_NOT_FOUND));
-            
+
+            MenuStock menuStock = menuStockMap.get(itemRequest.menuId());
+
             menuStock.decreaseStock(itemRequest.quantity());
             
             long price = menuStock.getMenu().getPrice();
             totalPrice += price * itemRequest.quantity();
-            menuStocks.add(menuStock);
         }
 
         Order order = new Order(member, store, totalPrice);
         orderRepository.save(order);
 
         List<OrderItem> orderItems = new ArrayList<>();
-        for (int i = 0; i < request.items().size(); i++) {
-            OrderItemRequest itemRequest = request.items().get(i);
-            MenuStock menuStock = menuStocks.get(i);
-            
+
+        for (OrderItemRequest itemRequest : request.items()) {
+
+            MenuStock menuStock = menuStockMap.get(itemRequest.menuId());
+
             OrderItem orderItem = new OrderItem(order, menuStock.getMenu(), itemRequest.quantity(), menuStock.getMenu().getPrice());
             orderItems.add(orderItem);
         }
