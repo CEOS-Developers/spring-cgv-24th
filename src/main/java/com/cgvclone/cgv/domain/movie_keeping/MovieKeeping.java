@@ -1,7 +1,7 @@
 package com.cgvclone.cgv.domain.movie_keeping;
 
 import com.cgvclone.cgv.common.BaseEntity;
-import com.cgvclone.cgv.domain.User.User;
+import com.cgvclone.cgv.domain.user.User;
 import com.cgvclone.cgv.domain.movie.Movie;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;

@@ -2,8 +2,8 @@ package com.cgvclone.cgv.domain.booking;
 
 import com.cgvclone.cgv.common.exception.ErrorCode;
 import com.cgvclone.cgv.common.exception.GlobalException;
-import com.cgvclone.cgv.domain.User.User;
-import com.cgvclone.cgv.domain.User.UserService;
+import com.cgvclone.cgv.domain.user.User;
+import com.cgvclone.cgv.domain.user.UserService;
 import com.cgvclone.cgv.domain.booking.dto.BookingCreateRequest;
 import com.cgvclone.cgv.domain.booking.dto.SeatRequest;
 import com.cgvclone.cgv.domain.showtime.Showtime;

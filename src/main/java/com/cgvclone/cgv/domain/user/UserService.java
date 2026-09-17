@@ -1,4 +1,4 @@
-package com.cgvclone.cgv.domain.User;
+package com.cgvclone.cgv.domain.user;
 
 import com.cgvclone.cgv.common.exception.ErrorCode;
 import com.cgvclone.cgv.common.exception.GlobalException;

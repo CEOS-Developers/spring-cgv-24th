@@ -1,4 +1,4 @@
-package com.cgvclone.cgv.domain.User;
+package com.cgvclone.cgv.domain.user;
 
 import com.cgvclone.cgv.common.BaseEntity;
 import jakarta.persistence.Column;

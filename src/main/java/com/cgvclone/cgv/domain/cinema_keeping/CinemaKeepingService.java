@@ -2,8 +2,8 @@ package com.cgvclone.cgv.domain.cinema_keeping;
 
 import com.cgvclone.cgv.common.exception.ErrorCode;
 import com.cgvclone.cgv.common.exception.GlobalException;
-import com.cgvclone.cgv.domain.User.User;
-import com.cgvclone.cgv.domain.User.UserService;
+import com.cgvclone.cgv.domain.user.User;
+import com.cgvclone.cgv.domain.user.UserService;
 import com.cgvclone.cgv.domain.cinema.Cinema;
 import com.cgvclone.cgv.domain.cinema.CinemaService;
 import lombok.RequiredArgsConstructor;

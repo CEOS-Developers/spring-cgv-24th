@@ -1,4 +1,4 @@
-package com.cgvclone.cgv.domain.User;
+package com.cgvclone.cgv.domain.user;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 
