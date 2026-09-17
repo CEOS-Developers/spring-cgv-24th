@@ -1,5 +1,7 @@
 package com.cgvclone.cgv.domain.movie;
 
+import com.cgvclone.cgv.common.exception.ErrorCode;
+import com.cgvclone.cgv.common.exception.GlobalException;
 import com.cgvclone.cgv.domain.movie.dto.MovieDetailResponse;
 import com.cgvclone.cgv.domain.movie.dto.MovieListResponse;
 import java.util.List;
@@ -23,7 +25,7 @@ public class MovieService {
     @Transactional(readOnly = true)
     public MovieDetailResponse getMovie(Long movieId) {
         Movie movie = movieRepository.findById(movieId)
-                .orElseThrow(() -> new IllegalArgumentException("Movie not found"));
+                .orElseThrow(() -> new GlobalException(ErrorCode.MOVIE_NOT_FOUND));
         return MovieDetailResponse.from(movie);
     }
 }

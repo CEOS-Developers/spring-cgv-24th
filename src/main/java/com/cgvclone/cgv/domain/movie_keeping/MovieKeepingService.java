@@ -1,5 +1,7 @@
 package com.cgvclone.cgv.domain.movie_keeping;
 
+import com.cgvclone.cgv.common.exception.ErrorCode;
+import com.cgvclone.cgv.common.exception.GlobalException;
 import com.cgvclone.cgv.domain.User.User;
 import com.cgvclone.cgv.domain.User.UserRepository;
 import com.cgvclone.cgv.domain.movie.Movie;
@@ -21,10 +23,10 @@ public class MovieKeepingService {
         // TODO: 인증인가 스터디 후 User 지정 필요
         Long currentUserId = 1L;
         User user = userRepository.findById(currentUserId)
-                .orElseThrow(() -> new IllegalArgumentException("User not found"));
+                .orElseThrow(() -> new GlobalException(ErrorCode.USER_NOT_FOUND));
 
         Movie movie = movieRepository.findById(movieId)
-                .orElseThrow(() -> new IllegalArgumentException("Movie not found"));
+                .orElseThrow(() -> new GlobalException(ErrorCode.MOVIE_NOT_FOUND));
 
         MovieKeeping movieKeeping = MovieKeeping.builder()
                 .user(user)
@@ -38,13 +40,13 @@ public class MovieKeepingService {
         // TODO: 인증인가 스터디 후 User 지정 필요
         Long currentUserId = 1L;
         User user = userRepository.findById(currentUserId)
-                .orElseThrow(() -> new IllegalArgumentException("User not found"));
+                .orElseThrow(() -> new GlobalException(ErrorCode.USER_NOT_FOUND));
 
         Movie movie = movieRepository.findById(movieId)
-                .orElseThrow(() -> new IllegalArgumentException("Movie not found"));
+                .orElseThrow(() -> new GlobalException(ErrorCode.MOVIE_NOT_FOUND));
 
         MovieKeeping movieKeeping = movieKeepingRepository.findByUserAndMovie(user, movie)
-                .orElseThrow(() -> new IllegalArgumentException("해당 영화를 찜 한 적이 없습니다."));
+                .orElseThrow(() -> new GlobalException(ErrorCode.MOVIE_KEEPING_NOT_FOUND));
 
         movieKeepingRepository.delete(movieKeeping);
     }

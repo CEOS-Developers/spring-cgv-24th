@@ -1,6 +1,8 @@
 package com.cgvclone.cgv.domain.booking;
 
 import com.cgvclone.cgv.common.BaseEntity;
+import com.cgvclone.cgv.common.exception.ErrorCode;
+import com.cgvclone.cgv.common.exception.GlobalException;
 import com.cgvclone.cgv.domain.User.User;
 import com.cgvclone.cgv.domain.showtime.Showtime;
 import jakarta.persistence.CascadeType;
@@ -60,11 +62,11 @@ public class Booking extends BaseEntity {
 
     public void cancel(LocalDateTime currentTime) {
         if (this.status == BookingStatus.CANCELLED) {
-            throw new IllegalStateException("이미 취소된 예약입니다.");
+            throw new GlobalException(ErrorCode.BOOKING_ALREADY_CANCELLED);
         }
 
         if (this.showtime.getStartTime().isBefore(currentTime)) {
-            throw new IllegalStateException("이미 상영이 시작되어 예매를 취소할 수 없습니다.");
+            throw new GlobalException(ErrorCode.SHOWTIME_ALREADY_STARTED);
         }
 
         this.status = BookingStatus.CANCELLED;

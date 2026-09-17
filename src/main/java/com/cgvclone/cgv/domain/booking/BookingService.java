@@ -1,9 +1,11 @@
 package com.cgvclone.cgv.domain.booking;
 
-import com.cgvclone.cgv.domain.booking.dto.BookingCreateRequest;
-import com.cgvclone.cgv.domain.booking.dto.SeatRequest;
+import com.cgvclone.cgv.common.exception.ErrorCode;
+import com.cgvclone.cgv.common.exception.GlobalException;
 import com.cgvclone.cgv.domain.User.User;
 import com.cgvclone.cgv.domain.User.UserRepository;
+import com.cgvclone.cgv.domain.booking.dto.BookingCreateRequest;
+import com.cgvclone.cgv.domain.booking.dto.SeatRequest;
 import com.cgvclone.cgv.domain.showtime.Showtime;
 import com.cgvclone.cgv.domain.showtime.ShowtimeRepository;
 import java.time.LocalDateTime;
@@ -26,10 +28,10 @@ public class BookingService {
         // TODO: 인증인가 스터디 후 User 지정 필요
         Long currentUserId = 1L;
         User user = userRepository.findById(currentUserId)
-                .orElseThrow(() -> new IllegalArgumentException("User not found"));
+                .orElseThrow(() -> new GlobalException(ErrorCode.USER_NOT_FOUND));
 
         Showtime showtime = showtimeRepository.findById(request.showtimeId())
-                .orElseThrow(() -> new IllegalArgumentException("Showtime not found"));
+                .orElseThrow(() -> new GlobalException(ErrorCode.SHOWTIME_NOT_FOUND));
 
         List<BookingSeat> bookedSeats = bookingSeatRepository.findBookedSeatsByShowtimeId(showtime.getShowtimeId());
 
@@ -40,8 +42,7 @@ public class BookingService {
                                     booked.getColumnNo().equals(requestedSeat.columnNo())
                     );
             if (isAlreadyBooked) {
-                throw new IllegalStateException(
-                        "이미 예매된 좌석입니다: " + requestedSeat.rowNo() + "행 " + requestedSeat.columnNo() + "열");
+                throw new GlobalException(ErrorCode.SEAT_ALREADY_BOOKED);
             }
         }
 
@@ -63,7 +64,7 @@ public class BookingService {
 
     public void cancelBooking(Long bookingId) {
         Booking booking = bookingRepository.findById(bookingId)
-                .orElseThrow(() -> new IllegalArgumentException("Booking not found"));
+                .orElseThrow(() -> new GlobalException(ErrorCode.BOOKING_NOT_FOUND));
 
         booking.cancel(LocalDateTime.now());
     }
