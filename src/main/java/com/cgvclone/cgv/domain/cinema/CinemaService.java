@@ -15,9 +15,14 @@ public class CinemaService {
     private final CinemaRepository cinemaRepository;
 
     @Transactional(readOnly = true)
-    public CinemaDetailResponse getCinema(Long cinemaId) {
-        Cinema cinema = cinemaRepository.findById(cinemaId)
+    public Cinema getCinemaEntity(Long cinemaId) {
+        return cinemaRepository.findById(cinemaId)
                 .orElseThrow(() -> new GlobalException(ErrorCode.CINEMA_NOT_FOUND));
+    }
+
+    @Transactional(readOnly = true)
+    public CinemaDetailResponse getCinema(Long cinemaId) {
+        Cinema cinema = getCinemaEntity(cinemaId);
         return CinemaDetailResponse.from(cinema);
     }
 }

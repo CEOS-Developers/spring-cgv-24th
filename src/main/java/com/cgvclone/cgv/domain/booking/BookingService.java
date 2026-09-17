@@ -7,7 +7,7 @@ import com.cgvclone.cgv.domain.User.UserService;
 import com.cgvclone.cgv.domain.booking.dto.BookingCreateRequest;
 import com.cgvclone.cgv.domain.booking.dto.SeatRequest;
 import com.cgvclone.cgv.domain.showtime.Showtime;
-import com.cgvclone.cgv.domain.showtime.ShowtimeRepository;
+import com.cgvclone.cgv.domain.showtime.ShowtimeService;
 import java.time.LocalDateTime;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
@@ -21,16 +21,21 @@ public class BookingService {
 
     private final BookingRepository bookingRepository;
     private final UserService userService;
-    private final ShowtimeRepository showtimeRepository;
+    private final ShowtimeService showtimeService;
     private final BookingSeatRepository bookingSeatRepository;
+
+    @Transactional(readOnly = true)
+    public Booking getBooking(Long bookingId) {
+        return bookingRepository.findById(bookingId)
+                .orElseThrow(() -> new GlobalException(ErrorCode.BOOKING_NOT_FOUND));
+    }
 
     public void createBooking(BookingCreateRequest request) {
         // TODO: 인증인가 스터디 후 User 지정 필요
         Long currentUserId = 1L;
         User user = userService.getUser(currentUserId);
 
-        Showtime showtime = showtimeRepository.findById(request.showtimeId())
-                .orElseThrow(() -> new GlobalException(ErrorCode.SHOWTIME_NOT_FOUND));
+        Showtime showtime = showtimeService.getShowtime(request.showtimeId());
 
         List<BookingSeat> bookedSeats = bookingSeatRepository.findBookedSeatsByShowtimeId(showtime.getShowtimeId());
 
@@ -62,9 +67,7 @@ public class BookingService {
     }
 
     public void cancelBooking(Long bookingId) {
-        Booking booking = bookingRepository.findById(bookingId)
-                .orElseThrow(() -> new GlobalException(ErrorCode.BOOKING_NOT_FOUND));
-
+        Booking booking = getBooking(bookingId);
         booking.cancel(LocalDateTime.now());
     }
 }

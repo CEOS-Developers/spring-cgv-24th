@@ -17,6 +17,12 @@ public class MovieService {
     private final MovieRepository movieRepository;
 
     @Transactional(readOnly = true)
+    public Movie getMovieEntity(Long movieId) {
+        return movieRepository.findById(movieId)
+                .orElseThrow(() -> new GlobalException(ErrorCode.MOVIE_NOT_FOUND));
+    }
+
+    @Transactional(readOnly = true)
     public MovieListResponse getMovies() {
         List<Movie> movies = movieRepository.findAll();
         return MovieListResponse.from(movies);
@@ -24,8 +30,7 @@ public class MovieService {
 
     @Transactional(readOnly = true)
     public MovieDetailResponse getMovie(Long movieId) {
-        Movie movie = movieRepository.findById(movieId)
-                .orElseThrow(() -> new GlobalException(ErrorCode.MOVIE_NOT_FOUND));
+        Movie movie = getMovieEntity(movieId);
         return MovieDetailResponse.from(movie);
     }
 }
