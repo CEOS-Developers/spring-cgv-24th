@@ -50,7 +50,7 @@ public class StoreController {
             @Positive @PathVariable("theaterId") Long theaterId,
             @Positive @PathVariable("productId") Long productId,
             @Valid @RequestBody StoreStockReqDTO request) {
-        return ApiResponse.onSuccess(storeService.updateStock(theaterId, productId, request));
+        return ApiResponse.onSuccess(storeService.replenishStock(theaterId, productId, request));
     }
 
     @Operation(summary = "매점 구매")

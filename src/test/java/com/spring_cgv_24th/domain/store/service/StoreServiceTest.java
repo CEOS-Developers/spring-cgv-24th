@@ -1,7 +1,9 @@
 package com.spring_cgv_24th.domain.store.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -29,10 +31,10 @@ import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.data.domain.Sort;
 
 @ExtendWith(MockitoExtension.class)
 class StoreServiceTest {
@@ -53,7 +55,6 @@ class StoreServiceTest {
         when(product.getPrice()).thenReturn(9000);
         when(theaterRepository.existsById(1L)).thenReturn(true);
         when(theaterRepository.existsById(2L)).thenReturn(true);
-        when(productRepository.findAll(Sort.by("id"))).thenReturn(List.of(product));
         when(theaterStockRepository.findAllByTheater_IdOrderByProduct_IdAsc(1L))
                 .thenReturn(List.of(stock(product, 8)));
         when(theaterStockRepository.findAllByTheater_IdOrderByProduct_IdAsc(2L))
@@ -70,36 +71,72 @@ class StoreServiceTest {
     }
 
     @Test
-    void missingStockDoesNotInventAQuantity() {
+    void productWithoutTheaterStockIsNotListed() {
+        Product existingProduct = mock(Product.class);
+        when(existingProduct.getId()).thenReturn(1L);
         when(theaterRepository.existsById(1L)).thenReturn(true);
-        when(productRepository.findAll(Sort.by("id"))).thenReturn(List.of(mock(Product.class)));
         when(theaterStockRepository.findAllByTheater_IdOrderByProduct_IdAsc(1L))
-                .thenReturn(List.of());
+                .thenReturn(List.of(stock(existingProduct, 8)));
 
-        CustomException error = assertThrows(CustomException.class,
-                () -> storeService.getTheaterProducts(1L));
+        List<TheaterStockResDTO> products = storeService.getTheaterProducts(1L);
 
-        assertEquals(ErrorCode.THEATER_STOCK_NOT_FOUND, error.getErrorCode());
+        assertEquals(1, products.size());
+        assertEquals(1L, products.getFirst().productId());
+        assertEquals(8, products.getFirst().quantity());
+        verifyNoInteractions(productRepository);
     }
 
     @Test
-    void updateStockSetsNewQuantity() {
+    void replenishmentAddsToExistingStock() {
         Product product = mock(Product.class);
         when(product.getId()).thenReturn(1L);
         TheaterStock stock = stock(product, 1);
+        when(theaterRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(mock(Theater.class)));
+        when(productRepository.findById(1L)).thenReturn(Optional.of(product));
         when(theaterStockRepository.findByTheaterIdAndProductIdForUpdate(1L, 1L))
                 .thenReturn(Optional.of(stock));
-        when(theaterStockRepository.save(stock)).thenReturn(stock);
 
-        TheaterStockResDTO response = storeService.updateStock(1L, 1L, new StoreStockReqDTO(3));
+        TheaterStockResDTO response = storeService.replenishStock(1L, 1L, new StoreStockReqDTO(3));
 
-        assertEquals(3, stock.getQuantity());
-        assertEquals(3, response.quantity());
-        verify(theaterStockRepository).save(stock);
+        assertEquals(4, stock.getQuantity());
+        assertEquals(4, response.quantity());
     }
 
     @Test
-    void purchaseSavesPriceAndLeavesOneUnit() {
+    void firstReplenishmentRegistersStock() {
+        Theater theater = mock(Theater.class);
+        Product product = mock(Product.class);
+        when(product.getId()).thenReturn(1L);
+        when(theaterRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(theater));
+        when(productRepository.findById(1L)).thenReturn(Optional.of(product));
+        when(theaterStockRepository.findByTheaterIdAndProductIdForUpdate(1L, 1L))
+                .thenReturn(Optional.empty());
+        when(theaterStockRepository.save(any(TheaterStock.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        TheaterStockResDTO response = storeService.replenishStock(1L, 1L, new StoreStockReqDTO(10));
+
+        ArgumentCaptor<TheaterStock> stockCaptor = ArgumentCaptor.forClass(TheaterStock.class);
+        verify(theaterStockRepository).save(stockCaptor.capture());
+        assertSame(theater, stockCaptor.getValue().getTheater());
+        assertSame(product, stockCaptor.getValue().getProduct());
+        assertEquals(10, response.quantity());
+    }
+
+    @Test
+    void replenishmentRejectsUnknownProduct() {
+        when(theaterRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(mock(Theater.class)));
+        when(productRepository.findById(2L)).thenReturn(Optional.empty());
+
+        CustomException error = assertThrows(CustomException.class,
+                () -> storeService.replenishStock(1L, 2L, new StoreStockReqDTO(10)));
+
+        assertEquals(ErrorCode.PRODUCT_NOT_FOUND, error.getErrorCode());
+        verifyNoInteractions(theaterStockRepository);
+    }
+
+    @Test
+    void purchaseSavesPriceAndReducesStock() {
         Product product = mock(Product.class);
         when(product.getId()).thenReturn(1L);
         when(product.getName()).thenReturn("팝콘");
@@ -139,6 +176,55 @@ class StoreServiceTest {
         assertEquals(ErrorCode.STORE_STOCK_INSUFFICIENT, error.getErrorCode());
         assertEquals(1, stock.getQuantity());
         verifyNoInteractions(storeOrderRepository, storeOrderItemRepository);
+    }
+
+    @Test
+    void purchaseCannotExceedAvailableStock() {
+        TheaterStock stock = stock(mock(Product.class), 1);
+        when(memberRepository.findById(1L)).thenReturn(Optional.of(mock(Member.class)));
+        when(theaterRepository.findById(1L)).thenReturn(Optional.of(mock(Theater.class)));
+        when(theaterStockRepository.findByTheaterIdAndProductIdForUpdate(1L, 1L))
+                .thenReturn(Optional.of(stock));
+
+        CustomException error = assertThrows(CustomException.class,
+                () -> storeService.createOrder(1L, order(2)));
+
+        assertEquals(ErrorCode.STORE_STOCK_INSUFFICIENT, error.getErrorCode());
+        assertEquals(1, stock.getQuantity());
+        verifyNoInteractions(storeOrderRepository, storeOrderItemRepository);
+    }
+
+    @Test
+    void missingStockCannotBePurchased() {
+        when(memberRepository.findById(1L)).thenReturn(Optional.of(mock(Member.class)));
+        when(theaterRepository.findById(1L)).thenReturn(Optional.of(mock(Theater.class)));
+        when(theaterStockRepository.findByTheaterIdAndProductIdForUpdate(1L, 1L))
+                .thenReturn(Optional.empty());
+        when(productRepository.existsById(1L)).thenReturn(true);
+
+        CustomException error = assertThrows(CustomException.class,
+                () -> storeService.createOrder(1L, order(1)));
+
+        assertEquals(ErrorCode.THEATER_STOCK_NOT_FOUND, error.getErrorCode());
+        verifyNoInteractions(storeOrderRepository, storeOrderItemRepository);
+    }
+
+    @Test
+    void stockCannotBeRegisteredWithZeroQuantity() {
+        CustomException error = assertThrows(CustomException.class,
+                () -> stock(mock(Product.class), 0));
+
+        assertEquals(ErrorCode.BAD_REQUEST, error.getErrorCode());
+    }
+
+    @Test
+    void replenishmentCannotOverflowQuantity() {
+        TheaterStock stock = stock(mock(Product.class), Integer.MAX_VALUE);
+
+        CustomException error = assertThrows(CustomException.class, () -> stock.addQuantity(1));
+
+        assertEquals(ErrorCode.BAD_REQUEST, error.getErrorCode());
+        assertEquals(Integer.MAX_VALUE, stock.getQuantity());
     }
 
     private static TheaterStock stock(Product product, int quantity) {

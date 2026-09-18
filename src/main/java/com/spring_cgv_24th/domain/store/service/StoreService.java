@@ -23,8 +23,6 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
-import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
@@ -53,27 +51,36 @@ public class StoreService {
             throw new CustomException(ErrorCode.THEATER_NOT_FOUND);
         }
 
-        List<Product> products = productRepository.findAll(Sort.by("id"));
-        Map<Long, Integer> quantitiesByProductId = theaterStockRepository
-                .findAllByTheater_IdOrderByProduct_IdAsc(theaterId).stream()
-                .collect(Collectors.toMap(stock -> stock.getProduct().getId(), TheaterStock::getQuantity));
-        if (quantitiesByProductId.size() != products.size()
-                || quantitiesByProductId.values().stream().anyMatch(quantity -> quantity < 1)) {
-            throw new CustomException(ErrorCode.THEATER_STOCK_NOT_FOUND);
-        }
-
-        return products.stream()
-                .map(product -> TheaterStockResDTO.from(product, quantitiesByProductId.get(product.getId())))
+        return theaterStockRepository.findAllByTheater_IdOrderByProduct_IdAsc(theaterId).stream()
+                .map(stock -> TheaterStockResDTO.from(stock.getProduct(), stock.getQuantity()))
                 .toList();
     }
 
     @Transactional
-    public TheaterStockResDTO updateStock(Long theaterId, Long productId, StoreStockReqDTO request) {
-        TheaterStock stock = theaterStockRepository
-                .findByTheaterIdAndProductIdForUpdate(theaterId, productId)
-                .orElseThrow(() -> new CustomException(ErrorCode.THEATER_STOCK_NOT_FOUND));
-        stock.updateQuantity(request.quantity());
-        return TheaterStockResDTO.from(stock.getProduct(), theaterStockRepository.save(stock).getQuantity());
+    public TheaterStockResDTO replenishStock(Long theaterId, Long productId, StoreStockReqDTO request) {
+        Integer additionalQuantity = request.quantity();
+        if (additionalQuantity == null || additionalQuantity <= 0) {
+            throw new CustomException(ErrorCode.BAD_REQUEST);
+        }
+
+        // 재고 행이 아직 없을 때도 동일 영화관의 등록 요청을 직렬화한다.
+        Theater theater = theaterRepository.findByIdForUpdate(theaterId)
+                .orElseThrow(() -> new CustomException(ErrorCode.THEATER_NOT_FOUND));
+        Product product = productRepository.findById(productId)
+                .orElseThrow(() -> new CustomException(ErrorCode.PRODUCT_NOT_FOUND));
+        TheaterStock stock = theaterStockRepository.findByTheaterIdAndProductIdForUpdate(theaterId, productId)
+                .orElse(null);
+
+        if (stock == null) {
+            stock = theaterStockRepository.save(TheaterStock.builder()
+                    .theater(theater)
+                    .product(product)
+                    .quantity(additionalQuantity)
+                    .build());
+        } else {
+            stock.addQuantity(additionalQuantity);
+        }
+        return TheaterStockResDTO.from(product, stock.getQuantity());
     }
 
     @Transactional
@@ -102,7 +109,8 @@ public class StoreService {
                 .sorted(Comparator.comparing(StoreOrderReqDTO.OrderItemDTO::productId)).toList()) {
             TheaterStock stock = theaterStockRepository
                     .findByTheaterIdAndProductIdForUpdate(theaterId, item.productId())
-                    .orElseThrow(() -> new CustomException(ErrorCode.THEATER_STOCK_NOT_FOUND));
+                    .orElseThrow(() -> new CustomException(productRepository.existsById(item.productId())
+                            ? ErrorCode.THEATER_STOCK_NOT_FOUND : ErrorCode.PRODUCT_NOT_FOUND));
             stock.decreaseQuantity(item.quantity());
             items.add(StoreOrderItem.builder()
                     .order(order)

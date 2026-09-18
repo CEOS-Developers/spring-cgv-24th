@@ -48,11 +48,11 @@ public class TheaterStock {
         this.updatedAt = LocalDateTime.now();
     }
 
-    public void updateQuantity(int quantity) {
-        if (quantity < 1) {
+    public void addQuantity(int additionalQuantity) {
+        if (additionalQuantity <= 0 || quantity > Integer.MAX_VALUE - additionalQuantity) {
             throw new CustomException(ErrorCode.BAD_REQUEST);
         }
-        this.quantity = quantity;
+        this.quantity += additionalQuantity;
         this.updatedAt = LocalDateTime.now();
     }
 
@@ -60,7 +60,7 @@ public class TheaterStock {
         if (purchaseQuantity <= 0) {
             throw new CustomException(ErrorCode.BAD_REQUEST);
         }
-        // 구매 후에도 재고가 최소 1개 남아야 한다.
+        // 저장된 재고는 항상 1개 이상이어야 한다.
         if (quantity <= purchaseQuantity) {
             throw new CustomException(ErrorCode.STORE_STOCK_INSUFFICIENT);
         }
