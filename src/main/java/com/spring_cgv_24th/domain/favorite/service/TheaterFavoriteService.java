@@ -43,12 +43,6 @@ public class TheaterFavoriteService {
     // 임시: 로그인 구현 후에는 memberId 파라미터 제거하고 인증된 회원 ID 사용할 것임.
     @Transactional
     public void removeFavorite(Long theaterId, Long memberId) {
-        if (!memberRepository.existsById(memberId)) {
-            throw new CustomException(ErrorCode.MEMBER_NOT_FOUND);
-        }
-        if (!theaterRepository.existsById(theaterId)) {
-            throw new CustomException(ErrorCode.THEATER_NOT_FOUND);
-        }
         TheaterFavorite favorite = theaterFavoriteRepository.findByMember_IdAndTheater_Id(memberId, theaterId)
                 .orElseThrow(() -> new CustomException(ErrorCode.THEATER_FAVORITE_NOT_FOUND));
         theaterFavoriteRepository.delete(favorite);

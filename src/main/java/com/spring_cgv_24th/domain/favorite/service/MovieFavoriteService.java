@@ -42,12 +42,6 @@ public class MovieFavoriteService {
 
     @Transactional
     public void removeFavorite(Long movieId, Long memberId) {
-        if (!memberRepository.existsById(memberId)) {
-            throw new CustomException(ErrorCode.MEMBER_NOT_FOUND);
-        }
-        if (!movieRepository.existsById(movieId)) {
-            throw new CustomException(ErrorCode.MOVIE_NOT_FOUND);
-        }
         MovieFavorite favorite = movieFavoriteRepository.findByMember_IdAndMovie_Id(memberId, movieId)
                 .orElseThrow(() -> new CustomException(ErrorCode.MOVIE_FAVORITE_NOT_FOUND));
         movieFavoriteRepository.delete(favorite);
