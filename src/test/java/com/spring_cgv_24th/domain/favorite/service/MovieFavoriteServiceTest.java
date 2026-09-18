@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.spring_cgv_24th.domain.favorite.dto.MovieFavoriteResDTO;
@@ -28,6 +29,7 @@ import org.mockito.Captor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
 
 @ExtendWith(MockitoExtension.class)
 class MovieFavoriteServiceTest {
@@ -75,14 +77,27 @@ class MovieFavoriteServiceTest {
                 .member(mock(Member.class))
                 .movie(mock(Movie.class))
                 .build();
-        when(memberRepository.existsById(1L)).thenReturn(true);
-        when(movieRepository.existsById(2L)).thenReturn(true);
         when(movieFavoriteRepository.findByMember_IdAndMovie_Id(1L, 2L))
                 .thenReturn(Optional.of(favorite));
 
         movieFavoriteService.removeFavorite(2L, 1L);
 
         verify(movieFavoriteRepository).delete(favorite);
+        verifyNoInteractions(memberRepository, movieRepository);
+    }
+
+    @Test
+    void removingMissingFavoriteReturnsFavoriteNotFound() {
+        when(movieFavoriteRepository.findByMember_IdAndMovie_Id(1L, 2L))
+                .thenReturn(Optional.empty());
+
+        CustomException error = assertThrows(CustomException.class,
+                () -> movieFavoriteService.removeFavorite(2L, 1L));
+
+        assertEquals(ErrorCode.MOVIE_FAVORITE_NOT_FOUND, error.getErrorCode());
+        assertEquals(HttpStatus.NOT_FOUND, error.getErrorCode().getHttpStatus());
+        verify(movieFavoriteRepository, never()).delete(any(MovieFavorite.class));
+        verifyNoInteractions(memberRepository, movieRepository);
     }
 
     @Test

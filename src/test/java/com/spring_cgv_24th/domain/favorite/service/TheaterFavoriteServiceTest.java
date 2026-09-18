@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.spring_cgv_24th.domain.favorite.dto.TheaterFavoriteResDTO;
@@ -28,6 +29,7 @@ import org.mockito.Captor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
 
 @ExtendWith(MockitoExtension.class)
 class TheaterFavoriteServiceTest {
@@ -75,14 +77,27 @@ class TheaterFavoriteServiceTest {
                 .member(mock(Member.class))
                 .theater(mock(Theater.class))
                 .build();
-        when(memberRepository.existsById(1L)).thenReturn(true);
-        when(theaterRepository.existsById(2L)).thenReturn(true);
         when(theaterFavoriteRepository.findByMember_IdAndTheater_Id(1L, 2L))
                 .thenReturn(Optional.of(favorite));
 
         theaterFavoriteService.removeFavorite(2L, 1L);
 
         verify(theaterFavoriteRepository).delete(favorite);
+        verifyNoInteractions(memberRepository, theaterRepository);
+    }
+
+    @Test
+    void removingMissingFavoriteReturnsFavoriteNotFound() {
+        when(theaterFavoriteRepository.findByMember_IdAndTheater_Id(1L, 2L))
+                .thenReturn(Optional.empty());
+
+        CustomException error = assertThrows(CustomException.class,
+                () -> theaterFavoriteService.removeFavorite(2L, 1L));
+
+        assertEquals(ErrorCode.THEATER_FAVORITE_NOT_FOUND, error.getErrorCode());
+        assertEquals(HttpStatus.NOT_FOUND, error.getErrorCode().getHttpStatus());
+        verify(theaterFavoriteRepository, never()).delete(any(TheaterFavorite.class));
+        verifyNoInteractions(memberRepository, theaterRepository);
     }
 
     @Test
