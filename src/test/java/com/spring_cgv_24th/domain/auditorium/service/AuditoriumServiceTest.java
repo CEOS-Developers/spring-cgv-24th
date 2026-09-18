@@ -45,6 +45,7 @@ class AuditoriumServiceTest {
                 .kind(AuditoriumKind.GENERAL)
                 .rowCount((short) 8)
                 .columnCount((short) 8)
+                .basePrice(14_000)
                 .build();
         when(theaterRepository.findById(1L)).thenReturn(Optional.of(theater));
         when(auditoriumTypeRepository.findByKind(AuditoriumKind.GENERAL))

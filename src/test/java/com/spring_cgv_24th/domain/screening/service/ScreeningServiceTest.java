@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -54,6 +55,7 @@ class ScreeningServiceTest {
                 .kind(AuditoriumKind.GENERAL)
                 .rowCount((short) 2)
                 .columnCount((short) 3)
+                .basePrice(14_000)
                 .build();
         LocalDateTime startsAt = LocalDateTime.of(2026, 9, 16, 14, 0);
         when(movieRepository.findById(1L)).thenReturn(Optional.of(movie));
@@ -83,6 +85,7 @@ class ScreeningServiceTest {
                 .kind(AuditoriumKind.GENERAL)
                 .rowCount((short) 2)
                 .columnCount((short) 3)
+                .basePrice(14_000)
                 .build();
         LocalDateTime startsAt = LocalDateTime.of(2026, 9, 16, 14, 0);
         when(movieRepository.findById(1L)).thenReturn(Optional.of(movie));
@@ -106,5 +109,62 @@ class ScreeningServiceTest {
         assertEquals(List.of("1-1", "1-2", "1-3", "2-1", "2-2", "2-3"),
                 seats.stream().map(seat -> seat.getRowNo() + "-" + seat.getColumnNo()).toList());
         seats.forEach(seat -> assertEquals(14_000, seat.getPrice()));
+    }
+
+    @Test
+    void priceChangeAffectsOnlyNewScreenings() {
+        Movie movie = mock(Movie.class);
+        Auditorium auditorium = mock(Auditorium.class);
+        AuditoriumType type = AuditoriumType.builder()
+                .kind(AuditoriumKind.GENERAL)
+                .rowCount((short) 1)
+                .columnCount((short) 1)
+                .basePrice(14_000)
+                .build();
+        when(movieRepository.findById(1L)).thenReturn(Optional.of(movie));
+        when(auditoriumRepository.findById(2L)).thenReturn(Optional.of(auditorium));
+        when(movie.getDurationMinutes()).thenReturn((short) 120);
+        when(auditorium.getType()).thenReturn(type);
+        when(auditorium.getId()).thenReturn(2L);
+        when(auditorium.getTheater()).thenReturn(mock(Theater.class));
+        when(screeningRepository.save(any(Screening.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        screeningService.createScreening(new ScreeningReqDTO.CreateScreeningDTO(
+                1L, 2L, LocalDateTime.of(2026, 9, 16, 14, 0)));
+        type.updateBasePrice(16_000);
+        screeningService.createScreening(new ScreeningReqDTO.CreateScreeningDTO(
+                1L, 2L, LocalDateTime.of(2026, 9, 17, 14, 0)));
+
+        verify(screeningSeatRepository, times(2)).saveAll(seatsCaptor.capture());
+        List<ScreeningSeat> firstSeats = new ArrayList<>();
+        List<ScreeningSeat> secondSeats = new ArrayList<>();
+        seatsCaptor.getAllValues().get(0).forEach(firstSeats::add);
+        seatsCaptor.getAllValues().get(1).forEach(secondSeats::add);
+        assertEquals(14_000, firstSeats.getFirst().getPrice());
+        assertEquals(16_000, secondSeats.getFirst().getPrice());
+    }
+
+    @Test
+    void invalidBasePricePreventsScreeningCreation() {
+        Movie movie = mock(Movie.class);
+        Auditorium auditorium = mock(Auditorium.class);
+        AuditoriumType type = mock(AuditoriumType.class);
+        when(movieRepository.findById(1L)).thenReturn(Optional.of(movie));
+        when(auditoriumRepository.findById(2L)).thenReturn(Optional.of(auditorium));
+        when(movie.getDurationMinutes()).thenReturn((short) 120);
+        when(auditorium.getType()).thenReturn(type);
+        when(auditorium.getId()).thenReturn(2L);
+        when(type.getRowCount()).thenReturn((short) 1);
+        when(type.getColumnCount()).thenReturn((short) 1);
+        when(type.getBasePrice()).thenReturn(0);
+
+        CustomException error = assertThrows(CustomException.class,
+                () -> screeningService.createScreening(new ScreeningReqDTO.CreateScreeningDTO(
+                        1L, 2L, LocalDateTime.of(2026, 9, 16, 14, 0))));
+
+        assertEquals(ErrorCode.TICKET_PRICE_CONFIG_INVALID, error.getErrorCode());
+        verify(screeningRepository, never()).save(any(Screening.class));
+        verifyNoInteractions(screeningSeatRepository);
     }
 }

@@ -51,18 +51,17 @@ public class ScreeningService {
             throw new CustomException(ErrorCode.SCREENING_OVERLAP);
         }
 
+        int price = type.getBasePrice();
+        if (price <= 0) {
+            throw new CustomException(ErrorCode.TICKET_PRICE_CONFIG_INVALID);
+        }
+
         Screening screening = screeningRepository.save(Screening.builder()
                 .movie(movie)
                 .auditorium(auditorium)
                 .startsAt(startsAt)
                 .endsAt(endsAt)
                 .build());
-
-        // 영화표 가격 설정
-        int price = switch (type.getKind()) {
-            case GENERAL -> 14_000;
-            case IMAX, FOUR_DX -> 18_000;
-        };
 
         // 상영관의 행·열 전체 좌표를 순회하며 회차별 좌석을 하나씩 만든다.
         List<ScreeningSeat> seats = new ArrayList<>();

@@ -21,6 +21,8 @@ public enum ErrorCode {
     AUDITORIUM_TYPE_NOT_FOUND(HttpStatus.NOT_FOUND, "AUDITORIUM_TYPE404", "상영관 유형을 찾을 수 없습니다."),
     SCREENING_NOT_FOUND(HttpStatus.NOT_FOUND, "SCREENING404", "상영 회차를 찾을 수 없습니다."),
     SCREENING_OVERLAP(HttpStatus.CONFLICT, "SCREENING409", "상영관의 다른 회차와 시간이 겹칩니다."),
+    TICKET_PRICE_CONFIG_INVALID(HttpStatus.INTERNAL_SERVER_ERROR, "TICKET_PRICE_CONFIG500",
+            "영화표 가격 설정이 누락되었거나 올바르지 않습니다."),
     SCREENING_ALREADY_STARTED(HttpStatus.CONFLICT, "SCREENING_STARTED409", "이미 시작된 상영 회차는 예매할 수 없습니다."),
 
     // 예매

@@ -18,12 +18,17 @@ public class AuditoriumTypeInitializer implements ApplicationRunner {
     @Override
     @Transactional
     public void run(ApplicationArguments args) {
+        // 신규 DB의 초기값만 등록하며 기존 유형의 가격은 덮어쓰지 않는다.
         for (AuditoriumKind kind : AuditoriumKind.values()) {
             if (auditoriumTypeRepository.findByKind(kind).isEmpty()) {
                 auditoriumTypeRepository.save(AuditoriumType.builder()
                         .kind(kind)
                         .rowCount((short) 8)
                         .columnCount((short) 8)
+                        .basePrice(switch (kind) {
+                            case GENERAL -> 14_000;
+                            case IMAX, FOUR_DX -> 18_000;
+                        })
                         .build());
             }
         }
