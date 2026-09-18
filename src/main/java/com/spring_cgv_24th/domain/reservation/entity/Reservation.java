@@ -48,7 +48,8 @@ public class Reservation {
     private LocalDateTime cancelledAt;
 
     @Builder
-    public Reservation(Screening screening) {
+    public Reservation(Member member, Screening screening) {
+        this.member = member;
         this.screening = screening;
     }
 

@@ -1,5 +1,6 @@
 package com.spring_cgv_24th.domain.reservation.dto;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
@@ -11,6 +12,11 @@ public class ReservationReqDTO {
     }
 
     public record CreateReservationDTO(
+            @Schema(description = "임시 회원 ID. 로그인 구현 후 인증된 회원 ID를 사용합니다.")
+            @NotNull(message = "회원 ID는 필수입니다.")
+            @Positive(message = "회원 ID는 양수이어야 합니다.")
+            Long memberId,
+
             @NotNull(message = "상영 회차 ID는 필수입니다.")
             @Positive(message = "상영 회차 ID는 양수이어야 합니다.")
             Long screeningId,

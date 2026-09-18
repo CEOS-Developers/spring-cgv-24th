@@ -1,5 +1,7 @@
 package com.spring_cgv_24th.domain.reservation.service;
 
+import com.spring_cgv_24th.domain.member.entity.Member;
+import com.spring_cgv_24th.domain.member.repository.MemberRepository;
 import com.spring_cgv_24th.domain.reservation.dto.ReservationReqDTO;
 import com.spring_cgv_24th.domain.reservation.dto.ReservationResDTO;
 import com.spring_cgv_24th.domain.reservation.entity.Reservation;
@@ -16,6 +18,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -25,6 +28,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional(readOnly = true)
 public class ReservationService {
 
+    private final MemberRepository memberRepository;
     private final ScreeningRepository screeningRepository;
     private final ScreeningSeatRepository screeningSeatRepository;
     private final ReservationRepository reservationRepository;
@@ -41,6 +45,8 @@ public class ReservationService {
         Screening screening = screeningRepository.findById(request.screeningId())
                 .orElseThrow(() -> new CustomException(ErrorCode.SCREENING_NOT_FOUND));
         requireBeforeStart(screening, ErrorCode.SCREENING_ALREADY_STARTED);
+        Member member = memberRepository.findById(request.memberId())
+                .orElseThrow(() -> new CustomException(ErrorCode.MEMBER_NOT_FOUND));
 
         // 서로 겹치는 좌석 요청도 항상 같은 ID 순서로 잠근다. 동시성 문제 방지
         List<ScreeningSeat> seats = new ArrayList<>();
@@ -58,6 +64,7 @@ public class ReservationService {
         requireBeforeStart(screening, ErrorCode.SCREENING_ALREADY_STARTED);
 
         Reservation reservation = reservationRepository.save(Reservation.builder()
+                .member(member)
                 .screening(screening)
                 .build());
         seats.forEach(seat -> seat.occupy(reservation));
@@ -66,9 +73,13 @@ public class ReservationService {
     }
 
     @Transactional
-    public void cancelReservation(Long reservationId) {
+    public void cancelReservation(Long reservationId, Long memberId) {
         Reservation reservation = reservationRepository.findByIdForUpdate(reservationId)
                 .orElseThrow(() -> new CustomException(ErrorCode.RESERVATION_NOT_FOUND));
+        Member owner = reservation.getMember();
+        if (owner == null || !Objects.equals(owner.getId(), memberId)) {
+            throw new CustomException(ErrorCode.RESERVATION_FORBIDDEN);
+        }
         if (reservation.getStatus() == ReservationStatus.CANCELLED) {
             throw new CustomException(ErrorCode.RESERVATION_ALREADY_CANCELLED);
         }
