@@ -36,6 +36,7 @@ import org.mockito.Captor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
 
 @ExtendWith(MockitoExtension.class)
 class ScreeningServiceTest {
@@ -46,6 +47,35 @@ class ScreeningServiceTest {
     @Mock private ScreeningSeatRepository screeningSeatRepository;
     @Captor private ArgumentCaptor<Iterable<ScreeningSeat>> seatsCaptor;
     @InjectMocks private ScreeningService screeningService;
+
+    @Test
+    void invalidMovieDurationReturnsSpecificConfigurationError() {
+        Movie movie = mock(Movie.class);
+        Auditorium auditorium = mock(Auditorium.class);
+        when(movieRepository.findById(1L)).thenReturn(Optional.of(movie));
+        when(auditoriumRepository.findById(2L)).thenReturn(Optional.of(auditorium));
+        when(auditorium.getType()).thenReturn(mock(AuditoriumType.class));
+        when(movie.getDurationMinutes()).thenReturn((short) 0);
+
+        CustomException error = assertThrows(CustomException.class,
+                () -> screeningService.createScreening(new ScreeningReqDTO.CreateScreeningDTO(
+                        1L, 2L, LocalDateTime.of(2026, 9, 16, 14, 0))));
+
+        assertEquals(ErrorCode.INVALID_MOVIE_DURATION, error.getErrorCode());
+        assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, error.getErrorCode().getHttpStatus());
+        assertEquals("MOVIE_DURATION500", error.getErrorCode().getCode());
+        verifyNoInteractions(screeningRepository, screeningSeatRepository);
+    }
+
+    @Test
+    void invalidAuditoriumRowCountReturnsSpecificConfigurationError() {
+        assertInvalidAuditoriumDimensions((short) 0, (short) 1);
+    }
+
+    @Test
+    void invalidAuditoriumColumnCountReturnsSpecificConfigurationError() {
+        assertInvalidAuditoriumDimensions((short) 1, (short) 0);
+    }
 
     @Test
     void overlappingScreeningIsRejectedBeforeSaving() {
@@ -166,5 +196,29 @@ class ScreeningServiceTest {
         assertEquals(ErrorCode.TICKET_PRICE_CONFIG_INVALID, error.getErrorCode());
         verify(screeningRepository, never()).save(any(Screening.class));
         verifyNoInteractions(screeningSeatRepository);
+    }
+
+    private void assertInvalidAuditoriumDimensions(short rowCount, short columnCount) {
+        Movie movie = mock(Movie.class);
+        Auditorium auditorium = mock(Auditorium.class);
+        AuditoriumType type = AuditoriumType.builder()
+                .kind(AuditoriumKind.GENERAL)
+                .rowCount(rowCount)
+                .columnCount(columnCount)
+                .basePrice(14_000)
+                .build();
+        when(movieRepository.findById(1L)).thenReturn(Optional.of(movie));
+        when(auditoriumRepository.findById(2L)).thenReturn(Optional.of(auditorium));
+        when(auditorium.getType()).thenReturn(type);
+        when(movie.getDurationMinutes()).thenReturn((short) 120);
+
+        CustomException error = assertThrows(CustomException.class,
+                () -> screeningService.createScreening(new ScreeningReqDTO.CreateScreeningDTO(
+                        1L, 2L, LocalDateTime.of(2026, 9, 16, 14, 0))));
+
+        assertEquals(ErrorCode.INVALID_AUDITORIUM_CONFIG, error.getErrorCode());
+        assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, error.getErrorCode().getHttpStatus());
+        assertEquals("AUDITORIUM_CONFIG500", error.getErrorCode().getCode());
+        verifyNoInteractions(screeningRepository, screeningSeatRepository);
     }
 }

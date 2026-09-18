@@ -15,10 +15,14 @@ public enum ErrorCode {
 
     // 영화
     MOVIE_NOT_FOUND(HttpStatus.NOT_FOUND, "MOVIE404", "영화를 찾을 수 없습니다."),
+    INVALID_MOVIE_DURATION(HttpStatus.INTERNAL_SERVER_ERROR, "MOVIE_DURATION500",
+            "저장된 영화 상영 시간이 올바르지 않습니다."),
 
     // 상영관
     AUDITORIUM_NOT_FOUND(HttpStatus.NOT_FOUND, "AUDITORIUM404", "상영관을 찾을 수 없습니다."),
     AUDITORIUM_TYPE_NOT_FOUND(HttpStatus.NOT_FOUND, "AUDITORIUM_TYPE404", "상영관 유형을 찾을 수 없습니다."),
+    INVALID_AUDITORIUM_CONFIG(HttpStatus.INTERNAL_SERVER_ERROR, "AUDITORIUM_CONFIG500",
+            "저장된 상영관 좌석 규격이 올바르지 않습니다."),
     SCREENING_NOT_FOUND(HttpStatus.NOT_FOUND, "SCREENING404", "상영 회차를 찾을 수 없습니다."),
     SCREENING_OVERLAP(HttpStatus.CONFLICT, "SCREENING409", "상영관의 다른 회차와 시간이 겹칩니다."),
     TICKET_PRICE_CONFIG_INVALID(HttpStatus.INTERNAL_SERVER_ERROR, "TICKET_PRICE_CONFIG500",

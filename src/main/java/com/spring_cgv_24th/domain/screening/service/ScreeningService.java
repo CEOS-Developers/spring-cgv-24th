@@ -41,12 +41,16 @@ public class ScreeningService {
                 .orElseThrow(() -> new CustomException(ErrorCode.AUDITORIUM_NOT_FOUND));
         AuditoriumType type = auditorium.getType();
 
-        if (movie.getDurationMinutes() <= 0 || type.getRowCount() <= 0 || type.getColumnCount() <= 0) {
-            throw new IllegalStateException("저장된 영화 상영 시간 또는 상영관 좌석 규격이 올바르지 않습니다.");
+        short durationMinutes = movie.getDurationMinutes();
+        if (durationMinutes <= 0) {
+            throw new CustomException(ErrorCode.INVALID_MOVIE_DURATION);
+        }
+        if (type.getRowCount() <= 0 || type.getColumnCount() <= 0) {
+            throw new CustomException(ErrorCode.INVALID_AUDITORIUM_CONFIG);
         }
 
         LocalDateTime startsAt = request.startsAt();
-        LocalDateTime endsAt = startsAt.plusMinutes(movie.getDurationMinutes());
+        LocalDateTime endsAt = startsAt.plusMinutes(durationMinutes);
         if (screeningRepository.existsOverlapping(auditorium.getId(), startsAt, endsAt)) {
             throw new CustomException(ErrorCode.SCREENING_OVERLAP);
         }
