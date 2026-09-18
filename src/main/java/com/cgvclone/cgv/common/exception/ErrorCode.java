@@ -12,6 +12,8 @@ public enum ErrorCode {
     CINEMA_NOT_FOUND(HttpStatus.NOT_FOUND, "영화관을 찾을 수 없습니다."),
     MOVIE_KEEPING_NOT_FOUND(HttpStatus.NOT_FOUND, "해당 영화를 찜 한 적이 없습니다."),
     CINEMA_KEEPING_NOT_FOUND(HttpStatus.NOT_FOUND, "해당 영화관을 찜 한 적이 없습니다."),
+    CINEMA_ALREADY_KEPT(HttpStatus.CONFLICT, "이미 찜한 영화관입니다."),
+    MOVIE_ALREADY_KEPT(HttpStatus.CONFLICT, "이미 찜한 영화입니다."),
     SHOWTIME_NOT_FOUND(HttpStatus.NOT_FOUND, "상영 일정을 찾을 수 없습니다."),
     BOOKING_NOT_FOUND(HttpStatus.NOT_FOUND, "예약을 찾을 수 없습니다."),
     SEAT_ALREADY_BOOKED(HttpStatus.CONFLICT, "이미 예매된 좌석입니다."),

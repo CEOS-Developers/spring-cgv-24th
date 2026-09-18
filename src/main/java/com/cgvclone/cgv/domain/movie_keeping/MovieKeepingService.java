@@ -2,10 +2,10 @@ package com.cgvclone.cgv.domain.movie_keeping;
 
 import com.cgvclone.cgv.common.exception.ErrorCode;
 import com.cgvclone.cgv.common.exception.GlobalException;
-import com.cgvclone.cgv.domain.user.User;
-import com.cgvclone.cgv.domain.user.UserService;
 import com.cgvclone.cgv.domain.movie.Movie;
 import com.cgvclone.cgv.domain.movie.MovieService;
+import com.cgvclone.cgv.domain.user.User;
+import com.cgvclone.cgv.domain.user.UserService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -32,6 +32,8 @@ public class MovieKeepingService {
 
         Movie movie = movieService.getMovieEntity(movieId);
 
+        validateMovieNotKept(user, movie);
+
         MovieKeeping movieKeeping = MovieKeeping.builder()
                 .user(user)
                 .movie(movie)
@@ -50,5 +52,11 @@ public class MovieKeepingService {
         MovieKeeping movieKeeping = getMovieKeeping(user, movie);
 
         movieKeepingRepository.delete(movieKeeping);
+    }
+
+    private void validateMovieNotKept(User user, Movie movie) {
+        if (movieKeepingRepository.existsByUserAndMovie(user, movie)) {
+            throw new GlobalException(ErrorCode.MOVIE_ALREADY_KEPT);
+        }
     }
 }
