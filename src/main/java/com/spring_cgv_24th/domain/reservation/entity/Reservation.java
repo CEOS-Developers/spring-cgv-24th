@@ -3,6 +3,8 @@ package com.spring_cgv_24th.domain.reservation.entity;
 import com.spring_cgv_24th.domain.member.entity.Member;
 import com.spring_cgv_24th.domain.reservation.enums.ReservationStatus;
 import com.spring_cgv_24th.domain.screening.entity.Screening;
+import com.spring_cgv_24th.global.exception.CustomException;
+import com.spring_cgv_24th.global.exception.ErrorCode;
 import jakarta.persistence.*;
 
 import java.time.LocalDateTime;
@@ -47,10 +49,18 @@ public class Reservation {
     @Column(name = "cancelled_at", columnDefinition = "timestamp(6)")
     private LocalDateTime cancelledAt;
 
+    // 이전에 취소된 예매는 가격을 복원할 수 없어 null을 허용한다.
+    @Column(name = "total_price", updatable = false)
+    private Long totalPrice;
+
     @Builder
-    public Reservation(Member member, Screening screening) {
+    public Reservation(Member member, Screening screening, long totalPrice) {
+        if (totalPrice <= 0) {
+            throw new CustomException(ErrorCode.BAD_REQUEST);
+        }
         this.member = member;
         this.screening = screening;
+        this.totalPrice = totalPrice;
     }
 
     public void cancel(LocalDateTime cancelledAt) {

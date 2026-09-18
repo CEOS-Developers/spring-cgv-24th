@@ -5,8 +5,10 @@ import com.spring_cgv_24th.domain.member.repository.MemberRepository;
 import com.spring_cgv_24th.domain.reservation.dto.ReservationReqDTO;
 import com.spring_cgv_24th.domain.reservation.dto.ReservationResDTO;
 import com.spring_cgv_24th.domain.reservation.entity.Reservation;
+import com.spring_cgv_24th.domain.reservation.entity.ReservationSeat;
 import com.spring_cgv_24th.domain.reservation.enums.ReservationStatus;
 import com.spring_cgv_24th.domain.reservation.repository.ReservationRepository;
+import com.spring_cgv_24th.domain.reservation.repository.ReservationSeatRepository;
 import com.spring_cgv_24th.domain.screening.entity.Screening;
 import com.spring_cgv_24th.domain.screening.entity.ScreeningSeat;
 import com.spring_cgv_24th.domain.screening.repository.ScreeningRepository;
@@ -32,6 +34,7 @@ public class ReservationService {
     private final ScreeningRepository screeningRepository;
     private final ScreeningSeatRepository screeningSeatRepository;
     private final ReservationRepository reservationRepository;
+    private final ReservationSeatRepository reservationSeatRepository;
     private final Clock clock;
 
     @Transactional
@@ -63,11 +66,20 @@ public class ReservationService {
         // 좌석 잠금을 기다리는 동안 상영이 시작될 수 있으므로 저장 직전에 다시 확인한다.
         requireBeforeStart(screening, ErrorCode.SCREENING_ALREADY_STARTED);
 
+        long totalPrice = seats.stream().mapToLong(ScreeningSeat::getPrice).sum();
         Reservation reservation = reservationRepository.save(Reservation.builder()
                 .member(member)
                 .screening(screening)
+                .totalPrice(totalPrice)
                 .build());
         seats.forEach(seat -> seat.occupy(reservation));
+        reservationSeatRepository.saveAll(seats.stream()
+                .map(seat -> ReservationSeat.builder()
+                        .reservation(reservation)
+                        .screeningSeat(seat)
+                        .price(seat.getPrice())
+                        .build())
+                .toList());
 
         return ReservationResDTO.from(reservation, seats);
     }

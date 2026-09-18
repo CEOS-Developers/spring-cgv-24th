@@ -12,7 +12,7 @@ public record ReservationResDTO(
         ReservationStatus status,
         LocalDateTime reservedAt,
         List<Long> screeningSeatIds,
-        long totalPrice
+        Long totalPrice
 ) {
 
     public static ReservationResDTO from(Reservation reservation, List<ScreeningSeat> seats) {
@@ -22,6 +22,6 @@ public record ReservationResDTO(
                 reservation.getStatus(),
                 reservation.getReservedAt(),
                 seats.stream().map(ScreeningSeat::getId).toList(),
-                seats.stream().mapToLong(ScreeningSeat::getPrice).sum());
+                reservation.getTotalPrice());
     }
 }
