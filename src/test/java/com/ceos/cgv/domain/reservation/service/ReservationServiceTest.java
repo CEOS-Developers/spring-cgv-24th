@@ -1,7 +1,10 @@
 package com.ceos.cgv.domain.reservation.service;
 
 import com.ceos.cgv.domain.cinema.entity.Screen;
+import com.ceos.cgv.domain.movie.entity.Movie;
 import com.ceos.cgv.domain.movie.entity.Screening;
+import com.ceos.cgv.domain.movie.enums.AgeRating;
+import com.ceos.cgv.domain.movie.repository.MovieRepository;
 import com.ceos.cgv.domain.movie.repository.ScreeningRepository;
 import com.ceos.cgv.domain.reservation.dto.ReservationCreateRequest;
 import com.ceos.cgv.domain.reservation.dto.ReservedSeatRequest;
@@ -18,6 +21,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 
@@ -35,6 +39,8 @@ class ReservationServiceTest {
     @Mock
     private ScreeningRepository screeningRepository;
     @Mock
+    private MovieRepository movieRepository;
+    @Mock
     private ReservationRepository reservationRepository;
     @Mock
     private ReservedSeatRepository reservedSeatRepository;
@@ -51,6 +57,9 @@ class ReservationServiceTest {
         when(screen.getRowCount()).thenReturn(10);
         when(screen.getSeatsPerRow()).thenReturn(12);
         given(userRepository.findById(1L)).willReturn(Optional.of(user));
+        given(screeningRepository.findMovieIdById(8L)).willReturn(Optional.of(4L));
+        given(movieRepository.findByIdForShare(4L)).willReturn(Optional.of(
+                new Movie("영화", "설명", 120, LocalDate.of(2026, 9, 1), AgeRating.ALL)));
         given(screeningRepository.findByIdWithLock(8L)).willReturn(Optional.of(screening));
         given(reservedSeatRepository.findIdByReservationScreeningIdAndSeatRowAndSeatNumberAndReservationStatus(
                 8L, "A", 1, ReservationStatus.RESERVED

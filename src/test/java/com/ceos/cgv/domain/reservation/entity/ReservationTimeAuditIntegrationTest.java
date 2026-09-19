@@ -49,8 +49,8 @@ class ReservationTimeAuditIntegrationTest {
                 CINEMA_ID, "시간 테스트 영화관", "서울");
         jdbcTemplate.update("INSERT INTO screens (screen_id, cinema_id, screen_type, row_count, seats_per_row) VALUES (?, ?, ?, ?, ?)",
                 SCREEN_ID, CINEMA_ID, "GENERAL", 10, 12);
-        jdbcTemplate.update("INSERT INTO movies (movie_id, title, description, running_time, release_date, age_rating) VALUES (?, ?, ?, ?, ?, ?)",
-                MOVIE_ID, "시간 테스트 영화", "설명", 120, "2026-09-15", "ALL");
+        jdbcTemplate.update("INSERT INTO movies (movie_id, title, description, running_time, release_date, age_rating, visibility) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                MOVIE_ID, "시간 테스트 영화", "설명", 120, "2026-09-15", "ALL", "PUBLIC");
         jdbcTemplate.update("INSERT INTO screenings (screening_id, movie_id, screen_id, start_at) VALUES (?, ?, ?, ?)",
                 SCREENING_ID, MOVIE_ID, SCREEN_ID, "2026-09-20 12:30:00");
     }

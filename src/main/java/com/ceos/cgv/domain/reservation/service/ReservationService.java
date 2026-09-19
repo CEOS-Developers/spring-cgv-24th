@@ -1,7 +1,9 @@
 package com.ceos.cgv.domain.reservation.service;
 
 import com.ceos.cgv.domain.cinema.entity.Screen;
+import com.ceos.cgv.domain.movie.entity.Movie;
 import com.ceos.cgv.domain.movie.entity.Screening;
+import com.ceos.cgv.domain.movie.repository.MovieRepository;
 import com.ceos.cgv.domain.movie.repository.ScreeningRepository;
 import com.ceos.cgv.domain.reservation.dto.ReservationCreateRequest;
 import com.ceos.cgv.domain.reservation.dto.ReservedSeatRequest;
@@ -27,6 +29,7 @@ import java.util.Set;
 public class ReservationService {
     private final UserRepository userRepository;
     private final ScreeningRepository screeningRepository;
+    private final MovieRepository movieRepository;
     private final ReservationRepository reservationRepository;
     private final ReservedSeatRepository reservedSeatRepository;
 
@@ -36,6 +39,12 @@ public class ReservationService {
         // 예매를 요청한 사용자가 실제로 존재하는지 확인
         User user = userRepository.findById(request.userId())
                 .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
+
+        Long movieId = screeningRepository.findMovieIdById(request.screeningId())
+                .orElseThrow(() -> new BusinessException(ErrorCode.SCREENING_NOT_FOUND));
+        Movie movie = movieRepository.findByIdForShare(movieId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.MOVIE_NOT_FOUND));
+        movie.ensurePublic();
 
         // 같은 상영 일정에 대한 동시 예매를 순서대로 처리하기 위해 행을 잠금
         Screening screening = screeningRepository.findByIdWithLock(request.screeningId())

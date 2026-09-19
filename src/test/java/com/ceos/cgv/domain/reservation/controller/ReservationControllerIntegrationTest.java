@@ -32,7 +32,7 @@ class ReservationControllerIntegrationTest {
         jdbcTemplate.update("INSERT INTO users (user_id, name, email) VALUES (11, '테스트 사용자', 'reservation-test@example.com')");
         jdbcTemplate.update("INSERT INTO cinemas (cinema_id, name, address) VALUES (22, '테스트 영화관', '서울')");
         jdbcTemplate.update("INSERT INTO screens (screen_id, cinema_id, screen_type, row_count, seats_per_row) VALUES (33, 22, 'GENERAL', 10, 12)");
-        jdbcTemplate.update("INSERT INTO movies (movie_id, title, description, running_time, release_date, age_rating) VALUES (44, '예매 테스트 영화', '설명', 120, '2026-09-15', 'ALL')");
+        jdbcTemplate.update("INSERT INTO movies (movie_id, title, description, running_time, release_date, age_rating, visibility) VALUES (44, '예매 테스트 영화', '설명', 120, '2026-09-15', 'ALL', 'PUBLIC')");
         jdbcTemplate.update("INSERT INTO screenings (screening_id, movie_id, screen_id, start_at) VALUES (55, 44, 33, '2026-09-20T12:30:00')");
     }
 

@@ -10,11 +10,15 @@ import org.springframework.data.repository.query.Param;
 import jakarta.persistence.LockModeType;
 
 import java.util.List;
+import java.util.Optional;
 
 public interface ScreeningRepository extends JpaRepository<Screening, Long> {
+    @Query("select s.movie.id from Screening s where s.id = :screeningId")
+    Optional<Long> findMovieIdById(@Param("screeningId") Long screeningId);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select s from Screening s where s.id = :screeningId")
-    java.util.Optional<Screening> findByIdWithLock(@Param("screeningId") Long screeningId);
+    Optional<Screening> findByIdWithLock(@Param("screeningId") Long screeningId);
 
     @EntityGraph(attributePaths = {"movie", "screen"})
     List<Screening> findAllByMovie_IdOrderByStartAt(Long movieId);
