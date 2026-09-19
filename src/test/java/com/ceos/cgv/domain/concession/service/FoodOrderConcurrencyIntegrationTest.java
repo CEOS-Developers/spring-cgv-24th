@@ -7,11 +7,10 @@ import com.ceos.cgv.global.exception.ErrorCode;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -28,8 +27,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 @SpringBootTest
-@ActiveProfiles("local")
-@EnabledIfEnvironmentVariable(named = "CGV_DB_LOCAL", matches = ".+")
+@AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.ANY)
 class FoodOrderConcurrencyIntegrationTest {
 
     private static final long USER_ID = 801L;
@@ -171,7 +169,7 @@ class FoodOrderConcurrencyIntegrationTest {
     }
 
     private void cleanUp() {
-        jdbcTemplate.update("DELETE oi FROM order_items oi JOIN food_orders fo ON fo.order_id = oi.order_id WHERE fo.user_id = ? AND fo.cinema_id = ?",
+        jdbcTemplate.update("DELETE FROM order_items WHERE order_id IN (SELECT order_id FROM food_orders WHERE user_id = ? AND cinema_id = ?)",
                 USER_ID, CINEMA_ID);
         jdbcTemplate.update("DELETE FROM food_orders WHERE user_id = ? AND cinema_id = ?", USER_ID, CINEMA_ID);
         jdbcTemplate.update("DELETE FROM inventories WHERE inventory_id = ?", INVENTORY_ID);

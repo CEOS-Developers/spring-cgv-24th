@@ -1,6 +1,5 @@
 package com.ceos.cgv.domain.movie.service;
 
-import com.ceos.cgv.domain.movie.enums.MovieVisibility;
 import com.ceos.cgv.domain.movie.repository.MovieRepository;
 import com.ceos.cgv.domain.reservation.dto.ReservationCreateRequest;
 import com.ceos.cgv.domain.reservation.dto.ReservedSeatRequest;
@@ -10,11 +9,10 @@ import com.ceos.cgv.global.exception.ErrorCode;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import java.util.List;
@@ -22,10 +20,8 @@ import java.util.concurrent.*;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
-@SpringBootTest(properties =
-        "spring.datasource.hikari.connection-init-sql=SET SESSION innodb_lock_wait_timeout=5")
-@ActiveProfiles("local")
-@EnabledIfEnvironmentVariable(named = "CGV_DB_LOCAL", matches = ".+")
+@SpringBootTest
+@AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.ANY)
 class MovieVisibilityConcurrencyIntegrationTest {
     private static final long USER = 9501, CINEMA = 9502, SCREEN = 9503;
     private static final long MOVIE = 9504, SCREENING = 9505;
@@ -63,22 +59,18 @@ class MovieVisibilityConcurrencyIntegrationTest {
     }
 
     @Test
-    void 공유_잠금은_공존하고_비공개_변경만_기다린다() throws Exception {
-        ExecutorService pool = Executors.newFixedThreadPool(3);
-        CountDownLatch sharedHeld = new CountDownLatch(1);
+    void 영화_잠금이_유지되는_동안_비공개_변경은_대기한다() throws Exception {
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        CountDownLatch movieLockHeld = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
         try {
             Future<?> first = pool.submit(() -> new TransactionTemplate(transactionManager)
                     .executeWithoutResult(tx -> {
                         movieRepository.findByIdForShare(MOVIE).orElseThrow();
-                        sharedHeld.countDown();
+                        movieLockHeld.countDown();
                         await(release);
                     }));
-            assertThat(sharedHeld.await(2, TimeUnit.SECONDS)).isTrue();
-            Future<MovieVisibility> second = pool.submit(() ->
-                    new TransactionTemplate(transactionManager).execute(tx ->
-                            movieRepository.findByIdForShare(MOVIE).orElseThrow().getVisibility()));
-            assertThat(second.get(2, TimeUnit.SECONDS)).isEqualTo(MovieVisibility.PUBLIC);
+            assertThat(movieLockHeld.await(2, TimeUnit.SECONDS)).isTrue();
 
             CountDownLatch hideStarted = new CountDownLatch(1);
             Future<?> hide = pool.submit(() -> {

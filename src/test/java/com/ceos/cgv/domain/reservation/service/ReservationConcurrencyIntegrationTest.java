@@ -6,11 +6,10 @@ import com.ceos.cgv.global.exception.BusinessException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -27,8 +26,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 @SpringBootTest
-@ActiveProfiles("local")
-@EnabledIfEnvironmentVariable(named = "CGV_DB_LOCAL", matches = ".+")
+@AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.ANY)
 class ReservationConcurrencyIntegrationTest {
 
     private static final long USER_ID = 401L;
@@ -120,7 +118,7 @@ class ReservationConcurrencyIntegrationTest {
     }
 
     private void cleanUp() {
-        jdbcTemplate.update("DELETE rs FROM reserved_seats rs JOIN reservations r ON r.reservation_id = rs.reservation_id WHERE r.screening_id = ?", SCREENING_ID);
+        jdbcTemplate.update("DELETE FROM reserved_seats WHERE reservation_id IN (SELECT reservation_id FROM reservations WHERE screening_id = ?)", SCREENING_ID);
         jdbcTemplate.update("DELETE FROM reservations WHERE screening_id = ?", SCREENING_ID);
         jdbcTemplate.update("DELETE FROM screenings WHERE screening_id = ?", SCREENING_ID);
         jdbcTemplate.update("DELETE FROM movies WHERE movie_id = ?", MOVIE_ID);
