@@ -1,4 +1,4 @@
-package com.ceos24.cgv.domain.movie.domain;
+package com.ceos24.cgv.domain.movie.entity;
 
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;

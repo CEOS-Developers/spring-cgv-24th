@@ -1,7 +1,7 @@
-package com.ceos24.cgv.domain.screening.domain;
+package com.ceos24.cgv.domain.screening.entity;
 
-import com.ceos24.cgv.domain.movie.domain.Movie;
-import com.ceos24.cgv.domain.theater.domain.Screen;
+import com.ceos24.cgv.domain.movie.entity.Movie;
+import com.ceos24.cgv.domain.theater.entity.Screen;
 import jakarta.persistence.*;
 import java.time.LocalDateTime;
 import lombok.AccessLevel;

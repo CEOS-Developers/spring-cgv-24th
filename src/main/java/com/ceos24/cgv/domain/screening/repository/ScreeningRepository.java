@@ -1,7 +1,7 @@
 package com.ceos24.cgv.domain.screening.repository;
 
-import com.ceos24.cgv.domain.movie.domain.Movie;
-import com.ceos24.cgv.domain.screening.domain.Screening;
+import com.ceos24.cgv.domain.movie.entity.Movie;
+import com.ceos24.cgv.domain.screening.entity.Screening;
 import java.util.List;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;

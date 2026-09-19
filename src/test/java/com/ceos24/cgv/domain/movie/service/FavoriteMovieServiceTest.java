@@ -1,9 +1,9 @@
 package com.ceos24.cgv.domain.movie.service;
 
-import com.ceos24.cgv.domain.member.domain.Member;
+import com.ceos24.cgv.domain.member.entity.Member;
 import com.ceos24.cgv.domain.member.repository.MemberRepository;
-import com.ceos24.cgv.domain.movie.domain.FavoriteMovie;
-import com.ceos24.cgv.domain.movie.domain.Movie;
+import com.ceos24.cgv.domain.movie.entity.FavoriteMovie;
+import com.ceos24.cgv.domain.movie.entity.Movie;
 import com.ceos24.cgv.domain.movie.repository.FavoriteMovieRepository;
 import com.ceos24.cgv.domain.movie.repository.MovieRepository;
 import com.ceos24.cgv.global.exception.BusinessException;
@@ -14,7 +14,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.Optional;
 

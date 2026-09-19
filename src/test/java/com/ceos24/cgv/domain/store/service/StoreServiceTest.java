@@ -1,13 +1,13 @@
 package com.ceos24.cgv.domain.store.service;
 
-import com.ceos24.cgv.domain.store.domain.Menu;
-import com.ceos24.cgv.domain.store.domain.MenuStock;
-import com.ceos24.cgv.domain.store.domain.Store;
+import com.ceos24.cgv.domain.store.entity.Menu;
+import com.ceos24.cgv.domain.store.entity.MenuStock;
+import com.ceos24.cgv.domain.store.entity.Store;
 import com.ceos24.cgv.domain.store.dto.response.MenuStockInfo;
 import com.ceos24.cgv.domain.store.dto.response.StoreResponse;
 import com.ceos24.cgv.domain.store.repository.MenuStockRepository;
 import com.ceos24.cgv.domain.store.repository.StoreRepository;
-import com.ceos24.cgv.domain.theater.domain.Theater;
+import com.ceos24.cgv.domain.theater.entity.Theater;
 import com.ceos24.cgv.global.exception.BusinessException;
 import com.ceos24.cgv.global.exception.ErrorCode;
 import org.junit.jupiter.api.DisplayName;

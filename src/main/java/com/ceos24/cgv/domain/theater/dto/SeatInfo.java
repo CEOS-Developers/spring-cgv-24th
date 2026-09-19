@@ -1,6 +1,6 @@
 package com.ceos24.cgv.domain.theater.dto;
 
-import com.ceos24.cgv.domain.theater.domain.Seat;
+import com.ceos24.cgv.domain.theater.entity.Seat;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 

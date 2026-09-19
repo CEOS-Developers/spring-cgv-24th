@@ -1,6 +1,6 @@
 package com.ceos24.cgv.domain.movie.service;
 
-import com.ceos24.cgv.domain.movie.domain.Movie;
+import com.ceos24.cgv.domain.movie.entity.Movie;
 import com.ceos24.cgv.domain.movie.dto.MovieInfo;
 import com.ceos24.cgv.domain.movie.dto.ScheduleTimeInfo;
 import com.ceos24.cgv.domain.movie.dto.ScreenScheduleInfo;
@@ -8,9 +8,9 @@ import com.ceos24.cgv.domain.movie.dto.ScreeningMovieInfo;
 import com.ceos24.cgv.domain.movie.dto.response.GetMovieResponse;
 import com.ceos24.cgv.domain.movie.dto.response.GetScreeningResponse;
 import com.ceos24.cgv.domain.movie.repository.MovieRepository;
-import com.ceos24.cgv.domain.screening.domain.Screening;
+import com.ceos24.cgv.domain.screening.entity.Screening;
 import com.ceos24.cgv.domain.screening.repository.ScreeningRepository;
-import com.ceos24.cgv.domain.theater.domain.Screen;
+import com.ceos24.cgv.domain.theater.entity.Screen;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;

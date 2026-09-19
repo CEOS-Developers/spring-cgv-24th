@@ -5,7 +5,7 @@ import static org.mockito.Mockito.*;
 
 import com.ceos24.cgv.domain.store.dto.request.CreateStoreRequest;
 import com.ceos24.cgv.domain.store.service.StoreAdminService;
-import com.ceos24.cgv.domain.theater.domain.Theater;
+import com.ceos24.cgv.domain.theater.entity.Theater;
 import com.ceos24.cgv.domain.theater.dto.request.CreateTheaterRequest;
 import com.ceos24.cgv.domain.theater.repository.TheaterRepository;
 import org.junit.jupiter.api.DisplayName;

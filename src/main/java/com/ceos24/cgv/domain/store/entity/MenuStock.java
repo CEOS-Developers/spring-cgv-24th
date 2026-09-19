@@ -1,4 +1,4 @@
-package com.ceos24.cgv.domain.store.domain;
+package com.ceos24.cgv.domain.store.entity;
 
 import jakarta.persistence.*;
 import lombok.AccessLevel;

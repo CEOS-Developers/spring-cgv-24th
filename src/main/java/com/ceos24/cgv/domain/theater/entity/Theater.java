@@ -1,4 +1,4 @@
-package com.ceos24.cgv.domain.store.domain;
+package com.ceos24.cgv.domain.theater.entity;
 
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
@@ -11,11 +11,11 @@ import lombok.NoArgsConstructor;
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @Entity
-public class Menu {
+public class Theater {
 
-    public Menu(String name, Long price) {
+    public Theater(String name, String address) {
         this.name = name;
-        this.price = price;
+        this.address = address;
     }
 
     @Id
@@ -25,5 +25,5 @@ public class Menu {
     @jakarta.persistence.Column(length = 50)
     private String name;
 
-    private Long price;
+    private String address;
 }

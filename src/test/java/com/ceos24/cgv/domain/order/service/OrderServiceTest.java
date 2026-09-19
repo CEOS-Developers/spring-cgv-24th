@@ -1,15 +1,15 @@
 package com.ceos24.cgv.domain.order.service;
 
-import com.ceos24.cgv.domain.member.domain.Member;
+import com.ceos24.cgv.domain.member.entity.Member;
 import com.ceos24.cgv.domain.member.repository.MemberRepository;
-import com.ceos24.cgv.domain.order.domain.Order;
+import com.ceos24.cgv.domain.order.entity.Order;
 import com.ceos24.cgv.domain.order.dto.request.CreateOrderRequest;
 import com.ceos24.cgv.domain.order.dto.request.OrderItemRequest;
 import com.ceos24.cgv.domain.order.repository.OrderItemRepository;
 import com.ceos24.cgv.domain.order.repository.OrderRepository;
-import com.ceos24.cgv.domain.store.domain.Menu;
-import com.ceos24.cgv.domain.store.domain.MenuStock;
-import com.ceos24.cgv.domain.store.domain.Store;
+import com.ceos24.cgv.domain.store.entity.Menu;
+import com.ceos24.cgv.domain.store.entity.MenuStock;
+import com.ceos24.cgv.domain.store.entity.Store;
 import com.ceos24.cgv.domain.store.repository.MenuStockRepository;
 import com.ceos24.cgv.domain.store.repository.StoreRepository;
 import com.ceos24.cgv.global.exception.BusinessException;

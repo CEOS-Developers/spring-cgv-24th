@@ -1,6 +1,6 @@
-package com.ceos24.cgv.domain.theater.domain;
+package com.ceos24.cgv.domain.theater.entity;
 
-import com.ceos24.cgv.domain.screening.domain.Screening;
+import com.ceos24.cgv.domain.screening.entity.Screening;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Getter;

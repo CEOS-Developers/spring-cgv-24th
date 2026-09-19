@@ -1,6 +1,6 @@
 package com.ceos24.cgv.domain.theater.dto.request;
 
-import com.ceos24.cgv.domain.theater.domain.ScreenType;
+import com.ceos24.cgv.domain.theater.entity.ScreenType;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 

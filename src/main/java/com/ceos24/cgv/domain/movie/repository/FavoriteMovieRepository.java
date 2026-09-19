@@ -1,6 +1,6 @@
 package com.ceos24.cgv.domain.movie.repository;
 
-import com.ceos24.cgv.domain.movie.domain.FavoriteMovie;
+import com.ceos24.cgv.domain.movie.entity.FavoriteMovie;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 

@@ -1,6 +1,6 @@
 package com.ceos24.cgv.domain.store.repository;
 
-import com.ceos24.cgv.domain.store.domain.MenuStock;
+import com.ceos24.cgv.domain.store.entity.MenuStock;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;

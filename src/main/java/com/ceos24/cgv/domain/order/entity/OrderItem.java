@@ -1,6 +1,6 @@
-package com.ceos24.cgv.domain.order.domain;
+package com.ceos24.cgv.domain.order.entity;
 
-import com.ceos24.cgv.domain.store.domain.Menu;
+import com.ceos24.cgv.domain.store.entity.Menu;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Getter;

@@ -1,6 +1,6 @@
 package com.ceos24.cgv.domain.movie.dto;
 
-import com.ceos24.cgv.domain.movie.domain.Movie;
+import com.ceos24.cgv.domain.movie.entity.Movie;
 import io.swagger.v3.oas.annotations.media.Schema;
 
 @Schema(description = "영화 정보 DTO")

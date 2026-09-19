@@ -1,6 +1,6 @@
-package com.ceos24.cgv.domain.movie.domain;
+package com.ceos24.cgv.domain.theater.entity;
 
-import com.ceos24.cgv.domain.member.domain.Member;
+import com.ceos24.cgv.domain.member.entity.Member;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -8,12 +8,12 @@ import lombok.NoArgsConstructor;
 
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
-@Table(uniqueConstraints = @UniqueConstraint(columnNames = {"movie_id", "member_id"}))
+@Table(uniqueConstraints = @UniqueConstraint(columnNames = {"theater_id", "member_id"}))
 @Entity
-public class FavoriteMovie {
+public class FavoriteTheater {
 
-    public FavoriteMovie(Movie movie, Member member) {
-        this.movie = movie;
+    public FavoriteTheater(Theater theater, Member member) {
+        this.theater = theater;
         this.member = member;
     }
 
@@ -21,9 +21,9 @@ public class FavoriteMovie {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @JoinColumn(nullable = false, name = "movie_id")
+    @JoinColumn(nullable = false, name = "theater_id")
     @ManyToOne(fetch = FetchType.LAZY)
-    private Movie movie;
+    private Theater theater;
 
     @JoinColumn(nullable = false, name = "member_id")
     @ManyToOne(fetch = FetchType.LAZY)

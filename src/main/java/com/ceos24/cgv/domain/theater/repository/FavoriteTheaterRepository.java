@@ -1,6 +1,6 @@
 package com.ceos24.cgv.domain.theater.repository;
 
-import com.ceos24.cgv.domain.theater.domain.FavoriteTheater;
+import com.ceos24.cgv.domain.theater.entity.FavoriteTheater;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 

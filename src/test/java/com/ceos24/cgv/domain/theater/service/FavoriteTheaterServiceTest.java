@@ -5,10 +5,10 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
-import com.ceos24.cgv.domain.member.domain.Member;
+import com.ceos24.cgv.domain.member.entity.Member;
 import com.ceos24.cgv.domain.member.repository.MemberRepository;
-import com.ceos24.cgv.domain.theater.domain.FavoriteTheater;
-import com.ceos24.cgv.domain.theater.domain.Theater;
+import com.ceos24.cgv.domain.theater.entity.FavoriteTheater;
+import com.ceos24.cgv.domain.theater.entity.Theater;
 import com.ceos24.cgv.domain.theater.repository.FavoriteTheaterRepository;
 import com.ceos24.cgv.domain.theater.repository.TheaterRepository;
 import com.ceos24.cgv.global.exception.BusinessException;

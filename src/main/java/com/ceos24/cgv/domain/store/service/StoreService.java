@@ -1,7 +1,7 @@
 package com.ceos24.cgv.domain.store.service;
 
-import com.ceos24.cgv.domain.store.domain.MenuStock;
-import com.ceos24.cgv.domain.store.domain.Store;
+import com.ceos24.cgv.domain.store.entity.MenuStock;
+import com.ceos24.cgv.domain.store.entity.Store;
 import com.ceos24.cgv.domain.store.dto.response.MenuStockInfo;
 import com.ceos24.cgv.domain.store.dto.response.StoreResponse;
 import com.ceos24.cgv.domain.store.repository.MenuStockRepository;

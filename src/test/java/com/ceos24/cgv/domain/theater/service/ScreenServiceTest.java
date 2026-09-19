@@ -4,8 +4,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.Mockito.*;
 
-import com.ceos24.cgv.domain.theater.domain.Screen;
-import com.ceos24.cgv.domain.theater.domain.Theater;
+import com.ceos24.cgv.domain.theater.entity.Screen;
+import com.ceos24.cgv.domain.theater.entity.Theater;
 import com.ceos24.cgv.domain.theater.dto.response.GetScreenResponse;
 import com.ceos24.cgv.domain.theater.repository.ScreenRepository;
 import org.junit.jupiter.api.DisplayName;
@@ -14,7 +14,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
 

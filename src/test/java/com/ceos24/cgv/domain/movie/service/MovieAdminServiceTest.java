@@ -1,6 +1,6 @@
 package com.ceos24.cgv.domain.movie.service;
 
-import com.ceos24.cgv.domain.movie.domain.Movie;
+import com.ceos24.cgv.domain.movie.entity.Movie;
 import com.ceos24.cgv.domain.movie.dto.request.CreateMovieRequest;
 import com.ceos24.cgv.domain.movie.repository.MovieRepository;
 import org.junit.jupiter.api.DisplayName;

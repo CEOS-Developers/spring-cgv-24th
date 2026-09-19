@@ -1,8 +1,8 @@
 package com.ceos24.cgv.domain.theater.service;
 
-import com.ceos24.cgv.domain.screening.domain.Screening;
-import com.ceos24.cgv.domain.theater.domain.Screen;
-import com.ceos24.cgv.domain.theater.domain.Seat;
+import com.ceos24.cgv.domain.screening.entity.Screening;
+import com.ceos24.cgv.domain.theater.entity.Screen;
+import com.ceos24.cgv.domain.theater.entity.Seat;
 import com.ceos24.cgv.domain.theater.dto.SeatInfo;
 import com.ceos24.cgv.domain.theater.dto.response.GetSeatResponse;
 import com.ceos24.cgv.domain.theater.repository.SeatRepository;

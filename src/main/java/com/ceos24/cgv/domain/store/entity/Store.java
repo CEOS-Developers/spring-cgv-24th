@@ -1,5 +1,6 @@
-package com.ceos24.cgv.domain.theater.domain;
+package com.ceos24.cgv.domain.store.entity;
 
+import com.ceos24.cgv.domain.theater.entity.Theater;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -8,13 +9,11 @@ import lombok.NoArgsConstructor;
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @Entity
-public class Screen {
+public class Store {
 
-    public Screen(Theater theater, ScreenType screenType, String name, Long totalSeats) {
+    public Store(Theater theater, String name) {
         this.theater = theater;
-        this.screenType = screenType;
         this.name = name;
-        this.totalSeats = totalSeats;
     }
 
     @Id
@@ -22,13 +21,9 @@ public class Screen {
     private Long id;
 
     @JoinColumn(nullable = false)
-    @ManyToOne(fetch = FetchType.LAZY)
+    @OneToOne(fetch = FetchType.LAZY)
     private Theater theater;
 
-    @Enumerated(EnumType.STRING)
-    private ScreenType screenType;
-
+    @jakarta.persistence.Column(length = 50)
     private String name;
-
-    private Long totalSeats;
 }

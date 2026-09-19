@@ -1,6 +1,6 @@
 package com.ceos24.cgv.domain.store.service;
 
-import com.ceos24.cgv.domain.store.domain.Menu;
+import com.ceos24.cgv.domain.store.entity.Menu;
 import com.ceos24.cgv.domain.store.dto.request.CreateMenuRequest;
 import com.ceos24.cgv.domain.store.repository.MenuRepository;
 import org.junit.jupiter.api.DisplayName;

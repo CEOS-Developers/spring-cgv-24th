@@ -1,7 +1,7 @@
 package com.ceos24.cgv.domain.theater.service;
 
-import com.ceos24.cgv.domain.theater.domain.Screen;
-import com.ceos24.cgv.domain.theater.domain.Theater;
+import com.ceos24.cgv.domain.theater.entity.Screen;
+import com.ceos24.cgv.domain.theater.entity.Theater;
 import com.ceos24.cgv.domain.theater.dto.request.ScreenCreateRequest;
 import com.ceos24.cgv.domain.theater.repository.ScreenRepository;
 import com.ceos24.cgv.domain.theater.repository.TheaterRepository;

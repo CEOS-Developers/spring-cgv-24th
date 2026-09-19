@@ -1,6 +1,6 @@
 package com.ceos24.cgv.domain.reservation.repository;
 
-import com.ceos24.cgv.domain.reservation.domain.Reservation;
+import com.ceos24.cgv.domain.reservation.entity.Reservation;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;

@@ -1,9 +1,9 @@
 package com.ceos24.cgv.domain.movie.service;
 
-import com.ceos24.cgv.domain.member.domain.Member;
+import com.ceos24.cgv.domain.member.entity.Member;
 import com.ceos24.cgv.domain.member.repository.MemberRepository;
-import com.ceos24.cgv.domain.movie.domain.FavoriteMovie;
-import com.ceos24.cgv.domain.movie.domain.Movie;
+import com.ceos24.cgv.domain.movie.entity.FavoriteMovie;
+import com.ceos24.cgv.domain.movie.entity.Movie;
 import com.ceos24.cgv.domain.movie.dto.MovieInfo;
 import com.ceos24.cgv.domain.movie.dto.response.GetMovieResponse;
 import com.ceos24.cgv.domain.movie.repository.FavoriteMovieRepository;
@@ -13,8 +13,6 @@ import com.ceos24.cgv.global.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
-import java.util.List;
 
 @RequiredArgsConstructor
 @Service

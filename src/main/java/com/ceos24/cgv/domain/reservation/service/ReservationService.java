@@ -1,10 +1,10 @@
 package com.ceos24.cgv.domain.reservation.service;
 
-import com.ceos24.cgv.domain.member.domain.Member;
+import com.ceos24.cgv.domain.member.entity.Member;
 import com.ceos24.cgv.domain.member.repository.MemberRepository;
-import com.ceos24.cgv.domain.reservation.domain.Reservation;
+import com.ceos24.cgv.domain.reservation.entity.Reservation;
 import com.ceos24.cgv.domain.reservation.repository.ReservationRepository;
-import com.ceos24.cgv.domain.theater.domain.Seat;
+import com.ceos24.cgv.domain.theater.entity.Seat;
 import com.ceos24.cgv.domain.theater.repository.SeatRepository;
 import com.ceos24.cgv.global.exception.BusinessException;
 import com.ceos24.cgv.global.exception.ErrorCode;

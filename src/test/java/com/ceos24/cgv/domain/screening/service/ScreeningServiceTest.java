@@ -1,10 +1,10 @@
 package com.ceos24.cgv.domain.screening.service;
 
-import com.ceos24.cgv.domain.movie.domain.Movie;
-import com.ceos24.cgv.domain.screening.domain.Screening;
+import com.ceos24.cgv.domain.movie.entity.Movie;
+import com.ceos24.cgv.domain.screening.entity.Screening;
 import com.ceos24.cgv.domain.screening.dto.ScreeningInfo;
 import com.ceos24.cgv.domain.screening.repository.ScreeningRepository;
-import com.ceos24.cgv.domain.theater.domain.Screen;
+import com.ceos24.cgv.domain.theater.entity.Screen;
 import com.ceos24.cgv.global.exception.BusinessException;
 import com.ceos24.cgv.global.exception.ErrorCode;
 import org.junit.jupiter.api.DisplayName;
@@ -20,7 +20,6 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.BDDMockito.given;
 
 @ExtendWith(MockitoExtension.class)

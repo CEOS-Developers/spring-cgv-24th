@@ -5,9 +5,9 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
-import com.ceos24.cgv.domain.theater.domain.Screen;
-import com.ceos24.cgv.domain.theater.domain.ScreenType;
-import com.ceos24.cgv.domain.theater.domain.Theater;
+import com.ceos24.cgv.domain.theater.entity.Screen;
+import com.ceos24.cgv.domain.theater.entity.ScreenType;
+import com.ceos24.cgv.domain.theater.entity.Theater;
 import com.ceos24.cgv.domain.theater.dto.request.ScreenCreateRequest;
 import com.ceos24.cgv.domain.theater.repository.ScreenRepository;
 import com.ceos24.cgv.domain.theater.repository.TheaterRepository;

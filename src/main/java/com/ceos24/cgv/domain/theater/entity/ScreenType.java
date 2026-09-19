@@ -1,4 +1,4 @@
-package com.ceos24.cgv.domain.theater.domain;
+package com.ceos24.cgv.domain.theater.entity;
 
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;

@@ -1,9 +1,9 @@
 package com.ceos24.cgv.domain.theater.service;
 
-import com.ceos24.cgv.domain.member.domain.Member;
+import com.ceos24.cgv.domain.member.entity.Member;
 import com.ceos24.cgv.domain.member.repository.MemberRepository;
-import com.ceos24.cgv.domain.theater.domain.FavoriteTheater;
-import com.ceos24.cgv.domain.theater.domain.Theater;
+import com.ceos24.cgv.domain.theater.entity.FavoriteTheater;
+import com.ceos24.cgv.domain.theater.entity.Theater;
 import com.ceos24.cgv.domain.theater.dto.TheaterInfo;
 import com.ceos24.cgv.domain.theater.dto.response.GetTheaterResponse;
 import com.ceos24.cgv.domain.theater.repository.FavoriteTheaterRepository;
