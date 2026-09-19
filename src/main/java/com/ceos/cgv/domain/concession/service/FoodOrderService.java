@@ -20,6 +20,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -49,14 +50,17 @@ public class FoodOrderService {
             quantitiesByProduct.merge(item.productId(), item.quantity(), Math::addExact);
         }
 
-        // 이후 재고 차감과 주문 항목 생성에 사용할 상품별 처리 정보를 저장
-        List<OrderLine> orderLines = new ArrayList<>();
+        // 요청 순서와 무관하게 모든 주문이 상품 ID 순서로 재고 잠금을 획득
+        List<Map.Entry<Long, Integer>> lockOrder =
+                new ArrayList<>(quantitiesByProduct.entrySet());
+        lockOrder.sort(Map.Entry.comparingByKey());
+        Map<Long, OrderLine> orderLinesByProduct = new HashMap<>();
 
         // 상품을 하나씩 조회하지 않고 모든 상품을 한 번의 쿼리로 조회
         Map<Long, Product> productsById = productRepository.findAllById(quantitiesByProduct.keySet()).stream()
                 .collect(Collectors.toMap(Product::getId, product -> product));
         long totalPrice = 0;
-        for (Map.Entry<Long, Integer> item : quantitiesByProduct.entrySet()) {
+        for (Map.Entry<Long, Integer> item : lockOrder) {
             // 상품 id로 조회한 상품을 가져옴
             Product product = productsById.get(item.getKey());
             if (product == null) {
@@ -72,7 +76,8 @@ public class FoodOrderService {
             // 주문 시점의 상품 가격과 수량으로 총 주문 금액을 계산
             totalPrice = Math.addExact(totalPrice, Math.multiplyExact(product.getPrice(), item.getValue()));
             // 검증이 끝난 상품·재고·수량을 나중에 재사용할 수 있도록 보관
-            orderLines.add(new OrderLine(product, inventory, item.getValue()));
+            orderLinesByProduct.put(item.getKey(),
+                    new OrderLine(product, inventory, item.getValue()));
         }
 
         // 모든 상품과 재고 검증이 끝난 뒤 주문 엔티티 객체를 생성함
@@ -81,7 +86,8 @@ public class FoodOrderService {
                 .cinema(cinema)
                 .totalPrice(totalPrice)
                 .build();
-        for (OrderLine line : orderLines) {
+        for (Long productId : quantitiesByProduct.keySet()) {
+            OrderLine line = orderLinesByProduct.get(productId);
             // 검증이 끝난 재고에서 주문 수량만큼 차감
             line.inventory().decrease(line.quantity());
             // 주문 엔티티 객체와 상품을 주문 항목 객체로 연결함
