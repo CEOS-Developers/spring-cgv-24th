@@ -51,8 +51,10 @@ public class MovieController {
     }
 
     @DeleteMapping("/{movieId}")
-    @Operation(summary = "영화 삭제")
-    @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "204", description = "영화 삭제 성공")
+    @Operation(summary = "영화 비공개 처리",
+            description = "영화와 연관 이력을 보존하고 공개 조회 및 신규 이용을 중단함")
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(
+            responseCode = "204", description = "영화 비공개 처리 성공")
     public ResponseEntity<Void> delete(@PathVariable Long movieId) {
         movieService.delete(movieId);
         return ResponseEntity.noContent().build();
