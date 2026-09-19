@@ -5,8 +5,10 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -19,6 +21,8 @@ class MovieControllerIntegrationTest {
 
     @Autowired
     private MockMvc mockMvc;
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     @Test
     void 영화_생성하고_목록과_상세를_조회한다() throws Exception {
@@ -95,12 +99,23 @@ class MovieControllerIntegrationTest {
 
         mockMvc.perform(delete("/api/v1/movies/{movieId}", movieId))
                 .andExpect(status().isNoContent());
+        mockMvc.perform(delete("/api/v1/movies/{movieId}", movieId))
+                .andExpect(status().isNoContent());
 
         mockMvc.perform(get("/api/v1/movies/{movieId}", movieId))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.status").value(404))
                 .andExpect(jsonPath("$.message").exists())
                 .andExpect(jsonPath("$.code").value("MOVIE_NOT_FOUND"));
+        mockMvc.perform(get("/api/v1/movies"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[?(@.movieId == " + movieId + ")]").doesNotExist());
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM movies WHERE movie_id = ?",
+                Integer.class, movieId)).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT visibility FROM movies WHERE movie_id = ?",
+                String.class, movieId)).isEqualTo("HIDDEN");
     }
 
     @Test
@@ -110,5 +125,9 @@ class MovieControllerIntegrationTest {
                 .andExpect(jsonPath("$.status").value(404))
                 .andExpect(jsonPath("$.code").value("MOVIE_NOT_FOUND"))
                 .andExpect(jsonPath("$.message").isNotEmpty());
+
+        mockMvc.perform(delete("/api/v1/movies/{movieId}", 999_999L))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("MOVIE_NOT_FOUND"));
     }
 }

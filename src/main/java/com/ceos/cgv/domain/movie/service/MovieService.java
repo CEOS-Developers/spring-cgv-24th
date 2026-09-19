@@ -2,11 +2,13 @@ package com.ceos.cgv.domain.movie.service;
 
 import com.ceos.cgv.domain.movie.entity.Movie;
 import com.ceos.cgv.domain.movie.dto.MovieCreateRequest;
+import com.ceos.cgv.domain.movie.enums.MovieVisibility;
 import com.ceos.cgv.domain.movie.repository.MovieRepository;
 import com.ceos.cgv.global.exception.BusinessException;
 import com.ceos.cgv.global.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
@@ -15,12 +17,14 @@ import java.util.List;
 public class MovieService {
     private final MovieRepository movieRepository;
 
+    @Transactional(readOnly = true)
     public List<Movie> findAll(){
-        return movieRepository.findAll();
+        return movieRepository.findAllByVisibility(MovieVisibility.PUBLIC);
     }
 
+    @Transactional(readOnly = true)
     public Movie findById(Long movieId){
-        return movieRepository.findById(movieId)
+        return movieRepository.findByIdAndVisibility(movieId, MovieVisibility.PUBLIC)
                 .orElseThrow(() -> new BusinessException(ErrorCode.MOVIE_NOT_FOUND));
     }
 
@@ -35,7 +39,10 @@ public class MovieService {
         return movieRepository.save(movie);
     }
 
+    @Transactional
     public void delete(Long movieId) {
-        movieRepository.delete(findById(movieId));
+        Movie movie = movieRepository.findByIdForUpdate(movieId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.MOVIE_NOT_FOUND));
+        movie.hide();
     }
 }
