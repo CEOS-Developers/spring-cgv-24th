@@ -13,7 +13,9 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.time.LocalDate;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -96,5 +98,46 @@ class ScreeningControllerIntegrationTest {
                                 }
                                 """))
                 .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void 비공개_영화에는_새_상영을_등록할_수_없고_기존_상영도_공개_조회되지_않는다() throws Exception {
+        long cinemaId = 987_655L;
+        long screenId = 987_656L;
+        jdbcTemplate.update("INSERT INTO cinemas (cinema_id, name, address) VALUES (?, ?, ?)",
+                cinemaId, "비공개 테스트 영화관", "서울");
+        jdbcTemplate.update("""
+                INSERT INTO screens (screen_id, cinema_id, screen_type, row_count, seats_per_row)
+                VALUES (?, ?, 'GENERAL', 10, 12)
+                """, screenId, cinemaId);
+        Movie movie = movieRepository.save(new Movie(
+                "비공개 상영 테스트", "설명", 120,
+                LocalDate.of(2026, 9, 15), AgeRating.ALL));
+        jdbcTemplate.update("""
+                INSERT INTO screenings (movie_id, screen_id, start_at)
+                VALUES (?, ?, ?)
+                """, movie.getId(), screenId, "2026-09-20 12:30:00");
+
+        mockMvc.perform(delete("/api/v1/movies/{movieId}", movie.getId()))
+                .andExpect(status().isNoContent());
+
+        mockMvc.perform(post("/api/v1/screenings")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "movieId": %d,
+                                  "screenId": %d,
+                                  "startAt": "2026-09-20T15:30:00"
+                                }
+                                """.formatted(movie.getId(), screenId)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("MOVIE_NOT_AVAILABLE"));
+
+        mockMvc.perform(get("/api/v1/movies/{movieId}/screenings", movie.getId()))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("MOVIE_NOT_FOUND"));
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM screenings WHERE movie_id = ?",
+                Integer.class, movie.getId())).isEqualTo(1);
     }
 }

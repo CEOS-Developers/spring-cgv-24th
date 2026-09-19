@@ -10,6 +10,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -28,7 +29,7 @@ class MovieLikeControllerIntegrationTest {
     void 데이터베이스에_찜_테스트_기본_데이터를_넣는다() {
         jdbcTemplate.update("INSERT INTO users (user_id, name, email) VALUES (71, '찜 테스트 사용자', 'movie-like-test@example.com')");
         jdbcTemplate.update("INSERT INTO cinemas (cinema_id, name, address) VALUES (73, '찜 테스트 영화관', '서울')");
-        jdbcTemplate.update("INSERT INTO movies (movie_id, title, description, running_time, release_date, age_rating) VALUES (72, '찜 테스트 영화', '설명', 120, '2026-09-15', 'ALL')");
+        jdbcTemplate.update("INSERT INTO movies (movie_id, title, description, running_time, release_date, age_rating, visibility) VALUES (72, '찜 테스트 영화', '설명', 120, '2026-09-15', 'ALL', 'PUBLIC')");
     }
 
     @Test
@@ -58,5 +59,21 @@ class MovieLikeControllerIntegrationTest {
         mockMvc.perform(post("/api/v1/cinemas/{cinemaId}/likes", 73).param("userId", "71"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data").value(false));
+    }
+
+    @Test
+    void 비공개_영화의_기존_찜은_해제할_수_있지만_새로_찜할_수는_없다() throws Exception {
+        mockMvc.perform(post("/api/v1/movies/{movieId}/likes", 72).param("userId", "71"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data").value(true));
+        mockMvc.perform(delete("/api/v1/movies/{movieId}", 72))
+                .andExpect(status().isNoContent());
+
+        mockMvc.perform(post("/api/v1/movies/{movieId}/likes", 72).param("userId", "71"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data").value(false));
+        mockMvc.perform(post("/api/v1/movies/{movieId}/likes", 72).param("userId", "71"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("MOVIE_NOT_AVAILABLE"));
     }
 }

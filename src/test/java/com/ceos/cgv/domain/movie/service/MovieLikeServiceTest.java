@@ -36,7 +36,7 @@ class MovieLikeServiceTest {
         User user = mock(User.class);
         Movie movie = mock(Movie.class);
         given(userRepository.findById(1L)).willReturn(Optional.of(user));
-        given(movieRepository.findById(2L)).willReturn(Optional.of(movie));
+        given(movieRepository.findByIdForShare(2L)).willReturn(Optional.of(movie));
         given(movieLikeRepository.findByUser_IdAndMovie_Id(1L, 2L)).willReturn(Optional.empty());
 
         boolean liked = movieLikeService.toggle(1L, 2L);
@@ -51,7 +51,7 @@ class MovieLikeServiceTest {
         Movie movie = mock(Movie.class);
         MovieLike movieLike = mock(MovieLike.class);
         given(userRepository.findById(1L)).willReturn(Optional.of(user));
-        given(movieRepository.findById(2L)).willReturn(Optional.of(movie));
+        given(movieRepository.findByIdForShare(2L)).willReturn(Optional.of(movie));
         given(movieLikeRepository.findByUser_IdAndMovie_Id(1L, 2L)).willReturn(Optional.of(movieLike));
 
         boolean liked = movieLikeService.toggle(1L, 2L);

@@ -2,6 +2,8 @@ package com.ceos.cgv.domain.movie.entity;
 
 import com.ceos.cgv.domain.movie.enums.AgeRating;
 import com.ceos.cgv.domain.movie.enums.MovieVisibility;
+import com.ceos.cgv.global.exception.BusinessException;
+import com.ceos.cgv.global.exception.ErrorCode;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Builder;
@@ -59,5 +61,11 @@ public class Movie {
 
     public void hide() {
         this.visibility = MovieVisibility.HIDDEN;
+    }
+
+    public void ensurePublic() {
+        if (visibility != MovieVisibility.PUBLIC) {
+            throw new BusinessException(ErrorCode.MOVIE_NOT_AVAILABLE);
+        }
     }
 }

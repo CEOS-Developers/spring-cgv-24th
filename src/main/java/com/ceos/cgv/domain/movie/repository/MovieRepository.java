@@ -16,6 +16,12 @@ public interface MovieRepository extends JpaRepository<Movie, Long> {
 
     Optional<Movie> findByIdAndVisibility(Long id, MovieVisibility visibility);
 
+    boolean existsByIdAndVisibility(Long id, MovieVisibility visibility);
+
+    @Lock(LockModeType.PESSIMISTIC_READ)
+    @Query("select m from Movie m where m.id = :movieId")
+    Optional<Movie> findByIdForShare(@Param("movieId") Long movieId);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select m from Movie m where m.id = :movieId")
     Optional<Movie> findByIdForUpdate(@Param("movieId") Long movieId);
