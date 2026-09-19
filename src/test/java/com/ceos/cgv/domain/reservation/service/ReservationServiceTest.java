@@ -8,7 +8,7 @@ import com.ceos.cgv.domain.movie.repository.MovieRepository;
 import com.ceos.cgv.domain.movie.repository.ScreeningRepository;
 import com.ceos.cgv.domain.reservation.dto.ReservationCreateRequest;
 import com.ceos.cgv.domain.reservation.dto.ReservedSeatRequest;
-import com.ceos.cgv.domain.reservation.enums.ReservationStatus;
+import com.ceos.cgv.domain.reservation.dto.SeatCoordinate;
 import com.ceos.cgv.domain.reservation.repository.ReservationRepository;
 import com.ceos.cgv.domain.reservation.repository.ReservedSeatRepository;
 import com.ceos.cgv.domain.user.entity.User;
@@ -24,6 +24,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.BDDMockito.given;
@@ -61,9 +62,8 @@ class ReservationServiceTest {
         given(movieRepository.findByIdForShare(4L)).willReturn(Optional.of(
                 new Movie("영화", "설명", 120, LocalDate.of(2026, 9, 1), AgeRating.ALL)));
         given(screeningRepository.findByIdWithLock(8L)).willReturn(Optional.of(screening));
-        given(reservedSeatRepository.findIdByReservationScreeningIdAndSeatRowAndSeatNumberAndReservationStatus(
-                8L, "A", 1, ReservationStatus.RESERVED
-        )).willReturn(Optional.of(100L));
+        given(reservedSeatRepository.existsReservedByScreeningIdAndCoordinates(
+                8L, Set.of(new SeatCoordinate("A", 1)))).willReturn(true);
         ReservationCreateRequest request = new ReservationCreateRequest(
                 1L, 8L, List.of(new ReservedSeatRequest("A", 1))
         );

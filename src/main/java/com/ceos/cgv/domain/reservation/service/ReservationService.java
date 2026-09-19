@@ -7,6 +7,7 @@ import com.ceos.cgv.domain.movie.repository.MovieRepository;
 import com.ceos.cgv.domain.movie.repository.ScreeningRepository;
 import com.ceos.cgv.domain.reservation.dto.ReservationCreateRequest;
 import com.ceos.cgv.domain.reservation.dto.ReservedSeatRequest;
+import com.ceos.cgv.domain.reservation.dto.SeatCoordinate;
 import com.ceos.cgv.domain.reservation.entity.Reservation;
 import com.ceos.cgv.domain.reservation.entity.ReservedSeat;
 import com.ceos.cgv.domain.reservation.enums.ReservationStatus;
@@ -53,27 +54,25 @@ public class ReservationService {
         // 좌석 유효성 검증에 필요한 상영관 좌석 구조를 가져옴
         Screen screen = screening.getScreen();
 
-        // 한 번의 요청 안에서 같은 좌석이 중복으로 들어오는지 검사하기 위해 HashSet 사용
-        Set<String> requestedSeats = new HashSet<>();
+        if (request.seats() == null || request.seats().isEmpty()) {
+            throw new BusinessException(ErrorCode.INVALID_REQUEST);
+        }
+
+        // 모든 좌석을 검증한 뒤 요청 좌표의 중복 여부를 확인
+        Set<SeatCoordinate> requestedSeats = new HashSet<>();
         for (ReservedSeatRequest seat : request.seats()) {
             // 상영관의 좌석 범위를 벗어난 좌석인지 확인
             validateSeat(screen, seat);
 
-            // 예씨) A열 1번 좌석은 A1이라는 하나의 키로 만든다
-            String seatKey = seat.seatRow() + seat.seatNumber();
-            if (!requestedSeats.add(seatKey)) {
+            if (!requestedSeats.add(new SeatCoordinate(seat.seatRow(), seat.seatNumber()))) {
                 throw new BusinessException(ErrorCode.DUPLICATE_SEAT_IN_REQUEST);
             }
+        }
 
-            // 다른 사용자가 이미 예매한 좌석인지 DB에서 확인
-            boolean alreadyReserved = reservedSeatRepository
-                    .findIdByReservationScreeningIdAndSeatRowAndSeatNumberAndReservationStatus(
-                            screening.getId(), seat.seatRow(), seat.seatNumber(), ReservationStatus.RESERVED
-                    )
-                    .isPresent();
-            if (alreadyReserved) {
-                throw new BusinessException(ErrorCode.SEAT_ALREADY_RESERVED);
-            }
+        // 같은 회차의 요청 좌표만 한 번의 존재 조회로 확인
+        if (reservedSeatRepository.existsReservedByScreeningIdAndCoordinates(
+                screening.getId(), requestedSeats)) {
+            throw new BusinessException(ErrorCode.SEAT_ALREADY_RESERVED);
         }
 
         // 사용자와 상영 일정을 연결한 예매 엔티티 객체를 생성함
