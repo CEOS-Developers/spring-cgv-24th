@@ -79,10 +79,16 @@ class SecurityFlowIntegrationTest {
 
     @Test
     void 공개_영화_조회는_잘못된_토큰을_검증하지_않는다() throws Exception {
+        String publicResponse = mockMvc.perform(get("/api/v1/movies/8842"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
         for (String authorization : new String[]{"Bearer invalid.jwt.token", "Bearer " + expiredToken()}) {
-            mockMvc.perform(get("/api/v1/movies/8842").header("Authorization", authorization))
+            String response = mockMvc.perform(get("/api/v1/movies/8842")
+                            .header("Authorization", authorization))
                     .andExpect(status().isOk())
-                    .andExpect(jsonPath("$.data.movieId").value(8842));
+                    .andExpect(jsonPath("$.data.movieId").value(8842))
+                    .andReturn().getResponse().getContentAsString();
+            assertThat(response).isEqualTo(publicResponse);
         }
     }
 
@@ -117,6 +123,13 @@ class SecurityFlowIntegrationTest {
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT user_id FROM movie_likes WHERE movie_id = 8842", Long.class))
                 .isEqualTo(ownerId);
+        mockMvc.perform(post("/api/v1/movies/8842/likes")
+                        .header("Authorization", "Bearer " + jwtService.issue(otherId, UserRole.USER)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data").value(true));
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM movie_likes WHERE movie_id = 8842", Integer.class))
+                .isEqualTo(2);
     }
 
     private static String expiredToken() {
