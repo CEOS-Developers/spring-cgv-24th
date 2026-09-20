@@ -145,6 +145,7 @@ class MovieVisibilityIntegrationTest {
                 .andExpect(jsonPath("$.code").value("MOVIE_NOT_FOUND"));
 
         mockMvc.perform(post("/api/v1/screenings")
+                        .header("Authorization", adminToken())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {

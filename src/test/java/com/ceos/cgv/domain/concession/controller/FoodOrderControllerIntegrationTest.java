@@ -127,6 +127,7 @@ class FoodOrderControllerIntegrationTest {
     @Test
     void 상품과_영화관별_초기_재고를_등록한다() throws Exception {
         String productLocation = mockMvc.perform(post("/api/v1/products")
+                        .header("Authorization", userToken(91, UserRole.ADMIN))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"name": "콜라", "price": 900, "description": "음료"}
@@ -139,6 +140,7 @@ class FoodOrderControllerIntegrationTest {
         long productId = Long.parseLong(productLocation.substring(productLocation.lastIndexOf('/') + 1));
 
         mockMvc.perform(post("/api/v1/inventories")
+                        .header("Authorization", userToken(91, UserRole.ADMIN))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"cinemaId": 92, "productId": %d, "stockQuantity": 4}
@@ -147,6 +149,7 @@ class FoodOrderControllerIntegrationTest {
                 .andExpect(jsonPath("$.data.stockQuantity").value(4));
 
         mockMvc.perform(post("/api/v1/inventories")
+                        .header("Authorization", userToken(91, UserRole.ADMIN))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"cinemaId": 92, "productId": %d, "stockQuantity": 4}

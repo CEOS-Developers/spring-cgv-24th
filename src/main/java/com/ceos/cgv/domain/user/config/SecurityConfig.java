@@ -14,6 +14,8 @@ import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.AnonymousAuthenticationFilter;
 import org.springframework.security.web.util.matcher.RequestMatcher;
 
+import java.util.Set;
+
 @Configuration
 public class SecurityConfig {
     @Bean
@@ -35,9 +37,13 @@ public class SecurityConfig {
                 .substring(request.getContextPath().length())
                 .matches("/api/v1/food-orders(?:/[^/]+)?")
                 && ("POST".equals(request.getMethod()) || "GET".equals(request.getMethod()));
-        RequestMatcher adminMovie = request -> {
+        Set<String> adminRegistrationPaths = Set.of(
+                "/api/v1/screens", "/api/v1/screenings",
+                "/api/v1/products", "/api/v1/inventories");
+        RequestMatcher adminWrites = request -> {
             String path = request.getRequestURI().substring(request.getContextPath().length());
-            return ("POST".equals(request.getMethod()) && path.equals("/api/v1/movies"))
+            return ("POST".equals(request.getMethod())
+                    && (path.equals("/api/v1/movies") || adminRegistrationPaths.contains(path)))
                     || ("DELETE".equals(request.getMethod())
                     && path.matches("/api/v1/movies/[^/]+"));
         };
@@ -55,8 +61,8 @@ public class SecurityConfig {
                         .requestMatchers(cinemaLike).authenticated()
                         .requestMatchers(reservations).authenticated()
                         .requestMatchers(foodOrders).authenticated()
-                        .requestMatchers(adminMovie).hasRole("ADMIN")
-                        .anyRequest().permitAll())
+                        .requestMatchers(adminWrites).hasRole("ADMIN")
+                        .anyRequest().denyAll())
                 .addFilterBefore(new JwtAuthenticationFilter(jwtService, entryPoint, publicApiMatcher),
                         AnonymousAuthenticationFilter.class);
         return http.build();

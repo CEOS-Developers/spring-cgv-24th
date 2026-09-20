@@ -57,6 +57,7 @@ class ScreeningControllerIntegrationTest {
         ));
 
         String screenLocation = mockMvc.perform(post("/api/v1/screens")
+                        .header("Authorization", adminToken())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -75,6 +76,7 @@ class ScreeningControllerIntegrationTest {
         long screenId = Long.parseLong(screenLocation.substring(screenLocation.lastIndexOf('/') + 1));
 
         mockMvc.perform(post("/api/v1/screenings")
+                        .header("Authorization", adminToken())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -96,6 +98,7 @@ class ScreeningControllerIntegrationTest {
     @Test
     void 존재하지_않는_영화나_상영관으로_상영_일정을_만들면_404를_반환한다() throws Exception {
         mockMvc.perform(post("/api/v1/screenings")
+                        .header("Authorization", adminToken())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -130,6 +133,7 @@ class ScreeningControllerIntegrationTest {
                 .andExpect(status().isNoContent());
 
         mockMvc.perform(post("/api/v1/screenings")
+                        .header("Authorization", adminToken())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -147,5 +151,9 @@ class ScreeningControllerIntegrationTest {
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM screenings WHERE movie_id = ?",
                 Integer.class, movie.getId())).isEqualTo(1);
+    }
+
+    private String adminToken() {
+        return "Bearer " + jwtService.issue(1L, UserRole.ADMIN);
     }
 }
