@@ -13,30 +13,39 @@ import org.springframework.stereotype.Service;
 
 import javax.crypto.SecretKey;
 import java.time.Clock;
-import java.time.Duration;
 import java.time.Instant;
 import java.util.Date;
 
 @Service
 public class JwtService {
     private static final String ISSUER = "spring-cgv-24th";
-    private static final Duration ACCESS_TOKEN_LIFETIME = Duration.ofMinutes(30);
+    private static final long DEFAULT_EXPIRES_IN_SECONDS = 1800;
 
     private final SecretKey signingKey;
     private final Clock clock;
+    private final long expiresInSeconds;
 
     @Autowired
-    public JwtService(@Value("${cgv.jwt.secret-base64}") String secretBase64) {
-        this(secretBase64, Clock.systemUTC());
+    public JwtService(@Value("${cgv.jwt.secret-base64}") String secretBase64,
+                      @Value("${cgv.jwt.access-token-seconds}") long expiresInSeconds) {
+        this(secretBase64, Clock.systemUTC(), expiresInSeconds);
     }
 
     JwtService(String secretBase64, Clock clock) {
+        this(secretBase64, clock, DEFAULT_EXPIRES_IN_SECONDS);
+    }
+
+    JwtService(String secretBase64, Clock clock, long expiresInSeconds) {
         byte[] keyBytes = Decoders.BASE64.decode(secretBase64);
         if (keyBytes.length < 32) {
             throw new IllegalArgumentException("JWT signing key must be at least 32 bytes");
         }
+        if (expiresInSeconds <= 0) {
+            throw new IllegalArgumentException("JWT expiry must be positive");
+        }
         this.signingKey = Keys.hmacShaKeyFor(keyBytes);
         this.clock = clock;
+        this.expiresInSeconds = expiresInSeconds;
     }
 
     public String issue(Long userId, UserRole role) {
@@ -49,9 +58,13 @@ public class JwtService {
                 .subject(userId.toString())
                 .claim("role", role.name())
                 .issuedAt(Date.from(issuedAt))
-                .expiration(Date.from(issuedAt.plus(ACCESS_TOKEN_LIFETIME)))
+                .expiration(Date.from(issuedAt.plusSeconds(expiresInSeconds)))
                 .signWith(signingKey, Jwts.SIG.HS256)
                 .compact();
+    }
+
+    public long expiresInSeconds() {
+        return expiresInSeconds;
     }
 
     public VerifiedToken verify(String token) {

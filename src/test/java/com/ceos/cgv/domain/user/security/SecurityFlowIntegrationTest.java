@@ -52,7 +52,7 @@ class SecurityFlowIntegrationTest {
     }
 
     @Test
-    void 변조된_토큰과_만료된_토큰은_서로_다른_401_코드로_반환한다() throws Exception {
+    void 잘못된_서명과_만료된_토큰은_서로_다른_401_코드로_반환한다() throws Exception {
         mockMvc.perform(post("/api/v1/movies/8842/likes")
                         .header("Authorization", "Bearer invalid.jwt.token"))
                 .andExpect(status().isUnauthorized())
@@ -62,6 +62,19 @@ class SecurityFlowIntegrationTest {
                         .header("Authorization", "Bearer " + expiredToken()))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value("TOKEN_EXPIRED"));
+
+        String otherKeyToken = Jwts.builder()
+                .issuer("spring-cgv-24th")
+                .subject("41")
+                .claim("role", "USER")
+                .issuedAt(Date.from(Instant.now()))
+                .expiration(Date.from(Instant.now().plusSeconds(1800)))
+                .signWith(Keys.hmacShaKeyFor("fedcba9876543210fedcba9876543210".getBytes()), Jwts.SIG.HS256)
+                .compact();
+        mockMvc.perform(post("/api/v1/movies/8842/likes")
+                        .header("Authorization", "Bearer " + otherKeyToken))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("TOKEN_INVALID"));
     }
 
     @Test

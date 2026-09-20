@@ -28,6 +28,7 @@ public class LoginService {
             throw new BusinessException(ErrorCode.LOGIN_FAILED);
         }
         CgvUserDetails user = (CgvUserDetails) authentication.getPrincipal();
-        return LoginResponse.bearer(jwtService.issue(user.userId(), user.role()));
+        return LoginResponse.bearer(jwtService.issue(user.userId(), user.role()),
+                jwtService.expiresInSeconds());
     }
 }

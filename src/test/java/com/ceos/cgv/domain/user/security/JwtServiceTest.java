@@ -75,4 +75,17 @@ class JwtServiceTest {
             assertThatThrownBy(() -> service.verify(token)).isInstanceOf(JwtException.class);
         }
     }
+
+    @Test
+    void 설정한_초_단위_만료시간으로_토큰이_발급된다() {
+        JwtService service = new JwtService(SECRET, ISSUED_AT, 60);
+
+        String token = service.issue(42L, UserRole.USER);
+        String payload = new String(Base64.getUrlDecoder().decode(token.split("\\.")[1]), StandardCharsets.UTF_8);
+        Number issuedAt = JsonPath.read(payload, "$.iat");
+        Number expiresAt = JsonPath.read(payload, "$.exp");
+
+        assertThat(expiresAt.longValue() - issuedAt.longValue()).isEqualTo(60);
+        assertThat(service.expiresInSeconds()).isEqualTo(60);
+    }
 }

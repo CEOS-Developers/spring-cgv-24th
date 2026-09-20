@@ -10,3 +10,4 @@ springdoc:
 cgv:
   jwt:
     secret-base64: ${CGV_JWT_SECRET_BASE64}
+    access-token-seconds: ${CGV_ACCESS_TOKEN_SECONDS:1800}
