@@ -3,6 +3,7 @@ package com.ceos24.cgv.domain.screening.controller;
 import com.ceos24.cgv.domain.screening.dto.ScreeningResponse;
 import com.ceos24.cgv.domain.screening.dto.ScreeningSeatsResponse;
 import com.ceos24.cgv.domain.screening.service.ScreeningService;
+import com.ceos24.cgv.global.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -22,17 +23,17 @@ public class ScreeningController {
 
     @Operation(summary = "회차 목록 조회 (영화/지점/날짜 필터)")
     @GetMapping
-    public List<ScreeningResponse> list(
+    public ApiResponse<List<ScreeningResponse>> list(
             @RequestParam(required = false) Long movieId,
             @RequestParam(required = false) Long branchId,
             @RequestParam(required = false)
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
-        return screeningService.search(movieId, branchId, date);
+        return ApiResponse.success(screeningService.search(movieId, branchId, date));
     }
 
     @Operation(summary = "회차 좌석 조회 (상영관 크기 + 예매된 좌석)")
     @GetMapping("/{id}/seats")
-    public ScreeningSeatsResponse seats(@PathVariable Long id) {
-        return screeningService.getSeats(id);
+    public ApiResponse<ScreeningSeatsResponse> seats(@PathVariable Long id) {
+        return ApiResponse.success(screeningService.getSeats(id));
     }
 }

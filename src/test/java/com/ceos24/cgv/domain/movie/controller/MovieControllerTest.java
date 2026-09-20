@@ -18,7 +18,8 @@ class MovieControllerTest extends ControllerIntegrationTest {
 
         mockMvc.perform(get("/api/movies"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(2));
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.length()").value(2));
     }
 
     @Test
@@ -27,15 +28,16 @@ class MovieControllerTest extends ControllerIntegrationTest {
 
         mockMvc.perform(get("/api/movies/{id}", movie.getId()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.id").value(movie.getId()))
-                .andExpect(jsonPath("$.title").value("범죄도시4"))
-                .andExpect(jsonPath("$.director").value("감독"));
+                .andExpect(jsonPath("$.data.id").value(movie.getId()))
+                .andExpect(jsonPath("$.data.title").value("범죄도시4"))
+                .andExpect(jsonPath("$.data.director").value("감독"));
     }
 
     @Test
     void 없는_영화_조회_404() throws Exception {
         mockMvc.perform(get("/api/movies/9999"))
                 .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.success").value(false))
                 .andExpect(jsonPath("$.code").value("MOVIE_NOT_FOUND"));
     }
 }

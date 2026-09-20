@@ -2,6 +2,7 @@ package com.ceos24.cgv.domain.movie.controller;
 
 import com.ceos24.cgv.domain.movie.dto.MovieResponse;
 import com.ceos24.cgv.domain.movie.service.MovieService;
+import com.ceos24.cgv.global.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -22,13 +23,13 @@ public class MovieController {
 
     @Operation(summary = "영화 목록 조회")
     @GetMapping
-    public List<MovieResponse> list() {
-        return movieService.findAll();
+    public ApiResponse<List<MovieResponse>> list() {
+        return ApiResponse.success(movieService.findAll());
     }
 
     @Operation(summary = "영화 단건 조회")
     @GetMapping("/{id}")
-    public MovieResponse detail(@PathVariable Long id) {
-        return movieService.findById(id);
+    public ApiResponse<MovieResponse> detail(@PathVariable Long id) {
+        return ApiResponse.success(movieService.findById(id));
     }
 }

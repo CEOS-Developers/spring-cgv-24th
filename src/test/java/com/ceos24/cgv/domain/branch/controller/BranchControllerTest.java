@@ -19,9 +19,11 @@ class BranchControllerTest extends ControllerIntegrationTest {
 
         mockMvc.perform(get("/api/branches"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(2))
-                .andExpect(jsonPath("$[0].name").exists())
-                .andExpect(jsonPath("$[0].address").exists());
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.code").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.length()").value(2))
+                .andExpect(jsonPath("$.data[0].name").exists())
+                .andExpect(jsonPath("$.data[0].address").exists());
     }
 
     @Test
@@ -32,15 +34,16 @@ class BranchControllerTest extends ControllerIntegrationTest {
 
         mockMvc.perform(get("/api/branches/{id}", branch.getId()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.id").value(branch.getId()))
-                .andExpect(jsonPath("$.name").value("강남점"))
-                .andExpect(jsonPath("$.theaters.length()").value(2));
+                .andExpect(jsonPath("$.data.id").value(branch.getId()))
+                .andExpect(jsonPath("$.data.name").value("강남점"))
+                .andExpect(jsonPath("$.data.theaters.length()").value(2));
     }
 
     @Test
     void 없는_지점_조회_404() throws Exception {
         mockMvc.perform(get("/api/branches/9999"))
                 .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.success").value(false))
                 .andExpect(jsonPath("$.code").value("BRANCH_NOT_FOUND"));
     }
 }

@@ -3,6 +3,7 @@ package com.ceos24.cgv.domain.reservation.controller;
 import com.ceos24.cgv.domain.reservation.dto.ReservationCreateRequest;
 import com.ceos24.cgv.domain.reservation.dto.ReservationResponse;
 import com.ceos24.cgv.domain.reservation.service.ReservationService;
+import com.ceos24.cgv.global.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -21,20 +22,20 @@ public class ReservationController {
     @Operation(summary = "예매 생성")
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    public ReservationResponse create(@Valid @RequestBody ReservationCreateRequest req) {
-        return reservationService.create(req);
+    public ApiResponse<ReservationResponse> create(@Valid @RequestBody ReservationCreateRequest req) {
+        return ApiResponse.success(reservationService.create(req));
     }
 
     @Operation(summary = "예매 단건 조회")
     @GetMapping("/{id}")
-    public ReservationResponse detail(@PathVariable Long id) {
-        return reservationService.getById(id);
+    public ApiResponse<ReservationResponse> detail(@PathVariable Long id) {
+        return ApiResponse.success(reservationService.getById(id));
     }
 
     @Operation(summary = "예매 취소")
     @DeleteMapping("/{id}")
-    @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void cancel(@PathVariable Long id) {
+    public ApiResponse<Void> cancel(@PathVariable Long id) {
         reservationService.cancel(id);
+        return ApiResponse.success();
     }
 }

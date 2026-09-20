@@ -1,8 +1,8 @@
 package com.ceos24.cgv.global.exception;
 
+import com.ceos24.cgv.global.response.ApiResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
-import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -14,30 +14,30 @@ import java.util.List;
 public class GlobalExceptionHandler {
 
     @ExceptionHandler(CustomException.class)
-    public ResponseEntity<ErrorResponse> handleCustom(CustomException e) {
+    public ResponseEntity<ApiResponse<Void>> handleCustom(CustomException e) {
         ErrorCode code = e.getErrorCode();
         log.warn("[CustomException] {}: {}", code.name(), e.getMessage());
         return ResponseEntity.status(code.getHttpStatus())
-                             .body(ErrorResponse.of(code));
+                             .body(ApiResponse.error(code));
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
-    public ResponseEntity<ErrorResponse> handleValid(MethodArgumentNotValidException e) {
-        List<ErrorResponse.FieldError> fieldErrors = e.getBindingResult().getFieldErrors().stream()
-                .map(fe -> new ErrorResponse.FieldError(
+    public ResponseEntity<ApiResponse<Void>> handleValid(MethodArgumentNotValidException e) {
+        List<ApiResponse.FieldError> fieldErrors = e.getBindingResult().getFieldErrors().stream()
+                .map(fe -> new ApiResponse.FieldError(
                         fe.getField(),
                         fe.getRejectedValue() != null ? fe.getRejectedValue().toString() : null,
                         fe.getDefaultMessage()
                 ))
                 .toList();
         return ResponseEntity.badRequest()
-                             .body(ErrorResponse.of(ErrorCode.INVALID_INPUT_VALUE, fieldErrors));
+                             .body(ApiResponse.error(ErrorCode.INVALID_INPUT_VALUE, fieldErrors));
     }
 
     @ExceptionHandler(Exception.class)
-    public ResponseEntity<ErrorResponse> handleException(Exception e) {
+    public ResponseEntity<ApiResponse<Void>> handleException(Exception e) {
         log.error("[Unhandled] ", e);
         return ResponseEntity.internalServerError()
-                             .body(ErrorResponse.of(ErrorCode.INTERNAL_SERVER_ERROR));
+                             .body(ApiResponse.error(ErrorCode.INTERNAL_SERVER_ERROR));
     }
 }

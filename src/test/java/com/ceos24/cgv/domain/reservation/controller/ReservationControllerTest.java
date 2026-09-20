@@ -54,11 +54,13 @@ class ReservationControllerTest extends ControllerIntegrationTest {
                                 {"screeningId":%d,"userId":%d,"seats":[{"rowNum":3,"colNum":3},{"rowNum":3,"colNum":4}]}
                                 """.formatted(screening.getId(), user.getId())))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.status").value("RESERVED"))
-                .andExpect(jsonPath("$.seats.length()").value(2))
-                .andExpect(jsonPath("$.seats[0]").value("C3"))
-                .andExpect(jsonPath("$.seats[1]").value("C4"))
-                .andExpect(jsonPath("$.totalPrice").value(28000));
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.code").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.status").value("RESERVED"))
+                .andExpect(jsonPath("$.data.seats.length()").value(2))
+                .andExpect(jsonPath("$.data.seats[0]").value("C3"))
+                .andExpect(jsonPath("$.data.seats[1]").value("C4"))
+                .andExpect(jsonPath("$.data.totalPrice").value(28000));
     }
 
     @Test
@@ -125,6 +127,7 @@ class ReservationControllerTest extends ControllerIntegrationTest {
                                 {"screeningId":%d,"userId":%d,"seats":[]}
                                 """.formatted(screening.getId(), user.getId())))
                 .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.success").value(false))
                 .andExpect(jsonPath("$.code").value("INVALID_INPUT_VALUE"))
                 .andExpect(jsonPath("$.errors[0].field").exists());
     }
@@ -138,10 +141,10 @@ class ReservationControllerTest extends ControllerIntegrationTest {
 
         mockMvc.perform(get("/api/reservations/{id}", reservation.getId()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.id").value(reservation.getId()))
-                .andExpect(jsonPath("$.status").value("RESERVED"))
-                .andExpect(jsonPath("$.seats[0]").value("C3"))
-                .andExpect(jsonPath("$.totalPrice").value(14000));
+                .andExpect(jsonPath("$.data.id").value(reservation.getId()))
+                .andExpect(jsonPath("$.data.status").value("RESERVED"))
+                .andExpect(jsonPath("$.data.seats[0]").value("C3"))
+                .andExpect(jsonPath("$.data.totalPrice").value(14000));
     }
 
     @Test
@@ -159,15 +162,16 @@ class ReservationControllerTest extends ControllerIntegrationTest {
         flushAndClear();
 
         mockMvc.perform(delete("/api/reservations/{id}", reservation.getId()))
-                .andExpect(status().isNoContent());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
 
         flushAndClear();
 
         mockMvc.perform(get("/api/reservations/{id}", reservation.getId()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("CANCELLED"))
-                .andExpect(jsonPath("$.seats.length()").value(0))
-                .andExpect(jsonPath("$.totalPrice").value(0));
+                .andExpect(jsonPath("$.data.status").value("CANCELLED"))
+                .andExpect(jsonPath("$.data.seats.length()").value(0))
+                .andExpect(jsonPath("$.data.totalPrice").value(0));
     }
 
     @Test
@@ -185,7 +189,7 @@ class ReservationControllerTest extends ControllerIntegrationTest {
         flushAndClear();
 
         mockMvc.perform(delete("/api/reservations/{id}", reservation.getId()))
-                .andExpect(status().isNoContent());
+                .andExpect(status().isOk());
 
         flushAndClear();
 
@@ -203,7 +207,7 @@ class ReservationControllerTest extends ControllerIntegrationTest {
         flushAndClear();
 
         mockMvc.perform(delete("/api/reservations/{id}", reservation.getId()))
-                .andExpect(status().isNoContent());
+                .andExpect(status().isOk());
 
         flushAndClear();
 
@@ -211,6 +215,6 @@ class ReservationControllerTest extends ControllerIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(reserveBody(3, 3)))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.seats[0]").value("C3"));
+                .andExpect(jsonPath("$.data.seats[0]").value("C3"));
     }
 }

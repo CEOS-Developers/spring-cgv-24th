@@ -3,6 +3,7 @@ package com.ceos24.cgv.domain.branch.controller;
 import com.ceos24.cgv.domain.branch.dto.BranchDetailResponse;
 import com.ceos24.cgv.domain.branch.dto.BranchResponse;
 import com.ceos24.cgv.domain.branch.service.BranchService;
+import com.ceos24.cgv.global.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -23,13 +24,13 @@ public class BranchController {
 
     @Operation(summary = "지점 목록 조회")
     @GetMapping
-    public List<BranchResponse> list() {
-        return branchService.findAll();
+    public ApiResponse<List<BranchResponse>> list() {
+        return ApiResponse.success(branchService.findAll());
     }
 
     @Operation(summary = "지점 단건 조회 (소속 상영관 포함)")
     @GetMapping("/{id}")
-    public BranchDetailResponse detail(@PathVariable Long id) {
-        return branchService.findById(id);
+    public ApiResponse<BranchDetailResponse> detail(@PathVariable Long id) {
+        return ApiResponse.success(branchService.findById(id));
     }
 }

@@ -41,7 +41,8 @@ class ScreeningControllerTest extends ControllerIntegrationTest {
 
         mockMvc.perform(get("/api/screenings"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(3));
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.length()").value(3));
     }
 
     @Test
@@ -51,8 +52,8 @@ class ScreeningControllerTest extends ControllerIntegrationTest {
 
         mockMvc.perform(get("/api/screenings").param("movieId", String.valueOf(movieA.getId())))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(1))
-                .andExpect(jsonPath("$[0].movie.title").value("범죄도시4"));
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].movie.title").value("범죄도시4"));
     }
 
     @Test
@@ -64,8 +65,8 @@ class ScreeningControllerTest extends ControllerIntegrationTest {
                         .param("branchId", String.valueOf(branch.getId()))
                         .param("date", "2024-06-01"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(1))
-                .andExpect(jsonPath("$[0].theater.branchName").value("강남점"));
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].theater.branchName").value("강남점"));
     }
 
     @Test
@@ -83,18 +84,19 @@ class ScreeningControllerTest extends ControllerIntegrationTest {
 
         mockMvc.perform(get("/api/screenings/{id}/seats", screening.getId()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.screeningId").value(screening.getId()))
-                .andExpect(jsonPath("$.rowCount").value(8))
-                .andExpect(jsonPath("$.colCount").value(10))
-                .andExpect(jsonPath("$.reservedSeats.length()").value(2))
-                .andExpect(jsonPath("$.reservedSeats[0]").value("A7"))
-                .andExpect(jsonPath("$.reservedSeats[1]").value("B3"));
+                .andExpect(jsonPath("$.data.screeningId").value(screening.getId()))
+                .andExpect(jsonPath("$.data.rowCount").value(8))
+                .andExpect(jsonPath("$.data.colCount").value(10))
+                .andExpect(jsonPath("$.data.reservedSeats.length()").value(2))
+                .andExpect(jsonPath("$.data.reservedSeats[0]").value("A7"))
+                .andExpect(jsonPath("$.data.reservedSeats[1]").value("B3"));
     }
 
     @Test
     void 없는_회차_좌석_조회_404() throws Exception {
         mockMvc.perform(get("/api/screenings/9999/seats"))
                 .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.success").value(false))
                 .andExpect(jsonPath("$.code").value("SCREENING_NOT_FOUND"));
     }
 }
