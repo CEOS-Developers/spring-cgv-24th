@@ -17,6 +17,8 @@ public enum ErrorCode {
     AUTH_LOGIN_ID_ALREADY_EXISTS(409, "이미 존재하는 로그인 ID 입니다."),
     AUTH_EMAIL_ALREADY_EXISTS(409, "이미 사용중인 EMAIL입니다."),
     AUTH_INVALID_CREDENTIALS(500, "올바르지 않은 인증 정보입니다."),
+    AUTH_UNAUTHORIZED_USER(401, "인증되지 않은 사용자입니다."),
+    AUTH_FORBIDDEN_USER(403, "권한이 없는 사용자입니다."),
 
     // Store / Order
     STORE_NOT_FOUND(404, "존재하지 않는 매장입니다."),

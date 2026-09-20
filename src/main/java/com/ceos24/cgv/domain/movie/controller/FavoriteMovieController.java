@@ -3,11 +3,13 @@ package com.ceos24.cgv.domain.movie.controller;
 import com.ceos24.cgv.domain.movie.dto.response.GetMovieResponse;
 import com.ceos24.cgv.domain.movie.service.FavoriteMovieService;
 import com.ceos24.cgv.global.common.ApiResponse;
+import com.ceos24.cgv.global.security.CustomUserDetails;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 @Tag(name = "찜한 영화", description = "찜한 영화 관련 API")
@@ -21,8 +23,8 @@ public class FavoriteMovieController {
     @PostMapping("/api/movies/{movieId}/favorite")
     public ResponseEntity<ApiResponse<Void>> addFavoriteMovie(
             @PathVariable Long movieId,
-            @RequestHeader("X-Member-Id") Long memberId) {
-        favoriteMovieService.addFavoriteMovie(movieId, memberId);
+            @AuthenticationPrincipal CustomUserDetails userDetails) {
+        favoriteMovieService.addFavoriteMovie(movieId, userDetails.getMemberId());
         return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.success(null));
     }
 
