@@ -62,11 +62,13 @@ class MovieLikeControllerIntegrationTest {
 
     @Test
     void 영화관_찜도_한번의_POST로_추가와_취소를_토글한다() throws Exception {
-        mockMvc.perform(post("/api/v1/cinemas/{cinemaId}/likes", 73).param("userId", "71"))
+        mockMvc.perform(post("/api/v1/cinemas/{cinemaId}/likes", 73)
+                        .header("Authorization", userToken(71)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data").value(true));
 
-        mockMvc.perform(post("/api/v1/cinemas/{cinemaId}/likes", 73).param("userId", "71"))
+        mockMvc.perform(post("/api/v1/cinemas/{cinemaId}/likes", 73)
+                        .header("Authorization", userToken(71)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data").value(false));
     }
