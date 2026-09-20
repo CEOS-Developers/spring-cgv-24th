@@ -2,7 +2,10 @@ package com.ceos.cgv.domain.user.controller;
 
 import com.ceos.cgv.domain.user.dto.SignupRequest;
 import com.ceos.cgv.domain.user.dto.SignupResponse;
+import com.ceos.cgv.domain.user.dto.LoginRequest;
+import com.ceos.cgv.domain.user.dto.LoginResponse;
 import com.ceos.cgv.domain.user.service.RegistrationService;
+import com.ceos.cgv.domain.user.service.LoginService;
 import com.ceos.cgv.global.common.dto.ApiResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -18,11 +21,17 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class AuthController {
     private final RegistrationService registrationService;
+    private final LoginService loginService;
 
     @PostMapping("/signup")
     public ResponseEntity<ApiResponse<SignupResponse>> signup(
             @Valid @RequestBody SignupRequest request) {
         SignupResponse response = SignupResponse.from(registrationService.register(request));
         return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.created(response));
+    }
+
+    @PostMapping("/login")
+    public ResponseEntity<ApiResponse<LoginResponse>> login(@Valid @RequestBody LoginRequest request) {
+        return ResponseEntity.ok(ApiResponse.success(loginService.login(request)));
     }
 }
