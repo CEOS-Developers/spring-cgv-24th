@@ -102,9 +102,13 @@ public class FoodOrderService {
     }
 
     @Transactional(readOnly = true)
-    public FoodOrder findById(Long orderId) {
-        return foodOrderRepository.findWithItemsById(orderId)
+    public FoodOrder findById(Long orderId, Long userId) {
+        FoodOrder order = foodOrderRepository.findWithItemsById(orderId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.FOOD_ORDER_NOT_FOUND));
+        if (!order.getUser().getId().equals(userId)) {
+            throw new BusinessException(ErrorCode.ACCESS_DENIED);
+        }
+        return order;
     }
 
     private record OrderLine(Product product, Inventory inventory, Integer quantity) {

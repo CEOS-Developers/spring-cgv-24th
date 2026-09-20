@@ -1,5 +1,7 @@
 package com.ceos.cgv.domain.concession.controller;
 
+import com.ceos.cgv.domain.user.enums.UserRole;
+import com.ceos.cgv.domain.user.security.JwtService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.BeforeEach;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -15,6 +17,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -28,9 +31,13 @@ class FoodOrderControllerIntegrationTest {
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
+    @Autowired
+    private JwtService jwtService;
+
     @BeforeEach
     void 데이터베이스에_매점_주문_기본_데이터를_넣는다() {
         jdbcTemplate.update("INSERT INTO users (user_id, name, email) VALUES (91, '매점 테스트 사용자', 'food-order-test@example.com')");
+        jdbcTemplate.update("INSERT INTO users (user_id, name, email, role) VALUES (97, '다른 관리자', 'food-order-admin@example.com', 'ADMIN')");
         jdbcTemplate.update("INSERT INTO cinemas (cinema_id, name, address) VALUES (92, '매점 테스트 영화관 1', '서울')");
         jdbcTemplate.update("INSERT INTO cinemas (cinema_id, name, address) VALUES (93, '매점 테스트 영화관 2', '부산')");
         jdbcTemplate.update("INSERT INTO products (product_id, name, price, description) VALUES (94, '팝콘', 1200, '테스트 상품')");
@@ -39,12 +46,50 @@ class FoodOrderControllerIntegrationTest {
     }
 
     @Test
+    void 주문은_토큰_회원으로_생성되고_다른_관리자는_조회할_수_없다() throws Exception {
+        String request = """
+                {"userId":97,"cinemaId":92,"items":[{"productId":94,"quantity":1}]}
+                """;
+        mockMvc.perform(post("/api/v1/food-orders")
+                        .contentType(MediaType.APPLICATION_JSON).content(request))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("TOKEN_NOT_EXIST"));
+
+        String location = mockMvc.perform(post("/api/v1/food-orders")
+                        .header("Authorization", userToken(91, UserRole.USER))
+                        .contentType(MediaType.APPLICATION_JSON).content(request))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.userId").value(91))
+                .andReturn().getResponse().getHeader("Location");
+        long id = Long.parseLong(location.substring(location.lastIndexOf('/') + 1));
+
+        mockMvc.perform(get("/api/v1/food-orders/{id}", id))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("TOKEN_NOT_EXIST"));
+        mockMvc.perform(get("/api/v1/food-orders/{id}", id)
+                        .header("Authorization", userToken(97, UserRole.ADMIN)))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("ACCESS_DENIED"));
+        mockMvc.perform(get("/api/v1/food-orders/{id}", 999_999)
+                        .header("Authorization", userToken(91, UserRole.USER)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("FOOD_ORDER_NOT_FOUND"));
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT user_id FROM food_orders WHERE order_id=?", Long.class, id))
+                .isEqualTo(91L);
+    }
+
+    private String userToken(long userId, UserRole role) {
+        return "Bearer " + jwtService.issue(userId, role);
+    }
+
+    @Test
     void 존재하지_않는_사용자는_매점_주문을_할_수_없다() throws Exception {
         mockMvc.perform(post("/api/v1/food-orders")
+                        .header("Authorization", userToken(999999, UserRole.USER))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
-                                  "userId": 999999,
                                   "cinemaId": 999999,
                                   "items": [
                                     {"productId": 999999, "quantity": 1}
@@ -58,10 +103,10 @@ class FoodOrderControllerIntegrationTest {
     @Test
     void 주문_항목이_비어있으면_400을_반환한다() throws Exception {
         mockMvc.perform(post("/api/v1/food-orders")
+                        .header("Authorization", userToken(91, UserRole.USER))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
-                                  "userId": 1,
                                   "cinemaId": 1,
                                   "items": []
                                 }
@@ -113,10 +158,10 @@ class FoodOrderControllerIntegrationTest {
     @Test
     void 주문_금액을_서버에서_계산하고_선택한_영화관의_재고만_차감한다() throws Exception {
         String location = mockMvc.perform(post("/api/v1/food-orders")
+                        .header("Authorization", userToken(91, UserRole.USER))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
-                                  "userId": 91,
                                   "cinemaId": 92,
                                   "totalPrice": 1,
                                   "items": [{"productId": 94, "quantity": 2}]
@@ -130,7 +175,8 @@ class FoodOrderControllerIntegrationTest {
                 .getHeader("Location");
         long orderId = Long.parseLong(location.substring(location.lastIndexOf('/') + 1));
 
-        mockMvc.perform(get("/api/v1/food-orders/{orderId}", orderId))
+        mockMvc.perform(get("/api/v1/food-orders/{orderId}", orderId)
+                        .header("Authorization", userToken(91, UserRole.USER)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.totalPrice").value(2400))
                 .andExpect(jsonPath("$.data.items[0].productName").value("팝콘"));
@@ -148,10 +194,10 @@ class FoodOrderControllerIntegrationTest {
     @Test
     void 재고보다_많은_수량은_주문되지_않고_재고도_그대로다() throws Exception {
         mockMvc.perform(post("/api/v1/food-orders")
+                        .header("Authorization", userToken(91, UserRole.USER))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
-                                  "userId": 91,
                                   "cinemaId": 92,
                                   "items": [{"productId": 94, "quantity": 4}]
                                 }
