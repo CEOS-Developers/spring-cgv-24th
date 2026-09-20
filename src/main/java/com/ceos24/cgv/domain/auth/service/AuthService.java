@@ -7,8 +7,13 @@ import com.ceos24.cgv.domain.member.entity.Member;
 import com.ceos24.cgv.domain.member.repository.MemberRepository;
 import com.ceos24.cgv.global.exception.BusinessException;
 import com.ceos24.cgv.global.exception.ErrorCode;
+import com.ceos24.cgv.global.security.CustomUserDetails;
 import com.ceos24.cgv.global.security.jwt.JwtProvider;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -20,6 +25,7 @@ public class AuthService {
     private final MemberRepository memberRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtProvider jwtProvider;
+    private final AuthenticationManager authenticationManager;
 
     @Transactional
     public void signUp(SignUpRequest request) {
@@ -43,16 +49,19 @@ public class AuthService {
         memberRepository.save(member);
     }
 
-    @Transactional(readOnly = true)
     public String login(LoginRequest request) {
 
-        Member member = memberRepository.findByLoginId(request.loginId())
-                .orElseThrow(() -> new BusinessException(ErrorCode.AUTH_INVALID_CREDENTIALS));
+        try {
+            UsernamePasswordAuthenticationToken authenticationToken =
+                    new UsernamePasswordAuthenticationToken(request.loginId(), request.password());
 
-        if (!passwordEncoder.matches(request.password(), member.getPassword())) {
+            Authentication authentication = authenticationManager.authenticate(authenticationToken);
+
+            CustomUserDetails userDetails = (CustomUserDetails) authentication.getPrincipal();
+
+            return jwtProvider.createAccessToken(userDetails.getMemberId().toString());
+        } catch (AuthenticationException e) {
             throw new BusinessException(ErrorCode.AUTH_INVALID_CREDENTIALS);
         }
-
-        return jwtProvider.createAccessToken(member.getId().toString());
     }
 }
