@@ -26,6 +26,11 @@ public class SecurityConfig {
         RequestMatcher cinemaLike = request -> "POST".equals(request.getMethod())
                 && request.getRequestURI().substring(request.getContextPath().length())
                 .matches("/api/v1/cinemas/[^/]+/likes");
+        RequestMatcher reservations = request -> request.getRequestURI()
+                .substring(request.getContextPath().length())
+                .matches("/api/v1/reservations(?:/[^/]+)?")
+                && ("POST".equals(request.getMethod()) || "GET".equals(request.getMethod())
+                || "DELETE".equals(request.getMethod()));
         RequestMatcher adminMovie = request -> {
             String path = request.getRequestURI().substring(request.getContextPath().length());
             return ("POST".equals(request.getMethod()) && path.equals("/api/v1/movies"))
@@ -44,6 +49,7 @@ public class SecurityConfig {
                         .requestMatchers(publicApiMatcher).permitAll()
                         .requestMatchers(movieLike).authenticated()
                         .requestMatchers(cinemaLike).authenticated()
+                        .requestMatchers(reservations).authenticated()
                         .requestMatchers(adminMovie).hasRole("ADMIN")
                         .anyRequest().permitAll())
                 .addFilterBefore(new JwtAuthenticationFilter(jwtService, entryPoint, publicApiMatcher),

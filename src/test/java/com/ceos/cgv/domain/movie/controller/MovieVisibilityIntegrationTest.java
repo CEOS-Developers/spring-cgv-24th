@@ -86,13 +86,13 @@ class MovieVisibilityIntegrationTest {
             throws Exception {
         String reservationRequest = """
                 {
-                  "userId": %d,
                   "screeningId": %d,
                   "seats": [{"seatRow": "A", "seatNumber": 1}]
                 }
-                """.formatted(USER_ID, SCREENING_ID);
+                """.formatted(SCREENING_ID);
 
         String reservationLocation = mockMvc.perform(post("/api/v1/reservations")
+                        .header("Authorization", userToken())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(reservationRequest))
                 .andExpect(status().isCreated())
@@ -158,14 +158,14 @@ class MovieVisibilityIntegrationTest {
 
         // A1은 기존 예매가 점유하므로 A2로 신규 예매의 visibility 거절만 확인함
         mockMvc.perform(post("/api/v1/reservations")
+                        .header("Authorization", userToken())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
-                                  "userId": %d,
                                   "screeningId": %d,
                                   "seats": [{"seatRow": "A", "seatNumber": 2}]
                                 }
-                                """.formatted(USER_ID, SCREENING_ID)))
+                                """.formatted(SCREENING_ID)))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("MOVIE_NOT_AVAILABLE"));
 
@@ -185,15 +185,18 @@ class MovieVisibilityIntegrationTest {
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("MOVIE_NOT_AVAILABLE"));
 
-        mockMvc.perform(get("/api/v1/reservations/{reservationId}", reservationId))
+        mockMvc.perform(get("/api/v1/reservations/{reservationId}", reservationId)
+                        .header("Authorization", userToken()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.reservationId").value(reservationId))
                 .andExpect(jsonPath("$.data.status").value("RESERVED"));
 
-        mockMvc.perform(delete("/api/v1/reservations/{reservationId}", reservationId))
+        mockMvc.perform(delete("/api/v1/reservations/{reservationId}", reservationId)
+                        .header("Authorization", userToken()))
                 .andExpect(status().isNoContent());
 
-        mockMvc.perform(get("/api/v1/reservations/{reservationId}", reservationId))
+        mockMvc.perform(get("/api/v1/reservations/{reservationId}", reservationId)
+                        .header("Authorization", userToken()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.status").value("CANCELED"));
     }

@@ -95,14 +95,18 @@ public class ReservationService {
     }
 
     @Transactional(readOnly = true)
-    public Reservation findById(Long reservationId) {
-        return reservationRepository.findWithSeatsById(reservationId)
+    public Reservation findById(Long reservationId, Long userId) {
+        Reservation reservation = reservationRepository.findWithSeatsById(reservationId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.RESERVATION_NOT_FOUND));
+        if (!reservation.getUser().getId().equals(userId)) {
+            throw new BusinessException(ErrorCode.ACCESS_DENIED);
+        }
+        return reservation;
     }
 
     @Transactional
-    public void cancel(Long reservationId) {
-        Reservation reservation = findById(reservationId);
+    public void cancel(Long reservationId, Long userId) {
+        Reservation reservation = findById(reservationId, userId);
         if (reservation.getStatus() == ReservationStatus.CANCELED) {
             throw new BusinessException(ErrorCode.RESERVATION_ALREADY_CANCELED);
         }
