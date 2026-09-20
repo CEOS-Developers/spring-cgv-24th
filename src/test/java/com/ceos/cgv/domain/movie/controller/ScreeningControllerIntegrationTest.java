@@ -3,6 +3,8 @@ package com.ceos.cgv.domain.movie.controller;
 import com.ceos.cgv.domain.movie.entity.Movie;
 import com.ceos.cgv.domain.movie.enums.AgeRating;
 import com.ceos.cgv.domain.movie.repository.MovieRepository;
+import com.ceos.cgv.domain.user.enums.UserRole;
+import com.ceos.cgv.domain.user.security.JwtService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
@@ -36,6 +38,9 @@ class ScreeningControllerIntegrationTest {
 
     @Autowired
     private MovieRepository movieRepository;
+
+    @Autowired
+    private JwtService jwtService;
 
     @Test
     void 영화관에_상영관을_만들고_영화의_상영_일정을_등록해_조회한다() throws Exception {
@@ -120,7 +125,8 @@ class ScreeningControllerIntegrationTest {
                 VALUES (?, ?, ?)
                 """, movie.getId(), screenId, "2026-09-20 12:30:00");
 
-        mockMvc.perform(delete("/api/v1/movies/{movieId}", movie.getId()))
+        mockMvc.perform(delete("/api/v1/movies/{movieId}", movie.getId())
+                        .header("Authorization", "Bearer " + jwtService.issue(1L, UserRole.ADMIN)))
                 .andExpect(status().isNoContent());
 
         mockMvc.perform(post("/api/v1/screenings")

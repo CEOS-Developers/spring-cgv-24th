@@ -107,10 +107,12 @@ class MovieVisibilityIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data").value(true));
 
-        mockMvc.perform(delete("/api/v1/movies/{movieId}", MOVIE_ID))
+        mockMvc.perform(delete("/api/v1/movies/{movieId}", MOVIE_ID)
+                        .header("Authorization", adminToken()))
                 .andExpect(status().isNoContent());
 
-        mockMvc.perform(delete("/api/v1/movies/{movieId}", MOVIE_ID))
+        mockMvc.perform(delete("/api/v1/movies/{movieId}", MOVIE_ID)
+                        .header("Authorization", adminToken()))
                 .andExpect(status().isNoContent());
 
         assertThat(jdbcTemplate.queryForObject(
@@ -198,7 +200,8 @@ class MovieVisibilityIntegrationTest {
 
     @Test
     void 실제로_없는_영화의_DELETE는_404를_반환한다() throws Exception {
-        mockMvc.perform(delete("/api/v1/movies/{movieId}", ABSENT_MOVIE_ID))
+        mockMvc.perform(delete("/api/v1/movies/{movieId}", ABSENT_MOVIE_ID)
+                        .header("Authorization", adminToken()))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("MOVIE_NOT_FOUND"));
     }
@@ -234,5 +237,9 @@ class MovieVisibilityIntegrationTest {
 
     private String userToken() {
         return "Bearer " + jwtService.issue(USER_ID, UserRole.USER);
+    }
+
+    private String adminToken() {
+        return "Bearer " + jwtService.issue(USER_ID, UserRole.ADMIN);
     }
 }

@@ -23,6 +23,12 @@ public class SecurityConfig {
         RequestMatcher movieLike = request -> "POST".equals(request.getMethod())
                 && request.getRequestURI().substring(request.getContextPath().length())
                 .matches("/api/v1/movies/[^/]+/likes");
+        RequestMatcher adminMovie = request -> {
+            String path = request.getRequestURI().substring(request.getContextPath().length());
+            return ("POST".equals(request.getMethod()) && path.equals("/api/v1/movies"))
+                    || ("DELETE".equals(request.getMethod())
+                    && path.matches("/api/v1/movies/[^/]+"));
+        };
 
         http.csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
@@ -34,6 +40,7 @@ public class SecurityConfig {
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers(publicApiMatcher).permitAll()
                         .requestMatchers(movieLike).authenticated()
+                        .requestMatchers(adminMovie).hasRole("ADMIN")
                         .anyRequest().permitAll())
                 .addFilterBefore(new JwtAuthenticationFilter(jwtService, entryPoint, publicApiMatcher),
                         AnonymousAuthenticationFilter.class);

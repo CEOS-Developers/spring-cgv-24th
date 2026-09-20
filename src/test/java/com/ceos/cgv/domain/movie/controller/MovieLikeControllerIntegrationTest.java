@@ -77,7 +77,8 @@ class MovieLikeControllerIntegrationTest {
                         .header("Authorization", userToken(71)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data").value(true));
-        mockMvc.perform(delete("/api/v1/movies/{movieId}", 72))
+        mockMvc.perform(delete("/api/v1/movies/{movieId}", 72)
+                        .header("Authorization", adminToken()))
                 .andExpect(status().isNoContent());
 
         mockMvc.perform(post("/api/v1/movies/{movieId}/likes", 72)
@@ -92,5 +93,9 @@ class MovieLikeControllerIntegrationTest {
 
     private String userToken(long userId) {
         return "Bearer " + jwtService.issue(userId, UserRole.USER);
+    }
+
+    private String adminToken() {
+        return "Bearer " + jwtService.issue(1L, UserRole.ADMIN);
     }
 }
