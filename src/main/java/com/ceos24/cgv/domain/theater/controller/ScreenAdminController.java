@@ -21,7 +21,8 @@ public class ScreenAdminController {
     @Operation(summary = "상영관 생성", description = "특정 영화관에 새로운 상영관을 생성합니다.")
     @PostMapping("/theaters/{theaterId}/screens")
     public ResponseEntity<ApiResponse<Void>> createScreen(
-            @PathVariable Long theaterId, @RequestBody ScreenCreateRequest request) {
+            @PathVariable Long theaterId,
+            @RequestBody ScreenCreateRequest request) {
         screenAdminService.createScreen(theaterId, request);
         return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.success(null));
     }

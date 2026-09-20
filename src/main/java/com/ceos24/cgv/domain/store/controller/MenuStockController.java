@@ -13,7 +13,5 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping
 public class MenuStockController {
 
-    private final MenuStockService menuStockService;
 
-    //@PatchMapping
 }

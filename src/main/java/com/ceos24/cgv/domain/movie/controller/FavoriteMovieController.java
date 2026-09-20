@@ -32,14 +32,16 @@ public class FavoriteMovieController {
     @DeleteMapping("/api/favoriteMovies/{favoriteMovieId}")
     public ResponseEntity<ApiResponse<Void>> deleteFavoriteMovie(
             @PathVariable Long favoriteMovieId,
-            @RequestHeader("X-Member-Id") Long memberId) {
-        favoriteMovieService.deleteFavoriteMovie(favoriteMovieId, memberId);
+            @AuthenticationPrincipal CustomUserDetails userDetails) {
+        favoriteMovieService.deleteFavoriteMovie(favoriteMovieId, userDetails.getMemberId());
         return ResponseEntity.ok(ApiResponse.success(null));
     }
 
     @Operation(summary = "찜한 영화 목록 조회", description = "사용자가 찜한 영화 목록을 조회합니다.")
     @GetMapping("/api/favoriteMovies")
-    public ResponseEntity<ApiResponse<GetMovieResponse>> getAllFavoriteMovies(@RequestHeader("X-Member-Id") Long memberId) {
-        return ResponseEntity.ok(ApiResponse.success(favoriteMovieService.getAllFavoriteMovies(memberId)));
+    public ResponseEntity<ApiResponse<GetMovieResponse>> getAllFavoriteMovies(
+            @AuthenticationPrincipal CustomUserDetails userDetails) {
+        return ResponseEntity.ok(ApiResponse
+                .success(favoriteMovieService.getAllFavoriteMovies(userDetails.getMemberId())));
     }
 }
