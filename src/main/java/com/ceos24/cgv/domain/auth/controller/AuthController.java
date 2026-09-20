@@ -1,5 +1,6 @@
 package com.ceos24.cgv.domain.auth.controller;
 
+import com.ceos24.cgv.domain.auth.dto.request.LoginRequest;
 import com.ceos24.cgv.domain.auth.dto.request.SignUpRequest;
 import com.ceos24.cgv.domain.auth.service.AuthService;
 import com.ceos24.cgv.global.common.ApiResponse;
@@ -19,9 +20,15 @@ public class AuthController {
     private final AuthService authService;
 
     @PostMapping("/signup")
-    public ResponseEntity<ApiResponse<Void>> signUp (
+    public ResponseEntity<ApiResponse<Void>> signUp(
             @RequestBody SignUpRequest request) {
         authService.signUp(request);
         return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.success(null));
+    }
+
+    @PostMapping("/login")
+    public ResponseEntity<ApiResponse<String>> login(
+            @RequestBody LoginRequest request) {
+        return ResponseEntity.ok(ApiResponse.success(authService.login(request)));
     }
 }

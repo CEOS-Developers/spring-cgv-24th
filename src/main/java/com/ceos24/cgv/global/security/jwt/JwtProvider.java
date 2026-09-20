@@ -5,12 +5,14 @@ import io.jsonwebtoken.JwtException;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.io.Decoders;
 import io.jsonwebtoken.security.Keys;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import javax.crypto.SecretKey;
 import java.util.Date;
 
+@Slf4j
 @Component
 public class JwtProvider {
 
@@ -46,13 +48,13 @@ public class JwtProvider {
                     .parseSignedClaims(token);
             return true;
         } catch (ExpiredJwtException e) {
-            System.out.println("토큰 만료");
+            log.warn("만료된 토큰입니다: {}", e.getMessage());
             return false;
         } catch (JwtException e) {
-            System.out.println("토큰이 유효하지 않습니다.");
+            log.warn("토큰이 유효하지 않습니다: {}", e.getMessage());
             return false;
         } catch (IllegalArgumentException e) {
-            System.out.println("토큰이 없음");
+            log.warn("토큰이 없습니다: {}", e.getMessage());
             return false;
         }
     }

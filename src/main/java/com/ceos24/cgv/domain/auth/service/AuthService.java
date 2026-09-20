@@ -1,11 +1,13 @@
 package com.ceos24.cgv.domain.auth.service;
 
+import com.ceos24.cgv.domain.auth.dto.request.LoginRequest;
 import com.ceos24.cgv.domain.auth.dto.request.SignUpRequest;
 import com.ceos24.cgv.domain.member.Role;
 import com.ceos24.cgv.domain.member.entity.Member;
 import com.ceos24.cgv.domain.member.repository.MemberRepository;
 import com.ceos24.cgv.global.exception.BusinessException;
 import com.ceos24.cgv.global.exception.ErrorCode;
+import com.ceos24.cgv.global.security.jwt.JwtProvider;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -17,6 +19,7 @@ public class AuthService {
 
     private final MemberRepository memberRepository;
     private final PasswordEncoder passwordEncoder;
+    private final JwtProvider jwtProvider;
 
     @Transactional
     public void signUp(SignUpRequest request) {
@@ -38,5 +41,18 @@ public class AuthService {
                 .build();
 
         memberRepository.save(member);
+    }
+
+    @Transactional(readOnly = true)
+    public String login(LoginRequest request) {
+
+        Member member = memberRepository.findByLoginId(request.loginId())
+                .orElseThrow(() -> new BusinessException(ErrorCode.AUTH_INVALID_CREDENTIALS));
+
+        if (!passwordEncoder.matches(request.password(), member.getPassword())) {
+            throw new BusinessException(ErrorCode.AUTH_INVALID_CREDENTIALS);
+        }
+
+        return jwtProvider.createAccessToken(member.getId().toString());
     }
 }
