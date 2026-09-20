@@ -11,13 +11,13 @@ public class PublicApiRequestMatcher implements RequestMatcher {
                 && (path.equals("/api/v1/auth/signup") || path.equals("/api/v1/auth/login"))) {
             return true;
         }
-        if (path.equals("/swagger-ui.html") || path.startsWith("/swagger-ui/")
-                || path.startsWith("/v3/api-docs")
-                || path.equals("/actuator/health") || path.startsWith("/h2-console")) {
-            return true;
-        }
         if (!"GET".equals(request.getMethod())) {
             return false;
+        }
+        if (path.equals("/swagger-ui.html") || path.startsWith("/swagger-ui/")
+                || path.startsWith("/v3/api-docs")
+                || path.equals("/actuator/health")) {
+            return true;
         }
         return path.equals("/api/v1/movies")
                 || path.matches("/api/v1/movies/[^/]+")

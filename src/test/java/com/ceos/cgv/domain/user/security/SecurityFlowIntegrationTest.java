@@ -52,6 +52,15 @@ class SecurityFlowIntegrationTest {
     }
 
     @Test
+    void H2_콘솔과_문서의_쓰기_경로는_공개_예외가_아니다() throws Exception {
+        for (String path : new String[]{"/h2-console/login.do", "/v3/api-docs"}) {
+            mockMvc.perform(post(path))
+                    .andExpect(status().isUnauthorized())
+                    .andExpect(jsonPath("$.code").value("TOKEN_NOT_EXIST"));
+        }
+    }
+
+    @Test
     void 잘못된_서명과_만료된_토큰은_서로_다른_401_코드로_반환한다() throws Exception {
         mockMvc.perform(post("/api/v1/movies/8842/likes")
                         .header("Authorization", "Bearer invalid.jwt.token"))
