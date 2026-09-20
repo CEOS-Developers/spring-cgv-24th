@@ -1,10 +1,7 @@
 package com.ceos24.cgv.domain.member.entity;
 
-import jakarta.persistence.Entity;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
-import jakarta.persistence.Id;
-import jakarta.persistence.Table;
+import com.ceos24.cgv.domain.member.Role;
+import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -18,4 +15,15 @@ public class Member {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    private String name;
+
+    private String email;
+
+    private String loginId;
+
+    private String password;
+
+    @Enumerated(EnumType.STRING)
+    Role role;
 }
