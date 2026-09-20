@@ -1,6 +1,11 @@
 package com.ceos24.cgv.support;
 
-import com.ceos24.cgv.domain.*;
+import com.ceos24.cgv.domain.branch.entity.Branch;
+import com.ceos24.cgv.domain.branch.entity.Theater;
+import com.ceos24.cgv.domain.branch.entity.TheaterType;
+import com.ceos24.cgv.domain.movie.entity.Movie;
+import com.ceos24.cgv.domain.screening.entity.Screening;
+import com.ceos24.cgv.domain.user.entity.User;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -11,14 +16,6 @@ public class TestFixtures {
         return Branch.builder()
                 .name(name)
                 .address("서울시 강남구 테헤란로 1")
-                .build();
-    }
-
-    public static TheaterType theaterType(String name, int rows, int cols) {
-        return TheaterType.builder()
-                .name(name)
-                .rowCount(rows)
-                .colCount(cols)
                 .build();
     }
 
