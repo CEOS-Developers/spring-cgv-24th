@@ -1,5 +1,7 @@
 package com.ceos.cgv.domain.movie.controller;
 
+import com.ceos.cgv.domain.user.enums.UserRole;
+import com.ceos.cgv.domain.user.security.JwtService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -37,6 +39,9 @@ class MovieVisibilityIntegrationTest {
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private JwtService jwtService;
 
     @BeforeEach
     void 테스트_데이터를_준비한다() {
@@ -98,7 +103,7 @@ class MovieVisibilityIntegrationTest {
         long reservationId = extractId(reservationLocation);
 
         mockMvc.perform(post("/api/v1/movies/{movieId}/likes", MOVIE_ID)
-                        .param("userId", String.valueOf(USER_ID)))
+                        .header("Authorization", userToken()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data").value(true));
 
@@ -164,7 +169,7 @@ class MovieVisibilityIntegrationTest {
 
         // 기존 찜은 HIDDEN에서도 해제 가능함
         mockMvc.perform(post("/api/v1/movies/{movieId}/likes", MOVIE_ID)
-                        .param("userId", String.valueOf(USER_ID)))
+                        .header("Authorization", userToken()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data").value(false));
 
@@ -174,7 +179,7 @@ class MovieVisibilityIntegrationTest {
                 .isZero();
 
         mockMvc.perform(post("/api/v1/movies/{movieId}/likes", MOVIE_ID)
-                        .param("userId", String.valueOf(USER_ID)))
+                        .header("Authorization", userToken()))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("MOVIE_NOT_AVAILABLE"));
 
@@ -225,5 +230,9 @@ class MovieVisibilityIntegrationTest {
 
     private static long extractId(String location) {
         return Long.parseLong(location.substring(location.lastIndexOf('/') + 1));
+    }
+
+    private String userToken() {
+        return "Bearer " + jwtService.issue(USER_ID, UserRole.USER);
     }
 }

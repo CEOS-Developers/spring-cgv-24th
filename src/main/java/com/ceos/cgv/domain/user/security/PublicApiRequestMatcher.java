@@ -1,0 +1,29 @@
+package com.ceos.cgv.domain.user.security;
+
+import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.security.web.util.matcher.RequestMatcher;
+
+public class PublicApiRequestMatcher implements RequestMatcher {
+    @Override
+    public boolean matches(HttpServletRequest request) {
+        String path = request.getRequestURI().substring(request.getContextPath().length());
+        if ("POST".equals(request.getMethod())
+                && (path.equals("/api/v1/auth/signup") || path.equals("/api/v1/auth/login"))) {
+            return true;
+        }
+        if (path.equals("/swagger-ui.html") || path.startsWith("/swagger-ui/")
+                || path.startsWith("/v3/api-docs")
+                || path.equals("/actuator/health") || path.startsWith("/h2-console")) {
+            return true;
+        }
+        if (!"GET".equals(request.getMethod())) {
+            return false;
+        }
+        return path.equals("/api/v1/movies")
+                || path.matches("/api/v1/movies/[^/]+")
+                || path.matches("/api/v1/movies/[^/]+/screenings")
+                || path.equals("/api/v1/cinemas")
+                || path.matches("/api/v1/cinemas/[^/]+")
+                || path.equals("/api/v1/products");
+    }
+}

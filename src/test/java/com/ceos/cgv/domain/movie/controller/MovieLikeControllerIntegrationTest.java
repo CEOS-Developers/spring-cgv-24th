@@ -1,5 +1,7 @@
 package com.ceos.cgv.domain.movie.controller;
 
+import com.ceos.cgv.domain.user.enums.UserRole;
+import com.ceos.cgv.domain.user.security.JwtService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -27,6 +29,9 @@ class MovieLikeControllerIntegrationTest {
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
+    @Autowired
+    private JwtService jwtService;
+
     @BeforeEach
     void 데이터베이스에_찜_테스트_기본_데이터를_넣는다() {
         jdbcTemplate.update("INSERT INTO users (user_id, name, email) VALUES (71, '찜 테스트 사용자', 'movie-like-test@example.com')");
@@ -36,18 +41,21 @@ class MovieLikeControllerIntegrationTest {
 
     @Test
     void 영화_찜은_한번의_POST로_추가와_취소를_토글한다() throws Exception {
-        mockMvc.perform(post("/api/v1/movies/{movieId}/likes", 72).param("userId", "71"))
+        mockMvc.perform(post("/api/v1/movies/{movieId}/likes", 72)
+                        .header("Authorization", userToken(71)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data").value(true));
 
-        mockMvc.perform(post("/api/v1/movies/{movieId}/likes", 72).param("userId", "71"))
+        mockMvc.perform(post("/api/v1/movies/{movieId}/likes", 72)
+                        .header("Authorization", userToken(71)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data").value(false));
     }
 
     @Test
     void 영화_찜은_존재하는_사용자와_영화에만_생성한다() throws Exception {
-        mockMvc.perform(post("/api/v1/movies/{movieId}/likes", 72).param("userId", "999"))
+        mockMvc.perform(post("/api/v1/movies/{movieId}/likes", 72)
+                        .header("Authorization", userToken(999)))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("USER_NOT_FOUND"));
     }
@@ -65,17 +73,24 @@ class MovieLikeControllerIntegrationTest {
 
     @Test
     void 비공개_영화의_기존_찜은_해제할_수_있지만_새로_찜할_수는_없다() throws Exception {
-        mockMvc.perform(post("/api/v1/movies/{movieId}/likes", 72).param("userId", "71"))
+        mockMvc.perform(post("/api/v1/movies/{movieId}/likes", 72)
+                        .header("Authorization", userToken(71)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data").value(true));
         mockMvc.perform(delete("/api/v1/movies/{movieId}", 72))
                 .andExpect(status().isNoContent());
 
-        mockMvc.perform(post("/api/v1/movies/{movieId}/likes", 72).param("userId", "71"))
+        mockMvc.perform(post("/api/v1/movies/{movieId}/likes", 72)
+                        .header("Authorization", userToken(71)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data").value(false));
-        mockMvc.perform(post("/api/v1/movies/{movieId}/likes", 72).param("userId", "71"))
+        mockMvc.perform(post("/api/v1/movies/{movieId}/likes", 72)
+                        .header("Authorization", userToken(71)))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("MOVIE_NOT_AVAILABLE"));
+    }
+
+    private String userToken(long userId) {
+        return "Bearer " + jwtService.issue(userId, UserRole.USER);
     }
 }
