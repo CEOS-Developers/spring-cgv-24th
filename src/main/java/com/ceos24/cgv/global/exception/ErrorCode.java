@@ -12,7 +12,11 @@ public enum ErrorCode {
 
     // Member
     MEMBER_NOT_FOUND(404, "존재하지 않는 회원입니다."),
-    
+
+    // Auth
+    AUTH_LOGIN_ID_ALREADY_EXISTS(409, "이미 존재하는 로그인 ID 입니다."),
+    AUTH_EMAIL_ALREADY_EXISTS(409, "이미 사용중인 EMAIL입니다."),
+
     // Store / Order
     STORE_NOT_FOUND(404, "존재하지 않는 매장입니다."),
     MENU_NOT_FOUND(404, "해당 매장에 존재하지 않는 메뉴입니다."),
