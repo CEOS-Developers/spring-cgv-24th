@@ -20,10 +20,12 @@ public class Member {
 
     private String email;
 
+    @Column(nullable = false, unique = true, length = 50)
     private String loginId;
 
+    @Column(nullable = false)
     private String password;
 
     @Enumerated(EnumType.STRING)
-    Role role;
+    private Role role;
 }
