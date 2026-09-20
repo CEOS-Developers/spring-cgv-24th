@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
+import java.sql.SQLException;
 import java.util.Locale;
 
 @Service
@@ -40,7 +41,22 @@ public class RegistrationService {
         try {
             return userRepository.saveAndFlush(user);
         } catch (DataIntegrityViolationException exception) {
-            throw new BusinessException(ErrorCode.ACCOUNT_ALREADY_EXISTS);
+            if (isDuplicateKey(exception)) {
+                throw new BusinessException(ErrorCode.ACCOUNT_ALREADY_EXISTS);
+            }
+            throw exception;
         }
+    }
+
+    private static boolean isDuplicateKey(Throwable exception) {
+        for (Throwable cause = exception; cause != null; cause = cause.getCause()) {
+            if (cause instanceof SQLException sqlException
+                    && ("23505".equals(sqlException.getSQLState())
+                    || ("23000".equals(sqlException.getSQLState())
+                    && sqlException.getErrorCode() == 1062))) {
+                return true;
+            }
+        }
+        return false;
     }
 }
