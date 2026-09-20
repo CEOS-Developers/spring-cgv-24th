@@ -19,6 +19,9 @@ public enum ErrorCode {
     AUTH_INVALID_CREDENTIALS(500, "올바르지 않은 인증 정보입니다."),
     AUTH_UNAUTHORIZED_USER(401, "인증되지 않은 사용자입니다."),
     AUTH_FORBIDDEN_USER(403, "권한이 없는 사용자입니다."),
+    AUTH_EXPIRED_TOKEN(401, "만료된 토큰입니다."),
+    AUTH_INVALID_TOKEN(401, "유효하지 않은 토큰입니다."),
+    AUTH_TOKEN_NOT_EXIST(401, "토큰이 존재하지 않습니다."),
 
     // Store / Order
     STORE_NOT_FOUND(404, "존재하지 않는 매장입니다."),

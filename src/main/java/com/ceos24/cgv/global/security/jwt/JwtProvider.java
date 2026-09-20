@@ -39,24 +39,12 @@ public class JwtProvider {
                 .compact();
     }
 
-    public boolean validateToken(String token) {
-        try {
-            Jwts.parser()
-                    .verifyWith(secretKey)
-                    .requireIssuer("http://localhost:8080")
-                    .build()
-                    .parseSignedClaims(token);
-            return true;
-        } catch (ExpiredJwtException e) {
-            log.warn("만료된 토큰입니다: {}", e.getMessage());
-            return false;
-        } catch (JwtException e) {
-            log.warn("토큰이 유효하지 않습니다: {}", e.getMessage());
-            return false;
-        } catch (IllegalArgumentException e) {
-            log.warn("토큰이 없습니다: {}", e.getMessage());
-            return false;
-        }
+    public void validateToken(String token) {
+        Jwts.parser()
+                .verifyWith(secretKey)
+                .requireIssuer("http://localhost:8080")
+                .build()
+                .parseSignedClaims(token);
     }
 
     public Long getMemberIdFromToken(String token) {

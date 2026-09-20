@@ -2,7 +2,10 @@ package com.ceos24.cgv.global.security.jwt;
 
 import com.ceos24.cgv.domain.member.entity.Member;
 import com.ceos24.cgv.domain.member.repository.MemberRepository;
+import com.ceos24.cgv.global.exception.ErrorCode;
 import com.ceos24.cgv.global.security.CustomUserDetails;
+import io.jsonwebtoken.ExpiredJwtException;
+import io.jsonwebtoken.JwtException;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -29,15 +32,27 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             FilterChain filterChain) throws IOException, ServletException {
         String token = resolveToken(request);
 
-        if (token != null && jwtProvider.validateToken(token)) {
-            Long memberId = jwtProvider.getMemberIdFromToken(token);
-            Member member = memberRepository.findById(memberId).orElse(null);
-            if (member != null) {
-                CustomUserDetails userDetails = new CustomUserDetails(member);
-                UsernamePasswordAuthenticationToken authentication =
-                        new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
-                SecurityContextHolder.getContext().setAuthentication(authentication);
+        try {
+            if (token != null) {
+                jwtProvider.validateToken(token);
+                Long memberId = jwtProvider.getMemberIdFromToken(token);
+                Member member = memberRepository.findById(memberId).orElse(null);
+                if (member != null) {
+                    CustomUserDetails userDetails = new CustomUserDetails(member);
+                    UsernamePasswordAuthenticationToken authentication =
+                            new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
+                    SecurityContextHolder.getContext().setAuthentication(authentication);
+                }
             }
+        } catch (ExpiredJwtException e) {
+            log.warn("만료된 토큰입니다: {}", e.getMessage());
+            request.setAttribute("exception", ErrorCode.AUTH_EXPIRED_TOKEN);
+        } catch (JwtException e) {
+            log.warn("토큰이 유효하지 않습니다: {}", e.getMessage());
+            request.setAttribute("exception",ErrorCode.AUTH_INVALID_TOKEN);
+        } catch (IllegalArgumentException e) {
+            log.warn("토큰이 없습니다: {}", e.getMessage());
+            request.setAttribute("exception",ErrorCode.AUTH_TOKEN_NOT_EXIST);
         }
         filterChain.doFilter(request, response);
     }

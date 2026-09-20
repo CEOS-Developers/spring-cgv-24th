@@ -30,7 +30,13 @@ public class JwtAuthenticationEntryPoint implements AuthenticationEntryPoint {
         response.setContentType("application/json");
         response.setCharacterEncoding("UTF-8");
         response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-        ApiResponse<?> apiResponse = ApiResponse.error(401, ErrorCode.AUTH_UNAUTHORIZED_USER.getMessage());
+
+        ErrorCode errorCode = (ErrorCode) request.getAttribute("exception");
+        if (errorCode == null) {
+            errorCode = ErrorCode.AUTH_TOKEN_NOT_EXIST;
+        }
+
+        ApiResponse<?> apiResponse = ApiResponse.error(errorCode.getStatus(), errorCode.getMessage());
 
         response.getWriter().write(objectMapper.writeValueAsString(apiResponse));
     }
