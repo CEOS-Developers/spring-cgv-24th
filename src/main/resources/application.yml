@@ -1,0 +1,8 @@
+spring:
+  application:
+    name: spring-cgv-24th
+
+springdoc:
+  paths-to-match: /api/**
+  default-consumes-media-type: application/json
+  default-produces-media-type: application/json
