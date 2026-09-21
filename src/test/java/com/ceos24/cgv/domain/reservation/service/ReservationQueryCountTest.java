@@ -90,6 +90,9 @@ class ReservationQueryCountTest {
         ReservationResponse response = reservationService.getById(reservationId);
 
         assertThat(statistics.getPrepareStatementCount()).isEqualTo(1);
+        // 응답이 쓰는 스칼라만 읽으므로 엔티티는 한 개도 올라오지 않는다.
+        // 엔티티로 가져오면 branch.description(TEXT)처럼 안 쓰는 컴럼까지 따라온다.
+        assertThat(statistics.getEntityLoadCount()).isZero();
         assertThat(response.seats()).hasSize(1);
         assertThat(response.screening().branchName()).isEqualTo("강남");
     }

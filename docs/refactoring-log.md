@@ -615,3 +615,86 @@ DTO에 필드가 늘어 LAZY 초기화가 다시 끼어들면 이 테스트가 �
 ### 확인
 
 `./gradlew test` 88개 통과 (기존 86 + 신규 2). 엔티티·DTO·컨트롤러와 API 응답은 그대로다.
+
+---
+
+## 세션 3-2: 예매 단건 조회 over-fetch 정리
+
+세션 3-1이 **쿼리 수**를 줄였다면 이번은 한 건당 **읽는 양**을 줄인다.
+`getById()`가 `findByIdWithDetails()`로 엔티티 6종을 통째로 가져오고 있었다.
+
+### 문제
+
+응답 `ReservationResponse`가 쓰는 값과 SELECT가 읽는 컬럼의 차이:
+
+| 엔티티 | SELECT | 응답이 쓰는 것 |
+|---|---|---|
+| reservation | 9 | 7 |
+| screening | 8 | 3 (id, startAt, endAt) |
+| movie | 9 | 1 (title) |
+| theater | 6 | 1 (name) |
+| **branch** | 9 (**description TEXT** + image_url 포함) | 1 (name) |
+| reservation_seat | 10 × N | 4 × N |
+
+두 낭비가 겹친다.
+
+1. **컬럼 폭** — `Branch.description`은 교통·주차 안내를 담는 TEXT(최대 64KB)인데
+   응답은 지점 **이름**만 쓴다.
+2. **행 증폭** — `LEFT JOIN FETCH r.seats`는 좌석 수만큼 행을 만든다. Hibernate가
+   엔티티를 메모리에서 합치기 전에 좌석 1개당 헤더 41개 컬럼이 한 번씩 전송되므로,
+   같은 description을 좌석 수(최대 8)만큼 읽는다.
+3. 덤으로 영속성 컨텍스트에 엔티티 `5 + N`개와 더티 체킹 스냅샷이 남는다.
+   조회는 변경 감지가 필요 없는데도 그렇다.
+
+### 결정 1 — 조회는 엔티티를 쓰지 않는다
+
+`ReservationDetailRow`(record, 좌석 1행) + `ReservationRepository.findDetailRowsById()`
+생성자 표현식 프로젝션. `ReservationResponse.of(rows, now)`가 조립한다.
+헤더 값은 행마다 반복되지만 이제 전부 스칼라다.
+
+```
+before: 41개 컬럼(TEXT 포함) × N행 + 엔티티 5+N개
+after : 17개 컬럼            × N행 + 엔티티 0개
+```
+
+SQL은 1건 그대로다. `r.user.id`는 FK 컬럼이라 users 조인이 생기지 않는다(3-1 결정 4와 같은 근거).
+좌석 정렬도 `ORDER BY`로 DB가 하므로 DTO의 `Comparator`가 이 경로에서는 빠진다.
+
+### 결정 2 — 좌석 조인은 INNER JOIN
+
+좌석은 `@NotEmpty @Size(max = 8)`이라 예매에 항상 1개 이상 있다. INNER JOIN이어도 예매가
+있으면 행이 비지 않으므로, **빈 결과 = 예매 없음**이 되어 `RESERVATION_NOT_FOUND` 판정이
+행 수 하나로 끝난다. 취소·만료로 풀린 좌석도 이력으로 응답에 남아야 하므로 `release_key`
+조건은 넣지 않는다(기존과 동일).
+
+### 결정 3 — 변경 경로(`create`, `pay`)는 엔티티를 유지한다
+
+상태 전이는 관리 상태 엔티티가 있어야 한다. `pay()`를 프로젝션으로 바꾸면 변경용 조회와
+응답용 조회가 나뉘어 SELECT가 1건에서 2건이 된다. 결제는 예매당 한 번뿐이라 이득이 없다.
+`findByIdWithDetails`는 이제 `pay()` 전용이다.
+
+만료 판정(`PENDING && now >= expiresAt`)은 프로젝션에 엔티티가 없어
+`Reservation.isExpired()`를 부를 수 없다. `ReservationResponse`의 private static
+`resolveStatus()`로 빼고 엔티티 경로도 같은 메서드를 쓰게 했다. 엔티티는 건드리지 않았다.
+
+### 회귀 테스트
+
+`ReservationQueryCountTest.예매_단건_조회는_SQL_1회로_끝난다`에
+`statistics.getEntityLoadCount()`가 0이라는 단언을 더했다. 변경 전에는 6(= 5 + 좌석 1)이
+나오는 것을 먼저 확인했다. SQL **수**는 기존 단언이, 읽는 **양**은 이 단언이 지킨다.
+조회가 다시 엔티티를 타면 여기서 걸린다.
+
+실제 SQL에서 `description` / `image_url` / `director` / `age_rating`이 사라진 것을 확인했다.
+
+### 검토했으나 하지 않은 것
+
+- **`pay()`도 프로젝션화** — 결정 3. SELECT 1→2건.
+- **`Branch.description`에 `@Basic(fetch = LAZY)`** — 바이트코드 인핸스먼트가 있어야 동작하고
+  엔티티 변경이 필요하다. 지점 상세 화면은 어차피 description을 쓰므로 전역으로 미루는 것은
+  또 다른 곳에서 추가 SELECT를 만든다.
+- **조회를 헤더/좌석 2쿼리로 분리** — 헤더 반복이 사라지지만 SQL이 2건이 된다. 반복되는 값이
+  스칼라뿐이라 남은 중복의 크기가 작다.
+
+### 확인
+
+`./gradlew test` 88개 통과. 엔티티·컨트롤러·API 응답은 그대로다.

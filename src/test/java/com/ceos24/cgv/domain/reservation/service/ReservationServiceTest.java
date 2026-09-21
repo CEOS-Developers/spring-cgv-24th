@@ -16,6 +16,7 @@ import com.ceos24.cgv.domain.reservation.repository.ReservationSeatRepository.Se
 import com.ceos24.cgv.domain.reservation.entity.ReservationSeat;
 import com.ceos24.cgv.domain.reservation.entity.ReservationStatus;
 import com.ceos24.cgv.domain.reservation.dto.ReservationCreateRequest;
+import com.ceos24.cgv.domain.reservation.dto.ReservationDetailRow;
 import com.ceos24.cgv.domain.reservation.dto.ReservationResponse;
 import com.ceos24.cgv.domain.screening.entity.Screening;
 import com.ceos24.cgv.domain.screening.repository.ScreeningRepository;
@@ -238,7 +239,7 @@ class ReservationServiceTest {
 
     @Test
     void 없는_예매_조회시_RESERVATION_NOT_FOUND() {
-        given(reservationRepository.findByIdWithDetails(99L)).willReturn(Optional.empty());
+        given(reservationRepository.findDetailRowsById(99L)).willReturn(List.of());
 
         assertThatThrownBy(() -> service.getById(99L))
                 .isInstanceOf(CustomException.class)
@@ -247,8 +248,9 @@ class ReservationServiceTest {
 
     @Test
     void 예매_조회_정상() {
-        Reservation hold = holdWithId(5L, NOW, 1, 1, 1, 2);
-        given(reservationRepository.findByIdWithDetails(5L)).willReturn(Optional.of(hold));
+        given(reservationRepository.findDetailRowsById(5L))
+                .willReturn(List.of(detailRow(5L, NOW.plusMinutes(10), ReservationStatus.PENDING, 1, 1),
+                        detailRow(5L, NOW.plusMinutes(10), ReservationStatus.PENDING, 1, 2)));
 
         ReservationResponse response = service.getById(5L);
 
@@ -258,16 +260,17 @@ class ReservationServiceTest {
                 .containsExactly("A1", "A2");
         assertThat(response.totalPrice()).isEqualTo(28000);
         assertThat(response.status()).isEqualTo(ReservationStatus.PENDING);
+        assertThat(response.screening().movieTitle()).isEqualTo("범죄도시4");
+        assertThat(response.screening().branchName()).isEqualTo("강남점");
     }
 
     @Test
     void 만료된_선점은_조회하면_EXPIRED로_보인다() {
-        Reservation hold = holdWithId(5L, NOW.minusMinutes(20), 1, 1);
-        given(reservationRepository.findByIdWithDetails(5L)).willReturn(Optional.of(hold));
-
         // DB 상태는 아직 PENDING이지만 이미 좌석을 놓은 것이나 마찬가지다
+        given(reservationRepository.findDetailRowsById(5L))
+                .willReturn(List.of(detailRow(5L, NOW.minusMinutes(10), ReservationStatus.PENDING, 1, 1)));
+
         assertThat(service.getById(5L).status()).isEqualTo(ReservationStatus.EXPIRED);
-        assertThat(hold.getStatus()).isEqualTo(ReservationStatus.PENDING);
     }
 
     // ─── cancel ───────────────────────────────────────────────────────────────
@@ -359,6 +362,14 @@ class ReservationServiceTest {
             reservation.addSeat(rowCols[i], rowCols[i + 1], AudienceType.ADULT, 14000);
         }
         return reservation;
+    }
+
+    private ReservationDetailRow detailRow(long id, LocalDateTime expiresAt, ReservationStatus status,
+                                          int rowNum, int colNum) {
+        return new ReservationDetailRow(
+                id, 2L, status, NOW, expiresAt, null, null,
+                1L, "범죄도시4", "1관", "강남점", START, START.plusMinutes(120),
+                rowNum, colNum, AudienceType.ADULT, 14000);
     }
 
     private Screening screeningWith(long id, int price, LocalDateTime startAt) {

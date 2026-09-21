@@ -5,6 +5,7 @@ import com.ceos24.cgv.global.exception.CustomException;
 import com.ceos24.cgv.global.exception.ErrorCode;
 import com.ceos24.cgv.domain.reservation.dto.PaymentRequest;
 import com.ceos24.cgv.domain.reservation.dto.ReservationCreateRequest;
+import com.ceos24.cgv.domain.reservation.dto.ReservationDetailRow;
 import com.ceos24.cgv.domain.reservation.dto.ReservationResponse;
 import com.ceos24.cgv.domain.reservation.entity.Reservation;
 import com.ceos24.cgv.domain.reservation.entity.ReservationStatus;
@@ -109,8 +110,14 @@ public class ReservationService {
         return ReservationResponse.from(reservation, now);
     }
 
+    // 조회는 상태를 바꾸지 않으므로 엔티티가 필요 없다. 프로젝션으로 받으면 응답이 쓰는
+    // 스칼라만 읽고, 영속성 컨텍스트에 엔티티와 더티 체킹 스냅샷도 남지 않는다.
     public ReservationResponse getById(Long id) {
-        return ReservationResponse.from(findWithDetails(id), LocalDateTime.now(clock));
+        List<ReservationDetailRow> rows = reservationRepository.findDetailRowsById(id);
+        if (rows.isEmpty()) {
+            throw new CustomException(ErrorCode.RESERVATION_NOT_FOUND);
+        }
+        return ReservationResponse.of(rows, LocalDateTime.now(clock));
     }
 
     @Transactional
@@ -118,6 +125,8 @@ public class ReservationService {
         findWithSeats(id).cancel(LocalDateTime.now(clock));
     }
 
+    // 결제는 상태를 바꿔야 해서 관리 상태 엔티티가 필요하다. 응답까지 한 쿼리로 만들려고
+    // 영화·지점을 함께 가져온다.
     private Reservation findWithDetails(Long id) {
         return reservationRepository.findByIdWithDetails(id)
                 .orElseThrow(() -> new CustomException(ErrorCode.RESERVATION_NOT_FOUND));
