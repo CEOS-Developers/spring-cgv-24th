@@ -1,8 +1,122 @@
 # spring-cgv-24th
 CEOS 24기 백엔드 스터디 - CGV 클론 코딩 프로젝트
 
-## ERD 
-![img.png](img.png)
+## ERD
+
+```mermaid
+erDiagram
+    users ||--o{ reservation : "예매한다"
+    users ||--o{ purchase : "구매한다"
+    users ||--o{ movie_like : "찜한다"
+    users ||--o{ branch_like : "찜한다"
+    branch ||--o{ theater : "보유한다"
+    branch ||--o{ stock : "보유한다"
+    branch ||--o{ purchase : "발생한다"
+    branch ||--o{ branch_like : "찜된다"
+    theater ||--o{ screening : "편성한다"
+    movie ||--o{ screening : "상영된다"
+    movie ||--o{ movie_like : "찜된다"
+    screening ||--o{ reservation : "예매된다"
+    screening ||--o{ reservation_seat : "좌석중복방지"
+    reservation ||--o{ reservation_seat : "포함한다"
+    product ||--o{ stock : "재고를가진다"
+    product ||--o{ purchase_product : "포함된다"
+    purchase ||--o{ purchase_product : "포함한다"
+
+    users {
+        bigint user_id PK
+        varchar login_id UK
+        varchar password
+        varchar name
+        date birth_date
+    }
+    branch {
+        bigint branch_id PK
+        varchar name
+        varchar address
+        enum region "지역 탭"
+        enum status "운영 상태"
+        text description "교통·주차 안내"
+        varchar image_url "대표 이미지"
+    }
+    theater {
+        bigint theater_id PK
+        bigint branch_id FK
+        enum theater_type "좌석 배치 보유"
+        varchar name
+    }
+    movie {
+        bigint movie_id PK
+        varchar title
+        varchar director
+        varchar genre
+        int running_time
+        date release_date
+        varchar age_rating
+    }
+    screening {
+        bigint screening_id PK
+        bigint theater_id FK
+        bigint movie_id FK
+        datetime start_at
+        datetime end_at
+        int price
+    }
+    reservation {
+        bigint reservation_id PK
+        bigint user_id FK
+        bigint screening_id FK
+        enum status
+        datetime reserved_at
+        datetime cancelled_at
+    }
+    reservation_seat {
+        bigint reservation_seat_id PK
+        bigint reservation_id FK
+        bigint screening_id FK "유니크 제약용"
+        int row_num
+        int col_num
+        int paid_price
+    }
+    product {
+        bigint product_id PK
+        varchar name
+        int price
+    }
+    stock {
+        bigint stock_id PK
+        bigint branch_id FK
+        bigint product_id FK
+        int quantity
+    }
+    purchase {
+        bigint purchase_id PK
+        bigint user_id FK
+        bigint branch_id FK
+        int total_price
+        datetime purchased_at
+    }
+    purchase_product {
+        bigint purchase_product_id PK
+        bigint purchase_id FK
+        bigint product_id FK
+        int quantity
+        int unit_price
+    }
+    movie_like {
+        bigint movie_like_id PK
+        bigint user_id FK
+        bigint movie_id FK
+    }
+    branch_like {
+        bigint branch_like_id PK
+        bigint user_id FK
+        bigint branch_id FK
+    }
+```
+
+모든 테이블은 `BaseTimeEntity`를 상속해 `created_at` / `updated_at`을 가집니다. 그림에서는 생략했습니다.
+`region`, `status`, `theater_type`은 테이블이 아니라 **자바 ENUM**이며 `varchar`로 저장됩니다.
 
 ## 테이블 정의
 
@@ -34,6 +148,27 @@ CEOS 24기 백엔드 스터디 - CGV 클론 코딩 프로젝트
 | branch_id | bigint (PK) | 식별자 |
 | name | varchar(100) | 지점명 (예: CGV 홍대) |
 | address | varchar(255) | 주소 |
+| region | varchar(30) | 지역 탭 값 (ENUM `Region`) |
+| status | varchar(20) | 운영 상태 (ENUM `BranchStatus`) |
+| description | text | 교통·주차 안내 서술문 |
+| image_url | varchar(500) | 대표 이미지 1장, nullable |
+
+**`Region`** — 극장 목록 상단의 지역 탭. 선언 순서가 곧 노출 순서입니다.
+
+| 값 | 표시명 |
+|---|---|
+| SEOUL / GYEONGGI / INCHEON / GANGWON | 서울 / 경기 / 인천 / 강원 |
+| DAEJEON_CHUNGCHEONG / DAEGU | 대전·충청 / 대구 |
+| BUSAN_ULSAN / GYEONGSANG | 부산·울산 / 경상 |
+| GWANGJU_JEOLLA / JEJU | 광주·전라 / 제주 |
+
+**`BranchStatus`**
+
+| 값 | 표시명 | 목록 노출 |
+|---|---|---|
+| OPEN | 운영중 | O (예매 가능) |
+| TEMPORARILY_CLOSED | 임시휴업 | O (배지 표시) |
+| CLOSED | 운영종료 | X (상세 조회는 가능) |
 
 **관계**
 - `theater` 1:N — 지점 하나에 상영관이 여러 개 있습니다
@@ -44,20 +179,19 @@ CEOS 24기 백엔드 스터디 - CGV 클론 코딩 프로젝트
 </details>
 
 <details>
-<summary><strong>theater_type (상영관 종류)</strong></summary>
+<summary><strong>TheaterType (상영관 종류) — 테이블이 아닌 ENUM</strong></summary>
 
-| 컬럼 | 타입 | 설명 |
-|---|---|---|
-| theater_type_id | bigint (PK) | 식별자 |
-| name | varchar(50) | 종류명 (IMAX, 4DX, 일반관) |
-| row_count | int | 좌석 행 수 |
-| col_count | int | 좌석 열 수 |
+| 값 | 표시명 | rowCount | colCount |
+|---|---|---|---|
+| STANDARD | 일반관 | 8 | 10 |
+| SPECIAL | 특별관 | 10 | 20 |
 
-**관계**
-- `theater` 1:N — 종류 하나를 여러 상영관이 공유합니다
+`theater.theater_type`에 `varchar(20)`으로 저장됩니다.
 
-좌석 배치를 이 테이블이 보유합니다. "종류가 같으면 좌석이 동일하다"는
-요구사항에 따라 상영관마다 배치를 저장하지 않습니다.
+좌석 배치를 이 ENUM이 보유합니다. "종류가 같으면 좌석이 동일하다"는
+요구사항에 따라 상영관마다 배치를 저장하지 않습니다. 종류가 고정된 소수이고
+자체 속성이 행·열 두 개뿐이라 별도 테이블로 둘 이유가 없었습니다.
+좌석 범위 검증도 `TheaterType.isValidSeat()`로 이 ENUM이 책임집니다.
 
 </details>
 
@@ -68,12 +202,12 @@ CEOS 24기 백엔드 스터디 - CGV 클론 코딩 프로젝트
 |---|---|---|
 | theater_id | bigint (PK) | 식별자 |
 | branch_id | bigint (FK) | 소속 지점 |
-| theater_type_id | bigint (FK) | 상영관 종류 |
+| theater_type | varchar(20) | 상영관 종류 (ENUM `TheaterType`) |
 | name | varchar(50) | 관 이름 (예: 3관) |
 
 **관계**
 - `branch` N:1 — 상영관 여러 개가 지점 하나에 속합니다
-- `theater_type` N:1 — 상영관 여러 개가 같은 종류를 참조합니다
+- `TheaterType` — 종류는 ENUM이므로 조인 없이 컬럼으로 들고 있습니다
 - `screening` 1:N — 상영관 하나에서 회차가 여러 번 열립니다
 
 </details>
@@ -302,6 +436,123 @@ JPA의 `@ManyToMany`는 조인 테이블에 부가 속성을 둘 수 없고 생�
 
 요구사항의 "영화관"이 두 의미로 쓰이고 있었습니다. CGV 홍대점 같은 **지점**(`branch`)과 그 안에서 실제로 영화를 트는 **상영관**(`theater`)을 한 테이블로 묶으면 이후 관계가 전부 꼬입니다. 특별관·일반관은 속성이 동일하므로 테이블을 나누지 않고 `theater_type`으로 종류를 구분했습니다.
 
+### 지점 목록·상세 화면에서 역산한 컬럼
+
+초안의 `branch`는 `name`, `address` 두 개뿐이었습니다. 멘토 피드백(지역 / 운영 여부 / 설명 / 이미지)을 받고 실제 CGV 화면을 다시 보니, 빠진 것이 단순히 "표시할 값"이 아니라 **목록 화면의 필터·검색 축 자체**였습니다. 지역 탭도 검색창도 걸 컬럼이 없었습니다. 네 개를 각각 이렇게 결정했습니다.
+
+#### 지역 — ENUM (테이블 아님)
+
+탭 값은 `서울 / 경기 / 인천 / 강원 / 대전·충청 / 대구 / 부산·울산 / 경상 / 광주·전라 / 제주`입니다. 행정구역과 1:1이 아닙니다. "대전·충청"은 1광역시+3도를 묶은 것이고 "경상"은 대구·부산·울산을 뺀 나머지입니다.
+
+처음에는 **행정구역이 아니니까 오히려 테이블이 필요한 것 아닌가** 생각했는데, 반대였습니다. 행정구역이라면 외부 표준 데이터를 따라가야 하므로 테이블이 맞습니다. 하지만 이 값은 CGV가 임의로 정한 묶음이라 **값의 소유자가 코드**입니다. 10개 내외에서 멈추고, 표시명과 정렬 순서 말고는 자체 속성도 없습니다.
+
+| | ENUM (채택) | `region` 테이블 |
+|---|---|---|
+| 조회 | 조인 없음 | 목록 조회마다 조인 |
+| 안전성 | 컴파일 타임에 오타가 잡힘 | 런타임 FK |
+| 정렬 | 선언 순서 = 탭 순서 (컬럼 불필요) | `sort_order` 컬럼 필요 |
+| 값 변경 | **배포 필요** | 운영자가 실시간 관리 |
+| 지역명 검색 | **2단계** (아래) | SQL 한 방 |
+| 확장 | 하위 지역·배너 붙이려면 이관 | 컬럼 추가로 끝 |
+
+트레이드오프는 **지역명 검색**에서 나옵니다. DB에는 `BUSAN_ULSAN`만 있고 `"부산·울산"`은 코드에만 있으므로, 검색어를 먼저 `Region`으로 역변환한 뒤 `IN` 절에 넣어야 합니다.
+
+```java
+// Region.java — 표시명이 DB에 없으므로 키워드를 먼저 Region으로 바꾼다
+public static List<Region> searchByKeyword(String keyword) {
+    return Arrays.stream(values())
+            .filter(region -> region.displayName.contains(keyword))
+            .toList();
+}
+```
+
+```java
+// BranchRepository.java — 지점명 LIKE와 지역 IN을 OR로 묶는다
+@Query("""
+        SELECT b FROM Branch b
+        WHERE b.status <> :excluded
+          AND (b.name LIKE %:keyword% OR b.region IN :regions)
+        ORDER BY b.region, b.name
+        """)
+List<Branch> searchByKeyword(@Param("keyword") String keyword,
+                             @Param("regions") List<Region> regions,
+                             @Param("excluded") BranchStatus excluded);
+```
+
+검색이 두 단계가 되는 비용을 치르고 조인과 참조 테이블 관리 비용을 덜어낸 선택입니다. 지역별 배너·하위 지역 같은 속성이 생기면 그때 테이블로 승격하면 되고, 이관은 10행 INSERT입니다.
+
+#### 운영 여부 — boolean이 아니라 ENUM
+
+`is_operating boolean`으로 충분한지 먼저 따져봤는데, **실제 상태가 두 개가 아니었습니다.** 운영중 / 임시휴업(리모델링) / 운영종료(폐관)가 모두 존재합니다.
+
+결정적인 건 셋의 취급이 다르다는 점입니다. **임시휴업은 배지를 달고 목록에 남지만, 폐관은 목록에서 빠집니다.** boolean이면 `false`가 이 둘을 구분하지 못해 "목록에서 뺄지 말지"를 판단할 근거가 사라집니다. 표현력 부족이 실제 로직을 막는 겁니다.
+
+부수적으로, 상태가 늘어날 때 boolean은 컬럼 추가(스키마 변경)지만 ENUM은 값 추가 한 줄입니다. CGV에 실재하는 "오픈예정"이 그 경우인데, 지금 화면 요구에 없어 넣지 않았습니다.
+
+목록에서 제외할 상태는 서비스 상수로 한 곳에만 둡니다.
+
+```java
+// BranchService.java
+private static final BranchStatus EXCLUDED_FROM_LIST = BranchStatus.CLOSED;
+```
+
+상세 조회는 상태로 거르지 않습니다. 폐관 지점 링크로 들어와도 "운영종료"를 보여주는 편이 404보다 낫다고 봤습니다.
+
+#### 영화관 설명 — TEXT
+
+실제 데이터를 먼저 봤습니다. 광주금남로점 기준으로 버스 노선 나열 + 지하철 출구 + 주차장 목록 + 정산 방법이 **줄바꿈과 불릿을 포함해 수백~2천 자**이고, 극장마다 내용이 완전히 다릅니다.
+
+| 후보 | 판단 |
+|---|---|
+| `varchar(255)` | **불가.** 한 문단도 안 들어갑니다 |
+| `varchar(2000)` | 가능하지만 utf8mb4에서 8000바이트를 행 크기 예산(65535B)에서 선점합니다. 인덱싱할 일도 없는 컬럼이 자리를 차지합니다 |
+| **`text` (채택)** | 64KB. 값을 행 밖에 두므로 목록 조회 부담이 작습니다 |
+| `@Lob` | **회피.** MySQL에서 `LONGTEXT`(4GB)로 매핑되고 Hibernate가 LOB 스트림 처리를 시도합니다. 실제 분량에 비해 과합니다 |
+
+```java
+// Branch.java
+@Column(columnDefinition = "TEXT")
+private String description;
+```
+
+**저장 형식**은 줄바꿈을 포함한 평문 그대로입니다. HTML을 저장하면 XSS 방어 책임이 서버로 넘어오므로, 렌더링은 클라이언트가 `white-space: pre-line`으로 처리하도록 남겨둡니다.
+
+컬럼 타입만큼 중요한 게 **어디에 실어 보내느냐**입니다. `description`은 `BranchDetailResponse`에만 넣고 목록 DTO에서는 뺐습니다. 지점 30개 목록에 2KB씩 붙이면 응답이 60KB가 되는데, 목록 카드는 그 값을 쓰지 않습니다.
+
+#### 이미지 URL — 컬럼 1개
+
+상세 페이지 상단에 대표 이미지가 **정확히 1장**이고, 순서·캡션·타입 같은 부가 속성이 없습니다. 부가 속성 없는 1:N은 테이블로 뺄 이유가 없습니다. `stock`과 `purchase_product`를 독립 엔티티로 둔 기준(부가 속성이 있으니까)을 그대로 뒤집어 적용한 것입니다.
+
+결정적이었던 건 **나중 비용이 낮다**는 점입니다. 갤러리 요구가 생기면 이관이 한 줄입니다.
+
+```sql
+INSERT INTO branch_image (branch_id, url, sort_order)
+SELECT branch_id, image_url, 1 FROM branch WHERE image_url IS NOT NULL;
+```
+
+반대로 지금 테이블을 만들면 모든 상세 조회에 조인이 붙고, "대표 1장을 어떻게 고르나"(`is_main` 플래그? `sort_order = 1`?)라는 문제가 즉시 생깁니다. 요구가 없는데 먼저 치를 비용입니다.
+
+`varchar(500)`은 CDN 경로에 쿼리스트링이 붙는 경우까지 고려한 길이이고, 이미지 미등록 지점을 허용하려고 nullable로 뒀습니다.
+
+#### 특별관 라벨은 컬럼이 아니라 집계값
+
+목록 카드의 `SCREENX`, `4DX` 같은 라벨은 지점 속성이 아니라 **그 지점이 보유한 상영관들의 타입을 집계한 값**입니다. `branch`에 컬럼으로 넣으면 `theater`와 이중 관리가 되어 반드시 틀어집니다.
+
+다만 지점마다 조회하면 N+1이므로 `IN` + `GROUP BY`로 한 번에 집계합니다.
+
+```java
+// TheaterRepository.java
+@Query("""
+        SELECT t.branch.id AS branchId, t.theaterType AS theaterType
+        FROM Theater t
+        WHERE t.branch.id IN :branchIds
+        GROUP BY t.branch.id, t.theaterType
+        """)
+List<BranchTheaterType> findTheaterTypesByBranchIds(@Param("branchIds") List<Long> branchIds);
+```
+
+지점이 몇 개든 목록 조회는 쿼리 2방(지점 1 + 라벨 집계 1)입니다. `STANDARD`는 라벨에서 빼기 때문에 일반관만 있는 지점은 라벨이 비는데, 실제 화면에서 라벨 없는 극장이 있는 것과 일치합니다.
+
 ### 좌석 설계
 
 "종류가 같다면 좌석은 동일해요"와 "직사각형, 중간에 비어있는 곳 없음" 두 단서로 설계를 결정했습니다. 좌석 테이블을 만들지 않고 `theater_type`에 `row_count`, `col_count`만 두었습니다. 지점 30개 × 상영관 8개여도 배치는 종류 수만큼만 저장됩니다.
@@ -342,6 +593,16 @@ JPA의 `@ManyToMany`는 조인 테이블에 부가 속성을 둘 수 없고 생�
   일치해야 하지만 DB가 이를 보장하지 않습니다. 애플리케이션이 지켜야 합니다.
 - **나이 제한 검증**: `movie.age_rating`과 생년월일 비교는 애플리케이션
   책임입니다.
+- **지역 값 변경에 배포 필요**: `Region`을 ENUM으로 둔 대가입니다. 지점이
+  새 지역에 생기면 코드를 고쳐야 합니다.
+- **하위 지명으로는 지역 탭이 검색되지 않음**: `"충남"`으로 `"대전·충청"`이
+  잡히지 않습니다. 표시명 부분일치 방식의 한계입니다. 별칭 목록을 ENUM에
+  들려주면 해결되지만, 그 목록이 길어지면 테이블로 옮길 신호입니다.
+- **설명 전문 검색 불가**: `description`은 `LIKE` 풀스캔 외에 검색 수단이
+  없습니다. "주차 가능한 지점 찾기" 같은 요구가 생기면 전문 인덱스나
+  구조화된 편의시설 테이블이 필요합니다.
+- **대표 이미지 1장 제한**: 갤러리가 필요해지면 `branch_image` 테이블로
+  이관해야 합니다.
 
 ### 의도적으로 제외한 것
 
@@ -355,6 +616,19 @@ JPA의 `@ManyToMany`는 조인 테이블에 부가 속성을 둘 수 없고 생�
 - **다중 장르·출연진**: 실제로는 영화 하나에 여러 장르와 다수의 배우가
   있으나 별도 테이블이 필요합니다. 현재는 `genre` 단일 컬럼으로 두었습니다.
 - **좌석 등급, 할인·쿠폰, 결제 수단, 리뷰·평점**: 요구사항 범위 밖입니다.
+
+### 지점에 더 필요해 보이지만 이번에 넣지 않은 것
+
+피드백 4개를 반영하면서 같이 눈에 띈 것들입니다. 지금 화면 요구로는 정당화되지 않아 기록만 해둡니다.
+
+| 후보 | 왜 필요할 수 있나 | 왜 지금은 아닌가 |
+|---|---|---|
+| `tel varchar(20)` | CGV 상세에 지점 연락처가 표시됨 | 넣어도 무방한 수준이지만 피드백 범위 밖 |
+| 주소 분해 (도로명 / 상세 / 법정동) | 실제 표기가 3조각이고 검색 정확도가 다름 | 과제 범위에선 한 컬럼이 다루기 쉬움 |
+| `opened_on` / `closed_on` | `status`는 *지금* 상태만 담고 전환 시점을 남기지 않음 | "오픈예정"을 도입할 때 같이 필요해짐 |
+| 지점 코드 (CGV 내부 극장코드) | 외부 연동·딥링크·URL slug에서 PK 노출을 피함 | 연동 대상이 없음 |
+| 이미지를 full URL이 아닌 key로 | CDN 도메인이 바뀌면 전 행 UPDATE | 단순함을 택함. 도메인 교체는 한 번의 UPDATE로 감당 가능 |
+| 위경도 `decimal(10,7)` × 2 | "가까운 극장" 정렬 | 이번 범위 밖으로 명시됨 |
 
 ---
 
