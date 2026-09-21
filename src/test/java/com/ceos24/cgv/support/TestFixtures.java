@@ -43,12 +43,16 @@ public class TestFixtures {
     }
 
     public static Movie movie(String title) {
+        return movie(title, LocalDate.of(2024, 1, 1));
+    }
+
+    public static Movie movie(String title, LocalDate releaseDate) {
         return Movie.builder()
                 .title(title)
                 .director("감독")
                 .genre("액션")
                 .runningTime(120)
-                .releaseDate(LocalDate.of(2024, 1, 1))
+                .releaseDate(releaseDate)
                 .ageRating("12세")
                 .build();
     }

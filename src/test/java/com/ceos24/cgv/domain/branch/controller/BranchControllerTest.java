@@ -148,6 +148,25 @@ class BranchControllerTest extends ControllerIntegrationTest {
     }
 
     @Test
+    void 지역_목록은_극장이_없는_지역도_0으로_내려준다() throws Exception {
+        persist(TestFixtures.branch("강남점", Region.SEOUL, BranchStatus.OPEN));
+        persist(TestFixtures.branch("홍대점", Region.SEOUL, BranchStatus.OPEN));
+        persist(TestFixtures.branch("서면점", Region.BUSAN_ULSAN, BranchStatus.OPEN));
+        persist(TestFixtures.branch("폐관점", Region.SEOUL, BranchStatus.CLOSED));
+        flushAndClear();
+
+        mockMvc.perform(get("/api/branches/regions"))
+                .andExpect(status().isOk())
+                // Region 선언 순서가 곧 탭 순서다
+                .andExpect(jsonPath("$.data.length()").value(Region.values().length))
+                .andExpect(jsonPath("$.data[0].region").value("SEOUL"))
+                .andExpect(jsonPath("$.data[0].regionName").value("서울"))
+                .andExpect(jsonPath("$.data[0].branchCount").value(2))   // 운영종료는 빠진다
+                .andExpect(jsonPath("$.data[1].region").value("GYEONGGI"))
+                .andExpect(jsonPath("$.data[1].branchCount").value(0));
+    }
+
+    @Test
     void 없는_지역값이면_400() throws Exception {
         mockMvc.perform(get("/api/branches").param("region", "NOWHERE"))
                 .andExpect(status().isBadRequest())

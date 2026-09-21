@@ -2,11 +2,13 @@ package com.ceos24.cgv.domain.branch.service;
 
 import com.ceos24.cgv.domain.branch.dto.BranchDetailResponse;
 import com.ceos24.cgv.domain.branch.dto.BranchResponse;
+import com.ceos24.cgv.domain.branch.dto.RegionResponse;
 import com.ceos24.cgv.domain.branch.entity.Branch;
 import com.ceos24.cgv.domain.branch.entity.BranchStatus;
 import com.ceos24.cgv.domain.branch.entity.Region;
 import com.ceos24.cgv.domain.branch.entity.Theater;
 import com.ceos24.cgv.domain.branch.repository.BranchRepository;
+import com.ceos24.cgv.domain.branch.repository.BranchRepository.RegionCount;
 import com.ceos24.cgv.domain.branch.repository.TheaterRepository;
 import com.ceos24.cgv.domain.branch.repository.TheaterRepository.BranchTheaterType;
 import com.ceos24.cgv.global.exception.CustomException;
@@ -16,6 +18,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -38,6 +41,16 @@ public class BranchService {
         return branches.stream()
                 .map(branch -> BranchResponse.from(
                         branch, specialTypes.getOrDefault(branch.getId(), List.of())))
+                .toList();
+    }
+
+    // 지역 탭은 enum 선언 순서가 곧 노출 순서다. 집계 결과에 없는 지역은 0으로 채운다.
+    public List<RegionResponse> findRegions() {
+        Map<Region, Long> countByRegion = branchRepository.countByRegion(EXCLUDED_FROM_LIST).stream()
+                .collect(Collectors.toMap(RegionCount::getRegion, RegionCount::getBranchCount));
+
+        return Arrays.stream(Region.values())
+                .map(region -> RegionResponse.of(region, countByRegion.getOrDefault(region, 0L)))
                 .toList();
     }
 

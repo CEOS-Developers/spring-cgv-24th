@@ -19,6 +19,20 @@ public interface BranchRepository extends JpaRepository<Branch, Long> {
     List<Branch> findByRegion(@Param("region") Region region,
                               @Param("excluded") BranchStatus excluded);
 
+    interface RegionCount {
+        Region getRegion();
+        long getBranchCount();
+    }
+
+    // 지역 탭의 극장 수. 지점마다 세면 N+1이므로 GROUP BY 한 번으로 끝낸다.
+    @Query("""
+            SELECT b.region AS region, COUNT(b) AS branchCount
+            FROM Branch b
+            WHERE b.status <> :excluded
+            GROUP BY b.region
+            """)
+    List<RegionCount> countByRegion(@Param("excluded") BranchStatus excluded);
+
     // 지역 표시명은 DB에 없으므로 키워드를 Region 목록으로 변환해 IN 절에 넘긴다.
     @Query("""
             SELECT b FROM Branch b

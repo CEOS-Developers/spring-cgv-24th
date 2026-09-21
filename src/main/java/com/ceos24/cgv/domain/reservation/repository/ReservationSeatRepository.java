@@ -48,4 +48,31 @@ public interface ReservationSeatRepository extends JpaRepository<ReservationSeat
         int getRowNum();
         int getColNum();
     }
+
+    // 예매율 정렬용. 확정된 예매만 센다. 선점은 아직 결제 전이고,
+    // 취소·만료분은 release_key가 0이 아니라 status 조건만으로 이미 빠진다.
+    @Query("""
+            SELECT s.movie.id AS movieId, COUNT(rs) AS reservedCount
+            FROM ReservationSeat rs
+            JOIN rs.reservation r
+            JOIN rs.screening s
+            WHERE r.status = :reserved
+            GROUP BY s.movie.id
+            """)
+    List<MovieSeatCountProjection> countConfirmedByMovie(@Param("reserved") ReservationStatus reserved);
+
+    interface MovieSeatCountProjection {
+        Long getMovieId();
+        Long getReservedCount();
+    }
+
+    @Query("""
+            SELECT COUNT(rs)
+            FROM ReservationSeat rs
+            JOIN rs.reservation r
+            WHERE rs.screening.movie.id = :movieId
+              AND r.status = :reserved
+            """)
+    long countConfirmedByMovieId(@Param("movieId") Long movieId,
+                                 @Param("reserved") ReservationStatus reserved);
 }

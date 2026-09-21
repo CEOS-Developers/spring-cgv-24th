@@ -2,6 +2,7 @@ package com.ceos24.cgv.domain.branch.controller;
 
 import com.ceos24.cgv.domain.branch.dto.BranchDetailResponse;
 import com.ceos24.cgv.domain.branch.dto.BranchResponse;
+import com.ceos24.cgv.domain.branch.dto.RegionResponse;
 import com.ceos24.cgv.domain.branch.entity.Region;
 import com.ceos24.cgv.domain.branch.service.BranchService;
 import com.ceos24.cgv.global.response.ApiResponse;
@@ -33,6 +34,12 @@ public class BranchController {
             @Parameter(description = "지역명 또는 지점명")
             @RequestParam(required = false) String keyword) {
         return ApiResponse.success(branchService.search(region, keyword));
+    }
+
+    @Operation(summary = "지역 목록 조회 (지역별 극장 수)")
+    @GetMapping("/regions")
+    public ApiResponse<List<RegionResponse>> regions() {
+        return ApiResponse.success(branchService.findRegions());
     }
 
     @Operation(summary = "지점 단건 조회 (소속 상영관 포함)")

@@ -1,41 +1,38 @@
 package com.ceos24.cgv.domain.screening.dto;
 
-import com.ceos24.cgv.domain.branch.entity.Theater;
-import com.ceos24.cgv.domain.movie.entity.Movie;
 import com.ceos24.cgv.domain.screening.entity.Screening;
 
 import java.time.LocalDateTime;
 
+// 회차 목록 화면의 카드 한 장. 지점·상영관 종류는 상위 그룹이 갖고 있어 싣지 않는다.
+// 영화는 남긴다. 극장부터 고르는 경로에서는 영화를 고르기 전까지 여러 편이 섞인다.
 public record ScreeningResponse(
         Long id,
-        MovieSummary movie,
-        TheaterSummary theater,
+        String theaterName,
+        Long movieId,
+        String movieTitle,
         LocalDateTime startAt,
         LocalDateTime endAt,
         int price,
-        int remainingSeats
+        int remainingSeats,
+        int totalSeats,
+        boolean soldOut
 ) {
-    public record MovieSummary(Long id, String title, String ageRating) {
-        public static MovieSummary from(Movie m) {
-            return new MovieSummary(m.getId(), m.getTitle(), m.getAgeRating());
-        }
-    }
+    public static ScreeningResponse from(Screening s, int occupiedSeats) {
+        int totalSeats = s.getTheater().getTheaterType().getTotalSeatCount();
+        int remainingSeats = totalSeats - occupiedSeats;
 
-    public record TheaterSummary(Long id, String name, String branchName) {
-        public static TheaterSummary from(Theater t) {
-            return new TheaterSummary(t.getId(), t.getName(), t.getBranch().getName());
-        }
-    }
-
-    public static ScreeningResponse from(Screening s, int remainingSeats) {
         return new ScreeningResponse(
                 s.getId(),
-                MovieSummary.from(s.getMovie()),
-                TheaterSummary.from(s.getTheater()),
+                s.getTheater().getName(),
+                s.getMovie().getId(),
+                s.getMovie().getTitle(),
                 s.getStartAt(),
                 s.getEndAt(),
                 s.getPrice(),
-                remainingSeats
+                remainingSeats,
+                totalSeats,
+                remainingSeats <= 0
         );
     }
 }

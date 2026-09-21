@@ -11,10 +11,11 @@ public record MovieResponse(
         String genre,
         int runningTime,
         LocalDate releaseDate,
-        String ageRating
+        String ageRating,
+        long reservedSeatCount
 ) {
 
-    public static MovieResponse from(Movie movie) {
+    public static MovieResponse from(Movie movie, long reservedSeatCount) {
         return new MovieResponse(
                 movie.getId(),
                 movie.getTitle(),
@@ -22,7 +23,8 @@ public record MovieResponse(
                 movie.getGenre(),
                 movie.getRunningTime(),
                 movie.getReleaseDate(),
-                movie.getAgeRating()
+                movie.getAgeRating(),
+                reservedSeatCount
         );
     }
 }
