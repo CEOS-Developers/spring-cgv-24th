@@ -1,0 +1,40 @@
+package com.ceos24.cgv.global.apiPayload.code.status;
+
+import com.ceos24.cgv.global.apiPayload.code.BaseErrorCode;
+import com.ceos24.cgv.global.apiPayload.code.ErrorReasonDTO;
+import lombok.AllArgsConstructor;
+import lombok.Getter;
+import org.springframework.http.HttpStatus;
+
+@Getter
+@AllArgsConstructor
+public enum GlobalErrorStatus implements BaseErrorCode {
+
+    _INTERNAL_SERVER_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "COMMON500", "서버 내부 오류가 발생했습니다."),
+    _BAD_REQUEST(HttpStatus.BAD_REQUEST, "COMMON400", "잘못된 요청입니다."),
+    _UNAUTHORIZED(HttpStatus.UNAUTHORIZED, "COMMON401", "인증이 필요합니다."),
+    _CONFLICT(HttpStatus.CONFLICT, "COMMON409", "이미 존재하거나 다른 데이터와 연관되어 처리할 수 없는 요청입니다.");
+
+    private final HttpStatus httpStatus;
+    private final String code;
+    private final String message;
+
+    @Override
+    public ErrorReasonDTO getReason() {
+        return ErrorReasonDTO.builder()
+                .message(message)
+                .code(code)
+                .isSuccess(false)
+                .build();
+    }
+
+    @Override
+    public ErrorReasonDTO getReasonHttpStatus() {
+        return ErrorReasonDTO.builder()
+                .message(message)
+                .code(code)
+                .isSuccess(false)
+                .httpStatus(httpStatus)
+                .build();
+    }
+}
