@@ -6,6 +6,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 import java.util.List;
 
@@ -30,6 +31,19 @@ public class GlobalExceptionHandler {
                         fe.getDefaultMessage()
                 ))
                 .toList();
+        return ResponseEntity.badRequest()
+                             .body(ApiResponse.error(ErrorCode.INVALID_INPUT_VALUE, fieldErrors));
+    }
+
+    // enum 쿼리 파라미터에 없는 값이 들어오면 바인딩 단계에서 터진다. 400이어야 할 오류다.
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ApiResponse<Void>> handleTypeMismatch(MethodArgumentTypeMismatchException e) {
+        log.warn("[TypeMismatch] {}={}", e.getName(), e.getValue());
+        List<ApiResponse.FieldError> fieldErrors = List.of(new ApiResponse.FieldError(
+                e.getName(),
+                e.getValue() != null ? e.getValue().toString() : null,
+                "허용되지 않은 값입니다."
+        ));
         return ResponseEntity.badRequest()
                              .body(ApiResponse.error(ErrorCode.INVALID_INPUT_VALUE, fieldErrors));
     }
