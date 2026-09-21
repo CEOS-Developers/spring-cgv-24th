@@ -698,3 +698,161 @@ SQL은 1건 그대로다. `r.user.id`는 FK 컬럼이라 users 조인이 생기�
 ### 확인
 
 `./gradlew test` 88개 통과. 엔티티·컨트롤러·API 응답은 그대로다.
+
+---
+
+## 세션: 좌석 경합 시 커넥션 풀 보호 + 데드락 제거
+
+### 배경
+
+"같은 좌석에 요청이 몰리면 유니크 제약을 확인하는 과정에서 대기가 생기는가,
+그때 커넥션과 다른 요청의 응답 시간은 어떻게 되는가"를 확인하다 시작했다.
+
+InnoDB는 중복 키 INSERT를 즉시 1062로 거절하지 않는다. 선행 트랜잭션이 끝날 때까지
+S 락을 걸고 블로킹한다. 그 대기 스레드는 **커넥션을 쥔 채로** 기다린다.
+설정이 전부 기본값이어서 `maximumPoolSize=10`, `connectionTimeout=30초`,
+`innodb_lock_wait_timeout=50초` 였다. 좌석 하나의 경합으로 커넥션 10개가 묶이면
+11번째 요청부터는 엔드포인트와 무관하게 30초 뒤 죽는다. 락 한도가 커넥션 한도보다 길어서
+**경합과 무관한 API가 경합 중인 API보다 먼저 죽는** 역전이 있었다.
+
+### 결정 1 — 비관적 락은 넣지 않는다
+
+이 스키마에는 Seat 테이블이 없어서 예매 전 좌석에는 **잠글 행 자체가 없다.**
+결국 `Screening` 행에 `FOR UPDATE`를 거는 수밖에 없는데, 그건 회차 전체를 직렬화하는 것이라
+지금의 좌석 단위 유니크 제약보다 처리량이 훨씬 나쁘다.
+유니크 제약에 맡기는 방식 자체는 이 설계에 맞는 선택이다.
+고칠 것은 락 전략이 아니라 **락의 범위와 커넥션 점유**였다.
+
+### 결정 2 — 만료 선점 정리를 "요청한 좌석을 막고 있는 것"으로 좁힌다
+
+`findExpiredHolds` → `findExpiredHoldsBlocking`. 회차의 만료 선점을 전부 푸는 대신
+요청한 좌석을 실제로 점유 중인 선점만 고른다.
+
+전에는 A5를 고르는 요청이 J12의 만료 선점까지 UPDATE했다. 그 행 락이 예매 커밋까지
+유지되므로, 같은 회차를 골랐을 뿐인 다른 좌석 요청들이 서로를 기다렸다.
+**경합 단위가 좌석이 아니라 회차였다.**
+
+(행, 열) 쌍을 IN 절에 넣는 방법이 DB마다 달라 `rowNum * 100 + colNum` 스칼라 하나로 접었다.
+상영관 종류의 최대 열 수가 22라 100진 자리에서 겹치지 않는다. 이 키를 만들려면 좌석이
+범위 안이어야 하므로 정리를 범위·중복 검증 **뒤로** 옮겼다(3→5번). 검증이 먼저 오는 순서가
+읽기에도 낫다.
+
+#### 검토했으나 하지 않은 것: 별도 트랜잭션(REQUIRES_NEW) 분리
+
+정리를 `REQUIRES_NEW` 빈으로 떼어내 락을 즉시 놓게 하는 안을 먼저 구현했다가 되돌렸다.
+`ReservationControllerTest.만료된_선점의_좌석은_다시_잡을_수_있다`가 409로 깨졌다.
+별도 트랜잭션은 다른 커넥션에서 돌기 때문에 `@Transactional` 통합 테스트의 **미커밋 데이터를
+볼 수 없다.** 테스트만의 문제가 아니라 "정리가 호출자 트랜잭션에 참여하지 않는다"는
+실제 의미 변화다.
+
+게다가 REQUIRES_NEW는 락 **보유 시간**만 줄일 뿐 락 **범위**는 그대로 둔다.
+결정 2가 범위를 직접 줄이므로 그쪽이 본질이었다.
+
+### 결정 3 — 좌석을 정렬해서 INSERT한다
+
+`orderedSeats()`로 (행, 열) 오름차순 정렬 후 `addSeat`을 부른다.
+Hibernate는 `hibernate.order_inserts` 미설정 시 컬렉션 순서대로 INSERT하고,
+INSERT 순서가 곧 락 획득 순서다. 전에는 `[A1,A2]` 요청과 `[A2,A1]` 요청이 서로를 물고 도는
+순환 대기를 만들었다.
+
+`ReservationResponse.from`도 정렬하지만 그건 **응답 표시용**이고, 이건 **INSERT 순서**다.
+둘은 다른 문제다.
+
+**실측** — 정렬을 빼고 좌석이 엇갈린 동시 요청 6건을 던지면 성공이 **0건**이다.
+전원이 서로를 죽인다. 예외가 새는 정도가 아니라 기능이 무너진다.
+
+### 결정 4 — 데드락·락 타임아웃을 409로 매핑한다
+
+`SEAT_RESERVATION_CONFLICT` 추가. 데드락(1213)과 락 타임아웃(1205)은 Spring에서
+`ConcurrencyFailureException` 계열로 번역되어 기존 `catch (DataIntegrityViolationException)`에
+**걸리지 않았다.** 그대로 500이 나갔다.
+
+`SEAT_ALREADY_RESERVED`로 뭉치지 않은 이유: 락 타임아웃은 좌석이 팔렸다는 뜻이 아니라
+**판정하지 못했다**는 뜻이다. 재시도하면 성공할 수 있어서 안내 문구가 달라야 한다.
+결정 3으로 데드락 경로는 사실상 사라지지만 안전망으로 남긴다.
+
+### 결정 5 — 커넥션 풀이 인질로 잡히지 않게 한다
+
+| 항목 | 전 | 후 |
+|---|---|---|
+| `innodb_lock_wait_timeout` | 50초 | 3초 (JDBC URL `sessionVariables`) |
+| Hikari `maximum-pool-size` | 10 | 20 |
+| Hikari `connection-timeout` | 30초 | 3초 |
+| `open-in-view` | true | false |
+
+락 한도를 커넥션 한도보다 길게 두지 않는 것이 핵심이다. 그래야 무관한 API가 먼저 죽는
+역전이 사라진다. `connection-init-sql`이 아니라 JDBC URL로 넣은 이유는 H2 테스트가
+그 변수를 모르기 때문이다(테스트 yaml이 datasource를 통째로 덮어쓴다).
+
+`open-in-view: false`는 조회가 전부 fetch join 또는 DTO 프로젝션으로 정리된 뒤라 안전하다.
+(이전 세션의 조회 쿼리 정리가 선행 조건이었다.)
+
+### 회귀 테스트
+
+`ReservationConcurrencyTest` 추가. 스레드마다 트랜잭션이 따로 열려야 해서
+`ControllerIntegrationTest`(@Transactional)를 상속하지 않고 `@AfterEach`에서 직접 정리한다.
+
+1. 같은 좌석 6건 동시 → 성공 정확히 1건, 실패는 전부 매핑된 CustomException
+2. 좌석 순서가 엇갈린 6건 동시 → 성공 1건, 점유 좌석 2개 (수정 전 성공 0건으로 실패 확인)
+3. 만료된 선점이 잡고 있던 좌석을 동시 요청 2건이 다시 가져감 → 둘 다 성공
+
+테스트 DB가 H2라 InnoDB의 duplicate-key 블로킹 타이밍까지 재현하지는 못한다.
+H2도 행 락 타임아웃 시 `CannotAcquireLockException`을 던져 예외 매핑 검증에는 충분하다.
+
+### 확인
+
+`./gradlew test` 94개 통과(기존 88 + 신규 6). 엔티티는 건드리지 않았다.
+
+### MySQL 실환경 확인
+
+테스트는 H2라 `application.yaml` 설정 4개와 새 JPQL이 한 번도 실행되지 않았다
+(`src/test/resources/application.yaml`이 main 설정을 통째로 가린다).
+MySQL 8.0.45에 앱을 띄워 직접 확인했다. 기준값은 전역 `innodb_lock_wait_timeout=50`,
+격리수준 `REPEATABLE-READ`였다.
+
+**새 JPQL** — 생성 SQL이 의도대로 번역됐다.
+
+```sql
+and exists(select 1 from reservation_seat rs1_0
+  where rs1_0.reservation_id=r1_0.reservation_id
+    and rs1_0.screening_id=?
+    and rs1_0.release_key=0
+    and ((rs1_0.row_num*100)+rs1_0.col_num) in (?))
+```
+
+바인딩 값은 `101`(= 1×100 + 1)이었다.
+
+**범위 축소가 실제로 먹는다** — 1행1열과 5행5열에 선점을 만들고 **둘 다** 만료시킨 뒤
+1행1열만 재요청했다.
+
+| 예매 | 좌석 | 요청 후 status | release_key | updated_at |
+|---|---|---|---|---|
+| 1 | A1 | PENDING → **EXPIRED** | 0 → 1 | 갱신됨 |
+| 2 | E5 | **PENDING 유지** | **0 유지** | **요청 전과 동일** |
+
+만료 시각이 지났어도 **요청하지 않은 좌석의 선점은 건드리지 않는다.**
+전에는 둘 다 풀면서 E5 행에도 UPDATE 락을 걸었다.
+
+**락 타임아웃 + 예외 매핑** — MySQL 세션에서 같은 좌석 행을 INSERT하고 12초간 커밋하지 않은
+상태로 앱에 같은 좌석을 요청했다.
+
+- 소요 **3.32초** (전역 50초도, 세션이 쥔 12초도 아님) → `sessionVariables`가 먹었다
+- **409 `SEAT_RESERVATION_CONFLICT`** → `ConcurrencyFailureException` catch가 동작.
+  이 catch가 없었으면 500이었다
+
+이 측정으로 "InnoDB는 중복 키 INSERT를 즉시 거절하지 않고 커넥션을 쥔 채 블로킹한다"는
+전제도 실증됐다.
+
+**`open-in-view: false`** — GET 11개(지역·키워드 필터, 지점 상세, 회차 목록·좌석, 예매 단건)와
+쓰기 경로(결제·취소)를 모두 태웠다. 전부 2xx, 로그에 `LazyInitializationException` **0건**.
+
+**풀이 인질로 잡히지 않는다** — 같은 좌석으로 동시 30건을 던지면서 무관한 `/api/movies`를 쟀다.
+
+- 부하 중 앱 DB 커넥션 **20개** (`maximum-pool-size: 20` 적용 확인)
+- `/api/movies` 계속 **200, 8~9ms** — head-of-line blocking 없음
+- 예매 30건 결과 **201 정확히 1건 + 409 29건**, 500 **0건**
+- 전 구간 `SQLTransientConnectionException` **0건**
+
+전체 로그 집계는 `SEAT_ALREADY_RESERVED` 58건, `SEAT_RESERVATION_CONFLICT` 1건이었다.
+경합 대부분은 pre-check와 유니크 제약에서 깔끔히 걸러지고, 락 타임아웃은 위 인위적 시나리오
+하나뿐이었다.
