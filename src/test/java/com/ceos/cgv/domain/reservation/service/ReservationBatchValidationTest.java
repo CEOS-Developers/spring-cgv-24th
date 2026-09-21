@@ -7,6 +7,7 @@ import com.ceos.cgv.domain.movie.entity.Screening;
 import com.ceos.cgv.domain.movie.enums.AgeRating;
 import com.ceos.cgv.domain.movie.repository.MovieRepository;
 import com.ceos.cgv.domain.movie.repository.ScreeningRepository;
+import com.ceos.cgv.domain.movie.repository.ScreeningSeatRepository;
 import com.ceos.cgv.domain.reservation.dto.*;
 import com.ceos.cgv.domain.reservation.entity.Reservation;
 import com.ceos.cgv.domain.reservation.repository.*;
@@ -32,6 +33,7 @@ class ReservationBatchValidationTest {
     @Mock ScreeningRepository screenings;
     @Mock ReservationRepository reservations;
     @Mock ReservedSeatRepository seats;
+    @Mock ScreeningSeatRepository screeningSeats;
     @InjectMocks ReservationService service;
 
     @BeforeEach
@@ -50,6 +52,7 @@ class ReservationBatchValidationTest {
     void 여러_좌석을_한번_검사하고_모두_저장한다() {
         Set<SeatCoordinate> requested = Set.of(new SeatCoordinate("A",1), new SeatCoordinate("B",2));
         when(seats.existsReservedByScreeningIdAndCoordinates(8L, requested)).thenReturn(false);
+        when(screeningSeats.findAllByScreening_Id(8L)).thenReturn(List.of());
         when(reservations.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         Reservation result = service.create(new ReservationCreateRequest(1L,8L,
                 List.of(new ReservedSeatRequest("A",1),new ReservedSeatRequest("B",2))));

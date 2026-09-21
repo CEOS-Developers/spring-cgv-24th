@@ -3,8 +3,10 @@ package com.ceos.cgv.domain.reservation.service;
 import com.ceos.cgv.domain.cinema.entity.Screen;
 import com.ceos.cgv.domain.movie.entity.Movie;
 import com.ceos.cgv.domain.movie.entity.Screening;
+import com.ceos.cgv.domain.movie.entity.ScreeningSeat;
 import com.ceos.cgv.domain.movie.repository.MovieRepository;
 import com.ceos.cgv.domain.movie.repository.ScreeningRepository;
+import com.ceos.cgv.domain.movie.repository.ScreeningSeatRepository;
 import com.ceos.cgv.domain.reservation.dto.ReservationCreateRequest;
 import com.ceos.cgv.domain.reservation.dto.ReservedSeatRequest;
 import com.ceos.cgv.domain.reservation.dto.SeatCoordinate;
@@ -23,7 +25,10 @@ import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -33,6 +38,7 @@ public class ReservationService {
     private final MovieRepository movieRepository;
     private final ReservationRepository reservationRepository;
     private final ReservedSeatRepository reservedSeatRepository;
+    private final ScreeningSeatRepository screeningSeatRepository;
 
     // 예매 생성 전체를 하나의 트랜잭션으로 처리하고 커밋된 데이터만 읽음
     @Transactional(isolation = Isolation.READ_COMMITTED)
@@ -75,6 +81,20 @@ public class ReservationService {
             throw new BusinessException(ErrorCode.SEAT_ALREADY_RESERVED);
         }
 
+        // 기존 회차는 이관 전까지 좌석 행이 없을 수 있다. 일부만 존재하는 회차는 진행하지 않는다.
+        var screeningSeats = screeningSeatRepository.findAllByScreening_Id(screening.getId());
+        if (!screeningSeats.isEmpty()
+                && screeningSeats.size() != (long) screen.getRowCount() * screen.getSeatsPerRow()) {
+            throw new BusinessException(ErrorCode.SCREENING_SEATS_NOT_READY);
+        }
+        Map<SeatCoordinate, ScreeningSeat> screeningSeatsByCoordinate = screeningSeats.stream()
+                .collect(Collectors.toMap(
+                        seat -> new SeatCoordinate(seat.getSeatRow(), seat.getSeatNumber()),
+                        Function.identity()));
+        if (!screeningSeats.isEmpty() && !screeningSeatsByCoordinate.keySet().containsAll(requestedSeats)) {
+            throw new BusinessException(ErrorCode.SCREENING_SEATS_NOT_READY);
+        }
+
         // 사용자와 상영 일정을 연결한 예매 엔티티 객체를 생성함
         Reservation reservation = Reservation.builder()
                 .user(user)
@@ -87,6 +107,8 @@ public class ReservationService {
                     .reservation(reservation)
                     .seatRow(seat.seatRow())
                     .seatNumber(seat.seatNumber())
+                    .screeningSeat(screeningSeatsByCoordinate.get(
+                            new SeatCoordinate(seat.seatRow(), seat.seatNumber())))
                     .build());
         }
 

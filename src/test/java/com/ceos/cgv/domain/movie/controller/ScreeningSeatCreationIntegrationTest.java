@@ -17,7 +17,9 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -89,6 +91,80 @@ class ScreeningSeatCreationIntegrationTest {
                 .andExpect(status().isBadRequest());
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM screenings WHERE screen_id = 6604", Integer.class)).isZero();
+    }
+
+    @Test
+    void 취소와_재예매_이력은_같은_회차_좌석을_가리키고_좌석_표시는_보존한다() throws Exception {
+        long screeningId = createScreening("2026-09-26T20:30:00");
+        jdbcTemplate.update("INSERT INTO users (user_id, name, email) VALUES (6606, '좌석 회원', 'seat-6606@example.com')");
+        String request = """
+                {"screeningId":%d,"seats":[{"seatRow":"A","seatNumber":2}]}
+                """.formatted(screeningId);
+        String userToken = "Bearer " + jwtService.issue(6606L, UserRole.USER);
+
+        long firstReservationId = createReservation(request, userToken);
+        mockMvc.perform(delete("/api/v1/reservations/{id}", firstReservationId)
+                        .header("Authorization", userToken))
+                .andExpect(status().isNoContent());
+        createReservation(request, userToken);
+
+        List<String> histories = jdbcTemplate.query("""
+                SELECT CONCAT(rs.seat_row, rs.seat_number, ':', ss.screening_seat_id)
+                FROM reserved_seats rs
+                JOIN screening_seats ss ON ss.screening_seat_id = rs.screening_seat_id
+                WHERE ss.screening_id = ? ORDER BY rs.reserved_seat_id
+                """, (rs, rowNum) -> rs.getString(1), screeningId);
+        assertThat(histories).hasSize(2);
+        assertThat(histories.get(0)).startsWith("A2:").isEqualTo(histories.get(1));
+    }
+
+    @Test
+    void 기존_회차의_예약_이력은_새_FK_없이도_유지된다() throws Exception {
+        jdbcTemplate.update("""
+                INSERT INTO screenings (screening_id, movie_id, screen_id, start_at)
+                VALUES (6607, 6603, 6602, '2026-09-26 22:30:00')
+                """);
+        jdbcTemplate.update("INSERT INTO users (user_id, name, email) VALUES (6606, '좌석 회원', 'seat-6606@example.com')");
+        String request = """
+                {"screeningId":6607,"seats":[{"seatRow":"B","seatNumber":1}]}
+                """;
+        long reservationId = createReservation(request,
+                "Bearer " + jwtService.issue(6606L, UserRole.USER));
+
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT screening_seat_id FROM reserved_seats WHERE reservation_id = ?
+                """, Long.class, reservationId)).isNull();
+    }
+
+    @Test
+    void 좌석_행이_일부만_있는_회차는_새_예매를_거절한다() throws Exception {
+        long screeningId = createScreening("2026-09-27T12:30:00");
+        jdbcTemplate.update("""
+                DELETE FROM screening_seats
+                WHERE screening_id = ? AND seat_row = 'B' AND seat_number = 3
+                """, screeningId);
+        jdbcTemplate.update("INSERT INTO users (user_id, name, email) VALUES (6606, '좌석 회원', 'seat-6606@example.com')");
+
+        mockMvc.perform(post("/api/v1/reservations")
+                        .header("Authorization", "Bearer " + jwtService.issue(6606L, UserRole.USER))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"screeningId":%d,"seats":[{"seatRow":"A","seatNumber":1}]}
+                                """.formatted(screeningId)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("SCREENING_SEATS_NOT_READY"));
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM reservations WHERE screening_id = ?", Integer.class, screeningId)).isZero();
+    }
+
+    private long createReservation(String request, String userToken) throws Exception {
+        String location = mockMvc.perform(post("/api/v1/reservations")
+                        .header("Authorization", userToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(request))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getHeader("Location");
+        return Long.parseLong(location.substring(location.lastIndexOf('/') + 1));
     }
 
     private long createScreening(String startAt) throws Exception {
