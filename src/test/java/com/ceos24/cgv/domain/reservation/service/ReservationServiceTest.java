@@ -61,13 +61,13 @@ class ReservationServiceTest {
     }
 
     @Test
-    void 없는_사용자면_MEMBER_NOT_FOUND() {
+    void 없는_사용자면_USER_NOT_FOUND() {
         given(screeningRepository.findByIdWithTheaterType(1L)).willReturn(Optional.of(screeningStandardWith(1L, 14000)));
         given(userRepository.findById(99L)).willReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.create(reqOf(1L, 99L, new int[]{1, 1})))
                 .isInstanceOf(CustomException.class)
-                .extracting("errorCode").isEqualTo(ErrorCode.MEMBER_NOT_FOUND);
+                .extracting("errorCode").isEqualTo(ErrorCode.USER_NOT_FOUND);
     }
 
     @Test

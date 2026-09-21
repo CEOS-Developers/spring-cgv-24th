@@ -39,7 +39,7 @@ public class ReservationService {
 
         // 2. 사용자 존재
         User user = userRepository.findById(req.userId())
-                .orElseThrow(() -> new CustomException(ErrorCode.MEMBER_NOT_FOUND));
+                .orElseThrow(() -> new CustomException(ErrorCode.USER_NOT_FOUND));
 
         // 3. 좌석 범위 검증
         TheaterType type = screening.getTheater().getTheaterType();

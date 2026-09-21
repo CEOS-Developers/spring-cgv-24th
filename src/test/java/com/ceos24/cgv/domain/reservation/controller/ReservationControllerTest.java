@@ -75,14 +75,14 @@ class ReservationControllerTest extends ControllerIntegrationTest {
     }
 
     @Test
-    void 존재하지_않는_회원_예매_404() throws Exception {
+    void 존재하지_않는_사용자_예매_404() throws Exception {
         mockMvc.perform(post("/api/reservations")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"screeningId":%d,"userId":9999,"seats":[{"rowNum":1,"colNum":1}]}
                                 """.formatted(screening.getId())))
                 .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.code").value("MEMBER_NOT_FOUND"));
+                .andExpect(jsonPath("$.code").value("USER_NOT_FOUND"));
     }
 
     @Test
