@@ -40,8 +40,8 @@ public class ReservationService {
     public ReservationResponse create(ReservationCreateRequest req) {
         LocalDateTime now = LocalDateTime.now(clock);
 
-        // 1. 회차 존재 (theater 함께 로딩)
-        Screening screening = screeningRepository.findByIdWithTheaterType(req.screeningId())
+        // 1. 회차 존재 (응답이 읽는 영화·상영관·지점까지 함께 로딩)
+        Screening screening = screeningRepository.findByIdWithDetails(req.screeningId())
                 .orElseThrow(() -> new CustomException(ErrorCode.SCREENING_NOT_FOUND));
 
         // 2. 사용자 존재
@@ -115,11 +115,16 @@ public class ReservationService {
 
     @Transactional
     public void cancel(Long id) {
-        findWithDetails(id).cancel(LocalDateTime.now(clock));
+        findWithSeats(id).cancel(LocalDateTime.now(clock));
     }
 
     private Reservation findWithDetails(Long id) {
         return reservationRepository.findByIdWithDetails(id)
+                .orElseThrow(() -> new CustomException(ErrorCode.RESERVATION_NOT_FOUND));
+    }
+
+    private Reservation findWithSeats(Long id) {
+        return reservationRepository.findByIdWithSeats(id)
                 .orElseThrow(() -> new CustomException(ErrorCode.RESERVATION_NOT_FOUND));
     }
 

@@ -70,7 +70,7 @@ class ReservationServiceTest {
 
     @Test
     void 없는_회차면_SCREENING_NOT_FOUND() {
-        given(screeningRepository.findByIdWithTheaterType(1L)).willReturn(Optional.empty());
+        given(screeningRepository.findByIdWithDetails(1L)).willReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.create(reqOf(1L, 1L, new int[]{1, 1})))
                 .isInstanceOf(CustomException.class)
@@ -80,7 +80,7 @@ class ReservationServiceTest {
 
     @Test
     void 없는_사용자면_USER_NOT_FOUND() {
-        given(screeningRepository.findByIdWithTheaterType(1L)).willReturn(Optional.of(screeningWith(1L, 14000, START)));
+        given(screeningRepository.findByIdWithDetails(1L)).willReturn(Optional.of(screeningWith(1L, 14000, START)));
         given(userRepository.findById(99L)).willReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.create(reqOf(1L, 99L, new int[]{1, 1})))
@@ -274,7 +274,7 @@ class ReservationServiceTest {
 
     @Test
     void 없는_예매_취소시_RESERVATION_NOT_FOUND() {
-        given(reservationRepository.findByIdWithDetails(99L)).willReturn(Optional.empty());
+        given(reservationRepository.findByIdWithSeats(99L)).willReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.cancel(99L))
                 .isInstanceOf(CustomException.class)
@@ -284,7 +284,7 @@ class ReservationServiceTest {
     @Test
     void 취소해도_어느_좌석을_얼마에_잡았는지가_남는다() {
         Reservation hold = holdWithId(1L, NOW, 1, 1, 1, 2);
-        given(reservationRepository.findByIdWithDetails(1L)).willReturn(Optional.of(hold));
+        given(reservationRepository.findByIdWithSeats(1L)).willReturn(Optional.of(hold));
 
         service.cancel(1L);
 
@@ -299,7 +299,7 @@ class ReservationServiceTest {
     void 이미_취소된_예매_취소시_ALREADY_CANCELLED() {
         Reservation hold = holdWithId(1L, NOW, 1, 1);
         hold.cancel(NOW);
-        given(reservationRepository.findByIdWithDetails(1L)).willReturn(Optional.of(hold));
+        given(reservationRepository.findByIdWithSeats(1L)).willReturn(Optional.of(hold));
 
         assertThatThrownBy(() -> service.cancel(1L))
                 .isInstanceOf(CustomException.class)
@@ -310,7 +310,7 @@ class ReservationServiceTest {
     void 상영_20분_이내면_확정된_예매를_취소할_수_없다() {
         Reservation hold = holdWithId(1L, NOW, NOW.plusMinutes(19), 1, 1);
         hold.confirm(NOW);
-        given(reservationRepository.findByIdWithDetails(1L)).willReturn(Optional.of(hold));
+        given(reservationRepository.findByIdWithSeats(1L)).willReturn(Optional.of(hold));
 
         assertThatThrownBy(() -> service.cancel(1L))
                 .isInstanceOf(CustomException.class)
@@ -321,7 +321,7 @@ class ReservationServiceTest {
     @Test
     void 선점은_상영_20분_이내여도_놓을_수_있다() {
         Reservation hold = holdWithId(1L, NOW, NOW.plusMinutes(19), 1, 1);
-        given(reservationRepository.findByIdWithDetails(1L)).willReturn(Optional.of(hold));
+        given(reservationRepository.findByIdWithSeats(1L)).willReturn(Optional.of(hold));
 
         service.cancel(1L);
 
@@ -331,7 +331,7 @@ class ReservationServiceTest {
     // ─── 픽스처 헬퍼 ──────────────────────────────────────────────────────────
 
     private void givenScreeningAndUser(long screeningId, long userId) {
-        given(screeningRepository.findByIdWithTheaterType(screeningId))
+        given(screeningRepository.findByIdWithDetails(screeningId))
                 .willReturn(Optional.of(screeningWith(screeningId, 14000, START)));
         given(userRepository.findById(userId)).willReturn(Optional.of(userWithId(userId)));
     }

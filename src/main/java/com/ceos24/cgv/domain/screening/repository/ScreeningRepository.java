@@ -34,11 +34,22 @@ public interface ScreeningRepository extends JpaRepository<Screening, Long> {
                            @Param("startInclusive") LocalDateTime startInclusive,
                            @Param("endExclusive") LocalDateTime endExclusive);
 
-    // theaterType이 enum으로 바뀌어 Theater에 내장되므로 별도 fetch join이 불필요하다.
+    // 좌석 배치는 theaterType enum이 들고 있어 theater까지만 있으면 된다.
     @Query("""
             SELECT s FROM Screening s
-            JOIN FETCH s.theater t
+            JOIN FETCH s.theater
             WHERE s.id = :id
             """)
-    Optional<Screening> findByIdWithTheaterType(@Param("id") Long id);
+    Optional<Screening> findByIdWithTheater(@Param("id") Long id);
+
+    // 선점 응답은 영화 제목과 지점 이름까지 내려준다. 여기서 함께 가져오지 않으면
+    // DTO 변환 시점에 LAZY 초기화 SELECT가 두 건 더 나간다.
+    @Query("""
+            SELECT s FROM Screening s
+            JOIN FETCH s.movie
+            JOIN FETCH s.theater t
+            JOIN FETCH t.branch
+            WHERE s.id = :id
+            """)
+    Optional<Screening> findByIdWithDetails(@Param("id") Long id);
 }

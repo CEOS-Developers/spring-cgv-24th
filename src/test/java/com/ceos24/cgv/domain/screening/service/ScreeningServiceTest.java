@@ -188,7 +188,7 @@ class ScreeningServiceTest {
 
     @Test
     void 없는_회차면_SCREENING_NOT_FOUND() {
-        given(screeningRepository.findByIdWithTheaterType(99L)).willReturn(Optional.empty());
+        given(screeningRepository.findByIdWithTheater(99L)).willReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.getSeats(99L))
                 .isInstanceOf(CustomException.class)
@@ -197,7 +197,7 @@ class ScreeningServiceTest {
 
     @Test
     void 막힌_좌석이_없으면_빈_라벨_리스트() {
-        given(screeningRepository.findByIdWithTheaterType(1L)).willReturn(Optional.of(
+        given(screeningRepository.findByIdWithTheater(1L)).willReturn(Optional.of(
                 screeningOf(1L, branchWith(1L, "강남"), TheaterType.STANDARD, "1관", TODAY.atTime(10, 0))));
 
         ScreeningSeatsResponse response = service.getSeats(1L);
@@ -209,7 +209,7 @@ class ScreeningServiceTest {
 
     @Test
     void 좌석_라벨_변환_정확성() {
-        given(screeningRepository.findByIdWithTheaterType(1L)).willReturn(Optional.of(
+        given(screeningRepository.findByIdWithTheater(1L)).willReturn(Optional.of(
                 screeningOf(1L, branchWith(1L, "강남"), TheaterType.STANDARD, "1관", TODAY.atTime(10, 0))));
         List<SeatPositionProjection> positions = List.of(positionOf(1, 5), positionOf(3, 12));
         given(reservationSeatRepository.findOccupiedPositionsByScreeningId(1L, PENDING, NOW))

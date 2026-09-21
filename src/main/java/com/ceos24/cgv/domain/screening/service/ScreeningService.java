@@ -72,7 +72,7 @@ public class ScreeningService {
     }
 
     public ScreeningSeatsResponse getSeats(Long screeningId) {
-        Screening screening = screeningRepository.findByIdWithTheaterType(screeningId)
+        Screening screening = screeningRepository.findByIdWithTheater(screeningId)
                 .orElseThrow(() -> new CustomException(ErrorCode.SCREENING_NOT_FOUND));
 
         // 결제 전 선점도 남이 고를 수 없으므로 예매된 좌석과 똑같이 막힌 것으로 내려준다.
