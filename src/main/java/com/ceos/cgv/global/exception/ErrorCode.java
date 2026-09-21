@@ -22,6 +22,8 @@ public enum ErrorCode {
     SEAT_MIGRATION_CONFLICT(HttpStatus.CONFLICT, "기존 좌석 이력을 자동으로 연결할 수 없습니다."),
     RESERVATION_NOT_FOUND(HttpStatus.NOT_FOUND, "예매를 찾을 수 없습니다."),
     RESERVATION_ALREADY_CANCELED(HttpStatus.CONFLICT, "이미 취소된 예매입니다."),
+    HOLD_EXPIRED(HttpStatus.CONFLICT, "좌석 선점 시간이 만료되었습니다."),
+    HOLD_NOT_ACTIVE(HttpStatus.CONFLICT, "진행 중인 좌석 선점이 아닙니다."),
     PRODUCT_NOT_FOUND(HttpStatus.NOT_FOUND, "매점 상품을 찾을 수 없습니다."),
     INVENTORY_NOT_FOUND(HttpStatus.NOT_FOUND, "영화관의 상품 재고를 찾을 수 없습니다."),
     FOOD_ORDER_NOT_FOUND(HttpStatus.NOT_FOUND, "매점 주문을 찾을 수 없습니다."),
