@@ -43,7 +43,7 @@ enum:
 |---|---|---|
 | `Region` | SEOUL … JEJU (10개) | 지역 탭. 선언 순서가 노출 순서 |
 | `BranchStatus` | OPEN / TEMPORARILY_CLOSED / CLOSED | `isReservable()` 보유 |
-| `TheaterType` | STANDARD(8×10) / SPECIAL(10×20) | `getTotalSeatCount()`, `isValidSeat()` 보유 |
+| `TheaterType` | STANDARD(8×10) / SPECIAL(10×20) | `getTotalSeatCount()`, `isValidSeat()` 보유 · 세션 1-1에서 정정 |
 | `ReservationStatus` | RESERVED / CANCELLED | 메서드 없음 |
 
 유니크 제약:
@@ -155,6 +155,8 @@ screening 12개 / reservation 26개.
 좌석은 Seat 엔티티 없이 `TheaterType` + `ReservationSeat.rowNum/colNum`으로 표현하는
 구조가 확정이므로 추가 작업 없음.
 
+`TheaterType`의 값 구성은 세션 1-1에서 정정한다.
+
 #### (2) ReservationStatus에 PENDING 추가 + 예매 흐름 재설계
 
 영향받는 파일:
@@ -218,3 +220,211 @@ screening 12개 / reservation 26개.
 - (4)·(5)는 다른 세션에 의존하지 않아 언제든 가능하다. 예매 본류를 끝낸 뒤에 두는 것이 맞다.
 - (4)를 (5)보다 먼저 두는 것도 타당하다. 찜이 더 작고, 목록 응답에 찜 여부를 얹을지
   결정하면서 조회 응답 구조를 한 번 더 점검하게 된다.
+
+---
+
+## 세션 1-1: 상영관 종류 2단 구조
+
+세션 1의 보완. 세션 2 착수 전에 상영관 스키마를 확정하기 위해 처리했다.
+
+### 문제
+
+상영관 종류는 **대분류(일반관/특별관) → 실제 종류(IMAX·4DX·SCREENX)** 2단 구조이고
+좌석 배치는 실제 종류가 결정한다. 그런데 `TheaterType`은 `STANDARD`/`SPECIAL` 두 값뿐이라
+대분류가 곧 종류가 되어 있었다. "특별관"이라는 한 덩어리가 단일 배치(10×20)를 갖는 탓에
+IMAX와 4DX의 배치가 다르다는 사실을 표현할 수 없었다.
+
+README는 지점 목록 라벨을 `SCREENX`, `4DX`로 설명하지만 실제 응답은 `["특별관"]`
+하나였다.
+
+### 결정
+
+`TheaterCategory` enum을 새로 두고 `TheaterType`이 이를 필드로 갖는다.
+
+| 값 | 표시명 | 대분류 | rowCount | colCount | 총 좌석 |
+|---|---|---|---|---|---|
+| `STANDARD` | 일반관 | GENERAL | 8 | 10 | 80 |
+| `IMAX` | IMAX | SPECIAL | 12 | 22 | 264 |
+| `FOUR_DX` | 4DX | SPECIAL | 10 | 16 | 160 |
+| `SCREEN_X` | SCREENX | SPECIAL | 10 | 20 | 200 |
+
+- 대분류를 boolean이 아닌 enum으로 둔 이유: "특별관"이라는 **표시명**이 필요한 자리가
+  생길 수 있다. boolean은 그 이름을 담을 곳이 없다.
+- `TheaterCategory`는 `TheaterType`이 결정하는 값이라 컬럼으로 저장하지 않는다.
+- `STANDARD`는 8×10을 그대로 유지했다. 예매·회차 테스트의 기대값(80석, row 9는 범위 초과)이
+  이 배치에 걸려 있다.
+- 저장 형태는 기존과 동일(`theater.theater_type varchar(20)`). `ddl-auto`가 운영 `create` /
+  테스트 `create-drop`이라 마이그레이션이 필요 없었다.
+
+### 변경 파일
+
+| 파일 | 내용 |
+|---|---|
+| `TheaterCategory.java` | 신설. GENERAL/SPECIAL + 표시명 |
+| `TheaterType.java` | 값 4개로 재정의, `category` 필드와 `isSpecial()` 추가 |
+| `BranchService.java` | `!= STANDARD` → `isSpecial()`, 라벨 정렬 추가 |
+| `BranchControllerTest.java` | 특별관 라벨 테스트를 IMAX+4DX 조합으로 교체 |
+| `README.md` | TheaterType 표, 용어 분리·라벨 집계 서술 |
+
+### 라벨 정렬
+
+한 지점이 특별관을 여러 종류 보유하면 `specialTypes` 라벨 순서가 `GROUP BY` 결과 순서에
+좌우된다. `TheaterType` 선언 순서로 정렬해 응답을 고정했다. 테스트는 4DX를 먼저 저장한 뒤
+`["IMAX", "4DX"]`가 나오는지 확인한다.
+
+### 확인
+
+`./gradlew test` 53개 전부 통과. `remainingSeats == 80`과 좌석 범위 초과(row 9) 케이스가
+통과하므로 STANDARD 배치 8×10은 보존되었다.
+
+---
+
+## 세션 2: 예매 선점 상태와 결제 흐름
+
+리뷰 피드백 "결제가 완료되지 않았을 경우 좌석 점유는 일어나지만 예약 확정은 아닌 상태가
+존재할 것"을 반영한다. 세션 0에서 남겨둔 `seats.clear()` 문제도 여기서 같이 정리했다.
+
+### 상태 전이
+
+| from | to | 트리거 | 좌석 | 기록 |
+|---|---|---|---|---|
+| — | `PENDING` | 좌석 선택 | 점유 | `expiresAt` = 선택 + 10분 |
+| `PENDING` | `RESERVED` | 결제 성공 | 점유 유지 | `confirmedAt` |
+| `PENDING` | `CANCELLED` | 결제 실패 / 사용자 취소 | 해제 | `cancelledAt` |
+| `PENDING` | `EXPIRED` | 만료 시각 경과 | 해제 | — |
+| `RESERVED` | `CANCELLED` | 취소, 상영 20분 전까지 | 해제 | `cancelledAt` |
+
+거부되는 전이
+
+| 시도 | 응답 |
+|---|---|
+| 확정된 예매 재결제 | 409 `RESERVATION_NOT_PENDING` |
+| 만료된 선점 결제 | 409 `RESERVATION_EXPIRED` |
+| 취소된 예매 재취소 | 409 `ALREADY_CANCELLED` |
+| 상영 20분 이내 확정 예매 취소 | 409 `CANCEL_DEADLINE_PASSED` |
+| 점유 중인 좌석 선택 | 409 `SEAT_ALREADY_RESERVED` |
+
+**결제 실패는 좌석을 바로 놓는다.** 실패한 자리를 붙들고 재시도하게 두면 경쟁이 심한 회차에서
+좌석 회전이 막힌다. 실제 CGV도 결제에 실패하면 좌석 선택부터 다시 진행한다.
+
+**만료는 `CANCELLED`와 분리했다.** 사용자가 놓은 것과 시간이 지나 회수한 것은 원인이 다르고,
+합치면 "이 좌석이 왜 풀렸나"를 되짚을 수 없다.
+
+### 결정 1 — 취소 이력과 중복 방지
+
+좌석 행을 지우지 않고 유니크 키에 해제 키를 넣는다.
+
+```
+UNIQUE (screening_id, row_num, col_num, release_key)
+
+점유 중   release_key = 0
+풀린 좌석 release_key = 자기 reservation_id
+```
+
+MySQL에 partial unique index가 없어 "점유 중인 행만 유일"을 직접 표현할 수 없다. 해제 값으로
+예매 id를 쓰면 한 예매가 같은 좌석을 두 번 가질 수 없으므로 풀린 행끼리 충돌하지 않는다.
+시각을 쓰면 같은 좌석이 동시에 해제될 때 충돌할 수 있다.
+
+얻은 것: DB 유니크 제약이 그대로 최종 방어선으로 남으면서 어느 좌석을 얼마에 취소했는지가
+남는다. 취소된 예매를 조회하면 `seats`와 `totalPrice`가 그대로 보인다.
+치른 비용: `release_key = 0`이 "점유 중"이라는 게 도메인 언어가 아니라 주석이 필요하다.
+
+점유 테이블을 따로 두는 안은 테이블이 늘고 두 테이블 동기화가 어긋날 수 있어 택하지 않았다.
+
+### 결정 2 — 만료는 `expires_at` + lazy 처리
+
+- 조회는 쿼리 조건으로 거른다.
+  `release_key = 0 AND (status <> PENDING OR expires_at > :now)`
+  취소·만료로 풀린 행은 `release_key`에서 이미 빠지고, 남는 예외가 만료 시각은 지났지만 아직
+  정리되지 않은 선점이라 시각 조건을 더한다.
+- 쓰기는 좌석을 잡기 직전에 그 회차의 만료된 선점을 실제로 해제한다. 유니크 인덱스는 만료
+  시각을 모르므로 행을 놓아주지 않으면 시간이 지난 좌석도 다시 잡을 수 없다.
+- 정리 범위는 요청된 회차 한 건으로 좁혔다.
+
+스케줄러를 두지 않은 이유: 정확성은 위 두 경로로 이미 보장된다. 스케줄러는 "언젠가 정리된다"는
+보조 수단일 뿐인데 시간 제어·테스트 비용만 늘어난다. 나중에 얹어도 이 로직은 그대로 쓴다.
+
+**구현 중 걸린 것**: 해제(UPDATE)를 새 좌석(INSERT)보다 먼저 flush해야 한다. 한 번에
+flush하면 Hibernate가 INSERT를 UPDATE보다 앞서 내보내 같은 좌석에서 유니크 충돌이 난다.
+`ReservationService.releaseExpiredHolds()`에서 명시적으로 `flush()`를 부르는 이유다.
+
+### 결정 3 — 동시성
+
+- 막히는 지점은 `reservation_seat` INSERT 시 유니크 인덱스다.
+- `saveAndFlush()`로 INSERT를 즉시 강제하고 `DataIntegrityViolationException`을
+  `SEAT_ALREADY_RESERVED`(409)로 바꾼다.
+- 트랜잭션 경계는 `create()` 하나다. 만료 정리 → 검증 → INSERT → flush가 그 안에서 일어난다.
+  충돌 시 만료 정리까지 함께 롤백되지만 무해하다. 다음 요청이 다시 정리한다.
+- pre-check는 경쟁이 없을 때 친절한 응답을 주기 위한 것이고 방어선이 아니다. 검사와 INSERT
+  사이의 틈은 원리적으로 막을 수 없고 그 틈을 제약이 막는다.
+- 비관적 락은 쓰지 않는다. 좌석 단위로 잠글 행이 없고(좌석 마스터 테이블이 없다),
+  `Screening` 행을 잠그면 회차 단위로 직렬화되어 처리량이 크게 떨어진다.
+
+### 결정 4 — 취소 기한은 엔티티에
+
+`Reservation`이 `screening`을 참조하므로 `startAt`과 비교할 재료가 이미 있다. 규칙이 하나뿐이라
+정책 객체는 과하다고 보고 `CANCEL_DEADLINE_MINUTES = 20` 상수를 엔티티에 뒀다.
+
+선점(`PENDING`)에는 기한을 적용하지 않는다. 아직 확정 전이라 언제든 놓을 수 있어야 한다.
+
+`now`는 서비스가 주입한다. 엔티티가 `LocalDateTime.now()`를 직접 부르면 "10분 뒤",
+"상영 20분 전" 같은 상황을 테스트에서 만들 수 없다. 이를 위해 `Clock` 빈을 도입했다.
+
+### 결정 5 — 권종별 가격
+
+`AudienceType` enum이 할인율을 보유한다. `TheaterType`이 좌석 배치를 갖는 것과 같은 패턴이다.
+
+| 값 | 표시명 | 할인율 | 기준가 14,000 기준 |
+|---|---|---|---|
+| `ADULT` | 일반 | 0% | 14,000 |
+| `YOUTH` | 청소년 | 20% | 11,200 |
+| `PREFERENTIAL` | 우대 | 50% | 7,000 |
+| `SENIOR` | 경로 | 50% | 7,000 |
+
+`screening.price`가 기준가이고 권종은 거기서 얼마를 깎는지만 안다. 가격표 테이블은 만들지
+않았다. 명세에 가격 얘기가 없고 권종은 값이 고정된 소수다.
+
+요청은 좌석마다 권종을 받는다. 화면은 인원을 먼저 고르지만, 좌석-권종 매핑이 없으면 좌석별
+금액을 정할 수 없다. 실제 티켓에도 좌석마다 권종이 찍힌다.
+
+### 결정 6 — 좌석 수와 인원 수 검증
+
+좌석마다 권종이 붙으므로 불일치가 구조적으로 발생하지 않는다. 별도 검증 대신 총 좌석 수
+상한만 DTO에서 `@Size(max = 8)`로 막았다. 요청 형식 검증이라 Bean Validation이 맞는 자리다.
+
+### API
+
+| 메서드 | 경로 | 구분 | 하는 일 |
+|---|---|---|---|
+| POST | `/api/reservations` | 수정 | 좌석 선점. `PENDING` 생성 + `expiresAt` |
+| POST | `/api/reservations/{id}/payment` | 신규 | mock 결제. 성공 → 확정 / 실패 → 좌석 해제 + 402 |
+| DELETE | `/api/reservations/{id}` | 수정 | 취소. 선점은 즉시, 확정은 상영 20분 전까지 |
+| GET | `/api/reservations/{id}` | 수정 | 상태·시각 4종·좌석별 권종/금액 |
+| GET | `/api/screenings/{id}/seats` | 수정 | 점유 판정에 미만료 선점 포함 |
+| GET | `/api/screenings` | 수정 | 잔여좌석 집계를 같은 기준으로 |
+
+### 계획과 달라진 점
+
+- **만료된 선점을 결제하면 정리까지 하려 했으나 예외만 던진다.** `CustomException`이
+  트랜잭션을 롤백시켜 같은 트랜잭션에서 한 해제가 사라지기 때문이다. 정리는 그 회차의 다음
+  좌석 선점 요청이 맡고, 그 전까지도 조회 조건이 시각을 보므로 좌석은 이미 풀린 것으로 센다.
+- **결제 실패 경로만 `@Transactional(noRollbackFor = CustomException.class)`를 쓴다.**
+  실패를 402로 알리면서 좌석 해제는 남겨야 해서다.
+- **`EXPIRED` 상태의 예매를 취소하면 `RESERVATION_EXPIRED`를 준다.** `ALREADY_CANCELLED`로
+  뭉치면 메시지가 사실과 다르다.
+- **좌석 라벨 변환을 `ReservationSeat.label()` 한 곳으로 모았다.** 세션 0에서 적어둔
+  `ReservationResponse`와 `ScreeningService`의 중복이 이번에 양쪽 다 수정 대상이 되어 함께
+  정리했다.
+
+### 남은 것
+
+- 회차 조회 응답 구조는 세션 3에서 재설계하므로 이번에는 점유 판정 기준만 맞췄다.
+- 매점(`purchase` / `purchase_product`) 서술은 세션 5 대상이라 그대로 뒀다.
+
+### 확인
+
+`./gradlew test` 70개 통과 (예매 서비스 21 + 예매 API 22).
+
+`README.md`에도 반영했다. ERD와 `reservation`/`reservation_seat` 컬럼 표,
+`ReservationStatus`·`AudienceType` ENUM 설명, 중복 예매 방지·선점 만료 설계 배경,
+한계 항목(취소 이력 → `release_key`의 의미와 만료 행 잔존).

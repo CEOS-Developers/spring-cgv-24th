@@ -66,8 +66,9 @@ erDiagram
         bigint reservation_id PK
         bigint user_id FK
         bigint screening_id FK
-        enum status
-        datetime reserved_at
+        enum status "선점/확정/취소/만료"
+        datetime expires_at "선점 만료 예정"
+        datetime confirmed_at "결제 완료"
         datetime cancelled_at
     }
     reservation_seat {
@@ -76,7 +77,9 @@ erDiagram
         bigint screening_id FK "유니크 제약용"
         int row_num
         int col_num
+        enum audience_type "권종"
         int paid_price
+        bigint release_key "유니크 제약용"
     }
     product {
         bigint product_id PK
@@ -116,7 +119,7 @@ erDiagram
 ```
 
 모든 테이블은 `BaseTimeEntity`를 상속해 `created_at` / `updated_at`을 가집니다. 그림에서는 생략했습니다.
-`region`, `status`, `theater_type`은 테이블이 아니라 **자바 ENUM**이며 `varchar`로 저장됩니다.
+`region`, `status`, `theater_type`, `audience_type`은 테이블이 아니라 **자바 ENUM**이며 `varchar`로 저장됩니다.
 
 ## 테이블 정의
 
@@ -181,12 +184,18 @@ erDiagram
 <details>
 <summary><strong>TheaterType (상영관 종류) — 테이블이 아닌 ENUM</strong></summary>
 
-| 값 | 표시명 | rowCount | colCount |
-|---|---|---|---|
-| STANDARD | 일반관 | 8 | 10 |
-| SPECIAL | 특별관 | 10 | 20 |
+상영관 종류는 대분류(일반관/특별관) 아래에 실제 종류가 놓이는 2단 구조입니다.
+대분류는 `TheaterCategory`, 실제 종류는 `TheaterType`이 갖습니다.
 
-`theater.theater_type`에 `varchar(20)`으로 저장됩니다.
+| 값 | 표시명 | 대분류 | rowCount | colCount | 총 좌석 |
+|---|---|---|---|---|---|
+| STANDARD | 일반관 | GENERAL | 8 | 10 | 80 |
+| IMAX | IMAX | SPECIAL | 12 | 22 | 264 |
+| FOUR_DX | 4DX | SPECIAL | 10 | 16 | 160 |
+| SCREEN_X | SCREENX | SPECIAL | 10 | 20 | 200 |
+
+`theater.theater_type`에 `varchar(20)`으로 저장됩니다. `TheaterCategory`는
+`TheaterType`이 결정하는 값이라 컬럼으로 저장하지 않습니다.
 
 좌석 배치를 이 ENUM이 보유합니다. "종류가 같으면 좌석이 동일하다"는
 요구사항에 따라 상영관마다 배치를 저장하지 않습니다. 종류가 고정된 소수이고
@@ -262,8 +271,9 @@ erDiagram
 | reservation_id | bigint (PK) | 식별자 |
 | user_id | bigint (FK) | 예매자 |
 | screening_id | bigint (FK) | 예매한 회차 |
-| status | varchar(20) | RESERVED / CANCELLED |
-| reserved_at | datetime | 예매 시각 |
+| status | varchar(20) | 예매 상태 (ENUM `ReservationStatus`) |
+| expires_at | datetime | 선점 만료 예정 시각 (좌석 선택 + 10분) |
+| confirmed_at | datetime (null) | 결제 완료 시각 |
 | cancelled_at | datetime (null) | 취소 시각 |
 
 **관계**
@@ -273,6 +283,53 @@ erDiagram
 
 한 번의 예매에 여러 좌석이 선택될 수 있으므로 헤더-디테일 구조로
 분리했습니다. 이 테이블은 "예매 행위"를 나타냅니다.
+
+좌석을 고른 시각은 별도 컬럼 없이 `created_at`이 갖습니다.
+
+</details>
+
+<details>
+<summary><strong>ReservationStatus (예매 상태) — 테이블이 아닌 ENUM</strong></summary>
+
+| 값 | 표시명 | 좌석 |
+|---|---|---|
+| PENDING | 결제대기 | 점유 |
+| RESERVED | 예매완료 | 점유 |
+| CANCELLED | 취소 | 해제 |
+| EXPIRED | 선점만료 | 해제 |
+
+| from | to | 트리거 |
+|---|---|---|
+| — | PENDING | 좌석 선택 (10분간 선점) |
+| PENDING | RESERVED | 결제 성공 |
+| PENDING | CANCELLED | 결제 실패 / 사용자 취소 |
+| PENDING | EXPIRED | 만료 시각 경과 |
+| RESERVED | CANCELLED | 취소, 상영 20분 전까지 |
+
+결제에 실패하면 좌석을 바로 놓습니다. 실패한 자리를 붙들고 재시도하게 두면 경쟁이 심한
+회차에서 좌석 회전이 막힙니다. 실제 CGV도 결제에 실패하면 좌석 선택부터 다시 진행합니다.
+
+만료를 `CANCELLED`와 분리한 이유는 사용자가 놓은 것과 시간이 지나 회수한 것의 원인이
+다르기 때문입니다. 합치면 "이 좌석이 왜 풀렸나"를 되짚을 수 없습니다.
+
+</details>
+
+<details>
+<summary><strong>AudienceType (권종) — 테이블이 아닌 ENUM</strong></summary>
+
+| 값 | 표시명 | 할인율 | 기준가 14,000 기준 |
+|---|---|---|---|
+| ADULT | 일반 | 0% | 14,000 |
+| YOUTH | 청소년 | 20% | 11,200 |
+| PREFERENTIAL | 우대 | 50% | 7,000 |
+| SENIOR | 경로 | 50% | 7,000 |
+
+기준가는 `screening.price`가 갖고 권종은 거기서 얼마를 깎는지만 압니다. 가격표를 테이블로
+두지 않은 이유는 값이 고정된 소수이고 자체 속성이 할인율 하나뿐이기 때문입니다.
+`TheaterType`이 좌석 배치를 갖는 것과 같은 판단입니다.
+
+좌석마다 권종이 붙습니다. 화면은 인원을 먼저 고르지만, 좌석-권종 매핑이 없으면 좌석별
+금액을 정할 수 없습니다. 실제 티켓에도 좌석마다 권종이 찍힙니다.
 
 </details>
 
@@ -286,9 +343,11 @@ erDiagram
 | screening_id | bigint (FK) | 회차 (유니크 제약용 중복 저장) |
 | row_num | int | 좌석 행 위치 |
 | col_num | int | 좌석 열 위치 |
-| paid_price | int | 결제 시점 가격 |
+| audience_type | varchar(20) | 권종 (ENUM `AudienceType`) |
+| paid_price | int | 권종 할인이 적용된 결제 시점 가격 |
+| release_key | bigint | 점유 중 0, 풀린 좌석은 자기 reservation_id |
 
-**제약**: (screening_id, row_num, col_num) 유니크 — 중복 예매 방지
+**제약**: (screening_id, row_num, col_num, release_key) 유니크 — 중복 예매 방지
 
 **관계**
 - `reservation` N:1 — 여러 좌석이 예매 한 건에 속합니다
@@ -297,6 +356,9 @@ erDiagram
 좌석 테이블이 없으므로 위치를 행·열 숫자로 저장합니다.
 `paid_price`는 회차 가격이 변경되어도 과거 결제 금액이 유지되도록
 예매 시점 값을 복사한 것입니다.
+
+취소·만료된 좌석도 행을 지우지 않고 `release_key`만 세웁니다.
+어느 좌석을 얼마에 잡았는지가 남습니다.
 
 </details>
 
@@ -434,7 +496,7 @@ JPA의 `@ManyToMany`는 조인 테이블에 부가 속성을 둘 수 없고 생�
 
 ### 용어 분리: 지점 vs 상영관
 
-요구사항의 "영화관"이 두 의미로 쓰이고 있었습니다. CGV 홍대점 같은 **지점**(`branch`)과 그 안에서 실제로 영화를 트는 **상영관**(`theater`)을 한 테이블로 묶으면 이후 관계가 전부 꼬입니다. 특별관·일반관은 속성이 동일하므로 테이블을 나누지 않고 `theater_type`으로 종류를 구분했습니다.
+요구사항의 "영화관"이 두 의미로 쓰이고 있었습니다. CGV 홍대점 같은 **지점**(`branch`)과 그 안에서 실제로 영화를 트는 **상영관**(`theater`)을 한 테이블로 묶으면 이후 관계가 전부 꼬입니다. 특별관·일반관은 속성이 동일하므로 테이블을 나누지 않고 `theater_type`으로 종류를 구분했습니다. 이때 "특별관"은 IMAX·4DX·SCREENX를 묶는 대분류이지 종류 자체가 아니므로, 대분류는 `TheaterCategory`로 따로 두고 배치는 실제 종류가 갖습니다.
 
 ### 지점 목록·상세 화면에서 역산한 컬럼
 
@@ -551,7 +613,7 @@ SELECT branch_id, image_url, 1 FROM branch WHERE image_url IS NOT NULL;
 List<BranchTheaterType> findTheaterTypesByBranchIds(@Param("branchIds") List<Long> branchIds);
 ```
 
-지점이 몇 개든 목록 조회는 쿼리 2방(지점 1 + 라벨 집계 1)입니다. `STANDARD`는 라벨에서 빼기 때문에 일반관만 있는 지점은 라벨이 비는데, 실제 화면에서 라벨 없는 극장이 있는 것과 일치합니다.
+지점이 몇 개든 목록 조회는 쿼리 2방(지점 1 + 라벨 집계 1)입니다. 대분류가 `GENERAL`인 종류는 라벨에서 빼기 때문에 일반관만 있는 지점은 라벨이 비는데, 실제 화면에서 라벨 없는 극장이 있는 것과 일치합니다. 한 지점이 특별관을 여러 종류 보유할 수 있어 라벨 순서는 `TheaterType` 선언 순서로 고정했습니다.
 
 ### 좌석 설계
 
@@ -574,9 +636,29 @@ List<BranchTheaterType> findTheaterTypesByBranchIds(@Param("branchIds") List<Lon
 
 ### 중복 예매 방지
 
-`reservation_seat`에 `(screening_id, row_num, col_num)` 유니크 제약을 걸었습니다. 애플리케이션 로직만으로는 동시 요청을 완전히 막을 수 없어 DB 차원의 최종 안전망이 필요합니다.
+`reservation_seat`에 유니크 제약을 걸었습니다. 애플리케이션 로직만으로는 동시 요청을 완전히 막을 수 없어 DB 차원의 최종 안전망이 필요합니다. 검사와 INSERT 사이의 틈은 원리적으로 막을 수 없고, 그 틈을 제약이 막습니다. 비관적 락은 쓰지 않습니다. 좌석 단위로 잠글 행이 없고(좌석 마스터 테이블이 없습니다), 회차 행을 잠그면 회차 단위로 직렬화되어 처리량이 크게 떨어집니다.
 
-이 제약은 취소와 충돌합니다. 취소된 좌석 행이 남으면 다른 사람이 같은 자리를 예매할 때 제약에 걸립니다. **취소 시 `reservation_seat` 행을 삭제하는 방식**을 택했고, 그 결과 어느 좌석을 취소했는지에 대한 이력은 남지 않습니다.
+결제 전 선점(`PENDING`)도 좌석 행을 실제로 만듭니다. 그래야 같은 제약이 그대로 선점 잠금 역할을 합니다. 실제 CGV도 결제 전 선택 단계에서 남이 그 좌석을 잡지 못합니다.
+
+이 제약은 취소와 충돌합니다. 취소된 좌석 행이 남으면 다른 사람이 같은 자리를 예매할 때 제약에 걸립니다. 행을 지우면 충돌은 풀리지만 어느 좌석을 취소했는지가 사라집니다. 그래서 **유니크 키에 `release_key`를 넣어 점유 중인 행만 유일**하게 만들었습니다.
+
+```
+UNIQUE (screening_id, row_num, col_num, release_key)
+
+점유 중   release_key = 0
+풀린 좌석 release_key = 자기 reservation_id
+```
+
+MySQL에 partial unique index가 없어 "점유 중인 행만 유일"을 직접 표현할 수 없습니다. 해제 값으로 `reservation_id`를 쓰면 한 예매가 같은 좌석을 두 번 가질 수 없으므로 풀린 행끼리 충돌하지 않습니다. 시각을 쓰면 같은 좌석이 동시에 해제될 때 충돌할 수 있습니다.
+
+### 선점 만료
+
+`reservation.expires_at`에 만료 예정 시각을 두고, 별도 스케줄러 없이 두 지점에서 처리합니다.
+
+- **조회**는 시각 조건으로 거릅니다. 만료된 선점은 행이 남아 있어도 점유로 세지 않습니다.
+- **좌석을 잡기 직전**에 그 회차의 만료된 선점을 실제로 해제합니다. 유니크 인덱스는 만료 시각을 모르므로, 행을 놓아주지 않으면 시간이 지난 좌석도 다시 잡을 수 없습니다.
+
+정확성은 이 두 경로로 보장되므로 스케줄러는 "언젠가 정리된다"는 보조 수단일 뿐입니다. 시간 제어·테스트 비용만 늘어난다고 보고 넣지 않았습니다.
 
 ---
 
@@ -587,8 +669,11 @@ List<BranchTheaterType> findTheaterTypesByBranchIds(@Param("branchIds") List<Lon
 - **좌석 범위 검증**: 상영관 크기를 벗어난 좌석 예매를 DB가 막지 못합니다.
   좌석을 개별 행으로 저장하지 않은 선택의 결과이며, 애플리케이션에서
   `theater_type`의 행·열과 비교해야 합니다.
-- **취소 이력**: 취소 시 좌석 행을 삭제하므로 어느 좌석이 취소되었는지
-  추적할 수 없습니다. 필요하다면 별도 로그 테이블이 있어야 합니다.
+- **`release_key`의 의미**: 0이 "점유 중"을 뜻하는 것은 도메인 언어가 아니라
+  유니크 제약을 위한 장치입니다. 컬럼만 보고는 뜻을 알 수 없어 주석이 필요합니다.
+- **만료된 선점 행**: 만료 시각이 지나도 다음 선점 요청이 오기 전까지는 행이
+  `release_key = 0`인 채로 남습니다. 조회는 시각 조건으로 거르므로 점유로 세지는
+  않지만, 테이블만 보면 풀린 좌석인지 바로 드러나지 않습니다.
 - **회차 정보 중복**: `reservation_seat.screening_id`는 부모의 값과 항상
   일치해야 하지만 DB가 이를 보장하지 않습니다. 애플리케이션이 지켜야 합니다.
 - **나이 제한 검증**: `movie.age_rating`과 생년월일 비교는 애플리케이션
