@@ -28,6 +28,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.CannotAcquireLockException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -41,6 +42,8 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.*;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -175,7 +178,8 @@ class ReservationServiceTest {
         givenScreeningAndUser(1L, 1L);
         givenSaveAssignsId(2L);
         Reservation stale = holdWithId(1L, NOW.minusMinutes(20), 1, 1);
-        given(reservationRepository.findExpiredHolds(1L, ReservationStatus.PENDING, NOW))
+        given(reservationRepository.findExpiredHoldsBlocking(
+                eq(1L), anyList(), eq(ReservationStatus.PENDING), eq(NOW)))
                 .willReturn(List.of(stale));
 
         service.create(reqOf(1L, 1L, new int[]{1, 1}));
@@ -184,6 +188,46 @@ class ReservationServiceTest {
         assertThat(stale.getSeats()).noneMatch(ReservationSeat::isOccupied);
         // 해제를 먼저 내보내지 않으면 새 좌석 INSERT가 유니크 제약에 걸린다
         verify(reservationRepository).flush();
+    }
+
+    @Test
+    void 정리_대상은_요청한_좌석을_막고_있는_선점으로_좁힌다() {
+        givenScreeningAndUser(1L, 1L);
+        givenSaveAssignsId(2L);
+
+        service.create(reqOf(1L, 1L, new int[]{2, 3}, new int[]{1, 5}));
+
+        // 회차의 만료 선점을 전부 풀면 그 행들에 UPDATE 락이 걸려, 같은 회차를 골랐을 뿐인
+        // 다른 좌석 요청까지 서로를 기다린다. 요청한 좌석만 키로 넘긴다.
+        ArgumentCaptor<List<Integer>> captor = ArgumentCaptor.forClass(List.class);
+        verify(reservationRepository).findExpiredHoldsBlocking(
+                eq(1L), captor.capture(), eq(ReservationStatus.PENDING), eq(NOW));
+        assertThat(captor.getValue()).containsExactlyInAnyOrder(203, 105);
+    }
+
+    @Test
+    void 좌석은_행_열_순서로_INSERT된다() {
+        givenScreeningAndUser(1L, 1L);
+        givenSaveAssignsId(2L);
+
+        service.create(reqOf(1L, 1L, new int[]{2, 3}, new int[]{1, 5}, new int[]{2, 1}));
+
+        // INSERT 순서가 곧 락 획득 순서다. 모든 요청이 같은 순서를 쓰면 데드락이 생길 수 없다.
+        ArgumentCaptor<Reservation> captor = ArgumentCaptor.forClass(Reservation.class);
+        verify(reservationRepository).saveAndFlush(captor.capture());
+        assertThat(captor.getValue().getSeats()).extracting(ReservationSeat::getLabel)
+                .containsExactly("A5", "B1", "B3");
+    }
+
+    @Test
+    void 데드락이나_락_타임아웃은_SEAT_RESERVATION_CONFLICT로_바뀐다() {
+        givenScreeningAndUser(1L, 1L);
+        given(reservationRepository.saveAndFlush(any(Reservation.class)))
+                .willThrow(new CannotAcquireLockException("lock wait timeout"));
+
+        assertThatThrownBy(() -> service.create(reqOf(1L, 1L, new int[]{1, 1})))
+                .isInstanceOf(CustomException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.SEAT_RESERVATION_CONFLICT);
     }
 
     // ─── pay ──────────────────────────────────────────────────────────────────

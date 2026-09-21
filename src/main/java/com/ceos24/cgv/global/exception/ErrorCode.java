@@ -25,6 +25,7 @@ public enum ErrorCode {
     SEAT_OUT_OF_RANGE(HttpStatus.BAD_REQUEST, "좌석이 상영관 범위를 벗어났습니다."),
     DUPLICATE_SEAT_IN_REQUEST(HttpStatus.BAD_REQUEST, "요청 안에 중복된 좌석이 있습니다."),
     SEAT_ALREADY_RESERVED(HttpStatus.CONFLICT, "이미 선택된 좌석입니다."),
+    SEAT_RESERVATION_CONFLICT(HttpStatus.CONFLICT, "좌석 선점 경합이 발생했습니다. 다시 시도해 주세요."),
     ALREADY_CANCELLED(HttpStatus.CONFLICT, "이미 취소된 예매입니다."),
     RESERVATION_NOT_PENDING(HttpStatus.CONFLICT, "결제 대기 상태인 예매가 아닙니다."),
     RESERVATION_EXPIRED(HttpStatus.CONFLICT, "선점 시간이 만료된 예매입니다."),

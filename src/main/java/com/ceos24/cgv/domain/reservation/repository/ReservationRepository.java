@@ -55,15 +55,24 @@ public interface ReservationRepository extends JpaRepository<Reservation, Long> 
             """)
     Optional<Reservation> findByIdWithSeats(@Param("id") Long id);
 
+    // 요청한 좌석을 실제로 막고 있는 만료 선점만 고른다. 회차의 만료 선점을 전부 풀면
+    // 그 행들에 UPDATE 락이 걸려, 같은 회차를 골랐을 뿐인 다른 좌석 요청까지 서로를 기다린다.
     // 좌석을 풀려면 자식까지 손대므로 seats를 함께 가져온다.
     @Query("""
             SELECT r FROM Reservation r
             LEFT JOIN FETCH r.seats
-            WHERE r.screening.id = :screeningId
-              AND r.status = :pending
+            WHERE r.status = :pending
               AND r.expiresAt <= :now
+              AND EXISTS (
+                  SELECT 1 FROM ReservationSeat rs
+                  WHERE rs.reservation = r
+                    AND rs.screening.id = :screeningId
+                    AND rs.releaseKey = 0
+                    AND rs.rowNum * 100 + rs.colNum IN :seatKeys
+              )
             """)
-    List<Reservation> findExpiredHolds(@Param("screeningId") Long screeningId,
-                                       @Param("pending") ReservationStatus pending,
-                                       @Param("now") LocalDateTime now);
+    List<Reservation> findExpiredHoldsBlocking(@Param("screeningId") Long screeningId,
+                                               @Param("seatKeys") List<Integer> seatKeys,
+                                               @Param("pending") ReservationStatus pending,
+                                               @Param("now") LocalDateTime now);
 }

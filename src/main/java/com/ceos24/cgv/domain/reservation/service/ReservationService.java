@@ -16,12 +16,14 @@ import com.ceos24.cgv.domain.screening.repository.ScreeningRepository;
 import com.ceos24.cgv.domain.user.entity.User;
 import com.ceos24.cgv.domain.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.ConcurrencyFailureException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.LocalDateTime;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -49,11 +51,7 @@ public class ReservationService {
         User user = userRepository.findById(req.userId())
                 .orElseThrow(() -> new CustomException(ErrorCode.USER_NOT_FOUND));
 
-        // 3. 만료된 선점 정리. 유니크 인덱스는 만료 시각을 모르므로,
-        //    행을 놓아주지 않으면 시간이 지난 좌석도 다시 선택할 수 없다.
-        releaseExpiredHolds(screening.getId(), now);
-
-        // 4. 좌석 범위 검증
+        // 3. 좌석 범위 검증
         TheaterType type = screening.getTheater().getTheaterType();
         for (ReservationCreateRequest.SeatRequest s : req.seats()) {
             if (!type.isValidSeat(s.rowNum(), s.colNum())) {
@@ -61,7 +59,7 @@ public class ReservationService {
             }
         }
 
-        // 5. 요청 내 중복 검증
+        // 4. 요청 내 중복 검증
         long distinctCount = req.seats().stream()
                 .map(s -> List.of(s.rowNum(), s.colNum()))
                 .distinct()
@@ -69,6 +67,11 @@ public class ReservationService {
         if (distinctCount != req.seats().size()) {
             throw new CustomException(ErrorCode.DUPLICATE_SEAT_IN_REQUEST);
         }
+
+        // 5. 만료된 선점 정리. 유니크 인덱스는 만료 시각을 모르므로,
+        //    행을 놓아주지 않으면 시간이 지난 좌석도 다시 선택할 수 없다.
+        //    범위·중복 검증을 통과한 뒤라 좌석 키가 안전한 범위 안이다.
+        releaseExpiredHolds(screening.getId(), req.seats(), now);
 
         // 6. 이미 점유된 좌석 pre-check. 경쟁이 없는 경우에 친절한 응답을 주기 위한 것이고,
         //    검사와 INSERT 사이의 틈은 7번의 유니크 제약이 막는다.
@@ -86,12 +89,18 @@ public class ReservationService {
         Reservation reservation = Reservation.builder()
                 .user(user).screening(screening).now(now).build();
         int basePrice = screening.getPrice();
-        req.seats().forEach(s -> reservation.addSeat(s.rowNum(), s.colNum(), s.audienceType(), basePrice));
+        // 좌석 순서가 곧 INSERT 순서이고, INSERT 순서가 곧 락 획득 순서다.
+        // 정렬해 두면 [A1,A2]와 [A2,A1] 요청이 서로를 물고 도는 데드락이 생길 수 없다.
+        orderedSeats(req).forEach(s -> reservation.addSeat(s.rowNum(), s.colNum(), s.audienceType(), basePrice));
 
         try {
             return ReservationResponse.from(reservationRepository.saveAndFlush(reservation), now);
         } catch (DataIntegrityViolationException e) {
             throw new CustomException(ErrorCode.SEAT_ALREADY_RESERVED);
+        } catch (ConcurrencyFailureException e) {
+            // 데드락·락 대기 타임아웃. 좌석이 팔렸다는 뜻이 아니라 판정하지 못했다는 뜻이라
+            // 이미 선택된 좌석과 구분해서 재시도를 안내한다.
+            throw new CustomException(ErrorCode.SEAT_RESERVATION_CONFLICT);
         }
     }
 
@@ -139,13 +148,30 @@ public class ReservationService {
 
     // 해제를 INSERT보다 먼저 DB에 반영해야 한다. 한 번에 flush하면 Hibernate가
     // INSERT를 UPDATE보다 앞서 내보내 같은 좌석에서 유니크 충돌이 난다.
-    private void releaseExpiredHolds(Long screeningId, LocalDateTime now) {
-        List<Reservation> expired = reservationRepository
-                .findExpiredHolds(screeningId, ReservationStatus.PENDING, now);
+    private void releaseExpiredHolds(Long screeningId,
+                                     List<ReservationCreateRequest.SeatRequest> seats,
+                                     LocalDateTime now) {
+        List<Reservation> expired = reservationRepository.findExpiredHoldsBlocking(
+                screeningId, seatKeysOf(seats), ReservationStatus.PENDING, now);
         if (expired.isEmpty()) {
             return;
         }
         expired.forEach(r -> r.expire(now));
         reservationRepository.flush();
+    }
+
+    // (행, 열) 쌍을 IN 절에 넣을 방법이 DB마다 달라 스칼라 하나로 접는다.
+    // 열 수는 상영관 종류 최대가 22라 100진 자리에서 겹치지 않는다.
+    private List<Integer> seatKeysOf(List<ReservationCreateRequest.SeatRequest> seats) {
+        return seats.stream()
+                .map(s -> s.rowNum() * 100 + s.colNum())
+                .toList();
+    }
+
+    private List<ReservationCreateRequest.SeatRequest> orderedSeats(ReservationCreateRequest req) {
+        return req.seats().stream()
+                .sorted(Comparator.comparingInt(ReservationCreateRequest.SeatRequest::rowNum)
+                        .thenComparingInt(ReservationCreateRequest.SeatRequest::colNum))
+                .toList();
     }
 }
