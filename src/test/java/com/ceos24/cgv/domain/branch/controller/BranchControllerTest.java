@@ -129,17 +129,20 @@ class BranchControllerTest extends ControllerIntegrationTest {
     void 특별관_보유_지점만_라벨이_붙는다() throws Exception {
         Branch special = persist(TestFixtures.branch("강남점"));
         persist(TestFixtures.theater(special, TheaterType.STANDARD, "1관"));
-        persist(TestFixtures.theater(special, TheaterType.SPECIAL, "2관"));
+        persist(TestFixtures.theater(special, TheaterType.FOUR_DX, "2관"));
+        persist(TestFixtures.theater(special, TheaterType.IMAX, "3관"));
 
         Branch normal = persist(TestFixtures.branch("홍대점"));
         persist(TestFixtures.theater(normal, TheaterType.STANDARD, "1관"));
         flushAndClear();
 
+        // 4DX를 먼저 저장했어도 라벨은 TheaterType 선언 순서를 따른다
         mockMvc.perform(get("/api/branches"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data[0].name").value("강남점"))
-                .andExpect(jsonPath("$.data[0].specialTypes.length()").value(1))
-                .andExpect(jsonPath("$.data[0].specialTypes[0]").value("특별관"))
+                .andExpect(jsonPath("$.data[0].specialTypes.length()").value(2))
+                .andExpect(jsonPath("$.data[0].specialTypes[0]").value("IMAX"))
+                .andExpect(jsonPath("$.data[0].specialTypes[1]").value("4DX"))
                 .andExpect(jsonPath("$.data[1].name").value("홍대점"))
                 .andExpect(jsonPath("$.data[1].specialTypes.length()").value(0));
     }

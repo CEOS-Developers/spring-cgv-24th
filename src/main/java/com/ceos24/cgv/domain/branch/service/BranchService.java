@@ -6,7 +6,6 @@ import com.ceos24.cgv.domain.branch.entity.Branch;
 import com.ceos24.cgv.domain.branch.entity.BranchStatus;
 import com.ceos24.cgv.domain.branch.entity.Region;
 import com.ceos24.cgv.domain.branch.entity.Theater;
-import com.ceos24.cgv.domain.branch.entity.TheaterType;
 import com.ceos24.cgv.domain.branch.repository.BranchRepository;
 import com.ceos24.cgv.domain.branch.repository.TheaterRepository;
 import com.ceos24.cgv.domain.branch.repository.TheaterRepository.BranchTheaterType;
@@ -17,6 +16,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -68,8 +68,11 @@ public class BranchService {
         }
         List<Long> branchIds = branches.stream().map(Branch::getId).toList();
 
+        // 한 지점이 특별관을 여러 종류 보유할 수 있어, GROUP BY 결과 순서에
+        // 라벨 순서가 좌우되지 않도록 TheaterType 선언 순서로 고정한다.
         return theaterRepository.findTheaterTypesByBranchIds(branchIds).stream()
-                .filter(row -> row.getTheaterType() != TheaterType.STANDARD)
+                .filter(row -> row.getTheaterType().isSpecial())
+                .sorted(Comparator.comparing(BranchTheaterType::getTheaterType))
                 .collect(Collectors.groupingBy(
                         BranchTheaterType::getBranchId,
                         Collectors.mapping(
