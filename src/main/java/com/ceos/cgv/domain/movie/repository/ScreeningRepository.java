@@ -13,6 +13,9 @@ import java.util.List;
 import java.util.Optional;
 
 public interface ScreeningRepository extends JpaRepository<Screening, Long> {
+    @Query("select s.id from Screening s order by s.id")
+    List<Long> findAllIdsOrderById();
+
     @Query("select s.movie.id from Screening s where s.id = :screeningId")
     Optional<Long> findMovieIdById(@Param("screeningId") Long screeningId);
 

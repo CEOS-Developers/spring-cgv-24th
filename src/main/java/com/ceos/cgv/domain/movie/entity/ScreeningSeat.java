@@ -46,4 +46,8 @@ public class ScreeningSeat {
         this.seatRow = seatRow;
         this.seatNumber = seatNumber;
     }
+
+    public void restoreCurrentReservation(Reservation reservation) {
+        this.currentReservation = reservation;
+    }
 }

@@ -9,8 +9,10 @@ import jakarta.persistence.criteria.Predicate;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
+import org.springframework.data.jpa.repository.EntityGraph;
 
 import java.util.Collection;
+import java.util.List;
 
 public interface ReservedSeatRepository extends JpaRepository<ReservedSeat, Long>,
         JpaSpecificationExecutor<ReservedSeat> {
@@ -34,4 +36,7 @@ public interface ReservedSeatRepository extends JpaRepository<ReservedSeat, Long
         };
         return exists(specification);
     }
+
+    @EntityGraph(attributePaths = "reservation")
+    List<ReservedSeat> findAllByReservation_Screening_Id(Long screeningId);
 }

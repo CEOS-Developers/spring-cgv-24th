@@ -19,6 +19,7 @@ public enum ErrorCode {
     MOVIE_NOT_AVAILABLE(HttpStatus.CONFLICT, "현재 이용할 수 없는 영화입니다."),
     SCREENING_NOT_FOUND(HttpStatus.NOT_FOUND, "상영 일정을 찾을 수 없습니다."),
     SCREENING_SEATS_NOT_READY(HttpStatus.CONFLICT, "상영 좌석이 준비되지 않았습니다."),
+    SEAT_MIGRATION_CONFLICT(HttpStatus.CONFLICT, "기존 좌석 이력을 자동으로 연결할 수 없습니다."),
     RESERVATION_NOT_FOUND(HttpStatus.NOT_FOUND, "예매를 찾을 수 없습니다."),
     RESERVATION_ALREADY_CANCELED(HttpStatus.CONFLICT, "이미 취소된 예매입니다."),
     PRODUCT_NOT_FOUND(HttpStatus.NOT_FOUND, "매점 상품을 찾을 수 없습니다."),

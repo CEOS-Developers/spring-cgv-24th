@@ -48,4 +48,8 @@ public class ReservedSeat {
         this.seatNumber = seatNumber;
         this.screeningSeat = screeningSeat;
     }
+
+    public void linkScreeningSeat(ScreeningSeat screeningSeat) {
+        this.screeningSeat = screeningSeat;
+    }
 }
