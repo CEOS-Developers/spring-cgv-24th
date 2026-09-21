@@ -1,0 +1,37 @@
+package com.ceos24.cgv.domain.screening.entity;
+
+import com.ceos24.cgv.domain.movie.entity.Movie;
+import com.ceos24.cgv.domain.theater.entity.Screen;
+import jakarta.persistence.*;
+import java.time.LocalDateTime;
+import lombok.AccessLevel;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+
+@Getter
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
+@Entity
+public class Screening {
+
+    public Screening(Movie movie, Screen screen, LocalDateTime startTime, LocalDateTime endTime) {
+        this.movie = movie;
+        this.screen = screen;
+        this.startTime = startTime;
+        this.endTime = endTime;
+    }
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @JoinColumn(nullable = false)
+    @ManyToOne(fetch = FetchType.LAZY)
+    private Movie movie;
+
+    @JoinColumn(nullable = false)
+    @ManyToOne(fetch = FetchType.LAZY)
+    private Screen screen;
+
+    private LocalDateTime startTime;
+    private LocalDateTime endTime;
+}
