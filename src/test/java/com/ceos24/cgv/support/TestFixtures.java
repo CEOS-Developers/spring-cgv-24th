@@ -6,6 +6,7 @@ import com.ceos24.cgv.domain.branch.entity.Region;
 import com.ceos24.cgv.domain.branch.entity.Theater;
 import com.ceos24.cgv.domain.branch.entity.TheaterType;
 import com.ceos24.cgv.domain.movie.entity.Movie;
+import com.ceos24.cgv.domain.reservation.entity.Reservation;
 import com.ceos24.cgv.domain.screening.entity.Screening;
 import com.ceos24.cgv.domain.user.entity.User;
 
@@ -60,6 +61,14 @@ public class TestFixtures {
                 .startAt(start)
                 .endAt(start.plusMinutes(120))
                 .price(price)
+                .build();
+    }
+
+    public static Reservation hold(User user, Screening screening, LocalDateTime now) {
+        return Reservation.builder()
+                .user(user)
+                .screening(screening)
+                .now(now)
                 .build();
     }
 

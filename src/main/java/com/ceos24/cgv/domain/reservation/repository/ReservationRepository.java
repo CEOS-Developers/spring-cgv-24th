@@ -1,10 +1,13 @@
 package com.ceos24.cgv.domain.reservation.repository;
 
 import com.ceos24.cgv.domain.reservation.entity.Reservation;
+import com.ceos24.cgv.domain.reservation.entity.ReservationStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 
 public interface ReservationRepository extends JpaRepository<Reservation, Long> {
@@ -20,4 +23,16 @@ public interface ReservationRepository extends JpaRepository<Reservation, Long> 
             WHERE r.id = :id
             """)
     Optional<Reservation> findByIdWithDetails(@Param("id") Long id);
+
+    // 좌석을 풀려면 자식까지 손대므로 seats를 함께 가져온다.
+    @Query("""
+            SELECT DISTINCT r FROM Reservation r
+            LEFT JOIN FETCH r.seats
+            WHERE r.screening.id = :screeningId
+              AND r.status = :pending
+              AND r.expiresAt <= :now
+            """)
+    List<Reservation> findExpiredHolds(@Param("screeningId") Long screeningId,
+                                       @Param("pending") ReservationStatus pending,
+                                       @Param("now") LocalDateTime now);
 }

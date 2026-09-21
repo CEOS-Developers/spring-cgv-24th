@@ -1,5 +1,6 @@
 package com.ceos24.cgv.domain.reservation.dto;
 
+import com.ceos24.cgv.domain.reservation.entity.AudienceType;
 import com.ceos24.cgv.domain.reservation.entity.Reservation;
 import com.ceos24.cgv.domain.reservation.entity.ReservationSeat;
 import com.ceos24.cgv.domain.reservation.entity.ReservationStatus;
@@ -14,9 +15,12 @@ public record ReservationResponse(
         Long userId,
         ScreeningSummary screening,
         ReservationStatus status,
-        List<String> seats,
+        String statusName,
+        List<SeatSummary> seats,
         int totalPrice,
-        LocalDateTime reservedAt,
+        LocalDateTime selectedAt,
+        LocalDateTime expiresAt,
+        LocalDateTime confirmedAt,
         LocalDateTime cancelledAt
 ) {
     public record ScreeningSummary(
@@ -39,21 +43,44 @@ public record ReservationResponse(
         }
     }
 
-    public static ReservationResponse from(Reservation r) {
-        List<String> seatLabels = r.getSeats().stream()
+    public record SeatSummary(
+            String label,
+            AudienceType audienceType,
+            String audienceTypeName,
+            int paidPrice
+    ) {
+        public static SeatSummary from(ReservationSeat seat) {
+            return new SeatSummary(
+                    seat.getLabel(),
+                    seat.getAudienceType(),
+                    seat.getAudienceType().getDisplayName(),
+                    seat.getPaidPrice()
+            );
+        }
+    }
+
+    // 만료된 선점은 DB 상태가 아직 PENDING이어도 이미 좌석을 놓은 것이나 마찬가지다.
+    // 정리는 다음 좌석 선점 요청이 하고, 조회는 현재 사실만 보여준다.
+    public static ReservationResponse from(Reservation r, LocalDateTime now) {
+        List<SeatSummary> seats = r.getSeats().stream()
                 .sorted(Comparator.comparingInt(ReservationSeat::getRowNum)
                         .thenComparingInt(ReservationSeat::getColNum))
-                .map(s -> String.valueOf((char) ('A' + s.getRowNum() - 1)) + s.getColNum())
+                .map(SeatSummary::from)
                 .toList();
+
+        ReservationStatus status = r.isExpired(now) ? ReservationStatus.EXPIRED : r.getStatus();
 
         return new ReservationResponse(
                 r.getId(),
                 r.getUser().getId(),
                 ScreeningSummary.from(r.getScreening()),
-                r.getStatus(),
-                seatLabels,
+                status,
+                status.getDisplayName(),
+                seats,
                 r.getTotalPrice(),
-                r.getReservedAt(),
+                r.getCreatedAt(),
+                r.getExpiresAt(),
+                r.getConfirmedAt(),
                 r.getCancelledAt()
         );
     }

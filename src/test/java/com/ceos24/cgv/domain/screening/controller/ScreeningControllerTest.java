@@ -4,6 +4,7 @@ import com.ceos24.cgv.domain.branch.entity.Branch;
 import com.ceos24.cgv.domain.branch.entity.Theater;
 import com.ceos24.cgv.domain.branch.entity.TheaterType;
 import com.ceos24.cgv.domain.movie.entity.Movie;
+import com.ceos24.cgv.domain.reservation.entity.AudienceType;
 import com.ceos24.cgv.domain.reservation.entity.Reservation;
 import com.ceos24.cgv.domain.screening.entity.Screening;
 import com.ceos24.cgv.support.ControllerIntegrationTest;
@@ -75,9 +76,9 @@ class ScreeningControllerTest extends ControllerIntegrationTest {
                 LocalDateTime.of(2024, 6, 1, 10, 0), 14000));
         User user = persist(TestFixtures.user("testuser01"));
 
-        Reservation reservation = Reservation.builder().user(user).screening(screening).build();
-        reservation.addSeat(1, 7, 14000);
-        reservation.addSeat(2, 3, 14000);
+        Reservation reservation = TestFixtures.hold(user, screening, LocalDateTime.now());
+        reservation.addSeat(1, 7, AudienceType.ADULT, 14000);
+        reservation.addSeat(2, 3, AudienceType.ADULT, 14000);
         persist(reservation);
 
         flushAndClear();

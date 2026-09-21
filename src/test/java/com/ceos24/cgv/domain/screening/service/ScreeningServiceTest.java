@@ -14,15 +14,18 @@ import com.ceos24.cgv.domain.screening.repository.ScreeningRepository;
 import com.ceos24.cgv.domain.screening.service.ScreeningService;
 import com.ceos24.cgv.domain.screening.dto.ScreeningResponse;
 import com.ceos24.cgv.domain.screening.dto.ScreeningSeatsResponse;
+import com.ceos24.cgv.domain.reservation.entity.ReservationStatus;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
 
@@ -36,9 +39,20 @@ import static org.mockito.Mockito.verify;
 @ExtendWith(MockitoExtension.class)
 class ScreeningServiceTest {
 
+    private static final ZoneId ZONE = ZoneId.systemDefault();
+    private static final LocalDateTime NOW = LocalDateTime.of(2024, 6, 1, 9, 0);
+    private static final ReservationStatus PENDING = ReservationStatus.PENDING;
+
     @Mock ScreeningRepository screeningRepository;
     @Mock ReservationSeatRepository reservationSeatRepository;
-    @InjectMocks ScreeningService service;
+
+    ScreeningService service;
+
+    @BeforeEach
+    void setUp() {
+        Clock clock = Clock.fixed(NOW.atZone(ZONE).toInstant(), ZONE);
+        service = new ScreeningService(screeningRepository, reservationSeatRepository, clock);
+    }
 
     // ─── search ──────────────────────────────────────────────────────────────
 
@@ -50,14 +64,14 @@ class ScreeningServiceTest {
 
         assertThat(result).isEmpty();
         // 회차가 없으면 예약 좌석 카운트 쿼리를 불필요하게 날리지 않아야 한다
-        verify(reservationSeatRepository, never()).countGroupedByScreeningIds(any());
+        verify(reservationSeatRepository, never()).countOccupiedByScreeningIds(any(), any(), any());
     }
 
     @Test
     void 회차_있고_예약_없으면_남은좌석이_전체좌석수() {
         given(screeningRepository.searchWithGraph(any(), any(), any(), any()))
                 .willReturn(List.of(screeningStandardWith(1L, 14000)));
-        given(reservationSeatRepository.countGroupedByScreeningIds(List.of(1L))).willReturn(List.of());
+        given(reservationSeatRepository.countOccupiedByScreeningIds(List.of(1L), PENDING, NOW)).willReturn(List.of());
 
         List<ScreeningResponse> result = service.search(null, null, null);
 
@@ -74,7 +88,7 @@ class ScreeningServiceTest {
         SeatCountProjection proj = mock(SeatCountProjection.class);
         given(proj.getScreeningId()).willReturn(1L);
         given(proj.getReservedCount()).willReturn(3L);
-        given(reservationSeatRepository.countGroupedByScreeningIds(List.of(1L, 2L))).willReturn(List.of(proj));
+        given(reservationSeatRepository.countOccupiedByScreeningIds(List.of(1L, 2L), PENDING, NOW)).willReturn(List.of(proj));
 
         List<ScreeningResponse> result = service.search(null, null, null);
 
@@ -113,7 +127,7 @@ class ScreeningServiceTest {
     void 예약된_좌석이_없으면_빈_라벨_리스트() {
         given(screeningRepository.findByIdWithTheaterType(1L))
                 .willReturn(Optional.of(screeningStandardWith(1L, 14000)));
-        given(reservationSeatRepository.findPositionsByScreeningId(1L)).willReturn(List.of());
+        given(reservationSeatRepository.findOccupiedPositionsByScreeningId(1L, PENDING, NOW)).willReturn(List.of());
 
         ScreeningSeatsResponse response = service.getSeats(1L);
 
@@ -135,7 +149,7 @@ class ScreeningServiceTest {
         given(p2.getRowNum()).willReturn(3);
         given(p2.getColNum()).willReturn(12); // → "C12"
 
-        given(reservationSeatRepository.findPositionsByScreeningId(1L)).willReturn(List.of(p1, p2));
+        given(reservationSeatRepository.findOccupiedPositionsByScreeningId(1L, PENDING, NOW)).willReturn(List.of(p1, p2));
 
         ScreeningSeatsResponse response = service.getSeats(1L);
 
