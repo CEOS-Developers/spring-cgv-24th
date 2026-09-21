@@ -1,6 +1,8 @@
 package com.ceos24.cgv.support;
 
 import com.ceos24.cgv.domain.branch.entity.Branch;
+import com.ceos24.cgv.domain.branch.entity.BranchStatus;
+import com.ceos24.cgv.domain.branch.entity.Region;
 import com.ceos24.cgv.domain.branch.entity.Theater;
 import com.ceos24.cgv.domain.branch.entity.TheaterType;
 import com.ceos24.cgv.domain.movie.entity.Movie;
@@ -13,9 +15,21 @@ import java.time.LocalDateTime;
 public class TestFixtures {
 
     public static Branch branch(String name) {
+        return branch(name, Region.SEOUL, BranchStatus.OPEN);
+    }
+
+    public static Branch branch(String name, Region region, BranchStatus status) {
         return Branch.builder()
                 .name(name)
                 .address("서울시 강남구 테헤란로 1")
+                .region(region)
+                .status(status)
+                .description("""
+                        [대중교통]
+                        - 지하철 2호선 강남역 11번 출구
+                        [주차]
+                        - 건물 지하 2~4층, 관람 시 3시간 무료""")
+                .imageUrl("https://img.example.com/branch/" + name + ".jpg")
                 .build();
     }
 
