@@ -533,3 +533,85 @@ N+1이 아니다. 총석은 `TheaterType.getTotalSeatCount()`이고 카드에 `s
 ### 확인
 
 `./gradlew test` 86개 통과 (회차 서비스 13 + 회차 API 12 + 영화 API 5 + 지점 API 12).
+
+---
+
+## 세션 3-1: 조회 쿼리 정리
+
+PR 리뷰 피드백 "`create()`를 한 번 실행했을 때 나가는 SQL을 비교하고 불필요한 SELECT가 없는지
+확인하라"에 대한 처리. 세션 4 착수 전에 끝냈다.
+
+### 문제
+
+`create()`는 `findByIdWithTheaterType()`으로 `theater`만 fetch join 하는데, 응답을 만드는
+`ReservationResponse.ScreeningSummary.from()`이 `movie.title`과 `theater.branch.name`을 읽는다.
+둘 다 LAZY `@ManyToOne`이라 **DTO 변환 시점에 프록시 초기화 SELECT가 두 건 더 나갔다.**
+서비스 코드만 보면 보이지 않고 로그를 찍어야 드러나는 종류의 낭비다.
+
+좌석 2개 예매 기준 SQL 9건 → **7건**.
+
+| # | SQL | 비고 |
+|---|---|---|
+| 1 | SELECT screening + movie + theater + branch | 조인 확장 |
+| 2 | SELECT users | 존재 검증(`USER_NOT_FOUND`)의 근거라 남는다 |
+| 3 | SELECT 만료 선점 | 유니크 인덱스가 만료 시각을 모른다 |
+| 4 | SELECT 점유 좌석 | pre-check |
+| 5-7 | INSERT reservation 1 + reservation_seat 2 | |
+| ~~+2~~ | ~~SELECT movie / SELECT branch~~ | **제거** |
+
+### 결정 1 — 회차 조회를 용도별로 둘로 나눈다
+
+기존 쿼리를 넓히지 않고 `ScreeningRepository.findByIdWithDetails()`를 새로 뒀다.
+좌석 조회(`getSeats()`)는 `theater.theaterType`(enum 컬럼)만 읽으므로 movie·branch를 더하면
+그쪽이 over-fetch가 된다. 한 쿼리로 합치면 두 화면 중 하나는 반드시 손해를 본다.
+
+이름이 내용과 어긋나 있던 `findByIdWithTheaterType`은 `findByIdWithTheater`로 바꿨다.
+세션 1-1에서 `TheaterType`이 enum 컬럼이 된 뒤로 "타입을 함께 가져온다"는 뜻이 사라졌다.
+
+### 결정 2 — fetch join 쿼리의 `DISTINCT` 제거
+
+Hibernate 6부터 컬렉션 fetch join의 엔티티 중복은 항상 메모리에서 제거되고, HQL의 `DISTINCT`는
+SQL로 그대로 전달된다(`passDistinctThrough` 옵션 자체가 없어졌다). 중복 제거 효과는 그대로인데
+조인 결과 전체에 대한 SQL `DISTINCT` 비용만 남으므로 뺐다.
+
+### 결정 3 — 취소는 전용 쿼리를 쓴다
+
+`cancel()`은 좌석 해제와 `screening.startAt` 비교만 하고 응답을 만들지 않는다.
+`findByIdWithDetails`를 그대로 쓰면 영화·지점까지 조인해 읽지도 않을 컬럼을 끌고 온다.
+`findByIdWithSeats`(screening + seats)를 따로 뒀다. 쿼리 수는 1회로 같고 조인 폭만 줄었다.
+
+### 결정 4 — `user`는 조인하지 않는다 (가정이 틀렸던 부분)
+
+당초 `JOIN FETCH r.user`가 필요하다고 봤다. 필드 접근 매핑이면 프록시의 id getter가 단축되지
+않아 `user.getId()`가 초기화를 부를 것이라 판단했기 때문이다. **실측 결과 틀렸다.**
+조인을 빼도 단건 조회 SQL은 1건 그대로였다. Hibernate는 필드 접근이어도 식별자 getter를
+가로채 초기화 없이 값을 돌려준다.
+
+응답이 사용자를 id로만 쓰므로 조인을 뺐다. 이름 같은 다른 필드를 응답에 실으면 그때 다시
+fetch join을 더해야 하고, 그 사실을 쿼리 위 주석으로 남겼다.
+
+### 회귀 테스트
+
+`ReservationQueryCountTest`. 테스트 설정에만 `hibernate.generate_statistics=true`를 켜고
+`Statistics.getPrepareStatementCount()`로 SQL 수를 센다.
+
+- `create()`(좌석 2개) = 7건, `getById()` = 1건
+- 수정 전 코드에서 `create()`가 9건으로 실패하는 것을 먼저 확인하고 고쳤다
+
+DTO에 필드가 늘어 LAZY 초기화가 다시 끼어들면 이 테스트가 잡는다. 로그를 눈으로 대조하지
+않아도 되게 만드는 것이 목적이다.
+
+### 검토했으나 하지 않은 것
+
+- **`userRepository.findById()` → `getReferenceById()`** — 존재 검증을 잃는다. FK 위반이
+  `DataIntegrityViolationException`으로 올라와 `SEAT_ALREADY_RESERVED`로 잘못 번역된다.
+- **pre-check 쿼리를 요청 좌석으로 좁히기** — 가져오는 행의 상한이 총 좌석 수(최대 264)이고
+  `screening_id` 인덱스 한 번의 스캔이다. `getSeats()`와 공유 중인 쿼리를 쪼갤 만한 이득이 없다.
+- **INSERT 배치(`hibernate.jdbc.batch_size`)** — 좌석 PK가 `IDENTITY`라 생성 키를 행마다
+  받아야 해서 배치가 걸리지 않는다.
+- `ScreeningService.search()`, `MovieService`, `BranchService`는 목록 + `GROUP BY` 집계
+  2쿼리 구조라 이미 N+1이 없다. `default_batch_fetch_size: 100`도 이미 설정돼 있다.
+
+### 확인
+
+`./gradlew test` 88개 통과 (기존 86 + 신규 2). 엔티티·DTO·컨트롤러와 API 응답은 그대로다.

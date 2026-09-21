@@ -839,19 +839,17 @@ public SimpleJpaRepository(JpaEntityInformation<T, ?> entityInformation, EntityM
 
 ### fetch join 사용 시 알아두어야 할 것들
 
-**DISTINCT를 빠뜨리면 생기는 중복**
+**컬렉션 fetch join과 DISTINCT**
 
-1:N 관계를 fetch join하면 1 쪽 행이 N 개만큼 중복되어 반환됩니다. `Reservation` 1건에 `ReservationSeat` 3개가 있으면 쿼리 결과는 `Reservation` 행 3개입니다.
+1:N 관계를 fetch join하면 SQL 결과에서 1 쪽 행이 N 개만큼 중복됩니다. `Reservation` 1건에 `ReservationSeat` 3개가 있으면 SQL 결과는 `Reservation` 행 3개입니다.
 
 ```java
-// DISTINCT 없을 때: Java List에 같은 Reservation이 3번 들어옴
 SELECT r FROM Reservation r JOIN FETCH r.seats
-
-// DISTINCT 있을 때: Reservation 1건으로 중복 제거
-SELECT DISTINCT r FROM Reservation r JOIN FETCH r.seats
 ```
 
-Hibernate 6(Spring Boot 3.x)부터는 컬렉션 fetch join 시 자동으로 중복을 제거하지만, 명시적으로 쓰는 편이 의도를 드러냅니다.
+그렇다고 Java 목록에 `Reservation`이 3번 들어오지는 않습니다. Hibernate 6(Spring Boot 3.x)부터 **엔티티 목록의 중복 제거는 항상 자동**이고, 이를 끄던 `hibernate.query.passDistinctThrough` 옵션 자체가 없어졌습니다.
+
+반면 JPQL에 쓴 `DISTINCT`는 SQL로 그대로 전달됩니다. 중복 제거 효과는 달라지지 않는데 조인 결과 전체에 `DISTINCT`를 거는 비용만 남습니다. 그래서 이 프로젝트의 fetch join 쿼리에는 `DISTINCT`를 쓰지 않습니다. 중복 제거가 목적이 아니라 DB에 실제로 `DISTINCT`가 필요한 집계라면 그때는 의미가 있습니다.
 
 **HHH000104 — fetch join과 페이징을 동시에 쓰면 안 됩니다**
 
@@ -932,8 +930,7 @@ public void cancel() {
 ```java
 // ReservationRepository.java
 @Query("""
-        SELECT DISTINCT r FROM Reservation r
-        JOIN FETCH r.user
+        SELECT r FROM Reservation r
         JOIN FETCH r.screening s
         JOIN FETCH s.movie
         JOIN FETCH s.theater t
@@ -944,7 +941,7 @@ public void cancel() {
 Optional<Reservation> findByIdWithDetails(@Param("id") Long id);
 ```
 
-`DISTINCT`는 `r.seats` LEFT JOIN으로 인한 부모 행 중복 제거용입니다. 컬렉션 fetch join이 2개 이상이면 `MultipleBagFetchException`이 발생하므로, 그 경우에는 각각 별도 쿼리로 조회한 뒤 조립해야 합니다. 회차 목록의 잔여좌석 카운트는 IN 절 + GROUP BY로 한 번에 집계해(`countGroupedByScreeningIds`) N+1을 방지했습니다.
+`user`를 조인하지 않은 것은 의도입니다. 응답이 사용자를 id로만 쓰는데, 프록시의 id getter는 초기화 없이 식별자를 돌려주므로 조인해도 쿼리가 줄지 않습니다(`ReservationQueryCountTest`로 실측했습니다). 이름 같은 다른 필드를 응답에 실으면 그때 fetch join을 더해야 합니다. 컬렉션 fetch join이 2개 이상이면 `MultipleBagFetchException`이 발생하므로, 그 경우에는 각각 별도 쿼리로 조회한 뒤 조립해야 합니다. 회차 목록의 잔여좌석 카운트는 IN 절 + GROUP BY로 한 번에 집계해(`countGroupedByScreeningIds`) N+1을 방지했습니다.
 
 ### REST API — 자원 URL + HTTP 메서드 + 상태 코드
 
@@ -1019,7 +1016,7 @@ public ReservationResponse getById(Long id) {
 // ReservationServiceTest.java
 @Test
 void 없는_회차면_SCREENING_NOT_FOUND() {
-    given(screeningRepository.findByIdWithTheaterType(1L)).willReturn(Optional.empty());
+    given(screeningRepository.findByIdWithDetails(1L)).willReturn(Optional.empty());
 
     assertThatThrownBy(() -> service.create(reqOf(1L, 1L, new int[]{1, 1})))
             .isInstanceOf(CustomException.class)
