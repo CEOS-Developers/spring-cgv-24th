@@ -35,7 +35,10 @@ public class SeatHoldTransitionService {
     public TransitionResult confirm(Long reservationId, Long userId) {
         ReservationSnapshot snapshot = snapshot(reservationId, userId);
         if (snapshot.status() == ReservationStatus.RESERVED) {
-            return TransitionResult.success(SeatHoldResponse.from(owned(reservationId, userId)));
+            Reservation current = owned(reservationId, userId);
+            return current.getStatus() == ReservationStatus.RESERVED
+                    ? TransitionResult.success(SeatHoldResponse.from(current))
+                    : TransitionResult.failure(ErrorCode.HOLD_NOT_ACTIVE);
         }
         if (snapshot.status() != ReservationStatus.HELD) {
             return TransitionResult.failure(ErrorCode.HOLD_NOT_ACTIVE);
