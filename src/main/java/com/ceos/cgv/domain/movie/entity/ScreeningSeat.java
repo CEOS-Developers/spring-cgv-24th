@@ -1,6 +1,8 @@
 package com.ceos.cgv.domain.movie.entity;
 
 import com.ceos.cgv.domain.reservation.entity.Reservation;
+import com.ceos.cgv.global.exception.BusinessException;
+import com.ceos.cgv.global.exception.ErrorCode;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
@@ -49,5 +51,19 @@ public class ScreeningSeat {
 
     public void restoreCurrentReservation(Reservation reservation) {
         this.currentReservation = reservation;
+    }
+
+    public void occupy(Reservation reservation) {
+        if (currentReservation != null) {
+            throw new BusinessException(ErrorCode.SEAT_ALREADY_RESERVED);
+        }
+        this.currentReservation = reservation;
+    }
+
+    public void releaseIfOwnedBy(Reservation reservation) {
+        if (currentReservation == null || !currentReservation.getId().equals(reservation.getId())) {
+            throw new BusinessException(ErrorCode.SEAT_OWNER_MISMATCH);
+        }
+        this.currentReservation = null;
     }
 }

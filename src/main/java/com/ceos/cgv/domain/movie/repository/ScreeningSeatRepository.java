@@ -11,6 +11,8 @@ import java.util.Optional;
 public interface ScreeningSeatRepository extends JpaRepository<ScreeningSeat, Long> {
     List<ScreeningSeat> findAllByScreening_Id(Long screeningId);
 
+    long countByScreening_Id(Long screeningId);
+
     @Query(value = """
             SELECT * FROM screening_seats
             WHERE screening_id = :screeningId AND seat_row = :seatRow AND seat_number = :seatNumber

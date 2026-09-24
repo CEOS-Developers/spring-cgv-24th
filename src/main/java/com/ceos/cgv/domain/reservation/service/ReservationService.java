@@ -25,10 +25,10 @@ import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.HashSet;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.function.Function;
-import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -39,6 +39,7 @@ public class ReservationService {
     private final ReservationRepository reservationRepository;
     private final ReservedSeatRepository reservedSeatRepository;
     private final ScreeningSeatRepository screeningSeatRepository;
+    private final ScreeningSeatLockService screeningSeatLockService;
 
     // 예매 생성 전체를 하나의 트랜잭션으로 처리하고 커밋된 데이터만 읽음
     @Transactional(isolation = Isolation.READ_COMMITTED)
@@ -53,8 +54,7 @@ public class ReservationService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.MOVIE_NOT_FOUND));
         movie.ensurePublic();
 
-        // 같은 상영 일정에 대한 동시 예매를 순서대로 처리하기 위해 행을 잠금
-        Screening screening = screeningRepository.findByIdWithLock(request.screeningId())
+        Screening screening = screeningRepository.findById(request.screeningId())
                 .orElseThrow(() -> new BusinessException(ErrorCode.SCREENING_NOT_FOUND));
 
         // 좌석 유효성 검증에 필요한 상영관 좌석 구조를 가져옴
@@ -75,24 +75,31 @@ public class ReservationService {
             }
         }
 
-        // 같은 회차의 요청 좌표만 한 번의 존재 조회로 확인
+        long seatCount = screeningSeatRepository.countByScreening_Id(screening.getId());
+        boolean legacyScreening = seatCount == 0;
+        if (legacyScreening) {
+            // 이관 전 회차의 기존 직렬화 경로는 좌석 데이터가 준비될 때까지 유지한다.
+            screeningRepository.findByIdWithLock(screening.getId())
+                    .orElseThrow(() -> new BusinessException(ErrorCode.SCREENING_NOT_FOUND));
+        } else if (seatCount != (long) screen.getRowCount() * screen.getSeatsPerRow()) {
+            throw new BusinessException(ErrorCode.SCREENING_SEATS_NOT_READY);
+        }
+
+        List<ScreeningSeat> lockedSeats = legacyScreening ? List.of()
+                : screeningSeatLockService.lockSeats(screening.getId(), requestedSeats);
+        Map<SeatCoordinate, ScreeningSeat> screeningSeatsByCoordinate = new HashMap<>();
+        for (ScreeningSeat seat : lockedSeats) {
+            screeningSeatsByCoordinate.put(new SeatCoordinate(seat.getSeatRow(), seat.getSeatNumber()), seat);
+            if (seat.getCurrentReservation() != null) {
+                throw new BusinessException(seat.getCurrentReservation().getStatus() == ReservationStatus.HELD
+                        ? ErrorCode.SEAT_HELD : ErrorCode.SEAT_ALREADY_RESERVED);
+            }
+        }
+
+        // 기존 이력 조회도 유지해 이관 전 좌석 점유와 데이터 불일치를 방어한다.
         if (reservedSeatRepository.existsReservedByScreeningIdAndCoordinates(
                 screening.getId(), requestedSeats)) {
             throw new BusinessException(ErrorCode.SEAT_ALREADY_RESERVED);
-        }
-
-        // 기존 회차는 이관 전까지 좌석 행이 없을 수 있다. 일부만 존재하는 회차는 진행하지 않는다.
-        var screeningSeats = screeningSeatRepository.findAllByScreening_Id(screening.getId());
-        if (!screeningSeats.isEmpty()
-                && screeningSeats.size() != (long) screen.getRowCount() * screen.getSeatsPerRow()) {
-            throw new BusinessException(ErrorCode.SCREENING_SEATS_NOT_READY);
-        }
-        Map<SeatCoordinate, ScreeningSeat> screeningSeatsByCoordinate = screeningSeats.stream()
-                .collect(Collectors.toMap(
-                        seat -> new SeatCoordinate(seat.getSeatRow(), seat.getSeatNumber()),
-                        Function.identity()));
-        if (!screeningSeats.isEmpty() && !screeningSeatsByCoordinate.keySet().containsAll(requestedSeats)) {
-            throw new BusinessException(ErrorCode.SCREENING_SEATS_NOT_READY);
         }
 
         // 사용자와 상영 일정을 연결한 예매 엔티티 객체를 생성함
@@ -113,7 +120,11 @@ public class ReservationService {
         }
 
         // Reservation의 cascade 설정을 이용해 예매와 좌석을 함께 저장
-        return reservationRepository.save(reservation);
+        Reservation saved = reservationRepository.save(reservation);
+        for (ScreeningSeat seat : lockedSeats) {
+            seat.occupy(saved);
+        }
+        return saved;
     }
 
     @Transactional(readOnly = true)
@@ -126,11 +137,26 @@ public class ReservationService {
         return reservation;
     }
 
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public void cancel(Long reservationId, Long userId) {
         Reservation reservation = findById(reservationId, userId);
         if (reservation.getStatus() == ReservationStatus.CANCELED) {
             throw new BusinessException(ErrorCode.RESERVATION_ALREADY_CANCELED);
+        }
+        List<ReservedSeat> histories = reservation.getReservedSeats();
+        long linkedCount = histories.stream().filter(seat -> seat.getScreeningSeat() != null).count();
+        if (linkedCount > 0 && linkedCount != histories.size()) {
+            throw new BusinessException(ErrorCode.SCREENING_SEATS_NOT_READY);
+        }
+        if (linkedCount > 0) {
+            List<SeatCoordinate> coordinates = histories.stream()
+                    .map(seat -> new SeatCoordinate(seat.getSeatRow(), seat.getSeatNumber()))
+                    .toList();
+            List<ScreeningSeat> locked = screeningSeatLockService.lockSeats(
+                    reservation.getScreening().getId(), coordinates);
+            for (ScreeningSeat seat : locked) {
+                seat.releaseIfOwnedBy(reservation);
+            }
         }
         reservation.cancel();
     }

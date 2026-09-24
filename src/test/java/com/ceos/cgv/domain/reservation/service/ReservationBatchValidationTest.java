@@ -35,24 +35,25 @@ class ReservationBatchValidationTest {
     @Mock ReservedSeatRepository seats;
     @Mock ScreeningSeatRepository screeningSeats;
     @InjectMocks ReservationService service;
+    private Screening screening;
 
     @BeforeEach
     void base() {
         Movie movie = new Movie("영화", "설명", 120, LocalDate.of(2026,9,1), AgeRating.ALL);
         Screen screen = new Screen(null, ScreenType.GENERAL, 10, 12);
-        Screening screening = new Screening(movie, screen, LocalDateTime.of(2026,9,20,12,30));
+        screening = new Screening(movie, screen, LocalDateTime.of(2026,9,20,12,30));
         ReflectionTestUtils.setField(screening, "id", 8L);
         when(users.findById(1L)).thenReturn(Optional.of(mock(User.class)));
         when(screenings.findMovieIdById(8L)).thenReturn(Optional.of(4L));
         when(movies.findByIdForShare(4L)).thenReturn(Optional.of(movie));
-        when(screenings.findByIdWithLock(8L)).thenReturn(Optional.of(screening));
+        when(screenings.findById(8L)).thenReturn(Optional.of(screening));
     }
 
     @Test
     void 여러_좌석을_한번_검사하고_모두_저장한다() {
         Set<SeatCoordinate> requested = Set.of(new SeatCoordinate("A",1), new SeatCoordinate("B",2));
         when(seats.existsReservedByScreeningIdAndCoordinates(8L, requested)).thenReturn(false);
-        when(screeningSeats.findAllByScreening_Id(8L)).thenReturn(List.of());
+        when(screenings.findByIdWithLock(8L)).thenReturn(Optional.of(screening));
         when(reservations.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         Reservation result = service.create(new ReservationCreateRequest(1L,8L,
                 List.of(new ReservedSeatRequest("A",1),new ReservedSeatRequest("B",2))));

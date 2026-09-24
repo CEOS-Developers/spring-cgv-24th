@@ -31,6 +31,8 @@ public enum ErrorCode {
     INVALID_SEAT(HttpStatus.BAD_REQUEST, "상영관에 존재하지 않는 좌석입니다."),
     DUPLICATE_SEAT_IN_REQUEST(HttpStatus.BAD_REQUEST, "요청에 같은 좌석이 중복되어 있습니다."),
     SEAT_ALREADY_RESERVED(HttpStatus.CONFLICT, "이미 예매된 좌석입니다."),
+    SEAT_HELD(HttpStatus.CONFLICT, "다른 사용자가 좌석을 선점 중입니다."),
+    SEAT_OWNER_MISMATCH(HttpStatus.CONFLICT, "좌석 점유 상태가 변경되었습니다."),
     SEAT_BUSY(HttpStatus.CONFLICT, "다른 요청이 좌석을 처리 중입니다."),
     STOCK_NOT_ENOUGH(HttpStatus.CONFLICT, "상품 재고가 부족합니다.");
 

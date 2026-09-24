@@ -6,6 +6,7 @@ import com.ceos.cgv.domain.movie.entity.Screening;
 import com.ceos.cgv.domain.movie.enums.AgeRating;
 import com.ceos.cgv.domain.movie.repository.MovieRepository;
 import com.ceos.cgv.domain.movie.repository.ScreeningRepository;
+import com.ceos.cgv.domain.movie.repository.ScreeningSeatRepository;
 import com.ceos.cgv.domain.reservation.dto.ReservationCreateRequest;
 import com.ceos.cgv.domain.reservation.dto.ReservedSeatRequest;
 import com.ceos.cgv.domain.reservation.dto.SeatCoordinate;
@@ -45,6 +46,10 @@ class ReservationServiceTest {
     private ReservationRepository reservationRepository;
     @Mock
     private ReservedSeatRepository reservedSeatRepository;
+    @Mock
+    private ScreeningSeatRepository screeningSeatRepository;
+    @Mock
+    private ScreeningSeatLockService screeningSeatLockService;
     @InjectMocks
     private ReservationService reservationService;
 
@@ -61,6 +66,7 @@ class ReservationServiceTest {
         given(screeningRepository.findMovieIdById(8L)).willReturn(Optional.of(4L));
         given(movieRepository.findByIdForShare(4L)).willReturn(Optional.of(
                 new Movie("영화", "설명", 120, LocalDate.of(2026, 9, 1), AgeRating.ALL)));
+        given(screeningRepository.findById(8L)).willReturn(Optional.of(screening));
         given(screeningRepository.findByIdWithLock(8L)).willReturn(Optional.of(screening));
         given(reservedSeatRepository.existsReservedByScreeningIdAndCoordinates(
                 8L, Set.of(new SeatCoordinate("A", 1)))).willReturn(true);

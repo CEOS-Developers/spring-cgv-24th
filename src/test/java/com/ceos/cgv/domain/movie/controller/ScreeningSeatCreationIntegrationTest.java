@@ -2,6 +2,7 @@ package com.ceos.cgv.domain.movie.controller;
 
 import com.ceos.cgv.domain.user.enums.UserRole;
 import com.ceos.cgv.domain.user.security.JwtService;
+import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -29,6 +30,7 @@ class ScreeningSeatCreationIntegrationTest {
     @Autowired MockMvc mockMvc;
     @Autowired JdbcTemplate jdbcTemplate;
     @Autowired JwtService jwtService;
+    @Autowired EntityManager entityManager;
 
     @BeforeEach
     void setUp() {
@@ -103,10 +105,13 @@ class ScreeningSeatCreationIntegrationTest {
         String userToken = "Bearer " + jwtService.issue(6606L, UserRole.USER);
 
         long firstReservationId = createReservation(request, userToken);
+        assertThat(currentReservationId(screeningId, "A", 2)).isEqualTo(firstReservationId);
         mockMvc.perform(delete("/api/v1/reservations/{id}", firstReservationId)
                         .header("Authorization", userToken))
                 .andExpect(status().isNoContent());
-        createReservation(request, userToken);
+        assertThat(currentReservationId(screeningId, "A", 2)).isNull();
+        long secondReservationId = createReservation(request, userToken);
+        assertThat(currentReservationId(screeningId, "A", 2)).isEqualTo(secondReservationId);
 
         List<String> histories = jdbcTemplate.query("""
                 SELECT CONCAT(rs.seat_row, rs.seat_number, ':', ss.screening_seat_id)
@@ -165,6 +170,14 @@ class ScreeningSeatCreationIntegrationTest {
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getHeader("Location");
         return Long.parseLong(location.substring(location.lastIndexOf('/') + 1));
+    }
+
+    private Long currentReservationId(long screeningId, String row, int number) {
+        entityManager.flush();
+        return jdbcTemplate.queryForObject("""
+                SELECT current_reservation_id FROM screening_seats
+                WHERE screening_id = ? AND seat_row = ? AND seat_number = ?
+                """, Long.class, screeningId, row, number);
     }
 
     private long createScreening(String startAt) throws Exception {
