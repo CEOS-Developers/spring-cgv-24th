@@ -16,6 +16,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -181,6 +182,81 @@ class SeatHoldControllerIntegrationTest {
                                 {"screeningId":8616,"seats":[{"seatRow":"B","seatNumber":1}]}
                                 """))
                 .andExpect(status().isCreated());
+    }
+
+    @Test
+    void 선점_확정은_같은_예매_ID로_한번만_처리한다() throws Exception {
+        long holdId = createHold(8611, KEY, "A", 1);
+
+        for (int attempt = 0; attempt < 2; attempt++) {
+            mockMvc.perform(post("/api/v1/seat-holds/{id}/confirm", holdId)
+                            .header("Authorization", userToken(8611)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.reservationId").value(holdId))
+                    .andExpect(jsonPath("$.data.status").value("RESERVED"));
+        }
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM reservations WHERE user_id=8611",
+                Integer.class)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("""
+                SELECT current_reservation_id FROM screening_seats WHERE screening_seat_id=8617
+                """, Long.class)).isEqualTo(holdId);
+    }
+
+    @Test
+    void 본인만_선점을_해제하고_늦게_온_해제는_새_점유를_지우지_못한다() throws Exception {
+        long oldHold = createHold(8611, KEY, "A", 1);
+        mockMvc.perform(post("/api/v1/seat-holds/{id}/confirm", oldHold)
+                        .header("Authorization", userToken(8612)))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(delete("/api/v1/seat-holds/{id}", oldHold)
+                        .header("Authorization", userToken(8612)))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(delete("/api/v1/seat-holds/{id}", oldHold)
+                        .header("Authorization", userToken(8611)))
+                .andExpect(status().isNoContent());
+        assertThat(jdbc.queryForObject("SELECT status FROM reservations WHERE reservation_id=?",
+                String.class, oldHold)).isEqualTo("RELEASED");
+        long newHold = createHold(8612, "123e4567-e89b-12d3-a456-426614174001", "A", 1);
+
+        mockMvc.perform(delete("/api/v1/seat-holds/{id}", oldHold)
+                        .header("Authorization", userToken(8611)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("HOLD_NOT_ACTIVE"));
+        assertThat(jdbc.queryForObject("""
+                SELECT current_reservation_id FROM screening_seats WHERE screening_seat_id=8617
+                """, Long.class)).isEqualTo(newHold);
+    }
+
+    @Test
+    void 영화가_비공개면_선점_확정을_거절하고_점유를_반환한다() throws Exception {
+        long holdId = createHold(8611, KEY, "B", 2);
+        mockMvc.perform(delete("/api/v1/movies/8615")
+                        .header("Authorization", "Bearer " + jwtService.issue(8611L, UserRole.ADMIN)))
+                .andExpect(status().isNoContent());
+
+        mockMvc.perform(post("/api/v1/seat-holds/{id}/confirm", holdId)
+                        .header("Authorization", userToken(8611)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("MOVIE_NOT_AVAILABLE"));
+        assertThat(jdbc.queryForObject("SELECT status FROM reservations WHERE reservation_id=?",
+                String.class, holdId)).isEqualTo("RELEASED");
+        assertThat(jdbc.queryForObject("""
+                SELECT current_reservation_id FROM screening_seats WHERE screening_seat_id=8620
+                """, Long.class)).isNull();
+    }
+
+    private long createHold(long userId, String key, String row, int number) throws Exception {
+        String response = mockMvc.perform(post("/api/v1/seat-holds")
+                        .header("Authorization", userToken(userId))
+                        .header("Idempotency-Key", key)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"screeningId":8616,"seats":[{"seatRow":"%s","seatNumber":%d}]}
+                                """.formatted(row, number)))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        return JsonPath.<Number>read(response, "$.data.reservationId").longValue();
     }
 
     private String userToken(long userId) {

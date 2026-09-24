@@ -10,6 +10,8 @@ import org.springframework.data.jpa.domain.Specification;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.EntityGraph;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.Collection;
 import java.util.List;
@@ -39,4 +41,11 @@ public interface ReservedSeatRepository extends JpaRepository<ReservedSeat, Long
 
     @EntityGraph(attributePaths = "reservation")
     List<ReservedSeat> findAllByReservation_Screening_Id(Long screeningId);
+
+    @Query("""
+            select new com.ceos.cgv.domain.reservation.dto.SeatCoordinate(
+                rs.seatRow, rs.seatNumber)
+            from ReservedSeat rs where rs.reservation.id = :reservationId
+            """)
+    List<SeatCoordinate> findCoordinatesByReservationId(@Param("reservationId") Long reservationId);
 }
