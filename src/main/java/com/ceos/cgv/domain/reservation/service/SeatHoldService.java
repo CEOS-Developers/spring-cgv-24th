@@ -48,6 +48,7 @@ public class SeatHoldService {
     private final ScreeningSeatLockService seatLockService;
     private final SeatHoldProperties properties;
     private final Clock seatHoldClock;
+    private final SeatHoldExpiryService expiryService;
 
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public HoldCreationResult create(Long userId, UUID requestKey, SeatHoldCreateRequest request) {
@@ -76,6 +77,7 @@ public class SeatHoldService {
                 throw new BusinessException(ErrorCode.HOLD_REQUEST_CONFLICT);
             }
             if (reservation.isExpiredAt(now)) {
+                expiryService.expireIfElapsed(reservation.getId());
                 throw new BusinessException(ErrorCode.HOLD_EXPIRED);
             }
             if (reservation.getStatus() != ReservationStatus.HELD
@@ -105,6 +107,15 @@ public class SeatHoldService {
         if (screeningSeatRepository.countByScreening_Id(screening.getId())
                 != (long) screen.getRowCount() * screen.getSeatsPerRow()) {
             throw new BusinessException(ErrorCode.SCREENING_SEATS_NOT_READY);
+        }
+
+        Set<Long> occupants = new HashSet<>();
+        for (SeatCoordinate coordinate : coordinates) {
+            screeningSeatRepository.findCurrentReservationId(
+                    screening.getId(), coordinate.row(), coordinate.number()).ifPresent(occupants::add);
+        }
+        for (Long occupantId : occupants) {
+            expiryService.expireIfElapsed(occupantId);
         }
 
         List<ScreeningSeat> seats = seatLockService.lockSeats(screening.getId(), coordinates);

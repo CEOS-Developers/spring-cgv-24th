@@ -2,6 +2,7 @@ package com.ceos.cgv.domain.reservation.controller;
 
 import com.ceos.cgv.domain.user.enums.UserRole;
 import com.ceos.cgv.domain.user.security.JwtService;
+import com.ceos.cgv.domain.reservation.service.SeatHoldCleanupTask;
 import com.jayway.jsonpath.JsonPath;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -30,6 +31,7 @@ class SeatHoldControllerIntegrationTest {
     @Autowired MockMvc mockMvc;
     @Autowired JdbcTemplate jdbc;
     @Autowired JwtService jwtService;
+    @Autowired SeatHoldCleanupTask cleanupTask;
 
     @BeforeEach
     void setUp() {
@@ -244,6 +246,99 @@ class SeatHoldControllerIntegrationTest {
         assertThat(jdbc.queryForObject("""
                 SELECT current_reservation_id FROM screening_seats WHERE screening_seat_id=8620
                 """, Long.class)).isNull();
+    }
+
+    @Test
+    void 만료된_선점은_정리_작업을_기다리지_않고_다른_회원이_다시_확보한다() throws Exception {
+        seedExpiredHold(8621L, "A", 1);
+
+        long newHold = createHold(8612, "123e4567-e89b-12d3-a456-426614174002", "A", 1);
+
+        assertThat(jdbc.queryForObject("SELECT status FROM reservations WHERE reservation_id=8621",
+                String.class)).isEqualTo("EXPIRED");
+        assertThat(jdbc.queryForObject("""
+                SELECT current_reservation_id FROM screening_seats WHERE screening_seat_id=8617
+                """, Long.class)).isEqualTo(newHold);
+    }
+
+    @Test
+    void 만료된_선점의_같은_요청_키는_새_선점을_만들거나_연장하지_않는다() throws Exception {
+        seedExpiredHold(8621L, "A", 1);
+
+        mockMvc.perform(post("/api/v1/seat-holds")
+                        .header("Authorization", userToken(8611))
+                        .header("Idempotency-Key", KEY)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"screeningId":8616,"seats":[{"seatRow":"A","seatNumber":1}]}
+                                """))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("HOLD_EXPIRED"));
+        assertThat(jdbc.queryForObject("SELECT status FROM reservations WHERE reservation_id=8621",
+                String.class)).isEqualTo("EXPIRED");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM reservations WHERE user_id=8611",
+                Integer.class)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("""
+                SELECT current_reservation_id FROM screening_seats WHERE screening_seat_id=8617
+                """, Long.class)).isNull();
+    }
+
+    @Test
+    void 만료된_선점은_유효한_JWT로도_확정되지_않고_좌석을_반환한다() throws Exception {
+        seedExpiredHold(8621L, "B", 1);
+
+        mockMvc.perform(post("/api/v1/seat-holds/{id}/confirm", 8621L)
+                        .header("Authorization", userToken(8611)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("HOLD_EXPIRED"));
+        assertThat(jdbc.queryForObject("SELECT status FROM reservations WHERE reservation_id=8621",
+                String.class)).isEqualTo("EXPIRED");
+        assertThat(jdbc.queryForObject("""
+                SELECT current_reservation_id FROM screening_seats WHERE screening_seat_id=8619
+                """, Long.class)).isNull();
+    }
+
+    @Test
+    void 보조_정리는_만료된_HELD만_반환하고_기존_RESERVED는_유지한다() {
+        seedExpiredHold(8621L, "A", 1);
+        jdbc.update("""
+                INSERT INTO reservations (reservation_id,user_id,screening_id,status,request_key,expires_at,created_at,updated_at)
+                VALUES (8623,8612,8616,'RESERVED','123e4567-e89b-12d3-a456-426614174003',
+                        DATEADD('MINUTE',-1,CURRENT_TIMESTAMP),CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+                """);
+        jdbc.update("""
+                INSERT INTO reserved_seats (reservation_id,seat_row,seat_number,screening_seat_id)
+                VALUES (8623,'A',2,8618)
+                """);
+        jdbc.update("UPDATE screening_seats SET current_reservation_id=8623 WHERE screening_seat_id=8618");
+
+        cleanupTask.cleanup();
+        cleanupTask.cleanup();
+
+        assertThat(jdbc.queryForObject("SELECT status FROM reservations WHERE reservation_id=8621",
+                String.class)).isEqualTo("EXPIRED");
+        assertThat(jdbc.queryForObject("""
+                SELECT current_reservation_id FROM screening_seats WHERE screening_seat_id=8617
+                """, Long.class)).isNull();
+        assertThat(jdbc.queryForObject("SELECT status FROM reservations WHERE reservation_id=8623",
+                String.class)).isEqualTo("RESERVED");
+        assertThat(jdbc.queryForObject("""
+                SELECT current_reservation_id FROM screening_seats WHERE screening_seat_id=8618
+                """, Long.class)).isEqualTo(8623L);
+    }
+
+    private void seedExpiredHold(long id, String row, int number) {
+        long seatId = ("A".equals(row) ? 8616 : 8618) + number;
+        jdbc.update("""
+                INSERT INTO reservations (reservation_id,user_id,screening_id,status,request_key,expires_at,created_at,updated_at)
+                VALUES (?,8611,8616,'HELD',?,DATEADD('MINUTE',-1,CURRENT_TIMESTAMP),CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+                """, id, KEY);
+        jdbc.update("""
+                INSERT INTO reserved_seats (reservation_id,seat_row,seat_number,screening_seat_id)
+                VALUES (?,?,?,?)
+                """, id, row, number, seatId);
+        jdbc.update("UPDATE screening_seats SET current_reservation_id=? WHERE screening_seat_id=?",
+                id, seatId);
     }
 
     private long createHold(long userId, String key, String row, int number) throws Exception {
