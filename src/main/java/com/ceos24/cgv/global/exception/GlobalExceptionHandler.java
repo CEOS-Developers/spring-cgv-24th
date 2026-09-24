@@ -4,6 +4,7 @@ import com.ceos24.cgv.global.response.ApiResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
@@ -44,6 +45,16 @@ public class GlobalExceptionHandler {
                 e.getValue() != null ? e.getValue().toString() : null,
                 "허용되지 않은 값입니다."
         ));
+        return ResponseEntity.badRequest()
+                             .body(ApiResponse.error(ErrorCode.INVALID_INPUT_VALUE, fieldErrors));
+    }
+
+    // 필수 쿼리 파라미터 누락. 처리하지 않으면 아래 Exception 핸들러로 떨어져 500이 된다.
+    @ExceptionHandler(MissingServletRequestParameterException.class)
+    public ResponseEntity<ApiResponse<Void>> handleMissingParam(MissingServletRequestParameterException e) {
+        log.warn("[MissingParam] {}", e.getParameterName());
+        List<ApiResponse.FieldError> fieldErrors = List.of(new ApiResponse.FieldError(
+                e.getParameterName(), null, "필수 파라미터입니다."));
         return ResponseEntity.badRequest()
                              .body(ApiResponse.error(ErrorCode.INVALID_INPUT_VALUE, fieldErrors));
     }

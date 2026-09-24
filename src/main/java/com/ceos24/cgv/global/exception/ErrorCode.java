@@ -32,6 +32,9 @@ public enum ErrorCode {
     CANCEL_DEADLINE_PASSED(HttpStatus.CONFLICT, "상영 20분 전까지만 취소할 수 있습니다."),
     PAYMENT_FAILED(HttpStatus.PAYMENT_REQUIRED, "결제에 실패했습니다. 좌석 선택부터 다시 진행해 주세요."),
 
+    // 찜
+    LIKE_REQUEST_CONFLICT(HttpStatus.CONFLICT, "찜 요청이 동시에 처리되었습니다. 다시 시도해 주세요."),
+
     // 매점
     OUT_OF_STOCK(HttpStatus.CONFLICT, "재고가 부족합니다.");
 

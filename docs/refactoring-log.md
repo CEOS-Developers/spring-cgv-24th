@@ -856,3 +856,103 @@ and exists(select 1 from reservation_seat rs1_0
 전체 로그 집계는 `SEAT_ALREADY_RESERVED` 58건, `SEAT_RESERVATION_CONFLICT` 1건이었다.
 경합 대부분은 pre-check와 유니크 제약에서 깔끔히 걸러지고, 락 타임아웃은 위 인위적 시나리오
 하나뿐이었다.
+
+---
+
+## 세션 4: 찜 API
+
+`BranchLike`/`MovieLike` 엔티티와 리포지토리만 있고 API가 없었다. CGV 극장 카드·상세와 영화의
+별 아이콘(누르면 찜, 다시 누르면 해제)을 받칠 API를 만든다. **엔티티는 수정하지 않았다.**
+유니크 제약(`uk_branch_like_user_branch`, `uk_movie_like_user_movie`)이 이미 걸려 있었다.
+
+극장 찜과 영화 찜은 커밋을 나눈다. 공통 작업(ErrorCode, 예외 핸들러, 아래 결정)은 극장 찜에 포함했다.
+
+### 결정 1 — 토글 대신 POST(등록) + DELETE(해제)
+
+토글은 "현재 상태를 뒤집어라"라서 결과가 서버 상태에 의존한다. 응답이 유실돼 재시도하면
+찜 → 해제로 되돌아가므로 클라이언트가 재시도해도 되는지 판단할 수 없다. POST/DELETE는 요청이
+**도달할 최종 상태**를 말하므로 같은 요청을 몇 번 보내도 결과가 같다. 별 아이콘 UI는 현재 상태를
+이미 알고 있어 어느 쪽을 부를지 고르는 비용이 없다.
+
+### 결정 2 — 이미 찜한 걸 찜 / 안 한 걸 해제 → 둘 다 200
+
+요청한 최종 상태가 이미 성립해 있으면 목표 달성으로 본다. 409를 주면 클라이언트가 할 수 있는 건
+"다시 동기화"뿐이고 재시도 안전성도 깨진다.
+
+- POST는 대상·사용자 존재를 검증한다(404). FK 위반도 `DataIntegrityViolationException`이라
+  검증이 없으면 없는 극장이 경합 충돌로 잘못 번역된다(세션 3-1과 같은 근거).
+- DELETE는 검증하지 않는다. 없는 극장이면 찜도 없으므로 "찜 아님"이 이미 성립한다.
+- 폐관 극장 찜은 막지 않는다. 상세 화면이 폐관도 보여주는 정책이고, 찜 목록에 상태를 싣는다.
+- POST가 201이 아닌 200인 이유: 새로 만들었는지가 응답에 의미 없고(멱등) 찜 행의 URI도 노출하지 않는다.
+
+### 결정 3 — 중복 방지는 두 곳에서 막힌다
+
+| 상황 | 막는 곳 | 응답 |
+|---|---|---|
+| 순차 중복 (재시도, 느린 더블클릭) | `existsBy...` pre-check | 200 (no-op) |
+| 진짜 동시 (INSERT 두 건이 겹침) | 유니크 제약 → `DataIntegrityViolationException` | 409 `LIKE_REQUEST_CONFLICT` |
+| 락 대기 타임아웃 | `ConcurrencyFailureException` | 409 `LIKE_REQUEST_CONFLICT` |
+
+**동시 경합에서 진 쪽에 200을 줄 수 없다.** flush 중 제약 위반이 나면 Hibernate 세션과 바깥
+트랜잭션이 rollback-only가 된다. 예외를 삼키고 정상 반환하면 커밋에서 `UnexpectedRollbackException`
+(500)이 난다. 별도 트랜잭션(REQUIRES_NEW / NOT_SUPPORTED)으로 빼면 `@Transactional` 통합 테스트의
+미커밋 데이터를 못 본다(좌석 경합 세션에서 겪은 문제).
+
+그래서 `SEAT_RESERVATION_CONFLICT`와 같은 성격으로 뒀다. "실패가 아니라 판정 못 함, 재시도하면
+성공". 재시도는 pre-check에 걸려 200으로 수렴한다. 극장·영화 공용 코드 하나다.
+
+해제는 JPQL 벌크 DELETE다. 파생 `deleteBy...`는 SELECT 후 엔티티별로 지워서, 동시 해제로 이미
+사라진 행을 만나면 낙관적 락 예외가 난다. 벌크 DELETE는 0행이어도 정상이다. SELECT도 없어진다.
+
+### 결정 4 — `userId`는 세 엔드포인트 모두 쿼리 파라미터
+
+DELETE 본문은 HTTP 의미가 정의돼 있지 않아 일부 클라이언트·프록시가 버린다. POST만 본문으로 받으면
+다음 주에 비워질 Request DTO를 새로 만드는 셈이라 셋을 맞췄다. Security 이후 파라미터만 걷어낸다.
+
+이 과정에서 `MissingServletRequestParameterException`이 처리되지 않아 필수 파라미터 누락이 **500**으로
+나가던 것을 발견했다. `GlobalExceptionHandler`에서 400 `INVALID_INPUT_VALUE`로 매핑했다.
+
+### 결정 5 — 내 찜 목록 API를 둔다
+
+결정 6에서 목록 응답에 찜 여부를 넣지 않으므로, 이게 없으면 찜 상태를 **읽을 경로가 없다.**
+CGV 극장 탭의 "자주 가는 CGV" 영역과 같다.
+
+- 최근 찜한 순(`id DESC`), `JOIN FETCH` 1쿼리
+- `status`를 싣는다. 찜한 뒤 폐관된 극장을 조용히 빼면 사용자는 왜 사라졌는지 모른다
+- 없는 사용자면 빈 배열이 아니라 `USER_NOT_FOUND`. 잘못된 id가 "찜 없음"으로 숨지 않게
+- DTO 프로젝션(세션 3-2)은 쓰지 않았다. 표시명이 enum 메서드라 생성자 표현식에 못 넣어 Row record가
+  하나 더 필요하고, 찜 수는 많아야 수십 건이다. 지점 목록 API도 엔티티를 그대로 읽는다
+
+### 결정 6 — 목록 응답에 "내가 찜했는지"는 이번에 넣지 않는다
+
+넣으려면 공개 GET(`/api/branches`, `/api/movies`)에 `userId`를 붙여야 하고, 다음 주 principal로
+바뀌면서 시그니처가 한 번 더 바뀐다. 익명이면 `liked`가 null/false 삼중 상태가 된다. 지금은 결정 5의
+목록으로 클라이언트가 찜 id 집합을 한 번 받아 별을 칠한다(요청 1회 추가, N+1 없음).
+
+Security 이후 넣을 때의 방법: 목록 id를 모아
+`SELECT bl.branch.id FROM BranchLike bl WHERE bl.user.id = :userId AND bl.branch.id IN :ids`
+한 번 → `Set<Long>` → `contains`. `specialTypesByBranchId()`와 같은 "id 모아 한 방" 패턴이라 쿼리는 1건만 는다.
+
+### API (극장)
+
+| 메서드 | 경로 | 요청 | 응답 | 에러 |
+|---|---|---|---|---|
+| POST | `/api/branches/{branchId}/likes` | `?userId=` | 200 (이미 찜이어도) | 400 · 404 `USER_NOT_FOUND` · 404 `BRANCH_NOT_FOUND` · 409 `LIKE_REQUEST_CONFLICT` |
+| DELETE | `/api/branches/{branchId}/likes` | `?userId=` | 200 (찜 없어도) | 400 |
+| GET | `/api/branches/likes` | `?userId=` | 200 `List<BranchLikeResponse>` | 400 · 404 `USER_NOT_FOUND` |
+
+`/api/branches/likes`는 리터럴 경로라 `/{id}`보다 우선한다(`/regions`와 같다).
+찜 API는 `BranchLikeController`/`BranchLikeService`로 분리했다. 조회 전용인 `BranchService`에
+쓰기와 `UserRepository` 의존이 섞이지 않게.
+
+### 회귀 테스트 (극장)
+
+- `BranchLikeControllerTest` 10개 — 등록·목록, 중복 등록 200 + 행 1개, 해제, 찜 없는 해제 200,
+  남의 찜은 안 지워짐, 404 3종, `userId` 누락 400, 최근 순 + 폐관 극장 상태 표시
+- `BranchLikeConcurrencyTest` 2개 — 같은 찜 6건 동시 → 행 정확히 1개, 실패는 전부
+  `LIKE_REQUEST_CONFLICT`. 진 요청도 재시도하면 성공. 로그에서 유니크 제약 위반이 실제로 발생해
+  catch 경로를 탔음을 확인했다
+
+### 확인 (극장)
+
+`./gradlew test` 106개 통과(기존 94 + 신규 12).
