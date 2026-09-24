@@ -3,6 +3,7 @@ package com.ceos.cgv.domain.movie.repository;
 import com.ceos.cgv.domain.movie.entity.ScreeningSeat;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.repository.query.Param;
 
 import java.util.List;
@@ -10,6 +11,9 @@ import java.util.Optional;
 
 public interface ScreeningSeatRepository extends JpaRepository<ScreeningSeat, Long> {
     List<ScreeningSeat> findAllByScreening_Id(Long screeningId);
+
+    @EntityGraph(attributePaths = "currentReservation")
+    List<ScreeningSeat> findAllByScreening_IdOrderBySeatRowAscSeatNumberAsc(Long screeningId);
 
     long countByScreening_Id(Long screeningId);
 

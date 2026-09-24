@@ -19,6 +19,7 @@ import java.time.Instant;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -428,6 +429,30 @@ class SeatHoldControllerIntegrationTest {
         assertThat(jdbc.queryForObject("""
                 SELECT current_reservation_id FROM screening_seats WHERE screening_seat_id=8620
                 """, Long.class)).isEqualTo(bookingId);
+    }
+
+    @Test
+    void 공개_좌석_조회는_만료된_선점을_빈_좌석으로_보여주고_확정_좌석은_유지한다() throws Exception {
+        seedExpiredHold(8621L, "A", 1);
+        mockMvc.perform(get("/api/v1/screenings/8616/seats")
+                        .header("Authorization", "Bearer invalid.jwt.token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].seatRow").value("A"))
+                .andExpect(jsonPath("$.data[0].seatNumber").value(1))
+                .andExpect(jsonPath("$.data[0].status").value("AVAILABLE"));
+        assertThat(jdbc.queryForObject("SELECT status FROM reservations WHERE reservation_id=8621",
+                String.class)).isEqualTo("HELD");
+
+        long holdId = createHold(8612, "123e4567-e89b-12d3-a456-426614174006", "B", 1);
+        mockMvc.perform(get("/api/v1/screenings/8616/seats"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[4].status").value("HELD"));
+        mockMvc.perform(post("/api/v1/seat-holds/{id}/confirm", holdId)
+                        .header("Authorization", userToken(8612)))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/api/v1/screenings/8616/seats"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[4].status").value("RESERVED"));
     }
 
     private void seedExpiredHold(long id, String row, int number) {

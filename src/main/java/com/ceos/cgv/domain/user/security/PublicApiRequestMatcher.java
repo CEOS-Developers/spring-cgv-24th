@@ -22,6 +22,7 @@ public class PublicApiRequestMatcher implements RequestMatcher {
         return path.equals("/api/v1/movies")
                 || path.matches("/api/v1/movies/[^/]+")
                 || path.matches("/api/v1/movies/[^/]+/screenings")
+                || path.matches("/api/v1/screenings/[^/]+/seats")
                 || path.equals("/api/v1/cinemas")
                 || path.matches("/api/v1/cinemas/[^/]+")
                 || path.equals("/api/v1/products");
