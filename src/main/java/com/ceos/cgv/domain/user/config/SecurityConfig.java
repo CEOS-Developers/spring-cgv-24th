@@ -39,6 +39,11 @@ public class SecurityConfig {
                 .substring(request.getContextPath().length())
                 .matches("/api/v1/food-orders(?:/[^/]+)?")
                 && ("POST".equals(request.getMethod()) || "GET".equals(request.getMethod()));
+        RequestMatcher seatHolds = request -> request.getRequestURI()
+                .substring(request.getContextPath().length())
+                .matches("/api/v1/seat-holds(?:/[^/]+(?:/confirm)?)?")
+                && ("POST".equals(request.getMethod()) || "DELETE".equals(request.getMethod())
+                || "GET".equals(request.getMethod()));
         Set<String> adminRegistrationPaths = Set.of(
                 "/api/v1/screens", "/api/v1/screenings",
                 "/api/v1/products", "/api/v1/inventories");
@@ -63,6 +68,7 @@ public class SecurityConfig {
                         .requestMatchers(cinemaLike).authenticated()
                         .requestMatchers(reservations).authenticated()
                         .requestMatchers(foodOrders).authenticated()
+                        .requestMatchers(seatHolds).authenticated()
                         .requestMatchers(adminWrites).hasRole("ADMIN")
                         .anyRequest().denyAll())
                 .addFilterBefore(new JwtAuthenticationFilter(jwtService, entryPoint, publicApiMatcher),
