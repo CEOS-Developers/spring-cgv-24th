@@ -956,3 +956,27 @@ Security 이후 넣을 때의 방법: 목록 id를 모아
 ### 확인 (극장)
 
 `./gradlew test` 106개 통과(기존 94 + 신규 12).
+
+### API (영화)
+
+결정 1~6을 그대로 따른다. 극장 찜과 구조가 대칭이다.
+
+| 메서드 | 경로 | 요청 | 응답 | 에러 |
+|---|---|---|---|---|
+| POST | `/api/movies/{movieId}/likes` | `?userId=` | 200 (이미 찜이어도) | 400 · 404 `USER_NOT_FOUND` · 404 `MOVIE_NOT_FOUND` · 409 `LIKE_REQUEST_CONFLICT` |
+| DELETE | `/api/movies/{movieId}/likes` | `?userId=` | 200 (찜 없어도) | 400 |
+| GET | `/api/movies/likes` | `?userId=` | 200 `List<MovieLikeResponse>` | 400 · 404 `USER_NOT_FOUND` |
+
+`MovieLikeResponse`는 `movieId`, `title`, `genre`, `releaseDate`, `ageRating`, `likedAt`.
+예매율(`reservedSeatCount`)은 싣지 않았다. 찜 목록은 정렬 기준이 찜한 시각이라 쓸 곳이 없고,
+넣으면 `GROUP BY` 집계 쿼리가 하나 더 붙는다.
+
+### 회귀 테스트 (영화)
+
+- `MovieLikeControllerTest` 10개. 극장 찜과 같은 항목에서 폐관 상태 대신 최근 순만 확인한다
+- 동시성 테스트는 두지 않았다. 서비스 구조와 제약 방식이 극장과 같아 `BranchLikeConcurrencyTest`가
+  같은 경로를 검증한다
+
+### 확인 (영화)
+
+`./gradlew test` 116개 통과(극장 찜까지 106 + 신규 10). 엔티티는 건드리지 않았다.
