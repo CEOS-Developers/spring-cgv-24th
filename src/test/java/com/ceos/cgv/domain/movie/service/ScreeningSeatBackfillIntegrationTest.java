@@ -123,6 +123,27 @@ class ScreeningSeatBackfillIntegrationTest {
                 Integer.class)).isEqualTo(1);
     }
 
+    @Test
+    void 재실행은_유효한_HELD와_종료된_RELEASED_이력을_구별한다() {
+        jdbc.update("""
+                INSERT INTO reservations (reservation_id,user_id,screening_id,status,request_key,expires_at,created_at,updated_at)
+                VALUES (776,771,775,'HELD','123e4567-e89b-12d3-a456-426614174020',
+                        DATEADD('MINUTE',5,CURRENT_TIMESTAMP),CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+                """);
+        jdbc.update("""
+                INSERT INTO reservations (reservation_id,user_id,screening_id,status,request_key,expires_at,created_at,updated_at)
+                VALUES (777,771,775,'RELEASED','123e4567-e89b-12d3-a456-426614174021',
+                        DATEADD('MINUTE',-5,CURRENT_TIMESTAMP),CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+                """);
+        history(779, 776, "A", 1);
+        history(780, 777, "B", 2);
+
+        assertThat(backfillService.backfill(SCREENING_ID))
+                .isEqualTo(new ScreeningSeatBackfillService.BackfillResult(4, 2, 1));
+        assertThat(backfillService.backfill(SCREENING_ID))
+                .isEqualTo(new ScreeningSeatBackfillService.BackfillResult(0, 0, 0));
+    }
+
     private void reservation(long id, String status) {
         jdbc.update("""
                 INSERT INTO reservations (reservation_id, user_id, screening_id, status, created_at, updated_at)

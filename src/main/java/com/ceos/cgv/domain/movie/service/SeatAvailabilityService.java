@@ -45,15 +45,17 @@ public class SeatAvailabilityService {
 
     private static SeatAvailabilityResponse.Status statusOf(ScreeningSeat seat, Instant now) {
         Reservation occupant = seat.getCurrentReservation();
-        if (occupant == null || occupant.isExpiredAt(now)) {
+        if (occupant == null) {
             return SeatAvailabilityResponse.Status.AVAILABLE;
         }
         if (occupant.getStatus() == ReservationStatus.HELD) {
-            return SeatAvailabilityResponse.Status.HELD;
+            return occupant.isExpiredAt(now)
+                    ? SeatAvailabilityResponse.Status.AVAILABLE
+                    : SeatAvailabilityResponse.Status.HELD;
         }
         if (occupant.getStatus() == ReservationStatus.RESERVED) {
             return SeatAvailabilityResponse.Status.RESERVED;
         }
-        return SeatAvailabilityResponse.Status.AVAILABLE;
+        throw new BusinessException(ErrorCode.SCREENING_SEATS_NOT_READY);
     }
 }

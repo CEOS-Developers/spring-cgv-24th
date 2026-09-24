@@ -8,6 +8,6 @@ import java.util.List;
 
 public record SeatHoldCreateRequest(
         @NotNull Long screeningId,
-        @NotEmpty List<@Valid ReservedSeatRequest> seats
+        @NotEmpty List<@NotNull @Valid ReservedSeatRequest> seats
 ) {
 }

@@ -115,8 +115,12 @@ public class SeatHoldCreationService {
                 if (occupant.isExpiredAt(now)) {
                     throw new ExpiredHoldEncountered(occupant.getId(), false);
                 }
-                throw new BusinessException(occupant.getStatus() == ReservationStatus.HELD
-                        ? ErrorCode.SEAT_HELD : ErrorCode.SEAT_ALREADY_RESERVED);
+                ErrorCode error = switch (occupant.getStatus()) {
+                    case HELD -> ErrorCode.SEAT_HELD;
+                    case RESERVED -> ErrorCode.SEAT_ALREADY_RESERVED;
+                    case EXPIRED, RELEASED, CANCELED -> ErrorCode.SCREENING_SEATS_NOT_READY;
+                };
+                throw new BusinessException(error);
             }
         }
         if (reservedSeatRepository.existsReservedByScreeningIdAndCoordinates(screening.getId(), coordinates)) {

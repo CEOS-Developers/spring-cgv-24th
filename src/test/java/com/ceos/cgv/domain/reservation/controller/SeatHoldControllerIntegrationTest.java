@@ -215,6 +215,42 @@ class SeatHoldControllerIntegrationTest {
     }
 
     @Test
+    void 좌석_배열의_null_항목은_선점과_직접_예매에서_400으로_거절한다() throws Exception {
+        String invalid = """
+                {"screeningId":8616,"seats":[null]}
+                """;
+        mockMvc.perform(post("/api/v1/seat-holds")
+                        .header("Authorization", userToken(8611))
+                        .header("Idempotency-Key", KEY)
+                        .contentType(MediaType.APPLICATION_JSON).content(invalid))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
+        mockMvc.perform(post("/api/v1/reservations")
+                        .header("Authorization", userToken(8611))
+                        .contentType(MediaType.APPLICATION_JSON).content(invalid))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
+    }
+
+    @Test
+    void 요청_키가_없거나_UUID가_아니면_공통_400을_반환한다() throws Exception {
+        String request = """
+                {"screeningId":8616,"seats":[{"seatRow":"A","seatNumber":1}]}
+                """;
+        mockMvc.perform(post("/api/v1/seat-holds")
+                        .header("Authorization", userToken(8611))
+                        .contentType(MediaType.APPLICATION_JSON).content(request))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
+        mockMvc.perform(post("/api/v1/seat-holds")
+                        .header("Authorization", userToken(8611))
+                        .header("Idempotency-Key", "not-a-uuid")
+                        .contentType(MediaType.APPLICATION_JSON).content(request))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
+    }
+
+    @Test
     void 한_요청의_여덟_좌석은_모두_선점된다() throws Exception {
         mockMvc.perform(post("/api/v1/seat-holds")
                         .header("Authorization", userToken(8611))
@@ -453,6 +489,33 @@ class SeatHoldControllerIntegrationTest {
         mockMvc.perform(get("/api/v1/screenings/8616/seats"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data[4].status").value("RESERVED"));
+    }
+
+    @Test
+    void 종료된_예매가_점유자로_남은_비정상_좌석은_빈_좌석으로_표시하지_않는다() throws Exception {
+        seedExpiredHold(8621L, "A", 1);
+        jdbc.update("UPDATE reservations SET status='RELEASED' WHERE reservation_id=8621");
+
+        mockMvc.perform(get("/api/v1/screenings/8616/seats"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("SCREENING_SEATS_NOT_READY"));
+        mockMvc.perform(post("/api/v1/seat-holds")
+                        .header("Authorization", userToken(8612))
+                        .header("Idempotency-Key", "123e4567-e89b-12d3-a456-426614174007")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"screeningId":8616,"seats":[{"seatRow":"A","seatNumber":1}]}
+                                """))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("SCREENING_SEATS_NOT_READY"));
+        mockMvc.perform(post("/api/v1/reservations")
+                        .header("Authorization", userToken(8612))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"screeningId":8616,"seats":[{"seatRow":"A","seatNumber":1}]}
+                                """))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("SCREENING_SEATS_NOT_READY"));
     }
 
     private void seedExpiredHold(long id, String row, int number) {

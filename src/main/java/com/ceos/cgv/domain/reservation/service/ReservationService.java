@@ -103,8 +103,12 @@ public class ReservationService {
         for (ScreeningSeat seat : lockedSeats) {
             screeningSeatsByCoordinate.put(new SeatCoordinate(seat.getSeatRow(), seat.getSeatNumber()), seat);
             if (seat.getCurrentReservation() != null) {
-                throw new BusinessException(seat.getCurrentReservation().getStatus() == ReservationStatus.HELD
-                        ? ErrorCode.SEAT_HELD : ErrorCode.SEAT_ALREADY_RESERVED);
+                ErrorCode error = switch (seat.getCurrentReservation().getStatus()) {
+                    case HELD -> ErrorCode.SEAT_HELD;
+                    case RESERVED -> ErrorCode.SEAT_ALREADY_RESERVED;
+                    case EXPIRED, RELEASED, CANCELED -> ErrorCode.SCREENING_SEATS_NOT_READY;
+                };
+                throw new BusinessException(error);
             }
         }
 

@@ -24,6 +24,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import java.time.Clock;
+import java.time.Instant;
 
 @Service
 @RequiredArgsConstructor
@@ -31,6 +33,7 @@ public class ScreeningSeatBackfillService {
     private final ScreeningRepository screeningRepository;
     private final ScreeningSeatRepository screeningSeatRepository;
     private final ReservedSeatRepository reservedSeatRepository;
+    private final Clock seatHoldClock;
 
     @Transactional
     public BackfillResult backfill(Long screeningId) {
@@ -76,6 +79,7 @@ public class ScreeningSeatBackfillService {
         List<ReservedSeat> histories = reservedSeatRepository.findAllByReservation_Screening_Id(screeningId);
         Map<SeatCoordinate, Reservation> activeReservations = new HashMap<>();
         Set<HistoryCoordinate> seenHistoryCoordinates = new HashSet<>();
+        Instant now = seatHoldClock.instant();
         for (ReservedSeat history : histories) {
             SeatCoordinate coordinate = new SeatCoordinate(history.getSeatRow(), history.getSeatNumber());
             ScreeningSeat seat = seatsByCoordinate.get(coordinate);
@@ -88,12 +92,20 @@ public class ScreeningSeatBackfillService {
                 throw conflict();
             }
             Reservation reservation = history.getReservation();
-            if (reservation.getStatus() == ReservationStatus.RESERVED) {
+            boolean active = switch (reservation.getStatus()) {
+                case RESERVED -> true;
+                case HELD -> {
+                    if (reservation.getExpiresAt() == null) {
+                        throw conflict();
+                    }
+                    yield !reservation.isExpiredAt(now);
+                }
+                case CANCELED, EXPIRED, RELEASED -> false;
+            };
+            if (active) {
                 if (activeReservations.putIfAbsent(coordinate, reservation) != null) {
                     throw conflict();
                 }
-            } else if (reservation.getStatus() != ReservationStatus.CANCELED) {
-                throw conflict();
             }
         }
 
