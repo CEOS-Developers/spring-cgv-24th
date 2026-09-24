@@ -36,7 +36,12 @@ public enum ErrorCode {
     LIKE_REQUEST_CONFLICT(HttpStatus.CONFLICT, "찜 요청이 동시에 처리되었습니다. 다시 시도해 주세요."),
 
     // 매점
-    OUT_OF_STOCK(HttpStatus.CONFLICT, "재고가 부족합니다.");
+    INVALID_STOCK_QUANTITY(HttpStatus.BAD_REQUEST, "재고는 1개 이상이어야 합니다."),
+    DUPLICATE_PRODUCT_IN_REQUEST(HttpStatus.BAD_REQUEST, "요청 안에 중복된 상품이 있습니다."),
+    BRANCH_NOT_OPERATING(HttpStatus.CONFLICT, "운영 중인 지점이 아닙니다."),
+    OUT_OF_STOCK(HttpStatus.CONFLICT, "재고가 부족합니다."),
+    STOCK_LOCK_CONFLICT(HttpStatus.CONFLICT, "주문이 몰려 처리하지 못했습니다. 다시 시도해 주세요."),
+    PURCHASE_PAYMENT_FAILED(HttpStatus.PAYMENT_REQUIRED, "결제에 실패했습니다.");
 
     private final HttpStatus httpStatus;
     private final String message;

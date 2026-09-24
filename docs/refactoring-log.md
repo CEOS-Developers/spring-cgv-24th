@@ -980,3 +980,146 @@ Security 이후 넣을 때의 방법: 목록 id를 모아
 ### 확인 (영화)
 
 `./gradlew test` 116개 통과(극장 찜까지 106 + 신규 10). 엔티티는 건드리지 않았다.
+
+---
+
+## 세션 5: 매점 구매 API
+
+`store` 도메인에 엔티티·리포지토리만 있었다. 과제 명세(극장별 재고, 공통 메뉴, 환불 없음)와
+운영진 확인 불변식 **"재고는 어떤 시점에도 1 이상"**을 반영해 메뉴 조회·구매·구매 내역 API를 만들었다.
+
+이미 정해져 있어 유지한 것: 메뉴는 `Product`(공통), 재고는 `Stock`(극장 × 상품),
+`Purchase`-`PurchaseProduct` 헤더-디테일, 구매 시점 가격의 `unitPrice` 복사, 취소 API 없음.
+
+### 결정 1 — 재고 불변식은 엔티티가 1차, DB CHECK가 최종선
+
+`Stock`만 수정했다(`Purchase`·`PurchaseProduct`·`Product`는 그대로).
+
+| 위치 | 규칙 | 위반 시 |
+|---|---|---|
+| 생성자 | `quantity >= 1` | `INVALID_STOCK_QUANTITY` (400) |
+| `decrease(amount)` | `amount >= 1` | `INVALID_INPUT_VALUE` — 음수 차감은 재고를 늘리는 버그 |
+| `decrease(amount)` | `amount <= availableQuantity()` | `OUT_OF_STOCK` (409). 검사를 끝낸 뒤에만 값을 바꿔 실패 시 상태 불변 |
+| DB | `CONSTRAINT ck_stock_quantity_min CHECK (quantity >= 1)` | 엔티티를 우회한 쓰기(수동 SQL, 향후 벌크 쿼리) 차단 |
+
+- **재고 N이면 판매 가능 수량은 N-1**이다. 의도된 동작이고 `availableQuantity()` / `isSoldOut()`으로
+  엔티티가 이 규칙을 소유한다. 메뉴 응답과 차감이 같은 메서드를 본다
+- CHECK는 JPA 3.2 표준 `@Table(check = @CheckConstraint(...))`로 선언했다. MySQL은 **8.0.16부터**
+  CHECK를 실제로 적용한다(그 전엔 파싱만 하고 무시). 운영 DB는 8.0.45(좌석 경합 세션에서 실측)라 유효하다.
+  `ddl-auto: create`라 마이그레이션이 필요 없었다
+- 재고 등록/보충 API는 명세에 없어 만들지 않았다
+
+### 결정 2 — 구매는 단일 단계
+
+좌석은 "고른 뒤 결제까지 남이 못 잡게" 점유가 필요했지만 매점 상품은 대체 가능한 수량이라 점유할
+대상이 없다. PENDING을 두면 선점 때 재고를 빼고 만료 때 되돌리는 **세션 2의 만료 문제가 그대로
+재현**되는데 얻는 것이 없다. 환불도 없으니 `Purchase`에 상태 필드가 필요 없고, 실패한 구매는 기록을
+남기지 않는다.
+
+### 결정 3 — 동시성: 비관적 락, 상품 id 순으로 한 건씩
+
+**트랜잭션 경계**는 `PurchaseService.purchase()` 하나다.
+
+```
+1. 요청 안 중복 상품 검사, 상품 id 오름차순 정렬
+2. 사용자·지점 조회, 운영 상태 확인                    락 없음
+3. 상품 일괄 조회 (findAllById)                          락 없음, 가격·이름용
+4. 상품마다 순서대로
+     SELECT ... FROM stock WHERE branch_id=? AND product_id=? FOR UPDATE   ← 락 획득
+     stock.decrease(qty)
+5. mock 결제 판정 — 실패면 예외 → 전체 롤백
+6. Purchase + items INSERT, stock UPDATE → 커밋 시 락 해제
+```
+
+- **락 범위**: 해당 지점 × 요청 상품의 stock 행만. `uk_stock_branch_product`의 동등 조회라 InnoDB는
+  레코드 락만 건다. 다른 지점, 같은 지점의 다른 상품은 서로 막지 않는다
+- **product는 잠그지 않는다.** 락 쿼리에 `JOIN FETCH s.product`를 넣으면 MySQL `FOR UPDATE`가 조인된
+  product 행까지 잠가 **지점이 달라도 같은 상품 구매가 직렬화**된다. 상품은 3단계에서 따로 읽는다.
+  실제 SQL에서 `from stock s1_0 where ... for update`로 stock만 잠기는 것을 확인했다
+- **데드락 방지**: `IN` 한 방으로 잠그면 획득 순서가 옵티마이저의 인덱스 스캔 순서에 맡겨진다. 정렬 후
+  한 건씩 잠가 순서를 코드로 보장했다. 대가는 상품 종류 수만큼의 SELECT인데 한 주문에 한 자릿수다
+- **락 보유 시간**: 4단계부터 커밋까지. mock 결제라 즉시 끝난다. 실제 PG였다면 외부 호출 동안 락을 쥐게
+  되므로 결제를 트랜잭션 밖으로 빼는 설계가 필요하다. 범위 밖이라 기록만 남긴다
+- **락 대기 타임아웃**(`innodb_lock_wait_timeout=3`) → `ConcurrencyFailureException` →
+  `STOCK_LOCK_CONFLICT`(409). 좌석의 `SEAT_RESERVATION_CONFLICT`처럼 "품절이 아니라 판정 못 함, 재시도"다
+- 좌석에서 비관적 락을 거절한 이유는 **잠글 행이 없어서**였다. 재고는 경합 단위(지점 × 상품)와 정확히
+  일치하는 행이 있으므로 비관적 락이 맞다. 인기 상품은 충돌이 잦아 낙관적 락은 재시도가 폭주하고
+  `@Version` 컬럼(엔티티 변경)도 필요하다
+- 불변식이 엔티티 메서드에 있으므로 조건부 벌크 UPDATE(`quantity - :n >= 1`)는 쓰지 않았다
+
+### 결정 4 — 요청 검증
+
+| 경우 | 응답 | 근거 |
+|---|---|---|
+| 같은 상품 두 번 | 400 `DUPLICATE_PRODUCT_IN_REQUEST` | 합치지 않고 거부. 장바구니는 상품당 한 줄이라 중복은 클라이언트 버그다. 합치면 요청과 저장 내역이 어긋난다. `DUPLICATE_SEAT_IN_REQUEST`와 같은 판단 |
+| 수량 0 이하, 항목 없음, 필수값 누락 | 400 `INVALID_INPUT_VALUE` | Bean Validation(`@Min(1)`, `@NotEmpty`, `@NotNull`) |
+| 없는 상품 id | 404 `PRODUCT_NOT_FOUND` | `findAllById` 결과 개수 비교 |
+| 상품은 있으나 그 극장 재고 행이 없음 | 409 `OUT_OF_STOCK` | 그 극장에서 팔지 않는 상품. 고객에게는 품절과 같다 |
+| 판매 가능 수량 초과 | 409 `OUT_OF_STOCK` | `Stock.decrease()` |
+| 휴관·폐관 지점 | 409 `BRANCH_NOT_OPERATING` | 기존 `Branch.isReservable()`(OPEN만 true). 예매 쪽에는 아직 이 검사가 없다 |
+
+### 결정 5 — API
+
+| 메서드 | 경로 | 요청 | 응답 | 에러 |
+|---|---|---|---|---|
+| GET | `/api/branches/{branchId}/products` | — | 200 `List<StoreMenuResponse>` 상품 id 순 | 404 `BRANCH_NOT_FOUND` |
+| POST | `/api/purchases` | body `userId`, `branchId`, `items[{productId, quantity}]`, `paymentResult` | 201 `PurchaseResponse` | 400 `INVALID_INPUT_VALUE` / `DUPLICATE_PRODUCT_IN_REQUEST` · 404 `USER_NOT_FOUND` / `BRANCH_NOT_FOUND` / `PRODUCT_NOT_FOUND` · 409 `BRANCH_NOT_OPERATING` / `OUT_OF_STOCK` / `STOCK_LOCK_CONFLICT` · 402 `PURCHASE_PAYMENT_FAILED` |
+| GET | `/api/purchases` | `?userId=` | 200 `List<PurchaseResponse>` 최근 순 | 400 · 404 `USER_NOT_FOUND` |
+
+- **메뉴**: `Stock JOIN FETCH product WHERE branch = ?` 한 방. 지점 확인 포함 **SQL 2건, 상품 수와 무관**.
+  원재고는 내리지 않고 판매 가능 수량과 품절 여부만 준다. 휴관 지점도 메뉴는 보여준다(지점 상세와 같은 정책)
+- **구매 내역**: DTO 프로젝션(`PurchaseHistoryRow`, 세션 3-2 방식). 엔티티로 fetch join하면
+  `branch.description`(TEXT)이 **구매 수 × 항목 수**만큼 반복 전송된다. 항목은 구매마다 1개 이상이라 INNER JOIN.
+  `PurchaseResponse.listOf()`가 `LinkedHashMap`으로 묶어 `ORDER BY p.id DESC` 순서를 유지한다
+- **구매 응답**은 방금 만든 엔티티에서 바로 만든다. 추가 SELECT 없음
+- 컨트롤러는 `StoreMenuController`(`/api/branches/{id}/products`)와 `PurchaseController`로 나눴다.
+  메뉴 경로가 branches 아래지만 재고를 읽으므로 store 도메인에 둔다
+
+### 결정 6 — mock 결제는 예매의 `PaymentResult`를 재사용
+
+- 예매는 결제가 별도 호출이라 enum을 `PaymentRequest`로 받았다. 매점은 단일 단계라 구매 요청 본문에
+  `paymentResult`로 받는다. enum은 `reservation.dto.PaymentRequest.PaymentResult`를 그대로 import한다
+  (dto 참조는 도메인 규칙상 허용, service만 금지)
+- **재고를 확보한 뒤 결제를 판정한다.** 결제부터 하면 돈은 나갔는데 품절인 경우가 생긴다
+- FAILURE → `PURCHASE_PAYMENT_FAILED`(402) → **전체 롤백**. 예매의 `noRollbackFor`와 반대다. 예매는 실패해도
+  좌석 해제를 남겨야 했지만 매점은 남길 것이 없다
+- 기존 `PAYMENT_FAILED`는 문구가 "좌석 선택부터 다시"라 예매 전용이다. 문구를 바꾸면 예매 응답이 바뀌므로
+  새 코드를 뒀다
+
+### ErrorCode 추가
+
+`INVALID_STOCK_QUANTITY`(400), `DUPLICATE_PRODUCT_IN_REQUEST`(400), `BRANCH_NOT_OPERATING`(409),
+`STOCK_LOCK_CONFLICT`(409), `PURCHASE_PAYMENT_FAILED`(402). `OUT_OF_STOCK`, `PRODUCT_NOT_FOUND`는 기존 것.
+
+### 회귀 테스트
+
+| 클래스 | 수 | 내용 |
+|---|---|---|
+| `StockTest` | 5 | 생성 시 1 미만 거부, 1개 남기는 차감, 1 미만 만드는 차감 거부 + 값 불변, 음수 차감 거부, N-1 |
+| `StoreMenuControllerTest` | 4 | 판매 가능 수량·품절, 극장별 분리, 404, **상품 3개에서 SQL 2건**(Statistics, N+1 회귀) |
+| `PurchaseControllerTest` | 13 | 성공 201 + 차감 + unitPrice·총액, 1개 남기는 구매, 초과 409, 중복 400, 수량 0 400, 빈 항목 400, 없는 상품 404, 재고 행 없음 409, 휴관 409, 없는 사용자 404, 결제 실패 402, 내역 최근 순, 내역 404 |
+| `PurchaseRollbackTest` | 3 | 부분 성공 없음(A 차감 후 B 실패 → A 원복), 결제 실패 시 재고 원복·기록 없음, **DB CHECK가 우회 쓰기를 막음** |
+| `PurchaseConcurrencyTest` | 2 | 재고 11(판매 가능 10)에 20스레드 동시 구매 → 성공 정확히 10, 나머지 전부 `OUT_OF_STOCK`, 최종 재고 1 / [A,B]·[B,A] 엇갈린 10스레드 → 전원 성공 |
+
+**롤백 검증은 실제 트랜잭션에서 한다.** `@Transactional` 테스트 안에서는 서비스가 바깥 테스트 트랜잭션에
+참여하므로 롤백이 테스트 끝까지 미뤄지고, 차감된 값이 영속성 컨텍스트에 남아 "원복됐다"를 확인할 수 없다.
+그래서 부분 성공·결제 실패는 `ReservationConcurrencyTest`처럼 비트랜잭션 + `@AfterEach` 정리로 분리했다.
+
+CHECK 검증 테스트는 `EntityManager`를 직접 써서 Spring 예외 번역을 거치지 않는다. 기대 예외는
+`DataIntegrityViolationException`이 아니라 Hibernate `ConstraintViolationException`이고, 메시지에 제약 이름이
+실리는 것까지 확인한다.
+
+동시성 테스트는 3회 반복 실행해 모두 통과했다. 테스트 DB는 H2라 InnoDB의 레코드 락 범위까지 재현하지는
+않는다. 검증하는 것은 lost update가 없는지와 획득 순서가 고정되는지다.
+
+### 검토했으나 하지 않은 것
+
+- `Purchase.purchasedAt`을 `Clock` 주입으로 변경 — 시각 기반 로직이 없어 테스트 이득 없이 엔티티만 바뀐다
+- 구매 단건 조회, 내역 페이지네이션 — 요청 범위 밖
+- `IN` 한 방 잠금 — 획득 순서를 코드로 보장할 수 없다
+- 조건부 벌크 UPDATE — 불변식을 엔티티 밖으로 빼게 된다
+
+### 확인
+
+`./gradlew test` 143개 통과(기존 116 + 신규 27). 생성 DDL에
+`constraint ck_stock_quantity_min check (quantity >= 1)`이 들어가는 것을 확인했다.

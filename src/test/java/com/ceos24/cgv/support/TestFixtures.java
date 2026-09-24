@@ -8,6 +8,8 @@ import com.ceos24.cgv.domain.branch.entity.TheaterType;
 import com.ceos24.cgv.domain.movie.entity.Movie;
 import com.ceos24.cgv.domain.reservation.entity.Reservation;
 import com.ceos24.cgv.domain.screening.entity.Screening;
+import com.ceos24.cgv.domain.store.entity.Product;
+import com.ceos24.cgv.domain.store.entity.Stock;
 import com.ceos24.cgv.domain.user.entity.User;
 
 import java.time.LocalDate;
@@ -73,6 +75,21 @@ public class TestFixtures {
                 .user(user)
                 .screening(screening)
                 .now(now)
+                .build();
+    }
+
+    public static Product product(String name, int price) {
+        return Product.builder()
+                .name(name)
+                .price(price)
+                .build();
+    }
+
+    public static Stock stock(Branch branch, Product product, int quantity) {
+        return Stock.builder()
+                .branch(branch)
+                .product(product)
+                .quantity(quantity)
                 .build();
     }
 
