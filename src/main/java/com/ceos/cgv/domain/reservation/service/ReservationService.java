@@ -40,6 +40,7 @@ public class ReservationService {
     private final ReservedSeatRepository reservedSeatRepository;
     private final ScreeningSeatRepository screeningSeatRepository;
     private final ScreeningSeatLockService screeningSeatLockService;
+    private final SeatHoldExpiryService seatHoldExpiryService;
 
     // 예매 생성 전체를 하나의 트랜잭션으로 처리하고 커밋된 데이터만 읽음
     @Transactional(isolation = Isolation.READ_COMMITTED)
@@ -83,6 +84,17 @@ public class ReservationService {
                     .orElseThrow(() -> new BusinessException(ErrorCode.SCREENING_NOT_FOUND));
         } else if (seatCount != (long) screen.getRowCount() * screen.getSeatsPerRow()) {
             throw new BusinessException(ErrorCode.SCREENING_SEATS_NOT_READY);
+        }
+
+        if (!legacyScreening) {
+            Set<Long> occupants = new HashSet<>();
+            for (SeatCoordinate coordinate : requestedSeats) {
+                screeningSeatRepository.findCurrentReservationId(screening.getId(),
+                        coordinate.row(), coordinate.number()).ifPresent(occupants::add);
+            }
+            for (Long occupantId : occupants) {
+                seatHoldExpiryService.expireIfElapsed(occupantId);
+            }
         }
 
         List<ScreeningSeat> lockedSeats = legacyScreening ? List.of()
