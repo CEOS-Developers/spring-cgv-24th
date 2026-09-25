@@ -1291,3 +1291,168 @@ JJWT 예외 분류는 임시 테스트로 입력마다 실제 발생 예외를 �
 
 `./gradlew test` 185개 통과(기존 143 + 신규 42). 로컬 실행 시 `.env`에 `JWT_SECRET`, `JWT_ACCESS_TOKEN_VALIDITY`가 필요하다.
 `UserDetailsService` 빈이 생기면서 Boot의 `Using generated security password` 로그가 사라졌다.
+
+---
+
+## 3주차 세션 2: JWT 인증 필터 / 보호 경로 / 인증·인가 실패 공통 응답
+
+세션 1의 `JwtProvider.parse()`(성공 → `AuthUser`, 실패 → 유형별 `CustomException`)를 전제로,
+요청에서 토큰을 꺼내 SecurityContext에 넣는 필터와 실제 경로 규칙, 401/403 JSON 응답을 만들었다.
+세션 1의 임시 `anyRequest().permitAll()`을 걷어냈다.
+
+### 결정 1 — 오류 코드를 과제 명세 이름으로 교체
+
+| 세션 1 | 세션 2 | 상태 |
+|---|---|---|
+| — | `TOKEN_NOT_EXIST` | 401 |
+| `EXPIRED_TOKEN` | `TOKEN_EXPIRED` | 401 |
+| `INVALID_TOKEN`, `MALFORMED_TOKEN` | `TOKEN_INVALID` (합침) | 401 |
+| — | `ACCESS_DENIED` | 403 |
+
+만료만 따로 둔다. 클라이언트가 재로그인으로 복구할 수 있는 유일한 경우라서다. 변조와 형식 오류를 나눠 알려주면
+공격자가 만든 토큰이 "파싱까지는 통과했다"는 단서가 된다. `JwtProvider`의 catch도 만료 / 나머지 두 갈래로 줄였다.
+
+### 결정 2 — 필터는 막지 않고 기록만 한다 (request attribute 방식)
+
+| 방식 | 선택 |
+|---|---|
+| (a) 필터에서 EntryPoint를 직접 호출하고 체인 종료 | X |
+| (b) 실패 원인을 request attribute에 남기고 통과, 보호 경로에서 거부될 때 EntryPoint가 읽음 | **O** |
+
+(a)는 만료 토큰을 가진 클라이언트가 공개 조회 API까지 막힌다. 거부 여부를 정하는 곳이 경로 규칙과 필터
+두 군데로 갈린다. (b)는 필터가 "사실"만 기록하고, 거부는 `AuthorizationFilter`가 경로 규칙으로 정한다.
+
+필터가 `CustomException`을 그대로 던지면 안 된다. `ExceptionTranslationFilter`는 `AuthenticationException`과
+`AccessDeniedException`만 처리하고, 게다가 JWT 필터는 그보다 앞에 있다. `@RestControllerAdvice`도 닿지 않아
+컨테이너까지 올라가 500이 되고, 공개 API도 같이 죽는다.
+
+**README용 문장 — 토큰 검증 실패 정책**
+
+> 토큰 검증에 실패해도 필터는 요청을 바로 막지 않는다. 실패 원인만 기록하고 익명 요청으로 넘기며, 거부 여부는
+> 경로 규칙이 정한다. 보호 API는 기록된 원인에 따라 `TOKEN_EXPIRED` 또는 `TOKEN_INVALID`로 401을 받고, 공개 조회
+> API는 토큰이 만료되거나 변조됐어도 익명 사용자로 정상 응답한다. 공개 API는 사용자 정보를 쓰지 않으므로 잘못된
+> 토큰이 권한을 얻는 경로는 없다. 대신 클라이언트는 공개 API 응답만으로는 토큰 만료를 알 수 없고, 보호 API를
+> 호출했을 때 알게 된다.
+
+### 결정 3 — principal은 토큰 클레임만으로 만든다 (DB 재조회 없음)
+
+`AuthUser(userId, role)`가 `UserDetails`를 구현해 principal이 된다. 비밀번호는 `null`, username은 userId 문자열.
+세션 1에서 "요청마다 DB를 보지 않는다"를 전제로 설계한 타입이라 별도 `CustomUserDetails` 클래스를 두지 않았다.
+
+- 매 요청 SELECT는 stateless 토큰의 이점을 지운다. 보호 API마다 쿼리가 1건씩 는다
+- **한계**: 권한 변경·탈퇴가 토큰 만료 전까지 반영되지 않는다
+  - 탈퇴 사용자는 `userId`를 쓰는 서비스에서 `USER_NOT_FOUND`로 걸린다
+  - 남는 실질 위험은 "ADMIN 권한을 회수했는데 기존 토큰으로 관리자 API 호출"이다
+- 완화 수단은 짧은 유효기간(`JWT_ACCESS_TOKEN_VALIDITY`)뿐이다. Refresh Token·블랙리스트는 영구 제외 범위다
+
+### 결정 4 — 필터는 빈으로 만들지 않는다
+
+Boot는 `Filter` 타입 빈을 전부 서블릿 컨테이너에 자동 등록한다(`ServletContextInitializerBeans`). 필터가 `@Component`면
+Security 체인 안(`addFilterBefore`)과 밖(서블릿 필터)에 두 번 등록된다. `SecurityConfig`에서
+`new JwtAuthenticationFilter(jwtProvider)`로 만들어 체인에만 넣었다.
+`@Component` + `FilterRegistrationBean.setEnabled(false)`는 만들고 다시 끄는 두 단계라 한쪽이 빠져도 드러나지 않아 택하지 않았다.
+
+실측한 체인 순서:
+
+```
+ 1 DisableEncodeUrlFilter
+ 2 WebAsyncManagerIntegrationFilter
+ 3 SecurityContextHolderFilter          요청 끝에 clearContext()
+ 4 HeaderWriterFilter
+ 5 JwtAuthenticationFilter              ← addFilterBefore(UsernamePasswordAuthenticationFilter)
+ 6 RequestCacheAwareFilter
+ 7 SecurityContextHolderAwareRequestFilter
+ 8 AnonymousAuthenticationFilter        비어 있으면 익명 토큰
+ 9 SessionManagementFilter
+10 ExceptionTranslationFilter           EntryPoint / AccessDeniedHandler 호출
+11 AuthorizationFilter                  경로 규칙 판정
+```
+
+`formLogin`을 꺼서 `UsernamePasswordAuthenticationFilter`는 체인에 없지만, `HttpSecurity`의 순서표 기준으로 그 앞 자리를 받는다.
+Anonymous 필터보다 앞이어야 토큰 인증이 먼저 자리를 잡는다.
+
+SecurityContext는 `createEmptyContext()`로 새로 만들어 교체한다. 기존 인스턴스를 고치면 그것을 공유하는 다른 스레드에 인증이 샌다.
+
+### 결정 5 — 경로 규칙
+
+| 메서드 | 경로 | 규칙 |
+|---|---|---|
+| * | `/api/admin/**` | `hasAuthority(Role.ADMIN.getAuthority())` (API는 세션 3) |
+| GET | `/api/branches/likes`, `/api/movies/likes` | authenticated |
+| POST | `/api/auth/signup`, `/api/auth/login` | permitAll |
+| GET | `/api/movies`, `/api/movies/{id}` | permitAll |
+| GET | `/api/branches`, `/api/branches/regions`, `/api/branches/{id}`, `/api/branches/{branchId}/products` | permitAll |
+| GET | `/api/screenings`, `/api/screenings/{id}/seats` | permitAll |
+| * | `/swagger-ui.html`, `/swagger-ui/**`, `/v3/api-docs/**` | permitAll |
+| * | `/error` | permitAll |
+| * | 그 외 (예매·결제·취소, 찜 등록·해제, 매점 구매·내역) | authenticated |
+
+- 첫 매칭 규칙만 적용된다. `/api/branches/{id}`가 `likes`도 받아들이므로 찜 목록 규칙을 공개 GET보다 먼저 뒀다.
+  순서가 바뀌면 MVC는 리터럴 경로를 우선하므로 찜 목록 컨트롤러가 익명에게 열린다
+- `hasRole("ADMIN")`은 내부에서 `ROLE_`을 다시 붙인다. 접두사를 `Role.getAuthority()` 한 곳에서만 만들기 위해 `hasAuthority`를 썼다
+- 기본값은 `authenticated()`. 규칙 없이 추가된 API는 열리지 않고 잠긴다
+- `/error`: 컨테이너 오류 포워드도 인가를 거친다. 막으면 원래 오류가 익명 401로 덮인다
+
+### 결정 6 — 실패 응답
+
+| 상황 | 경로 | 응답 |
+|---|---|---|
+| 보호 API, 토큰 없음 | 익명 → `AuthorizationFilter` 거부 → `ExceptionTranslationFilter` → EntryPoint (attribute 없음) | 401 `TOKEN_NOT_EXIST` |
+| 보호 API, 만료 토큰 | 필터가 `TOKEN_EXPIRED` 기록 → 익명 → EntryPoint | 401 `TOKEN_EXPIRED` |
+| 보호 API, 변조·형식 오류 | 필터가 `TOKEN_INVALID` 기록 → 익명 → EntryPoint | 401 `TOKEN_INVALID` |
+| 공개 API, 만료·변조 토큰 | 기록만 남고 permitAll 통과 | 200 |
+| 관리자 경로, USER 토큰 | 인증됨 → `AuthorizationFilter` 거부 → AccessDeniedHandler | 403 `ACCESS_DENIED` |
+| 관리자 경로, 토큰 없음 | 익명 → EntryPoint | 401 `TOKEN_NOT_EXIST` |
+
+- `AuthorizationFilter`는 두 경우 모두 같은 `AccessDeniedException`을 던진다. 401/403을 가르는 것은
+  `ExceptionTranslationFilter`가 현재 인증이 익명인지 보는 분기다. 신원을 모르면 권한 없음을 판정할 수 없으므로 401이다
+- 401에는 `WWW-Authenticate: Bearer`를 붙인다
+- JSON 직렬화는 `SecurityErrorResponder` 한 곳. 필터 단계는 `DispatcherServlet` 전이라 `@RestControllerAdvice`가 잡지 못한다.
+  `sendError()`는 Boot 기본 오류 JSON으로 바뀌므로 응답에 직접 쓴다
+- 매퍼는 Boot 4 자동설정 빈인 Jackson 3 `tools.jackson.databind.json.JsonMapper`. Jackson 2 `ObjectMapper`는 jjwt-jackson 때문에
+  classpath에 있지만 빈이 아니다. `ApiResponse`의 `com.fasterxml.jackson.annotation.JsonInclude`는 Jackson 3도 인식한다
+- 서블릿 기본 인코딩이 ISO-8859-1이라 `application/json;charset=UTF-8`을 명시한다
+
+### 결정 7 — CSRF 비활성화 유지
+
+**README용 문장 — CSRF**
+
+> 이 API는 인증 정보를 `Authorization: Bearer` 헤더로만 받고 세션과 인증 쿠키를 쓰지 않는다. CSRF는 브라우저가 쿠키 같은
+> 자격 증명을 요청에 자동으로 실어 보내는 점을 악용하는 공격인데, Bearer 헤더는 클라이언트 코드가 명시적으로 넣어야만
+> 전송되고 다른 출처의 페이지는 그 토큰을 읽을 수 없어 위조된 요청에 인증이 실리지 않는다. 그래서 CSRF 보호를
+> 비활성화했다. 인증 수단을 쿠키로 바꾸면 이 전제가 깨지므로 다시 켜야 한다.
+
+### 결정 8 — Swagger Bearer 스킴
+
+`bearerAuth`(HTTP, bearer, JWT) 스킴과 전역 `SecurityRequirement`를 추가했다. Authorize에 한 번 넣은 토큰이 모든 요청에 실린다.
+공개 API에도 실리지만 결정 2에 따라 막히지 않으므로 무해하다. 컨트롤러마다 `@SecurityRequirement`를 다는 방식은 규칙이
+`SecurityConfig`와 두 곳에 생겨 택하지 않았다. `/v3/api-docs`가 토큰 없이 200이고 `securitySchemes.bearerAuth`가
+들어가는 것을 임시 테스트로 확인했다.
+
+### 남은 것 (세션 3)
+
+보호 API가 여전히 `userId`를 쿼리·본문으로 받는다. 로그인한 A가 `userId=B`로 B의 자원에 접근할 수 있다.
+이번 세션은 "인증 여부"까지만 다뤘고, `@AuthenticationPrincipal AuthUser`로 바꾸는 것과 관리자 API는 세션 3에서 한다.
+
+### 회귀 테스트
+
+`SecurityConfigTest` 3 → 11개. `springSecurity()`를 적용한 MockMvc로 필터 체인을 태운다.
+
+| 테스트 | 확인 |
+|---|---|
+| 공개 API 토큰 없이 / 만료 토큰으로 | 200 |
+| 유효 토큰 + CSRF 없는 POST | 200 |
+| 보호 API 토큰 없음 | 401 `TOKEN_NOT_EXIST`, `WWW-Authenticate: Bearer`, `application/json;charset=UTF-8`, 한글 메시지 |
+| 보호 API 만료 / 변조 | 401 `TOKEN_EXPIRED` / `TOKEN_INVALID` |
+| 찜 목록 두 경로 익명 | 401 (규칙 순서 회귀) |
+| 관리자 경로 USER / 익명 | 403 `ACCESS_DENIED` / 401 `TOKEN_NOT_EXIST` |
+| 세션 미생성 | `Set-Cookie` 없음, 세션 null |
+| 필터 단일 등록 | 빈 0개, 체인 안에 정확히 1개 |
+
+만료 토큰은 테스트 `JwtProperties`와 과거 시각 `Clock`으로 만든 `JwtProvider`로 발급한다.
+정상·실패 시나리오 전수 테스트는 세션 4에서 한다.
+
+### 확인
+
+`./gradlew test` 193개 통과(기존 185 + 신규 8). `ControllerIntegrationTest`는 `springSecurity()`를 적용하지 않아
+기존 컨트롤러 테스트는 영향이 없다.
