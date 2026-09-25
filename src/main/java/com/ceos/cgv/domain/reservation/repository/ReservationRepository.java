@@ -1,5 +1,6 @@
 package com.ceos.cgv.domain.reservation.repository;
 
+import com.ceos.cgv.domain.reservation.dto.ExpiredHoldCandidate;
 import com.ceos.cgv.domain.reservation.dto.ReservationSnapshot;
 import com.ceos.cgv.domain.reservation.entity.Reservation;
 import com.ceos.cgv.domain.reservation.enums.ReservationStatus;
@@ -28,13 +29,18 @@ public interface ReservationRepository extends JpaRepository<Reservation, Long> 
     Optional<ReservationSnapshot> findSnapshotById(@Param("reservationId") Long reservationId);
 
     @Query("""
-            select r.id from Reservation r
+            select new com.ceos.cgv.domain.reservation.dto.ExpiredHoldCandidate(r.id, r.expiresAt)
+            from Reservation r
             where r.status = com.ceos.cgv.domain.reservation.enums.ReservationStatus.HELD
               and r.expiresAt <= :now
+              and (:afterExpiresAt is null or r.expiresAt > :afterExpiresAt
+                   or (r.expiresAt = :afterExpiresAt and r.id > :afterId))
             order by r.expiresAt, r.id
             """)
-    List<Long> findExpiredHoldIds(@Param("now") Instant now,
-                                  Pageable pageable);
+    List<ExpiredHoldCandidate> findExpiredHoldCandidates(@Param("now") Instant now,
+                                                         @Param("afterExpiresAt") Instant afterExpiresAt,
+                                                         @Param("afterId") Long afterId,
+                                                         Pageable pageable);
 
     @Query("""
             select count(r) from Reservation r

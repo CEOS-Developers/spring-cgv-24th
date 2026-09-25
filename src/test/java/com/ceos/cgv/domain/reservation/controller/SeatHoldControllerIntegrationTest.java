@@ -1,6 +1,9 @@
 package com.ceos.cgv.domain.reservation.controller;
 
+import com.ceos.cgv.domain.reservation.config.SeatHoldProperties;
+import com.ceos.cgv.domain.reservation.repository.ReservationRepository;
 import com.ceos.cgv.domain.reservation.service.SeatHoldCleanupTask;
+import com.ceos.cgv.domain.reservation.service.SeatHoldExpiryService;
 import com.ceos.cgv.domain.user.enums.UserRole;
 import com.ceos.cgv.domain.user.security.JwtService;
 import com.jayway.jsonpath.JsonPath;
@@ -15,6 +18,8 @@ import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -35,6 +40,9 @@ class SeatHoldControllerIntegrationTest {
     @Autowired JdbcTemplate jdbc;
     @Autowired JwtService jwtService;
     @Autowired SeatHoldCleanupTask cleanupTask;
+    @Autowired ReservationRepository reservationRepository;
+    @Autowired SeatHoldExpiryService expiryService;
+    @Autowired Clock seatHoldClock;
 
     @BeforeEach
     void setUp() {
@@ -516,6 +524,34 @@ class SeatHoldControllerIntegrationTest {
         assertThat(jdbc.queryForObject("""
                 SELECT current_reservation_id FROM screening_seats WHERE screening_seat_id=8618
                 """, Long.class)).isEqualTo(8623L);
+    }
+
+    @Test
+    void 앞선_만료_선점이_계속_실패해도_다음_만료_선점을_정리한다() {
+        seedExpiredHold(8621L, "A", 1);
+        jdbc.update("UPDATE screening_seats SET current_reservation_id=NULL WHERE screening_seat_id=8617");
+        jdbc.update("""
+                INSERT INTO reservations (reservation_id,user_id,screening_id,status,request_key,expires_at,created_at,updated_at)
+                VALUES (8622,8612,8616,'HELD','123e4567-e89b-12d3-a456-426614174022',
+                        (SELECT expires_at FROM reservations WHERE reservation_id=8621),
+                        CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+                """);
+        jdbc.update("""
+                INSERT INTO reserved_seats (reservation_id,seat_row,seat_number,screening_seat_id)
+                VALUES (8622,'A',2,8618)
+                """);
+        jdbc.update("UPDATE screening_seats SET current_reservation_id=8622 WHERE screening_seat_id=8618");
+        SeatHoldCleanupTask oneAtATime = new SeatHoldCleanupTask(reservationRepository, expiryService,
+                new SeatHoldProperties(Duration.ofMinutes(5), 8, 1, 1), seatHoldClock);
+
+        oneAtATime.cleanup();
+        oneAtATime.cleanup();
+
+        assertThat(jdbc.queryForObject("SELECT status FROM reservations WHERE reservation_id=8622",
+                String.class)).isEqualTo("EXPIRED");
+        assertThat(jdbc.queryForObject("""
+                SELECT current_reservation_id FROM screening_seats WHERE screening_seat_id=8618
+                """, Long.class)).isNull();
     }
 
     @Test

@@ -1,6 +1,7 @@
 package com.ceos.cgv.domain.reservation.service;
 
 import com.ceos.cgv.domain.reservation.config.SeatHoldProperties;
+import com.ceos.cgv.domain.reservation.dto.ExpiredHoldCandidate;
 import com.ceos.cgv.domain.reservation.repository.ReservationRepository;
 import com.ceos.cgv.global.exception.BusinessException;
 import com.ceos.cgv.global.exception.ErrorCode;
@@ -11,6 +12,8 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import java.time.Clock;
+import java.time.Instant;
+import java.util.List;
 
 @Component
 @RequiredArgsConstructor
@@ -20,13 +23,24 @@ public class SeatHoldCleanupTask {
     private final SeatHoldExpiryService expiryService;
     private final SeatHoldProperties properties;
     private final Clock seatHoldClock;
+    private ExpiredHoldCandidate lastScanned;
 
     @Scheduled(fixedDelayString = "${cgv.seat-hold.cleanup-delay-ms:60000}",
             initialDelayString = "${cgv.seat-hold.cleanup-delay-ms:60000}")
-    public void cleanup() {
-        var expiredIds = reservationRepository.findExpiredHoldIds(
-                seatHoldClock.instant(), PageRequest.of(0, properties.cleanupBatchSize()));
-        for (Long reservationId : expiredIds) {
+    public synchronized void cleanup() {
+        Instant now = seatHoldClock.instant();
+        var page = PageRequest.of(0, properties.cleanupBatchSize());
+        List<ExpiredHoldCandidate> candidates = findCandidates(now, page);
+        if (candidates.isEmpty() && lastScanned != null) {
+            lastScanned = null;
+            candidates = findCandidates(now, page);
+        }
+        if (candidates.isEmpty()) {
+            return;
+        }
+        lastScanned = candidates.getLast();
+        for (ExpiredHoldCandidate candidate : candidates) {
+            Long reservationId = candidate.reservationId();
             try {
                 expiryService.expireIfElapsed(reservationId);
             } catch (BusinessException exception) {
@@ -38,5 +52,11 @@ public class SeatHoldCleanupTask {
                 }
             }
         }
+    }
+
+    private List<ExpiredHoldCandidate> findCandidates(Instant now, PageRequest page) {
+        return reservationRepository.findExpiredHoldCandidates(now,
+                lastScanned == null ? null : lastScanned.expiresAt(),
+                lastScanned == null ? null : lastScanned.reservationId(), page);
     }
 }
