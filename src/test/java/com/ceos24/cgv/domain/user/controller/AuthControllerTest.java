@@ -2,15 +2,23 @@ package com.ceos24.cgv.domain.user.controller;
 
 import com.ceos24.cgv.domain.user.entity.Role;
 import com.ceos24.cgv.domain.user.entity.User;
+import com.ceos24.cgv.global.security.AuthUser;
+import com.ceos24.cgv.global.security.LoginUserDetails;
+import com.ceos24.cgv.global.security.jwt.JwtProvider;
 import com.ceos24.cgv.support.ControllerIntegrationTest;
 import com.ceos24.cgv.support.TestFixtures;
+import com.jayway.jsonpath.JsonPath;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
+import java.time.LocalDate;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -23,6 +31,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class AuthControllerTest extends ControllerIntegrationTest {
 
     @Autowired PasswordEncoder passwordEncoder;
+    @Autowired AuthenticationManager authenticationManager;
+    @Autowired JwtProvider jwtProvider;
 
     @Test
     void 회원가입하면_비밀번호를_해시로_저장하고_USER로_생성한다() throws Exception {
@@ -124,6 +134,104 @@ class AuthControllerTest extends ControllerIntegrationTest {
                         .content(json(body)))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("INVALID_INPUT_VALUE"));
+    }
+
+    @Test
+    void 로그인하면_사용자_id와_권한을_담은_토큰을_발급한다() throws Exception {
+        User user = persistUserWithPassword("cgvuser01", "password1!");
+
+        String response = mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(login("cgvuser01", "password1!"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.tokenType").value("Bearer"))
+                .andExpect(jsonPath("$.data.expiresIn").value(1800))
+                .andReturn().getResponse().getContentAsString();
+
+        String token = JsonPath.read(response, "$.data.accessToken");
+        AuthUser authUser = jwtProvider.parse(token);
+        assertThat(authUser.userId()).isEqualTo(user.getId());
+        assertThat(authUser.role()).isEqualTo(Role.USER);
+    }
+
+    @Test
+    void 가입한_계정으로_바로_로그인할_수_있다() throws Exception {
+        mockMvc.perform(post("/api/auth/signup")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(validSignup())))
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(login("cgvuser01", "password1!"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.accessToken").exists());
+    }
+
+    @Test
+    void 비밀번호가_틀린_경우와_계정이_없는_경우의_응답이_같다() throws Exception {
+        persistUserWithPassword("cgvuser01", "password1!");
+
+        String wrongPassword = mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(login("cgvuser01", "wrong-password"))))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("LOGIN_FAILED"))
+                .andReturn().getResponse().getContentAsString();
+
+        String noAccount = mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(login("nobody99", "password1!"))))
+                .andExpect(status().isUnauthorized())
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(noAccount).isEqualTo(wrongPassword);
+    }
+
+    @Test
+    void 로그인_값이_비어_있으면_400() throws Exception {
+        mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(login("cgvuser01", ""))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_INPUT_VALUE"));
+    }
+
+    @Test
+    void 인증이_끝나면_principal의_비밀번호_해시가_지워진다() {
+        persistUserWithPassword("cgvuser01", "password1!");
+
+        Authentication result = authenticationManager.authenticate(
+                UsernamePasswordAuthenticationToken.unauthenticated("cgvuser01", "password1!"));
+
+        LoginUserDetails principal = (LoginUserDetails) result.getPrincipal();
+        assertThat(principal.getUserId()).isNotNull();
+        assertThat(principal.getPassword()).isNull();
+        assertThat(result.getCredentials()).isNull();
+        // FACTOR_PASSWORD는 Security 7이 "비밀번호로 인증했음"을 표시하려고 덧붙인다(다중 인증 지원).
+        // 토큰에는 role만 싣기 때문에 이 권한은 로그인 요청 밖으로 나가지 않는다.
+        assertThat(result.getAuthorities()).extracting("authority")
+                .containsExactlyInAnyOrder("ROLE_USER", "FACTOR_PASSWORD");
+    }
+
+    private User persistUserWithPassword(String loginId, String rawPassword) {
+        User user = persist(User.builder()
+                .loginId(loginId)
+                .password(passwordEncoder.encode(rawPassword))
+                .name("홍길동")
+                .birthDate(LocalDate.of(2000, 1, 1))
+                .email("cgv@example.com")
+                .phoneNumber("01012345678")
+                .build());
+        flushAndClear();
+        return user;
+    }
+
+    private Map<String, String> login(String loginId, String password) {
+        Map<String, String> body = new LinkedHashMap<>();
+        body.put("loginId", loginId);
+        body.put("password", password);
+        return body;
     }
 
     private Map<String, String> validSignup() {

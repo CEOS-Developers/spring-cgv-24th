@@ -1,5 +1,7 @@
 package com.ceos24.cgv.domain.user.controller;
 
+import com.ceos24.cgv.domain.user.dto.LoginRequest;
+import com.ceos24.cgv.domain.user.dto.LoginResponse;
 import com.ceos24.cgv.domain.user.dto.SignupRequest;
 import com.ceos24.cgv.domain.user.dto.SignupResponse;
 import com.ceos24.cgv.domain.user.service.AuthService;
@@ -28,5 +30,11 @@ public class AuthController {
     @ResponseStatus(HttpStatus.CREATED)
     public ApiResponse<SignupResponse> signup(@Valid @RequestBody SignupRequest req) {
         return ApiResponse.success(authService.signup(req));
+    }
+
+    @Operation(summary = "로그인 — Access Token 발급. 계정 없음과 비밀번호 불일치는 같은 응답")
+    @PostMapping("/login")
+    public ApiResponse<LoginResponse> login(@Valid @RequestBody LoginRequest req) {
+        return ApiResponse.success(authService.login(req));
     }
 }

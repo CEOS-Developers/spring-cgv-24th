@@ -1,13 +1,21 @@
 package com.ceos24.cgv.domain.user.service;
 
+import com.ceos24.cgv.domain.user.dto.LoginRequest;
+import com.ceos24.cgv.domain.user.dto.LoginResponse;
 import com.ceos24.cgv.domain.user.dto.SignupRequest;
 import com.ceos24.cgv.domain.user.dto.SignupResponse;
 import com.ceos24.cgv.domain.user.entity.User;
 import com.ceos24.cgv.domain.user.repository.UserRepository;
 import com.ceos24.cgv.global.exception.CustomException;
 import com.ceos24.cgv.global.exception.ErrorCode;
+import com.ceos24.cgv.global.security.LoginUserDetails;
+import com.ceos24.cgv.global.security.jwt.JwtProvider;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -19,6 +27,8 @@ public class AuthService {
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
+    private final AuthenticationManager authenticationManager;
+    private final JwtProvider jwtProvider;
 
     @Transactional
     public SignupResponse signup(SignupRequest req) {
@@ -43,5 +53,21 @@ public class AuthService {
             throw new CustomException(ErrorCode.DUPLICATE_LOGIN_ID);
         }
         return SignupResponse.from(user);
+    }
+
+    public LoginResponse login(LoginRequest req) {
+        Authentication authentication;
+        try {
+            authentication = authenticationManager.authenticate(
+                    UsernamePasswordAuthenticationToken.unauthenticated(req.loginId(), req.password()));
+        } catch (BadCredentialsException e) {
+            // 계정 없음도 여기로 온다(DaoAuthenticationProvider가 변환). 다른 AuthenticationException은
+            // 잡지 않는다. DB 장애 같은 InternalAuthenticationServiceException이 로그인 실패로 가려지면 안 된다.
+            throw new CustomException(ErrorCode.LOGIN_FAILED);
+        }
+
+        LoginUserDetails principal = (LoginUserDetails) authentication.getPrincipal();
+        String accessToken = jwtProvider.createAccessToken(principal.getUserId(), principal.getRole());
+        return LoginResponse.of(accessToken, jwtProvider.getAccessTokenValiditySeconds());
     }
 }

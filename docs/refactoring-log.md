@@ -1123,3 +1123,171 @@ CHECK 검증 테스트는 `EntityManager`를 직접 써서 Spring 예외 번역�
 
 `./gradlew test` 143개 통과(기존 116 + 신규 27). 생성 DDL에
 `constraint ck_stock_quantity_min check (quantity >= 1)`이 들어가는 것을 확인했다.
+
+---
+
+## 3주차 세션 1: 회원가입 / 로그인 / Access Token 발급·검증
+
+3주차 JWT 인증의 첫 세션. 사용자 생성 → 비밀번호 인증 → 토큰 발급·검증까지만 만들었다.
+토큰을 요청에서 꺼내 SecurityContext에 넣는 필터와 보호 경로 구분은 세션 2에서 한다.
+그래서 이번 검증 로직의 목표는 "다음 필터가 만료 / 변조 / 형식 오류를 서로 다른 코드로 응답할 수 있는 구조"다.
+
+### 버전 확인
+
+| 항목 | 버전 | 확인 방법 |
+|---|---|---|
+| Spring Boot | 4.1.1 | `build.gradle` |
+| Spring Security | 7.1.1 | Boot BOM |
+| JJWT | 0.13.0 | Maven Central 최신 안정판 |
+
+- JJWT는 0.12 이후 API만 쓴다(`Jwts.parser().verifyWith().build().parseSignedClaims()`, `Jwts.builder().subject()`).
+  `parserBuilder()`, `setSigningKey()`, `setSubject()` 계열은 쓰지 않는다
+- JJWT에 Jackson 3 모듈이 없어 `jjwt-jackson`(Jackson 2)을 썼다. Boot 4 BOM이 Jackson 2(2.21.5)도 관리한다
+- Security 7의 `DaoAuthenticationProvider`는 `UserDetailsService`를 **생성자로만** 받는다(`setUserDetailsService` 제거).
+  `setPasswordEncoder`는 jar에서 deprecated가 아님을 `javap`로 확인했다
+
+### 결정 1 — AuthenticationManager는 직접 조립한다
+
+```java
+DaoAuthenticationProvider provider = new DaoAuthenticationProvider(userDetailsService);
+provider.setPasswordEncoder(passwordEncoder);
+return new ProviderManager(provider);
+```
+
+`AuthenticationConfiguration.getAuthenticationManager()`도 같은 조립을 하지만, Spring이 빈을 찾아 연결하므로
+"어떤 Provider가 어떤 UserDetailsService·PasswordEncoder로 비교하는지"가 코드에 보이지 않는다.
+
+로그인 호출 순서:
+
+```
+AuthService.login()                                     ← 우리 코드
+ └ authenticationManager.authenticate(unauthenticated token)
+    └ ProviderManager → DaoAuthenticationProvider       ← Spring
+       ├ LoginUserDetailsService.loadUserByUsername()   ← 우리 구현, Spring이 호출
+       ├ passwordEncoder.matches(raw, hash)             ← Spring이 호출
+       └ 성공 → authenticated token, eraseCredentials()
+ └ jwtProvider.createAccessToken()                      ← 우리 코드
+```
+
+### 결정 2 — 로그인 실패는 단일 응답
+
+- `DaoAuthenticationProvider`는 `hideUserNotFoundExceptions=true`(기본)라 `UsernameNotFoundException`을
+  `BadCredentialsException`으로 바꾼다. 계정이 없을 때도 더미 해시로 `matches()`를 돌려(`mitigateAgainstTimingAttack`)
+  응답 시간 차이를 줄인다
+- `AuthService.login()`에서 `BadCredentialsException`만 `LOGIN_FAILED`(401)로 바꾼다
+- `AuthenticationException` 전체를 잡지 않는다. `InternalAuthenticationServiceException`(DB 장애 등)이
+  "비밀번호 틀림"으로 가려지면 안 된다
+- 로그인 요청에는 가입 형식 규칙을 적용하지 않고 `@NotBlank`만 둔다. 400과 401이 갈리면 규칙·존재 여부를 추측할 단서가 된다
+
+두 응답을 다르게 주면 아이디 목록을 대입해 가입된 계정만 추려내는(계정 열거) 공격이 가능해지고,
+추려낸 계정에 비밀번호 대입을 집중할 수 있다.
+
+### 결정 3 — UserDetails는 둘로 나눈다
+
+| 타입 | 쓰이는 곳 | 비밀번호 |
+|---|---|---|
+| `LoginUserDetails` (`UserDetails`, `CredentialsContainer`) | 로그인 한 번 | 해시 보유, 인증 후 `ProviderManager`가 지움 |
+| `AuthUser(userId, role)` record | JWT 검증 결과, 세션 2 필터의 principal | 필드 자체가 없음 |
+
+하나로 합치면 JWT 경로에서 `getPassword()`에 쓰면 안 되는 빈 값을 채워야 한다.
+`LoginUserDetails`가 userId를 들고 있어 인증 직후 재조회 없이 `sub`를 만든다.
+
+**구현 중 걸린 것**: Security 7은 인증 성공 시 권한에 `FACTOR_PASSWORD`를 덧붙인다(다중 인증 지원).
+토큰에는 `role`만 싣기 때문에 이 권한은 로그인 요청 밖으로 나가지 않는다. 테스트에서 이 동작을 명시했다.
+
+### 결정 4 — 토큰 검증 결과는 `AuthUser` 또는 유형별 `CustomException`
+
+| 실제 발생한 JJWT 예외 | 상황 | ErrorCode |
+|---|---|---|
+| `ExpiredJwtException` | 만료 | `EXPIRED_TOKEN` |
+| `security.SignatureException` | payload 변조, 다른 키, HS512 | `INVALID_TOKEN` |
+| `UnsupportedJwtException` | `alg: none` | `INVALID_TOKEN` |
+| `IncorrectClaimException` | 다른 `iss` | `INVALID_TOKEN` |
+| `MalformedJwtException` | 조각 수·Base64·JSON 오류 | `MALFORMED_TOKEN` |
+| `IllegalArgumentException` | null, 빈 문자열, 공백 | `MALFORMED_TOKEN` |
+
+- 세션 2 필터는 `catch (CustomException e)` → `e.getErrorCode()`로 응답을 고른다. 필터는
+  `@RestControllerAdvice` 밖이라 어차피 직접 잡아야 한다
+- JJWT는 서명을 먼저 검증하고 그다음 exp·iss를 본다. **만료 + 변조 토큰은 `INVALID_TOKEN`** 이 나온다.
+  "만료" 판정은 우리가 발급한 게 확실한 토큰에만 붙는다
+- 허용 알고리즘을 `sig().clear().add(HS256)`로 못박았다. 헤더의 `alg`는 토큰을 만든 쪽이 정하는 값이다
+- enum 결과(`TokenStatus`) 반환은 호출자가 VALID 확인을 잊으면 실패 토큰으로 인증이 되므로 택하지 않았다
+
+토큰 구성: `sub`=userId 문자열, `role`=USER|ADMIN(접두사 없음), `iat`, `exp`, `iss`=`cgv-api`(코드 상수). `aud`는 생략.
+HS256, 키는 Base64 디코딩 후 256비트 이상이어야 하고, 미만이면 `WeakKeyException`으로 기동이 실패한다.
+발급·검증 시각은 기존 `Clock` 빈을 쓴다.
+
+설정은 `jwt.secret: ${JWT_SECRET}`, `jwt.access-token-validity: ${JWT_ACCESS_TOKEN_VALIDITY}`이고 기본값이 없다.
+실제 값은 Git에 올리지 않는 `.env`로 주입한다. 테스트 yaml에는 테스트 전용 더미 키를 뒀다.
+
+### 결정 5 — 회원가입 검증
+
+| 필드 | 규칙 | 이유 |
+|---|---|---|
+| loginId | `^[a-z0-9]{4,20}$` | MySQL 기본 collation이 대소문자를 구분하지 않아 `Abc`/`abc`가 unique에서 충돌한다 |
+| password | 공백 없는 ASCII 8~64자 | BCrypt는 72바이트 초과를 거부한다. 한글은 글자당 3바이트라 길이 제한만으로는 못 막는다 |
+| name | `@NotBlank @Size(max=50)` | 컬럼 길이 |
+| birthDate | `@NotNull @Past` | ISO `yyyy-MM-dd` |
+| email | `@NotBlank @Email @Size(max=100)` | unique 없음. 로그인에 쓰지 않는다 |
+| phoneNumber | `^01[016789][0-9]{7,8}$` | **하이픈 없이 숫자만** 저장·수신. 표시 형식은 클라이언트 몫 |
+
+- loginId 중복: `existsByLoginId` pre-check + `saveAndFlush`의 `DataIntegrityViolationException` → 409 `DUPLICATE_LOGIN_ID`.
+  users의 unique 제약은 `login_id` 하나라 오역 여지가 없다
+- `HttpMessageNotReadableException`이 처리되지 않아 `"2000-13-01"` 같은 본문이 **500**으로 나가던 것을 발견해
+  400 `INVALID_INPUT_VALUE`로 매핑했다. 전역 핸들러라 다른 API의 JSON 오류에도 적용된다
+
+### 결정 6 — role은 두 겹으로 막는다
+
+1. `SignupRequest`에 `role` 필드가 없다. Jackson이 모르는 필드를 버린다
+2. `User` 빌더에 role 파라미터가 없고 생성자가 `Role.USER`로 고정한다
+
+관리자 계정 생성은 세션 3에서 의도가 드러나는 별도 메서드로 추가한다(엔티티 변경이라 그때 승인받는다).
+`ROLE_` 접두사는 `Role.getAuthority()` 한 곳에서만 붙인다.
+
+### 엔티티 변경
+
+`User`에 `email`(varchar 100), `phoneNumber`(varchar 11), `role`(enum, not null) 추가. unique는 `login_id`만.
+`Role` enum 신설. 기존 `User.builder()` 사용처는 `TestFixtures.user()`, `ReservationServiceTest.userWithId()` 두 곳이었다.
+
+### 패키지 신설 — `global/security`
+
+`JwtProvider`, `JwtProperties`, `AuthUser`, `LoginUserDetails`, `LoginUserDetailsService`.
+Spring Security 어댑터 모음이라 도메인 밖에 뒀다. CLAUDE.md 패키지 트리에 없는 새 패키지다.
+회원가입·로그인 API는 `domain/user`(`AuthController`, `AuthService`)에 있다.
+
+### 최소 SecurityConfig (임시)
+
+STATELESS, csrf/formLogin/httpBasic/logout 비활성화, `POST /api/auth/signup`·`/api/auth/login` permitAll,
+**나머지도 임시 permitAll**(주석 표시). 세션 2에서 `authenticated()`로 바꾼다.
+
+CSRF를 끈 근거는 "인증 수단이 `Authorization` 헤더뿐"이라는 전제다. 쿠키 인증으로 바꾸면 다시 켜야 한다.
+
+`ControllerIntegrationTest`의 MockMvc는 `springSecurity()`를 적용하지 않아 필터 체인을 타지 않는다.
+그래서 `SecurityConfigTest`를 따로 두고 필터를 태운 상태로 기존 API 개방, CSRF 없는 POST, 세션 미생성을 확인했다.
+
+### API
+
+| 메서드 | 경로 | 요청 | 응답 | 에러 |
+|---|---|---|---|---|
+| POST | `/api/auth/signup` | `{loginId, password, name, birthDate, email, phoneNumber}` | 201 `{userId, loginId}` | 400 `INVALID_INPUT_VALUE` · 409 `DUPLICATE_LOGIN_ID` |
+| POST | `/api/auth/login` | `{loginId, password}` | 200 `{accessToken, tokenType, expiresIn}` | 400 `INVALID_INPUT_VALUE` · 401 `LOGIN_FAILED` |
+
+### ErrorCode 추가
+
+`DUPLICATE_LOGIN_ID`(409), `LOGIN_FAILED`(401), `EXPIRED_TOKEN`(401), `INVALID_TOKEN`(401), `MALFORMED_TOKEN`(401).
+인증 없음·권한 없음 코드는 세션 2에서 추가한다.
+
+### 회귀 테스트
+
+| 클래스 | 수 | 내용 |
+|---|---|---|
+| `SecurityConfigTest` | 3 | 필터를 태운 상태로 기존 GET 200, CSRF 없는 POST 성공, 세션·쿠키 미생성 |
+| `AuthControllerTest` | 22 | 해시 저장 + USER 생성, **본문 `role: ADMIN` 무시**, 같은 비밀번호도 해시 다름, 중복 409, 형식 오류 400(11종), 필수값 누락, 날짜 파싱 실패 400, 로그인 토큰의 sub·role, 가입 후 로그인, **비밀번호 틀림과 계정 없음의 응답 본문 완전 동일**, 빈 값 400, 인증 후 해시 삭제 |
+| `JwtProviderTest` | 17 | 왕복, claim이 정확히 5개, 만료·만료 직전, payload 변조, 다른 키, alg=none, HS512, 다른 iss, 만료+변조 → INVALID, 형식 오류 6종, 짧은 키 기동 실패 |
+
+JJWT 예외 분류는 임시 테스트로 입력마다 실제 발생 예외를 찍어 확인한 뒤 지웠다(결정 4의 표).
+
+### 확인
+
+`./gradlew test` 185개 통과(기존 143 + 신규 42). 로컬 실행 시 `.env`에 `JWT_SECRET`, `JWT_ACCESS_TOKEN_VALIDITY`가 필요하다.
+`UserDetailsService` 빈이 생기면서 Boot의 `Using generated security password` 로그가 사라졌다.
