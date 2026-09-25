@@ -5,6 +5,7 @@ import com.ceos.cgv.domain.movie.dto.MovieResponse;
 import com.ceos.cgv.domain.movie.service.MovieService;
 import com.ceos.cgv.global.common.dto.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -28,8 +29,10 @@ public class MovieController {
     private final MovieService movieService;
 
     @PostMapping
+    @SecurityRequirement(name = "bearerAuth")
     @Operation(summary = "영화 생성")
     @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "201", description = "영화 생성 성공")
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "관리자 권한이 필요합니다.")
     public ResponseEntity<ApiResponse<MovieResponse>> create(@Valid @RequestBody MovieCreateRequest request) {
         MovieResponse response = MovieResponse.from(movieService.create(request));
         return ResponseEntity.created(URI.create("/api/v1/movies/" + response.movieId()))
@@ -51,10 +54,12 @@ public class MovieController {
     }
 
     @DeleteMapping("/{movieId}")
+    @SecurityRequirement(name = "bearerAuth")
     @Operation(summary = "영화 비공개 처리",
             description = "영화와 연관 이력을 보존하고 공개 조회 및 신규 이용을 중단함")
     @io.swagger.v3.oas.annotations.responses.ApiResponse(
             responseCode = "204", description = "영화 비공개 처리 성공")
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "관리자 권한이 필요합니다.")
     public ResponseEntity<Void> delete(@PathVariable Long movieId) {
         movieService.delete(movieId);
         return ResponseEntity.noContent().build();

@@ -4,6 +4,7 @@ import com.ceos.cgv.domain.movie.service.MovieLikeService;
 import com.ceos.cgv.domain.user.security.AuthenticatedUser;
 import com.ceos.cgv.global.common.dto.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -17,6 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/v1/movies/{movieId}/likes")
 @RequiredArgsConstructor
 @Tag(name = "영화 찜", description = "영화 찜 및 취소")
+@SecurityRequirement(name = "bearerAuth")
 public class MovieLikeController {
     private final MovieLikeService movieLikeService;
 

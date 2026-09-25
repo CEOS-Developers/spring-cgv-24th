@@ -8,6 +8,7 @@ import com.ceos.cgv.domain.user.security.AuthenticatedUser;
 import com.ceos.cgv.global.common.dto.ApiResponse;
 import com.ceos.cgv.global.exception.BusinessException;
 import com.ceos.cgv.global.exception.ErrorCode;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -27,6 +28,7 @@ import java.util.UUID;
 @RestController
 @RequestMapping("/api/v1/seat-holds")
 @RequiredArgsConstructor
+@SecurityRequirement(name = "bearerAuth")
 public class SeatHoldController {
     private final SeatHoldService seatHoldService;
     private final SeatHoldTransitionService transitionService;
@@ -52,6 +54,7 @@ public class SeatHoldController {
     }
 
     @PostMapping("/{reservationId}/confirm")
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "본인 선점만 처리할 수 있습니다.")
     public ResponseEntity<ApiResponse<SeatHoldResponse>> confirm(
             @PathVariable Long reservationId, @AuthenticationPrincipal AuthenticatedUser user) {
         SeatHoldTransitionService.TransitionResult result =
@@ -63,6 +66,7 @@ public class SeatHoldController {
     }
 
     @DeleteMapping("/{reservationId}")
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "본인 선점만 처리할 수 있습니다.")
     public ResponseEntity<Void> release(@PathVariable Long reservationId,
                                         @AuthenticationPrincipal AuthenticatedUser user) {
         ErrorCode error = transitionService.release(reservationId, user.userId());

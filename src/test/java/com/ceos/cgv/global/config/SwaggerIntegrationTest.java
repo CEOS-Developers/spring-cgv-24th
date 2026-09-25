@@ -37,4 +37,26 @@ class SwaggerIntegrationTest {
         mockMvc.perform(get("/swagger-ui/index.html"))
                 .andExpect(status().isOk());
     }
+
+    @Test
+    void 보호_API에만_Bearer_인증과_401_403_응답을_표시한다() throws Exception {
+        mockMvc.perform(get("/v3/api-docs"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.components.securitySchemes.bearerAuth.type").value("http"))
+                .andExpect(jsonPath("$.components.securitySchemes.bearerAuth.scheme").value("bearer"))
+                .andExpect(jsonPath("$.paths['/api/v1/movies'].post.security[0].bearerAuth").isArray())
+                .andExpect(jsonPath("$.paths['/api/v1/movies'].post.responses['401'].description")
+                        .value("Access Token이 없거나 유효하지 않습니다."))
+                .andExpect(jsonPath("$.paths['/api/v1/movies'].post.responses['403'].description")
+                        .value("관리자 권한이 필요합니다."))
+                .andExpect(jsonPath("$.paths['/api/v1/seat-holds'].post.security[0].bearerAuth").isArray())
+                .andExpect(jsonPath("$.paths['/api/v1/seat-holds'].post.responses['401']").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/seat-holds'].post.responses['403']").doesNotExist())
+                .andExpect(jsonPath("$.paths['/api/v1/seat-holds/{reservationId}/confirm'].post.responses['403'].description")
+                        .value("본인 선점만 처리할 수 있습니다."))
+                .andExpect(jsonPath("$.paths['/api/v1/food-orders/{orderId}'].get.security[0].bearerAuth")
+                        .isArray())
+                .andExpect(jsonPath("$.paths['/api/v1/movies'].get.security").doesNotExist())
+                .andExpect(jsonPath("$.paths['/api/v1/auth/refresh'].post.security").doesNotExist());
+    }
 }
