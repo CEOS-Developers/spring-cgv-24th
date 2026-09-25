@@ -21,6 +21,9 @@ public enum ErrorCode {
     BRANCH_NOT_FOUND(HttpStatus.NOT_FOUND, "지점을 찾을 수 없습니다."),
     PRODUCT_NOT_FOUND(HttpStatus.NOT_FOUND, "상품을 찾을 수 없습니다."),
 
+    // 인증
+    DUPLICATE_LOGIN_ID(HttpStatus.CONFLICT, "이미 사용 중인 아이디입니다."),
+
     // 예매
     SEAT_OUT_OF_RANGE(HttpStatus.BAD_REQUEST, "좌석이 상영관 범위를 벗어났습니다."),
     DUPLICATE_SEAT_IN_REQUEST(HttpStatus.BAD_REQUEST, "요청 안에 중복된 좌석이 있습니다."),

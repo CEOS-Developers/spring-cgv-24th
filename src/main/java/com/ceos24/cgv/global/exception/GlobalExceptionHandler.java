@@ -3,6 +3,7 @@ package com.ceos24.cgv.global.exception;
 import com.ceos24.cgv.global.response.ApiResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -57,6 +58,15 @@ public class GlobalExceptionHandler {
                 e.getParameterName(), null, "필수 파라미터입니다."));
         return ResponseEntity.badRequest()
                              .body(ApiResponse.error(ErrorCode.INVALID_INPUT_VALUE, fieldErrors));
+    }
+
+    // JSON 문법 오류, 날짜 형식 오류, enum에 없는 값처럼 본문을 객체로 바꾸지 못한 경우.
+    // 처리하지 않으면 아래 Exception 핸들러로 떨어져 500이 된다.
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<ApiResponse<Void>> handleNotReadable(HttpMessageNotReadableException e) {
+        log.warn("[NotReadable] {}", e.getMessage());
+        return ResponseEntity.badRequest()
+                             .body(ApiResponse.error(ErrorCode.INVALID_INPUT_VALUE));
     }
 
     @ExceptionHandler(Exception.class)
