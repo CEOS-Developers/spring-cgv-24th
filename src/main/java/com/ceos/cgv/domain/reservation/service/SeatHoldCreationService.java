@@ -62,9 +62,9 @@ public class SeatHoldCreationService {
                 throw new BusinessException(ErrorCode.DUPLICATE_SEAT_IN_REQUEST);
             }
         }
-        Instant now = seatHoldClock.instant();
         User user = userRepository.findByIdForUpdate(userId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
+        Instant now = seatHoldClock.instant();
 
         var existing = reservationRepository.findByUser_IdAndRequestKey(userId, requestKey.toString());
         if (existing.isPresent()) {
@@ -109,6 +109,7 @@ public class SeatHoldCreationService {
         }
 
         List<ScreeningSeat> seats = seatLockService.lockSeats(screening.getId(), coordinates);
+        now = seatHoldClock.instant();
         for (ScreeningSeat seat : seats) {
             Reservation occupant = seat.getCurrentReservation();
             if (occupant != null) {
@@ -127,7 +128,7 @@ public class SeatHoldCreationService {
             throw new BusinessException(ErrorCode.SEAT_ALREADY_RESERVED);
         }
         Reservation hold = Reservation.hold(user, screening, requestKey,
-                now.plus(properties.duration()));
+                seatHoldClock.instant().plus(properties.duration()));
         Map<SeatCoordinate, ScreeningSeat> byCoordinate = seats.stream()
                 .collect(Collectors.toMap(
                         seat -> new SeatCoordinate(seat.getSeatRow(), seat.getSeatNumber()), Function.identity()));

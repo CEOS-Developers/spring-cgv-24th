@@ -8,6 +8,7 @@ import com.ceos.cgv.domain.movie.repository.MovieRepository;
 import com.ceos.cgv.domain.movie.repository.ScreeningRepository;
 import com.ceos.cgv.domain.movie.repository.ScreeningSeatRepository;
 import com.ceos.cgv.domain.reservation.dto.ReservationCreateRequest;
+import com.ceos.cgv.domain.reservation.dto.ReservationSnapshot;
 import com.ceos.cgv.domain.reservation.dto.ReservedSeatRequest;
 import com.ceos.cgv.domain.reservation.dto.SeatCoordinate;
 import com.ceos.cgv.domain.reservation.entity.Reservation;
@@ -170,6 +171,14 @@ public class ReservationService {
                     .toList();
             List<ScreeningSeat> locked = screeningSeatLockService.lockSeats(
                     reservation.getScreening().getId(), coordinates);
+            ReservationSnapshot current = reservationRepository.findSnapshotById(reservationId)
+                    .orElseThrow(() -> new BusinessException(ErrorCode.RESERVATION_NOT_FOUND));
+            if (current.status() == ReservationStatus.CANCELED) {
+                throw new BusinessException(ErrorCode.RESERVATION_ALREADY_CANCELED);
+            }
+            if (current.status() != ReservationStatus.RESERVED) {
+                throw new BusinessException(ErrorCode.HOLD_NOT_ACTIVE);
+            }
             for (ScreeningSeat seat : locked) {
                 seat.releaseIfOwnedBy(reservation);
             }
