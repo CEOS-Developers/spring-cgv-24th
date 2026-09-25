@@ -23,6 +23,9 @@ public enum ErrorCode {
 
     // 인증
     DUPLICATE_LOGIN_ID(HttpStatus.CONFLICT, "이미 사용 중인 아이디입니다."),
+    EXPIRED_TOKEN(HttpStatus.UNAUTHORIZED, "만료된 토큰입니다."),
+    INVALID_TOKEN(HttpStatus.UNAUTHORIZED, "유효하지 않은 토큰입니다."),
+    MALFORMED_TOKEN(HttpStatus.UNAUTHORIZED, "형식이 올바르지 않은 토큰입니다."),
 
     // 예매
     SEAT_OUT_OF_RANGE(HttpStatus.BAD_REQUEST, "좌석이 상영관 범위를 벗어났습니다."),

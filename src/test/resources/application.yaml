@@ -11,3 +11,8 @@ spring:
     properties:
       hibernate:
         generate_statistics: true
+
+# 테스트 전용 더미 키. 운영 키와 무관하며 노출되어도 되는 값이다.
+jwt:
+  secret: Y2d2LXRlc3Qtb25seS1kdW1teS1oczI1Ni1rZXktbm90LWZvci1wcm9kdWN0aW9uISE=
+  access-token-validity: 30m
