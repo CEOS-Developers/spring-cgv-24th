@@ -11,7 +11,9 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.CannotAcquireLockException;
+import org.springframework.dao.DataAccessResourceFailureException;
 
+import java.sql.SQLException;
 import java.util.List;
 import java.util.Optional;
 
@@ -49,5 +51,27 @@ class ScreeningSeatLockServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .extracting(error -> ((BusinessException) error).getErrorCode())
                 .isEqualTo(ErrorCode.SEAT_BUSY);
+    }
+
+    @Test
+    void MySQL_NOWAIT_3572는_번역_예외가_달라도_좌석_처리중으로_반환한다() {
+        when(repository.lockCoordinateNowait(8L, "A", 1)).thenThrow(
+                new DataAccessResourceFailureException("NOWAIT",
+                        new SQLException("Do not wait for lock", "HY000", 3572)));
+
+        assertThatThrownBy(() -> lockService.lockSeats(8L, List.of(new SeatCoordinate("A", 1))))
+                .isInstanceOf(BusinessException.class)
+                .extracting(error -> ((BusinessException) error).getErrorCode())
+                .isEqualTo(ErrorCode.SEAT_BUSY);
+    }
+
+    @Test
+    void 다른_SQL_오류는_잠금_충돌로_숨기지_않는다() {
+        DataAccessResourceFailureException failure = new DataAccessResourceFailureException(
+                "bad SQL", new SQLException("syntax", "42000", 1064));
+        when(repository.lockCoordinateNowait(8L, "A", 1)).thenThrow(failure);
+
+        assertThatThrownBy(() -> lockService.lockSeats(8L, List.of(new SeatCoordinate("A", 1))))
+                .isSameAs(failure);
     }
 }

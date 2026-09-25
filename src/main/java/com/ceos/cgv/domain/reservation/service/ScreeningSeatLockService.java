@@ -6,13 +6,16 @@ import com.ceos.cgv.domain.reservation.dto.SeatCoordinate;
 import com.ceos.cgv.global.exception.BusinessException;
 import com.ceos.cgv.global.exception.ErrorCode;
 import jakarta.persistence.LockTimeoutException;
+import jakarta.persistence.PersistenceException;
 import jakarta.persistence.PessimisticLockException;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataAccessException;
 import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
@@ -45,8 +48,23 @@ public class ScreeningSeatLockService {
             } catch (PessimisticLockingFailureException | LockTimeoutException
                      | PessimisticLockException exception) {
                 throw new BusinessException(ErrorCode.SEAT_BUSY);
+            } catch (DataAccessException | PersistenceException exception) {
+                if (isMysqlNowait(exception)) {
+                    throw new BusinessException(ErrorCode.SEAT_BUSY);
+                }
+                throw exception;
             }
         }
         return locked;
+    }
+
+    private static boolean isMysqlNowait(Throwable exception) {
+        for (Throwable cause = exception; cause != null; cause = cause.getCause()) {
+            if (cause instanceof SQLException sql
+                    && sql.getErrorCode() == 3572 && "HY000".equals(sql.getSQLState())) {
+                return true;
+            }
+        }
+        return false;
     }
 }
