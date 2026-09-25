@@ -1,8 +1,11 @@
 package com.ceos24.cgv.global.config;
 
+import com.ceos24.cgv.domain.user.entity.Role;
 import com.ceos24.cgv.global.security.JwtAccessDeniedHandler;
 import com.ceos24.cgv.global.security.JwtAuthenticationEntryPoint;
+import com.ceos24.cgv.global.security.jwt.JwtAuthenticationFilter;
 import com.ceos24.cgv.global.security.jwt.JwtProperties;
+import com.ceos24.cgv.global.security.jwt.JwtProvider;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -17,6 +20,7 @@ import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
 @Configuration
 @EnableConfigurationProperties(JwtProperties.class)
@@ -25,7 +29,8 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http,
                                                    JwtAuthenticationEntryPoint authenticationEntryPoint,
-                                                   JwtAccessDeniedHandler accessDeniedHandler) throws Exception {
+                                                   JwtAccessDeniedHandler accessDeniedHandler,
+                                                   JwtProvider jwtProvider) throws Exception {
         http
                 // 인증 수단이 Authorization 헤더뿐이라 브라우저가 자동으로 실어 보내는 자격 증명이 없다.
                 // CSRF는 그 자동 전송을 악용하는 공격이므로 막을 대상이 없다.
@@ -37,11 +42,24 @@ public class SecurityConfig {
                 .exceptionHandling(exception -> exception
                         .authenticationEntryPoint(authenticationEntryPoint)
                         .accessDeniedHandler(accessDeniedHandler))
+                // AnonymousAuthenticationFilter보다 앞에 둬야 토큰 인증이 익명 인증보다 먼저 자리를 잡는다.
+                .addFilterBefore(new JwtAuthenticationFilter(jwtProvider), UsernamePasswordAuthenticationFilter.class)
+                // 위에서부터 처음 맞는 규칙 하나만 적용된다.
                 .authorizeHttpRequests(auth -> auth
+                        .requestMatchers("/api/admin/**").hasAuthority(Role.ADMIN.getAuthority())
+                        // 아래 공개 규칙의 /{id}가 "likes"도 받아들이므로 먼저 막는다.
+                        .requestMatchers(HttpMethod.GET, "/api/branches/likes", "/api/movies/likes").authenticated()
                         .requestMatchers(HttpMethod.POST, "/api/auth/signup", "/api/auth/login").permitAll()
-                        // 임시 설정: JWT 필터가 없는 지금 잠그면 기존 API가 전부 401이 된다.
-                        // 3주차 세션 2에서 보호 경로를 구분하고 authenticated()로 바꾼다.
-                        .anyRequest().permitAll());
+                        .requestMatchers(HttpMethod.GET,
+                                "/api/movies", "/api/movies/{id}",
+                                "/api/branches", "/api/branches/regions", "/api/branches/{id}",
+                                "/api/branches/{branchId}/products",
+                                "/api/screenings", "/api/screenings/{id}/seats").permitAll()
+                        .requestMatchers("/swagger-ui.html", "/swagger-ui/**", "/v3/api-docs/**").permitAll()
+                        // 컨테이너가 오류를 /error로 포워드할 때도 인가를 다시 거친다. 막으면 원래 오류가 401로 덮인다.
+                        .requestMatchers("/error").permitAll()
+                        // 새 API가 규칙 없이 추가되면 열리는 대신 잠기도록 기본값을 인증 필요로 둔다.
+                        .anyRequest().authenticated());
         return http.build();
     }
 

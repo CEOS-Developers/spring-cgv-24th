@@ -1,34 +1,50 @@
 package com.ceos24.cgv.global.config;
 
 import com.ceos24.cgv.domain.branch.entity.Branch;
+import com.ceos24.cgv.domain.user.entity.Role;
 import com.ceos24.cgv.domain.user.entity.User;
+import com.ceos24.cgv.global.security.jwt.JwtAuthenticationFilter;
+import com.ceos24.cgv.global.security.jwt.JwtProperties;
+import com.ceos24.cgv.global.security.jwt.JwtProvider;
 import com.ceos24.cgv.support.TestFixtures;
 import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.HttpHeaders;
+import org.springframework.security.web.FilterChainProxy;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.context.WebApplicationContext;
 
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneOffset;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 // ControllerIntegrationTest의 MockMvc는 Security 필터 체인을 거치지 않는다.
-// 필터를 태워야 "security 의존성을 넣어도 기존 API가 열려 있다"를 확인할 수 있다.
+// 경로 규칙과 인증 실패 응답은 필터를 태워야 확인할 수 있다.
 @SpringBootTest
 @Transactional
 class SecurityConfigTest {
 
     @Autowired WebApplicationContext wac;
     @Autowired EntityManager em;
+    @Autowired JwtProvider jwtProvider;
+    @Autowired JwtProperties jwtProperties;
+    @Autowired FilterChainProxy filterChainProxy;
 
     MockMvc mockMvc;
 
@@ -38,21 +54,77 @@ class SecurityConfigTest {
     }
 
     @Test
-    void 인증_없이_기존_조회_API를_호출할_수_있다() throws Exception {
+    void 공개_조회_API는_토큰_없이_호출할_수_있다() throws Exception {
         mockMvc.perform(get("/api/movies"))
                 .andExpect(status().isOk());
     }
 
     @Test
-    void CSRF_토큰_없이_쓰기_API를_호출할_수_있다() throws Exception {
+    void 공개_조회_API는_만료된_토큰을_보내도_익명으로_통과한다() throws Exception {
+        mockMvc.perform(get("/api/movies").header(HttpHeaders.AUTHORIZATION, bearer(expiredToken())))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void 유효한_토큰이면_CSRF_토큰_없이_보호된_쓰기_API를_호출할_수_있다() throws Exception {
         User user = TestFixtures.user("securitytest");
         Branch branch = TestFixtures.branch("강남점");
         em.persist(user);
         em.persist(branch);
 
         mockMvc.perform(post("/api/branches/{id}/likes", branch.getId())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(jwtProvider.createAccessToken(user.getId(), Role.USER)))
                         .param("userId", user.getId().toString()))
                 .andExpect(status().isOk());
+    }
+
+    @Test
+    void 보호_API에_토큰이_없으면_401_TOKEN_NOT_EXIST() throws Exception {
+        mockMvc.perform(get("/api/purchases").param("userId", "1"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(header().string(HttpHeaders.WWW_AUTHENTICATE, "Bearer"))
+                .andExpect(content().contentType("application/json;charset=UTF-8"))
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.code").value("TOKEN_NOT_EXIST"))
+                .andExpect(jsonPath("$.message").value("인증 토큰이 없습니다."));
+    }
+
+    @Test
+    void 보호_API에_만료된_토큰이면_401_TOKEN_EXPIRED() throws Exception {
+        mockMvc.perform(get("/api/purchases").header(HttpHeaders.AUTHORIZATION, bearer(expiredToken())))
+                .andExpect(status().isUnauthorized())
+                .andExpect(header().string(HttpHeaders.WWW_AUTHENTICATE, "Bearer"))
+                .andExpect(jsonPath("$.code").value("TOKEN_EXPIRED"));
+    }
+
+    @Test
+    void 보호_API에_변조된_토큰이면_401_TOKEN_INVALID() throws Exception {
+        mockMvc.perform(get("/api/purchases").header(HttpHeaders.AUTHORIZATION, bearer("not-a-jwt")))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("TOKEN_INVALID"));
+    }
+
+    @Test
+    void 찜_목록은_공개_상세_경로와_겹쳐도_인증이_필요하다() throws Exception {
+        mockMvc.perform(get("/api/branches/likes"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/api/movies/likes"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void 일반_사용자가_관리자_경로를_호출하면_403_ACCESS_DENIED() throws Exception {
+        mockMvc.perform(get("/api/admin/anything")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(jwtProvider.createAccessToken(1L, Role.USER))))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("ACCESS_DENIED"));
+    }
+
+    @Test
+    void 익명_사용자가_관리자_경로를_호출하면_403이_아니라_401() throws Exception {
+        mockMvc.perform(get("/api/admin/anything"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("TOKEN_NOT_EXIST"));
     }
 
     @Test
@@ -62,5 +134,24 @@ class SecurityConfigTest {
                 .andReturn();
 
         assertThat(result.getRequest().getSession(false)).isNull();
+    }
+
+    // 빈이면 Boot가 서블릿 필터로도 등록해 요청마다 두 번 실행된다.
+    @Test
+    void JWT_필터는_빈이_아니고_Security_체인에만_한_번_등록된다() {
+        assertThat(wac.getBeansOfType(JwtAuthenticationFilter.class)).isEmpty();
+        assertThat(filterChainProxy.getFilterChains().getFirst().getFilters())
+                .filteredOn(JwtAuthenticationFilter.class::isInstance)
+                .hasSize(1);
+    }
+
+    private String expiredToken() {
+        Instant issuedAt = Instant.now().minus(jwtProperties.accessTokenValidity()).minus(Duration.ofMinutes(1));
+        return new JwtProvider(jwtProperties, Clock.fixed(issuedAt, ZoneOffset.UTC))
+                .createAccessToken(1L, Role.USER);
+    }
+
+    private static String bearer(String token) {
+        return "Bearer " + token;
     }
 }
