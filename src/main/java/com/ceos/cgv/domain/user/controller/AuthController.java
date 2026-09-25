@@ -38,8 +38,8 @@ public class AuthController {
         return ResponseEntity.ok(ApiResponse.success(loginService.login(request)));
     }
 
-    @PostMapping("/reissue")
-    public ResponseEntity<ApiResponse<LoginResponse>> reissue(
+    @PostMapping("/refresh")
+    public ResponseEntity<ApiResponse<LoginResponse>> refresh(
             @Valid @RequestBody RefreshTokenRequest request) {
         return ResponseEntity.ok(ApiResponse.success(refreshTokenService.reissue(request.refreshToken())));
     }

@@ -48,7 +48,7 @@ class AuthRefreshIntegrationTest {
                 "SELECT refresh_token_hash FROM users WHERE login_id='cinemafan'", String.class);
         assertThat(savedHash).hasSize(64).isNotEqualTo(refresh);
 
-        String second = mockMvc.perform(post("/api/v1/auth/reissue")
+        String second = mockMvc.perform(post("/api/v1/auth/refresh")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"refreshToken\":\"" + refresh + "\"}"))
                 .andExpect(status().isOk())
@@ -58,7 +58,7 @@ class AuthRefreshIntegrationTest {
         String rotated = JsonPath.read(second, "$.data.refreshToken");
         assertThat(rotated).isNotEqualTo(refresh);
 
-        mockMvc.perform(post("/api/v1/auth/reissue")
+        mockMvc.perform(post("/api/v1/auth/refresh")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"refreshToken\":\"" + refresh + "\"}"))
                 .andExpect(status().isUnauthorized())
@@ -70,7 +70,7 @@ class AuthRefreshIntegrationTest {
                 .andExpect(status().isNoContent());
         assertThat(jdbc.queryForObject(
                 "SELECT refresh_token_hash FROM users WHERE login_id='cinemafan'", String.class)).isNull();
-        mockMvc.perform(post("/api/v1/auth/reissue")
+        mockMvc.perform(post("/api/v1/auth/refresh")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"refreshToken\":\"" + rotated + "\"}"))
                 .andExpect(status().isUnauthorized());
@@ -88,7 +88,7 @@ class AuthRefreshIntegrationTest {
         String previousRefresh = JsonPath.read(first, "$.data.refreshToken");
         login();
 
-        mockMvc.perform(post("/api/v1/auth/reissue")
+        mockMvc.perform(post("/api/v1/auth/refresh")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"refreshToken\":\"" + previousRefresh + "\"}"))
                 .andExpect(status().isUnauthorized());
@@ -99,7 +99,7 @@ class AuthRefreshIntegrationTest {
                         .header("Authorization", "Bearer " + previousRefresh))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value("TOKEN_INVALID"));
-        mockMvc.perform(post("/api/v1/auth/reissue")
+        mockMvc.perform(post("/api/v1/auth/refresh")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"refreshToken\":\"" + previousAccess + "\"}"))
                 .andExpect(status().isUnauthorized())

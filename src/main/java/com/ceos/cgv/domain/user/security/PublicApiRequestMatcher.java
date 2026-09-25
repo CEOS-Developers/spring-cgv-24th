@@ -9,7 +9,7 @@ public class PublicApiRequestMatcher implements RequestMatcher {
         String path = request.getRequestURI().substring(request.getContextPath().length());
         if ("POST".equals(request.getMethod())
                 && (path.equals("/api/v1/auth/signup") || path.equals("/api/v1/auth/login")
-                || path.equals("/api/v1/auth/reissue") || path.equals("/api/v1/auth/logout"))) {
+                || path.equals("/api/v1/auth/refresh") || path.equals("/api/v1/auth/logout"))) {
             return true;
         }
         if (!"GET".equals(request.getMethod())) {
