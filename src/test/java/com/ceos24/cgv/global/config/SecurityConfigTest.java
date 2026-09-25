@@ -34,8 +34,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-// ControllerIntegrationTest의 MockMvc는 Security 필터 체인을 거치지 않는다.
-// 경로 규칙과 인증 실패 응답은 필터를 태워야 확인할 수 있다.
+// 경로 규칙, 인증·인가 실패 응답, 필터 등록 방식처럼 특정 컨트롤러에 속하지 않는 보안 설정을 확인한다.
 @SpringBootTest
 @Transactional
 class SecurityConfigTest {
@@ -73,14 +72,13 @@ class SecurityConfigTest {
         em.persist(branch);
 
         mockMvc.perform(post("/api/branches/{id}/likes", branch.getId())
-                        .header(HttpHeaders.AUTHORIZATION, bearer(jwtProvider.createAccessToken(user.getId(), Role.USER)))
-                        .param("userId", user.getId().toString()))
+                        .header(HttpHeaders.AUTHORIZATION, bearer(jwtProvider.createAccessToken(user.getId(), Role.USER))))
                 .andExpect(status().isOk());
     }
 
     @Test
     void 보호_API에_토큰이_없으면_401_TOKEN_NOT_EXIST() throws Exception {
-        mockMvc.perform(get("/api/purchases").param("userId", "1"))
+        mockMvc.perform(get("/api/purchases"))
                 .andExpect(status().isUnauthorized())
                 .andExpect(header().string(HttpHeaders.WWW_AUTHENTICATE, "Bearer"))
                 .andExpect(content().contentType("application/json;charset=UTF-8"))

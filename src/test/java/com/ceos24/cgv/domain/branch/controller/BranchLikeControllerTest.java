@@ -24,11 +24,11 @@ class BranchLikeControllerTest extends ControllerIntegrationTest {
         Branch branch = persist(TestFixtures.branch("강남점"));
 
         mockMvc.perform(post("/api/branches/{id}/likes", branch.getId())
-                        .param("userId", user.getId().toString()))
+                        .with(bearer(user)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true));
 
-        mockMvc.perform(get("/api/branches/likes").param("userId", user.getId().toString()))
+        mockMvc.perform(get("/api/branches/likes").with(bearer(user)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.length()").value(1))
                 .andExpect(jsonPath("$.data[0].branchId").value(branch.getId()))
@@ -45,7 +45,7 @@ class BranchLikeControllerTest extends ControllerIntegrationTest {
 
         for (int i = 0; i < 2; i++) {
             mockMvc.perform(post("/api/branches/{id}/likes", branch.getId())
-                            .param("userId", user.getId().toString()))
+                            .with(bearer(user)))
                     .andExpect(status().isOk());
         }
 
@@ -59,10 +59,10 @@ class BranchLikeControllerTest extends ControllerIntegrationTest {
         persist(BranchLike.builder().user(user).branch(branch).build());
 
         mockMvc.perform(delete("/api/branches/{id}/likes", branch.getId())
-                        .param("userId", user.getId().toString()))
+                        .with(bearer(user)))
                 .andExpect(status().isOk());
 
-        mockMvc.perform(get("/api/branches/likes").param("userId", user.getId().toString()))
+        mockMvc.perform(get("/api/branches/likes").with(bearer(user)))
                 .andExpect(jsonPath("$.data.length()").value(0));
     }
 
@@ -72,7 +72,7 @@ class BranchLikeControllerTest extends ControllerIntegrationTest {
         Branch branch = persist(TestFixtures.branch("강남점"));
 
         mockMvc.perform(delete("/api/branches/{id}/likes", branch.getId())
-                        .param("userId", user.getId().toString()))
+                        .with(bearer(user)))
                 .andExpect(status().isOk());
     }
 
@@ -84,7 +84,7 @@ class BranchLikeControllerTest extends ControllerIntegrationTest {
         persist(BranchLike.builder().user(other).branch(branch).build());
 
         mockMvc.perform(delete("/api/branches/{id}/likes", branch.getId())
-                        .param("userId", me.getId().toString()))
+                        .with(bearer(me)))
                 .andExpect(status().isOk());
 
         assertThat(likeCount()).isEqualTo(1);
@@ -94,7 +94,7 @@ class BranchLikeControllerTest extends ControllerIntegrationTest {
     void 없는_극장을_찜하면_404() throws Exception {
         User user = persist(TestFixtures.user("liker"));
 
-        mockMvc.perform(post("/api/branches/9999/likes").param("userId", user.getId().toString()))
+        mockMvc.perform(post("/api/branches/9999/likes").with(bearer(user)))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("BRANCH_NOT_FOUND"));
     }
@@ -103,26 +103,25 @@ class BranchLikeControllerTest extends ControllerIntegrationTest {
     void 없는_사용자가_찜하면_404() throws Exception {
         Branch branch = persist(TestFixtures.branch("강남점"));
 
-        mockMvc.perform(post("/api/branches/{id}/likes", branch.getId()).param("userId", "9999"))
+        mockMvc.perform(post("/api/branches/{id}/likes", branch.getId()).with(bearer(missingUser())))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("USER_NOT_FOUND"));
     }
 
     @Test
     void 없는_사용자의_찜_목록은_404() throws Exception {
-        mockMvc.perform(get("/api/branches/likes").param("userId", "9999"))
+        mockMvc.perform(get("/api/branches/likes").with(bearer(missingUser())))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("USER_NOT_FOUND"));
     }
 
     @Test
-    void userId가_없으면_400() throws Exception {
+    void 토큰이_없으면_401() throws Exception {
         Branch branch = persist(TestFixtures.branch("강남점"));
 
         mockMvc.perform(post("/api/branches/{id}/likes", branch.getId()))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("INVALID_INPUT_VALUE"))
-                .andExpect(jsonPath("$.errors[0].field").value("userId"));
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("TOKEN_NOT_EXIST"));
     }
 
     @Test
@@ -134,7 +133,7 @@ class BranchLikeControllerTest extends ControllerIntegrationTest {
         persist(BranchLike.builder().user(user).branch(open).build());
         flushAndClear();
 
-        mockMvc.perform(get("/api/branches/likes").param("userId", user.getId().toString()))
+        mockMvc.perform(get("/api/branches/likes").with(bearer(user)))
                 .andExpect(jsonPath("$.data.length()").value(2))
                 .andExpect(jsonPath("$.data[0].name").value("강남점"))
                 .andExpect(jsonPath("$.data[1].name").value("폐관점"))

@@ -75,7 +75,7 @@ class PurchaseRollbackTest {
     @Test
     void 한_상품이라도_재고가_모자라면_다른_상품도_차감되지_않는다() {
         // 팝콘은 먼저 잠기고 차감된 뒤 콜라에서 실패한다. 부분 성공이 남으면 팝콘이 8이 된다.
-        assertThatThrownBy(() -> purchaseService.purchase(request(PaymentResult.SUCCESS,
+        assertThatThrownBy(() -> purchaseService.purchase(userId, request(PaymentResult.SUCCESS,
                 new PurchaseCreateRequest.Item(popcornId, 2),
                 new PurchaseCreateRequest.Item(colaId, 3))))
                 .isInstanceOf(CustomException.class)
@@ -89,7 +89,7 @@ class PurchaseRollbackTest {
 
     @Test
     void 결제가_실패하면_차감한_재고가_원복되고_구매_기록도_없다() {
-        assertThatThrownBy(() -> purchaseService.purchase(request(PaymentResult.FAILURE,
+        assertThatThrownBy(() -> purchaseService.purchase(userId, request(PaymentResult.FAILURE,
                 new PurchaseCreateRequest.Item(popcornId, 2))))
                 .isInstanceOf(CustomException.class)
                 .extracting(e -> ((CustomException) e).getErrorCode())
@@ -113,7 +113,7 @@ class PurchaseRollbackTest {
     }
 
     private PurchaseCreateRequest request(PaymentResult result, PurchaseCreateRequest.Item... items) {
-        return new PurchaseCreateRequest(userId, branchId, List.of(items), result);
+        return new PurchaseCreateRequest(branchId, List.of(items), result);
     }
 
     private int quantityOf(Long productId) {

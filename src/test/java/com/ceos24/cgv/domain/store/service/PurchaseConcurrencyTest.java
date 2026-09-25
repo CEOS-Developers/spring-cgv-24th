@@ -118,7 +118,7 @@ class PurchaseConcurrencyTest {
         });
     }
 
-    private List<Outcome> runConcurrently(int threads, IntFunction<PurchaseCreateRequest> requestOf)
+    private List<Outcome> runConcurrently(int threads, IntFunction<Attempt> attemptOf)
             throws Exception {
         ExecutorService pool = Executors.newFixedThreadPool(threads);
         CountDownLatch ready = new CountDownLatch(threads);
@@ -126,12 +126,12 @@ class PurchaseConcurrencyTest {
 
         List<Callable<Outcome>> tasks = new ArrayList<>();
         for (int i = 0; i < threads; i++) {
-            PurchaseCreateRequest req = requestOf.apply(i);
+            Attempt attempt = attemptOf.apply(i);
             tasks.add(() -> {
                 ready.countDown();
                 go.await();
                 try {
-                    purchaseService.purchase(req);
+                    purchaseService.purchase(attempt.userId(), attempt.request());
                     return new Outcome(true, null);
                 } catch (Throwable t) {
                     return new Outcome(false, t);
@@ -157,8 +157,8 @@ class PurchaseConcurrencyTest {
         }
     }
 
-    private PurchaseCreateRequest request(Long userId, PurchaseCreateRequest.Item... items) {
-        return new PurchaseCreateRequest(userId, branchId, List.of(items), PaymentResult.SUCCESS);
+    private Attempt request(Long userId, PurchaseCreateRequest.Item... items) {
+        return new Attempt(userId, new PurchaseCreateRequest(branchId, List.of(items), PaymentResult.SUCCESS));
     }
 
     private long successCount(List<Outcome> outcomes) {
@@ -179,6 +179,8 @@ class PurchaseConcurrencyTest {
         return transactionTemplate.execute(status -> em.createQuery(
                 "select count(p) from Purchase p", Long.class).getSingleResult());
     }
+
+    private record Attempt(Long userId, PurchaseCreateRequest request) {}
 
     private record Outcome(boolean success, Throwable error) {}
 }

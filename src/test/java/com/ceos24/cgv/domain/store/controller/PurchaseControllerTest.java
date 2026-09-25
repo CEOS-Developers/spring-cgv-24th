@@ -121,12 +121,36 @@ class PurchaseControllerTest extends ControllerIntegrationTest {
 
     @Test
     void 없는_사용자는_404() throws Exception {
-        String body = "{\"userId\":9999,\"branchId\":%d,\"paymentResult\":\"SUCCESS\",\"items\":[%s]}"
-                .formatted(branch.getId(), item(popcorn.getId(), 1));
-
-        mockMvc.perform(post("/api/purchases").contentType("application/json").content(body))
+        구매요청(missingUser(), branch.getId(), "SUCCESS", item(popcorn.getId(), 1))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("USER_NOT_FOUND"));
+    }
+
+    @Test
+    void 본문에_남의_userId를_실어도_토큰의_사용자로_구매된다() throws Exception {
+        User other = persist(TestFixtures.user("other"));
+        String body = "{\"userId\":%d,\"branchId\":%d,\"paymentResult\":\"SUCCESS\",\"items\":[%s]}"
+                .formatted(other.getId(), branch.getId(), item(popcorn.getId(), 1));
+
+        mockMvc.perform(post("/api/purchases").with(bearer(user))
+                        .contentType("application/json").content(body))
+                .andExpect(status().isCreated());
+        flushAndClear();
+
+        mockMvc.perform(get("/api/purchases").with(bearer(user)))
+                .andExpect(jsonPath("$.data.length()").value(1));
+        mockMvc.perform(get("/api/purchases").with(bearer(other)))
+                .andExpect(jsonPath("$.data.length()").value(0));
+    }
+
+    @Test
+    void 토큰_없이_구매하면_401() throws Exception {
+        mockMvc.perform(post("/api/purchases")
+                        .contentType("application/json")
+                        .content("{\"branchId\":%d,\"paymentResult\":\"SUCCESS\",\"items\":[%s]}"
+                                .formatted(branch.getId(), item(popcorn.getId(), 1))))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("TOKEN_NOT_EXIST"));
     }
 
     @Test
@@ -142,7 +166,7 @@ class PurchaseControllerTest extends ControllerIntegrationTest {
         구매요청(branch.getId(), "SUCCESS", item(popcorn.getId(), 2), item(cola.getId(), 1));
         flushAndClear();
 
-        mockMvc.perform(get("/api/purchases").param("userId", user.getId().toString()))
+        mockMvc.perform(get("/api/purchases").with(bearer(user)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.length()").value(2))
                 .andExpect(jsonPath("$.data[0].totalPrice").value(13000))
@@ -156,7 +180,7 @@ class PurchaseControllerTest extends ControllerIntegrationTest {
 
     @Test
     void 없는_사용자의_구매_내역은_404() throws Exception {
-        mockMvc.perform(get("/api/purchases").param("userId", "9999"))
+        mockMvc.perform(get("/api/purchases").with(bearer(missingUser())))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("USER_NOT_FOUND"));
     }
@@ -168,9 +192,14 @@ class PurchaseControllerTest extends ControllerIntegrationTest {
     }
 
     private ResultActions 구매요청(Long branchId, String paymentResult, String... items) throws Exception {
-        String body = "{\"userId\":%d,\"branchId\":%d,\"paymentResult\":\"%s\",\"items\":[%s]}"
-                .formatted(user.getId(), branchId, paymentResult, String.join(",", items));
-        return mockMvc.perform(post("/api/purchases")
+        return 구매요청(user, branchId, paymentResult, items);
+    }
+
+    private ResultActions 구매요청(User buyer, Long branchId, String paymentResult, String... items)
+            throws Exception {
+        String body = "{\"branchId\":%d,\"paymentResult\":\"%s\",\"items\":[%s]}"
+                .formatted(branchId, paymentResult, String.join(",", items));
+        return mockMvc.perform(post("/api/purchases").with(bearer(buyer))
                 .contentType("application/json")
                 .content(body));
     }

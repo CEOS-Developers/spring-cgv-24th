@@ -40,12 +40,12 @@ public class PurchaseService {
     // 재고 확보부터 저장까지 한 트랜잭션이다. 어느 단계에서 예외가 나도 차감이 전부 롤백되어
     // 부분 성공이 없고, 잡았던 재고 행 락도 함께 풀린다.
     @Transactional
-    public PurchaseResponse purchase(PurchaseCreateRequest req) {
+    public PurchaseResponse purchase(Long userId, PurchaseCreateRequest req) {
         // 1. 요청 안 중복 상품
         List<PurchaseCreateRequest.Item> items = sortedByProductId(req.items());
 
         // 2. 사용자·지점 존재, 지점 운영 여부
-        User user = userRepository.findById(req.userId())
+        User user = userRepository.findById(userId)
                 .orElseThrow(() -> new CustomException(ErrorCode.USER_NOT_FOUND));
         Branch branch = branchRepository.findById(req.branchId())
                 .orElseThrow(() -> new CustomException(ErrorCode.BRANCH_NOT_FOUND));

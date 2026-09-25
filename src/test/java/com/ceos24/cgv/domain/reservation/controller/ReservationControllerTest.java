@@ -14,9 +14,7 @@ import org.hamcrest.Matchers;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
-import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.ResultActions;
-import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.time.Clock;
 import java.time.LocalDateTime;
@@ -27,7 +25,6 @@ import static com.ceos24.cgv.domain.reservation.entity.AudienceType.ADULT;
 import static com.ceos24.cgv.domain.reservation.entity.AudienceType.YOUTH;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.BDDMockito.given;
-import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
@@ -46,8 +43,6 @@ class ReservationControllerTest extends ControllerIntegrationTest {
 
     @BeforeEach
     void setUp() {
-        // 토큰을 필터가 풀어 SecurityContext에 넣어야 컨트롤러가 principal을 받는다
-        mockMvc = MockMvcBuilders.webAppContextSetup(wac).apply(springSecurity()).build();
         setNow(NOW);
 
         Branch branch = persist(TestFixtures.branch("강남점"));
@@ -110,11 +105,7 @@ class ReservationControllerTest extends ControllerIntegrationTest {
 
     @Test
     void 토큰은_유효하지만_사용자가_없으면_404() throws Exception {
-        // 탈퇴한 사용자의 토큰도 만료 전까지는 서명 검증을 통과한다
-        User ghost = TestFixtures.user("ghostuser1");
-        ReflectionTestUtils.setField(ghost, "id", 9999L);
-
-        선점요청(ghost, screening.getId(), seat(1, 1, ADULT))
+        선점요청(missingUser(), screening.getId(), seat(1, 1, ADULT))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("USER_NOT_FOUND"));
     }
@@ -361,10 +352,7 @@ class ReservationControllerTest extends ControllerIntegrationTest {
 
     @Test
     void 사라진_사용자의_토큰으로_내역을_조회하면_404() throws Exception {
-        User ghost = TestFixtures.user("ghostuser1");
-        ReflectionTestUtils.setField(ghost, "id", 9999L);
-
-        내역요청(ghost)
+        내역요청(missingUser())
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("USER_NOT_FOUND"));
     }

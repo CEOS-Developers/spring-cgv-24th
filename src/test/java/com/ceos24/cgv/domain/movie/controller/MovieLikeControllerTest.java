@@ -22,11 +22,11 @@ class MovieLikeControllerTest extends ControllerIntegrationTest {
         Movie movie = persist(TestFixtures.movie("범죄도시"));
 
         mockMvc.perform(post("/api/movies/{id}/likes", movie.getId())
-                        .param("userId", user.getId().toString()))
+                        .with(bearer(user)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true));
 
-        mockMvc.perform(get("/api/movies/likes").param("userId", user.getId().toString()))
+        mockMvc.perform(get("/api/movies/likes").with(bearer(user)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.length()").value(1))
                 .andExpect(jsonPath("$.data[0].movieId").value(movie.getId()))
@@ -42,7 +42,7 @@ class MovieLikeControllerTest extends ControllerIntegrationTest {
 
         for (int i = 0; i < 2; i++) {
             mockMvc.perform(post("/api/movies/{id}/likes", movie.getId())
-                            .param("userId", user.getId().toString()))
+                            .with(bearer(user)))
                     .andExpect(status().isOk());
         }
 
@@ -56,10 +56,10 @@ class MovieLikeControllerTest extends ControllerIntegrationTest {
         persist(MovieLike.builder().user(user).movie(movie).build());
 
         mockMvc.perform(delete("/api/movies/{id}/likes", movie.getId())
-                        .param("userId", user.getId().toString()))
+                        .with(bearer(user)))
                 .andExpect(status().isOk());
 
-        mockMvc.perform(get("/api/movies/likes").param("userId", user.getId().toString()))
+        mockMvc.perform(get("/api/movies/likes").with(bearer(user)))
                 .andExpect(jsonPath("$.data.length()").value(0));
     }
 
@@ -69,7 +69,7 @@ class MovieLikeControllerTest extends ControllerIntegrationTest {
         Movie movie = persist(TestFixtures.movie("범죄도시"));
 
         mockMvc.perform(delete("/api/movies/{id}/likes", movie.getId())
-                        .param("userId", user.getId().toString()))
+                        .with(bearer(user)))
                 .andExpect(status().isOk());
     }
 
@@ -81,7 +81,7 @@ class MovieLikeControllerTest extends ControllerIntegrationTest {
         persist(MovieLike.builder().user(other).movie(movie).build());
 
         mockMvc.perform(delete("/api/movies/{id}/likes", movie.getId())
-                        .param("userId", me.getId().toString()))
+                        .with(bearer(me)))
                 .andExpect(status().isOk());
 
         assertThat(likeCount()).isEqualTo(1);
@@ -91,7 +91,7 @@ class MovieLikeControllerTest extends ControllerIntegrationTest {
     void 없는_영화를_찜하면_404() throws Exception {
         User user = persist(TestFixtures.user("liker"));
 
-        mockMvc.perform(post("/api/movies/9999/likes").param("userId", user.getId().toString()))
+        mockMvc.perform(post("/api/movies/9999/likes").with(bearer(user)))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("MOVIE_NOT_FOUND"));
     }
@@ -100,26 +100,25 @@ class MovieLikeControllerTest extends ControllerIntegrationTest {
     void 없는_사용자가_찜하면_404() throws Exception {
         Movie movie = persist(TestFixtures.movie("범죄도시"));
 
-        mockMvc.perform(post("/api/movies/{id}/likes", movie.getId()).param("userId", "9999"))
+        mockMvc.perform(post("/api/movies/{id}/likes", movie.getId()).with(bearer(missingUser())))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("USER_NOT_FOUND"));
     }
 
     @Test
     void 없는_사용자의_찜_목록은_404() throws Exception {
-        mockMvc.perform(get("/api/movies/likes").param("userId", "9999"))
+        mockMvc.perform(get("/api/movies/likes").with(bearer(missingUser())))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("USER_NOT_FOUND"));
     }
 
     @Test
-    void userId가_없으면_400() throws Exception {
+    void 토큰이_없으면_401() throws Exception {
         Movie movie = persist(TestFixtures.movie("범죄도시"));
 
         mockMvc.perform(post("/api/movies/{id}/likes", movie.getId()))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("INVALID_INPUT_VALUE"))
-                .andExpect(jsonPath("$.errors[0].field").value("userId"));
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("TOKEN_NOT_EXIST"));
     }
 
     @Test
@@ -131,7 +130,7 @@ class MovieLikeControllerTest extends ControllerIntegrationTest {
         persist(MovieLike.builder().user(user).movie(second).build());
         flushAndClear();
 
-        mockMvc.perform(get("/api/movies/likes").param("userId", user.getId().toString()))
+        mockMvc.perform(get("/api/movies/likes").with(bearer(user)))
                 .andExpect(jsonPath("$.data.length()").value(2))
                 .andExpect(jsonPath("$.data[0].title").value("나중찜한영화"))
                 .andExpect(jsonPath("$.data[1].title").value("먼저찜한영화"));
