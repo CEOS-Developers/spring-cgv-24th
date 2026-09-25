@@ -14,6 +14,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
+
 // principal에서 userId만 꺼내 넘긴다. 서비스가 인증 방식을 모르면 테스트나 다른 호출 경로에서
 // Long 하나로 부를 수 있다.
 @Tag(name = "예매", description = "예매 생성/조회/취소")
@@ -38,6 +40,12 @@ public class ReservationController {
                                                 @PathVariable Long id,
                                                 @Valid @RequestBody PaymentRequest req) {
         return ApiResponse.success(reservationService.pay(id, authUser.userId(), req));
+    }
+
+    @Operation(summary = "내 예매 내역 (최근 예매 순, 취소·만료 포함)")
+    @GetMapping
+    public ApiResponse<List<ReservationResponse>> myReservations(@AuthenticationPrincipal AuthUser authUser) {
+        return ApiResponse.success(reservationService.findMine(authUser.userId()));
     }
 
     @Operation(summary = "예매 단건 조회")

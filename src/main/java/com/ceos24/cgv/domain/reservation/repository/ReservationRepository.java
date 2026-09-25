@@ -49,6 +49,25 @@ public interface ReservationRepository extends JpaRepository<Reservation, Long> 
             """)
     List<ReservationDetailRow> findOwnedDetailRows(@Param("id") Long id, @Param("userId") Long userId);
 
+    // 내역은 예매 수 × 좌석 수 행이 된다. 엔티티로 읽으면 branch.description(TEXT)이 그 행 수만큼
+    // 반복 전송되므로 단건 조회와 같은 프로젝션을 쓴다. 예매 id로 먼저 정렬해야 한 예매의 좌석이
+    // 붙어 나와 순서를 유지한 채 묶을 수 있다.
+    @Query("""
+            SELECT new com.ceos24.cgv.domain.reservation.dto.ReservationDetailRow(
+                r.id, r.user.id, r.status, r.createdAt, r.expiresAt, r.confirmedAt, r.cancelledAt,
+                s.id, m.title, t.name, b.name, s.startAt, s.endAt,
+                seat.rowNum, seat.colNum, seat.audienceType, seat.paidPrice)
+            FROM Reservation r
+            JOIN r.screening s
+            JOIN s.movie m
+            JOIN s.theater t
+            JOIN t.branch b
+            JOIN r.seats seat
+            WHERE r.user.id = :userId
+            ORDER BY r.id DESC, seat.rowNum, seat.colNum
+            """)
+    List<ReservationDetailRow> findDetailRowsByUserId(@Param("userId") Long userId);
+
     // 취소는 좌석 해제와 취소 기한 비교만 한다. 응답을 만들지 않으므로 사용자·영화·지점은 읽지 않는다.
     @Query("""
             SELECT r FROM Reservation r

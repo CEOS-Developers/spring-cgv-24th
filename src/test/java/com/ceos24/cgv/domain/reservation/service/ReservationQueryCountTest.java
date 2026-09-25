@@ -97,6 +97,25 @@ class ReservationQueryCountTest {
         assertThat(response.screening().branchName()).isEqualTo("강남");
     }
 
+    @Test
+    void 내_예매_내역은_예매_수와_무관하게_SQL_2회로_끝난다() {
+        reservationService.create(userId, requestOf(new SeatRequest(3, 1, AudienceType.ADULT)));
+        reservationService.create(userId, requestOf(
+                new SeatRequest(4, 1, AudienceType.ADULT),
+                new SeatRequest(4, 2, AudienceType.ADULT)));
+        em.flush();
+        em.clear();
+        statistics.clear();
+
+        List<ReservationResponse> responses = reservationService.findMine(userId);
+
+        // 사용자 존재 확인 1 + 내역 1. 예매마다 좌석·회차를 따로 읽는 N+1이 없다
+        assertThat(statistics.getPrepareStatementCount()).isEqualTo(2);
+        assertThat(statistics.getEntityLoadCount()).isZero();
+        assertThat(responses).hasSize(2);
+        assertThat(responses.getFirst().seats()).hasSize(2);
+    }
+
     private ReservationCreateRequest requestOf(SeatRequest... seats) {
         return new ReservationCreateRequest(screeningId, List.of(seats));
     }

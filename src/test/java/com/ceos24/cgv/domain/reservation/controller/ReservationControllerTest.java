@@ -10,6 +10,7 @@ import com.ceos24.cgv.domain.screening.entity.Screening;
 import com.ceos24.cgv.domain.user.entity.User;
 import com.ceos24.cgv.support.ControllerIntegrationTest;
 import com.ceos24.cgv.support.TestFixtures;
+import org.hamcrest.Matchers;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -315,6 +316,59 @@ class ReservationControllerTest extends ControllerIntegrationTest {
                 .andExpect(status().isOk());
     }
 
+    // ─── 내 예매 내역 ─────────────────────────────────────────────────────────
+
+    @Test
+    void 내_예매_내역은_내_것만_최근_순으로() throws Exception {
+        Long first = 선점(1, 1, 1, 2);
+        Long othersId = 선점Of(other, 3, 3);
+        Long second = 선점(2, 1);
+
+        내역요청(user)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(2))
+                .andExpect(jsonPath("$.data[0].id").value(second))
+                .andExpect(jsonPath("$.data[0].seats.length()").value(1))
+                .andExpect(jsonPath("$.data[1].id").value(first))
+                .andExpect(jsonPath("$.data[1].seats[0].label").value("A1"))
+                .andExpect(jsonPath("$.data[1].seats[1].label").value("A2"))
+                .andExpect(jsonPath("$.data[1].totalPrice").value(28000))
+                .andExpect(jsonPath("$.data[*].id", Matchers.not(Matchers.hasItem(othersId.intValue()))));
+    }
+
+    @Test
+    void 취소되거나_만료된_예매도_상태와_함께_남는다() throws Exception {
+        Long cancelled = 선점(1, 1);
+        취소요청(cancelled, user).andExpect(status().isOk());
+        Long expired = 선점(2, 1);
+        flushAndClear();
+        setNow(NOW.plusMinutes(11));
+
+        내역요청(user)
+                .andExpect(jsonPath("$.data[0].id").value(expired))
+                .andExpect(jsonPath("$.data[0].status").value("EXPIRED"))
+                .andExpect(jsonPath("$.data[1].id").value(cancelled))
+                .andExpect(jsonPath("$.data[1].status").value("CANCELLED"))
+                .andExpect(jsonPath("$.data[1].seats.length()").value(1));
+    }
+
+    @Test
+    void 예매가_없으면_빈_배열() throws Exception {
+        내역요청(user)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(0));
+    }
+
+    @Test
+    void 사라진_사용자의_토큰으로_내역을_조회하면_404() throws Exception {
+        User ghost = TestFixtures.user("ghostuser1");
+        ReflectionTestUtils.setField(ghost, "id", 9999L);
+
+        내역요청(ghost)
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("USER_NOT_FOUND"));
+    }
+
     // ─── 소유권 ───────────────────────────────────────────────────────────────
     // 남의 예매는 없는 예매와 구분되지 않아야 한다. 응답이 다르면 id를 차례로 넣어
     // 어떤 예매가 존재하는지 알아낼 수 있다.
@@ -423,10 +477,18 @@ class ReservationControllerTest extends ControllerIntegrationTest {
         return mockMvc.perform(delete("/api/reservations/{id}", id).with(bearer(requester)));
     }
 
+    private ResultActions 내역요청(User requester) throws Exception {
+        return mockMvc.perform(get("/api/reservations").with(bearer(requester)));
+    }
+
     // API를 거치지 않고 선점 상태를 만들어 둔다
     private Long 선점(int... rowCols) {
+        return 선점Of(user, rowCols);
+    }
+
+    private Long 선점Of(User owner, int... rowCols) {
         Reservation reservation = TestFixtures.hold(
-                em.find(User.class, user.getId()),
+                em.find(User.class, owner.getId()),
                 em.find(Screening.class, screening.getId()),
                 LocalDateTime.now(clock));
         for (int i = 0; i < rowCols.length; i += 2) {

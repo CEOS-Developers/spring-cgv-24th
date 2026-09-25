@@ -7,8 +7,11 @@ import com.ceos24.cgv.domain.reservation.entity.ReservationStatus;
 import com.ceos24.cgv.domain.screening.entity.Screening;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 public record ReservationResponse(
         Long id,
@@ -128,6 +131,17 @@ public record ReservationResponse(
                 head.confirmedAt(),
                 head.cancelledAt()
         );
+    }
+
+    // 행은 예매 id 내림차순으로 온다. LinkedHashMap이라 묶은 뒤에도 그 순서가 유지된다.
+    public static List<ReservationResponse> listOf(List<ReservationDetailRow> rows, LocalDateTime now) {
+        Map<Long, List<ReservationDetailRow>> byReservation = new LinkedHashMap<>();
+        for (ReservationDetailRow row : rows) {
+            byReservation.computeIfAbsent(row.reservationId(), id -> new ArrayList<>()).add(row);
+        }
+        return byReservation.values().stream()
+                .map(group -> of(group, now))
+                .toList();
     }
 
     // 프로젝션 경로에는 엔티티가 없어 Reservation.isExpired()를 부를 수 없다.
