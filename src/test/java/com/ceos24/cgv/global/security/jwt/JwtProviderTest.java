@@ -61,11 +61,11 @@ class JwtProviderTest {
     }
 
     @Test
-    void 만료_시각이_지나면_EXPIRED_TOKEN() {
+    void 만료_시각이_지나면_TOKEN_EXPIRED() {
         String token = provider.createAccessToken(42L, Role.USER);
         JwtProvider later = providerAt(NOW.plus(VALIDITY).plusSeconds(1), SECRET);
 
-        assertError(() -> later.parse(token), ErrorCode.EXPIRED_TOKEN);
+        assertError(() -> later.parse(token), ErrorCode.TOKEN_EXPIRED);
     }
 
     @Test
@@ -77,65 +77,65 @@ class JwtProviderTest {
     }
 
     @Test
-    void payload를_바꾸면_서명이_맞지_않아_INVALID_TOKEN() {
+    void payload를_바꾸면_서명이_맞지_않아_TOKEN_INVALID() {
         String token = provider.createAccessToken(42L, Role.USER);
 
         String forged = replacePayload(token, "\"USER\"", "\"ADMIN\"");
 
-        assertError(() -> provider.parse(forged), ErrorCode.INVALID_TOKEN);
+        assertError(() -> provider.parse(forged), ErrorCode.TOKEN_INVALID);
     }
 
     @Test
-    void 다른_키로_서명한_토큰은_INVALID_TOKEN() {
+    void 다른_키로_서명한_토큰은_TOKEN_INVALID() {
         String token = providerAt(NOW, OTHER_SECRET).createAccessToken(42L, Role.ADMIN);
 
-        assertError(() -> provider.parse(token), ErrorCode.INVALID_TOKEN);
+        assertError(() -> provider.parse(token), ErrorCode.TOKEN_INVALID);
     }
 
     @Test
-    void 서명하지_않은_alg_none_토큰은_INVALID_TOKEN() {
+    void 서명하지_않은_alg_none_토큰은_TOKEN_INVALID() {
         String header = base64Url("{\"alg\":\"none\"}");
         String payload = base64Url("{\"sub\":\"1\",\"role\":\"ADMIN\",\"iss\":\"cgv-api\",\"exp\":%d}"
                 .formatted(NOW.plus(VALIDITY).getEpochSecond()));
 
-        assertError(() -> provider.parse(header + "." + payload + "."), ErrorCode.INVALID_TOKEN);
+        assertError(() -> provider.parse(header + "." + payload + "."), ErrorCode.TOKEN_INVALID);
     }
 
     @Test
-    void 허용하지_않은_알고리즘으로_서명한_토큰은_INVALID_TOKEN() {
+    void 허용하지_않은_알고리즘으로_서명한_토큰은_TOKEN_INVALID() {
         String token = Jwts.builder()
                 .subject("42").claim("role", "ADMIN").issuer("cgv-api")
                 .expiration(Date.from(NOW.plus(VALIDITY)))
                 .signWith(Keys.hmacShaKeyFor(new byte[64]), Jwts.SIG.HS512)
                 .compact();
 
-        assertError(() -> provider.parse(token), ErrorCode.INVALID_TOKEN);
+        assertError(() -> provider.parse(token), ErrorCode.TOKEN_INVALID);
     }
 
     @Test
-    void 발급자가_다르면_INVALID_TOKEN() {
+    void 발급자가_다르면_TOKEN_INVALID() {
         String token = Jwts.builder()
                 .subject("42").claim("role", "USER").issuer("other-service")
                 .expiration(Date.from(NOW.plus(VALIDITY)))
                 .signWith(Keys.hmacShaKeyFor(Decoders.BASE64.decode(SECRET)), Jwts.SIG.HS256)
                 .compact();
 
-        assertError(() -> provider.parse(token), ErrorCode.INVALID_TOKEN);
+        assertError(() -> provider.parse(token), ErrorCode.TOKEN_INVALID);
     }
 
     @Test
-    void 만료된_토큰을_변조하면_만료가_아니라_INVALID_TOKEN() {
+    void 만료된_토큰을_변조하면_만료가_아니라_TOKEN_INVALID() {
         String forged = replacePayload(provider.createAccessToken(42L, Role.USER), "\"USER\"", "\"ADMIN\"");
         JwtProvider later = providerAt(NOW.plus(VALIDITY).plusSeconds(1), SECRET);
 
-        assertError(() -> later.parse(forged), ErrorCode.INVALID_TOKEN);
+        assertError(() -> later.parse(forged), ErrorCode.TOKEN_INVALID);
     }
 
     @ParameterizedTest
     @NullAndEmptySource
     @ValueSource(strings = {" ", "not-a-jwt", "only.two", "!!!.@@@.###"})
-    void JWT_형식이_아니면_MALFORMED_TOKEN(String token) {
-        assertError(() -> provider.parse(token), ErrorCode.MALFORMED_TOKEN);
+    void JWT_형식이_아니면_TOKEN_INVALID(String token) {
+        assertError(() -> provider.parse(token), ErrorCode.TOKEN_INVALID);
     }
 
     @Test

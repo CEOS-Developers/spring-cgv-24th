@@ -6,15 +6,11 @@ import com.ceos24.cgv.global.exception.ErrorCode;
 import com.ceos24.cgv.global.security.AuthUser;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.ExpiredJwtException;
-import io.jsonwebtoken.InvalidClaimException;
 import io.jsonwebtoken.JwtException;
 import io.jsonwebtoken.JwtParser;
 import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.MalformedJwtException;
-import io.jsonwebtoken.UnsupportedJwtException;
 import io.jsonwebtoken.io.Decoders;
 import io.jsonwebtoken.security.Keys;
-import io.jsonwebtoken.security.SecurityException;
 import org.springframework.stereotype.Component;
 
 import javax.crypto.SecretKey;
@@ -65,33 +61,29 @@ public class JwtProvider {
         return accessTokenValidity.toSeconds();
     }
 
-    // 실패 유형마다 ErrorCode를 달리 던져 호출자(인증 필터)가 응답을 고를 수 있게 한다.
-    // JJWT는 서명을 먼저 검증하고 그다음 exp·iss를 본다. 그래서 EXPIRED_TOKEN은 서명이 맞는 토큰에만 나온다.
+    // 만료만 따로 알려 클라이언트가 재로그인을 유도할 수 있게 하고, 나머지는 원인을 구분하지 않는다.
+    // 변조·형식 오류를 세분해 알려주면 공격자에게 어느 단계까지 통과했는지 단서가 된다.
+    // JJWT는 서명을 먼저 검증하고 그다음 exp·iss를 본다. 그래서 TOKEN_EXPIRED는 서명이 맞는 토큰에만 나온다.
     public AuthUser parse(String token) {
         Claims claims;
         try {
             claims = parser.parseSignedClaims(token).getPayload();
         } catch (ExpiredJwtException e) {
-            throw new CustomException(ErrorCode.EXPIRED_TOKEN);
-        } catch (SecurityException | UnsupportedJwtException | InvalidClaimException e) {
-            // 서명 불일치, 허용하지 않은 알고리즘(alg=none 포함), 다른 발급자
-            throw new CustomException(ErrorCode.INVALID_TOKEN);
-        } catch (MalformedJwtException | IllegalArgumentException e) {
-            throw new CustomException(ErrorCode.MALFORMED_TOKEN);
-        } catch (JwtException e) {
-            throw new CustomException(ErrorCode.INVALID_TOKEN);
+            throw new CustomException(ErrorCode.TOKEN_EXPIRED);
+        } catch (JwtException | IllegalArgumentException e) {
+            // 서명 불일치, 허용하지 않은 알고리즘(alg=none 포함), 다른 발급자, 형식 오류, 빈 값
+            throw new CustomException(ErrorCode.TOKEN_INVALID);
         }
         return toAuthUser(claims);
     }
 
-    // 서명이 맞으면 우리가 발급한 토큰이다. 그런데도 값이 이상하다면 형식 문제로 본다.
     private AuthUser toAuthUser(Claims claims) {
         try {
             Long userId = Long.valueOf(claims.getSubject());
             Role role = Role.valueOf(claims.get(ROLE_CLAIM, String.class));
             return new AuthUser(userId, role);
         } catch (IllegalArgumentException | NullPointerException | JwtException e) {
-            throw new CustomException(ErrorCode.MALFORMED_TOKEN);
+            throw new CustomException(ErrorCode.TOKEN_INVALID);
         }
     }
 }
