@@ -103,4 +103,9 @@ public class TestFixtures {
                 .phoneNumber("01012345678")
                 .build();
     }
+
+    public static User admin(String loginId) {
+        return User.createAdmin(loginId, "pw", "관리자", LocalDate.of(2000, 1, 1),
+                loginId + "@test.com", "01012345678");
+    }
 }

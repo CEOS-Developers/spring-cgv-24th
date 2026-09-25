@@ -55,4 +55,19 @@ public class User extends BaseTimeEntity {
         this.phoneNumber = phoneNumber;
         this.role = Role.USER;
     }
+
+    // 관리자는 가입 API가 아니라 서버 초기화로만 만든다. 빌더에 role을 열지 않고 이름으로 의도를 드러낸다.
+    public static User createAdmin(String loginId, String password, String name, LocalDate birthDate,
+                                   String email, String phoneNumber) {
+        User admin = User.builder()
+                .loginId(loginId)
+                .password(password)
+                .name(name)
+                .birthDate(birthDate)
+                .email(email)
+                .phoneNumber(phoneNumber)
+                .build();
+        admin.role = Role.ADMIN;
+        return admin;
+    }
 }

@@ -31,6 +31,12 @@ jwt:
   secret: ${JWT_SECRET}
   access-token-validity: ${JWT_ACCESS_TOKEN_VALIDITY}
 
+# local 프로필(SPRING_PROFILES_ACTIVE=local)에서만 읽는다. 다른 프로필에서는 값이 없어도 된다.
+# 비밀번호 평문은 Git에 올리지 않는 .env로만 주입한다.
+admin:
+  login-id: ${ADMIN_LOGIN_ID}
+  password: ${ADMIN_PASSWORD}
+
 logging:
   level:
     org.hibernate.SQL: debug

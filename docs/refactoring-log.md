@@ -1456,3 +1456,147 @@ SecurityContext는 `createEmptyContext()`로 새로 만들어 교체한다. 기�
 
 `./gradlew test` 193개 통과(기존 185 + 신규 8). `ControllerIntegrationTest`는 `springSecurity()`를 적용하지 않아
 기존 컨트롤러 테스트는 영향이 없다.
+
+---
+
+## 3주차 세션 3: 사용자별 접근 제어 / 소유권 검사 / 관리자 API
+
+세션 2까지는 "인증 여부"만 봤다. 보호 API가 여전히 `userId`를 본문·쿼리로 받아서, 로그인한 A가 B의 id를
+넣으면 B의 자원을 만들고 읽고 지울 수 있었다. 모든 사용자 식별을 토큰 기준으로 바꾸고, 리소스 id로 대상을
+지정하는 예매에 소유권 검사를 넣고, 관리자 API와 관리자 계정 초기화를 만들었다.
+
+### 결정 1 — 남의 예매는 404 `RESERVATION_NOT_FOUND` (ErrorCode를 추가하지 않는다)
+
+세션 프롬프트는 "ErrorCode를 추가"하라고 했지만 따르지 않았다. `ApiResponse.code`가 `ErrorCode.name()`이라
+404로 응답해도 코드가 다르면 "남의 것"이라는 사실이 그대로 드러난다. 없는 예매와 **응답 본문이 완전히 같아야**
+존재를 숨길 수 있다. 예매 id가 IDENTITY 순차 증가라 403이면 id를 차례로 넣어 어떤 예매가 존재하는지,
+예매량이 얼마인지 알아낼 수 있다. 테스트가 두 응답 본문의 문자열 동일성까지 단언한다.
+
+서버도 둘을 구분하지 않는다(다음 결정에서 쿼리 조건으로 걸러지므로). 감사 로그가 필요해지면 그때 조건 없는
+존재 조회를 추가한다.
+
+### 결정 2 — 소유권 검사는 쿼리 조건
+
+```sql
+WHERE r.id = :id AND r.user.id = :userId
+```
+
+`findOwnedWithDetails`(결제), `findOwnedWithSeats`(취소), `findOwnedDetailRows`(조회). 조건 없는 기존 세 쿼리는 지웠다.
+
+- 남의 예매는 **로딩되지 않는다.** `cancel()`/`confirm()`을 부를 엔티티가 없으므로 "소유권 검사가 상태 변경보다
+  먼저"가 코드 순서가 아니라 구조로 보장된다
+- 특히 결제 실패 경로가 위험했다. `noRollbackFor = CustomException`이라 상태 변경 뒤의 어떤 예외도 변경을
+  되돌리지 않는다. 검사를 줄 순서에 맡기면 한 줄만 어긋나도 남의 좌석이 풀린 채 커밋된다
+- 남의 **이미 취소된** 예매를 취소해도 409가 아니라 404다. 상태 검사가 먼저면 409가 존재와 상태를 흘린다
+- `r.user.id`는 FK 컬럼이라 users 조인이 붙지 않는다. SQL 수는 그대로다(`ReservationQueryCountTest` 7건/1건 유지)
+
+버린 대안
+- `reservation.validateOwner(userId)` — 엔티티 변경이 필요하고, "없는 척하라"는 **API 노출 정책**을 엔티티가
+  `NOT_FOUND`를 던지는 식으로 표현하게 된다. 조회는 프로젝션 경로라 엔티티 메서드를 쓸 수도 없다
+- 서비스 `if`문 — 호출부마다 반복되고, 빠뜨리거나 `cancel()` 뒤에 써도 컴파일·테스트가 잡지 못한다
+
+**구현 전 코드로 새 테스트를 먼저 돌려 공격이 성립하는 것을 확인했다.**
+
+| A의 토큰으로 B의 예매에 | 수정 전 | 수정 후 |
+|---|---|---|
+| `DELETE /api/reservations/{id}` | 200, 취소됨 | 404, 상태 불변 |
+| `POST .../payment {"result":"FAILURE"}` | 402, **B의 좌석 해제가 커밋됨** | 404, PENDING 유지 |
+| 이미 취소된 예매에 `DELETE` | 409 `ALREADY_CANCELLED` | 404 |
+| `GET /api/reservations/{id}` | 200, 전부 열람 | 404, 없는 예매와 같은 본문 |
+
+찜·구매 내역에는 별도 소유권 검사가 필요 없다. 대상을 `(토큰 사용자, branchId)` 같은 **자연 키**로 지정하므로
+남의 자원을 가리킬 문법이 없다. 리소스 id로 지정하는 API(예매)만 검사가 필요하다.
+
+### 결정 3 — `ROLE_` 접두사는 `Role.getAuthority()` 한 곳 (세션 1 결정 유지)
+
+| 위치 | 값 |
+|---|---|
+| 토큰 `role` 클레임 | `ADMIN` (접두사 없음, `role.name()`) |
+| `AuthUser.getAuthorities()` | `ROLE_ADMIN` (`role.getAuthority()`) |
+| `SecurityConfig` | `hasAuthority(Role.ADMIN.getAuthority())` |
+
+`hasRole("ADMIN")`은 `AuthorityAuthorizationManager`가 `"ROLE_" + "ADMIN"`을 만들어 `hasAuthority`와 같은 문자열
+비교를 한다. `AdminControllerTest`가 두 매니저를 직접 만들어 같은 결과를 내는 것을 확인한다.
+토큰에 `ROLE_ADMIN`을 넣지 않는 이유: 클레임은 도메인 값이고 접두사는 Spring Security의 표현이다. 섞으면
+`Role.valueOf("ROLE_ADMIN")`이 실패하거나 `hasRole`에서 접두사가 두 번 붙는다.
+
+### 결정 4 — 관리자 계정은 `ApplicationRunner` + `@Profile("local")` + 환경변수
+
+- data.sql은 BCrypt 해시를 Git에 박아야 한다. 해시도 오프라인 대입 대상이다. 러너는 기동 시 `PasswordEncoder`로 해시한다
+- `admin.login-id: ${ADMIN_LOGIN_ID}`, `admin.password: ${ADMIN_PASSWORD}`. 기본값 없음
+- `@ConfigurationProperties` + `@Validated @NotBlank` record로 받고, `@EnableConfigurationProperties`를
+  **러너 클래스에** 달았다. 러너가 local 프로필에서만 뜨므로 바인딩도 local에서만 일어난다.
+  다른 프로필은 값이 없어도 기동되고, local인데 비어 있으면 기동이 실패한다
+- `@Profile("local")`: 운영에서 부팅 부수효과로 관리자가 생기면 안 된다. 운영 관리자 생성은 명시적인 운영 작업이어야 한다
+- 멱등: `existsByLoginId`면 건너뛴다
+- 관리자 생성은 `User.createAdmin(...)` 정적 팩토리(**엔티티 변경, 승인받음**). 빌더에는 여전히 role이 없다
+- 회원가입으로 관리자를 만들 수 없는 것은 재확인했다(`SignupRequest`에 role 없음, 빌더가 USER 고정,
+  `AuthControllerTest`의 본문 `role: ADMIN` 무시 테스트)
+
+로컬 실행 시 `.env`에 `SPRING_PROFILES_ACTIVE=local`, `ADMIN_LOGIN_ID`, `ADMIN_PASSWORD`가 필요하다.
+
+### 결정 5 — 서비스에는 `Long userId`만 넘긴다
+
+컨트롤러가 `@AuthenticationPrincipal AuthUser`에서 `userId()`만 꺼낸다. 서비스가 인증 방식을 모르므로
+동시성·롤백 테스트는 여전히 Long을 넘기고, 찜 서비스는 **한 줄도 바뀌지 않았다.**
+`@AuthenticationPrincipal(expression = "userId")`는 SpEL 문자열이라 필드 이름 변경을 컴파일러가 잡지 못해 택하지 않았다.
+
+`AuthenticationPrincipalArgumentResolver`는 principal을 파라미터 타입에 대입할 수 없으면(익명의 `"anonymousUser"`)
+예외 없이 null을 준다. 이 API들이 모두 `authenticated()`라 null이 컨트롤러까지 오지 않는다. 경로를 실수로
+`permitAll`로 열면 401이 아니라 NPE → 500이 된다. 각 API에 "토큰 없으면 401" 테스트를 둔 이유다.
+
+### 결정 6 — 내 예매 내역 `GET /api/reservations`
+
+- URL에 사용자가 없다. `/api/users/{userId}/reservations`면 경로 id와 토큰 id를 비교하는 검사가 또 필요하다
+- 단건 조회와 같은 프로젝션 + `ORDER BY r.id DESC, 좌석`. `ReservationResponse.listOf()`가 `LinkedHashMap`으로 묶고
+  단건용 `of()`를 재사용한다. 만료 판정이 단건 조회와 같은 코드를 탄다
+- 취소·만료 예매도 상태와 함께 포함한다. 방금 취소한 예매가 사라지면 확인할 곳이 없다
+- 사라진 사용자의 토큰은 `USER_NOT_FOUND`. 찜·구매 내역과 같은 기준
+- SQL은 예매 수와 무관하게 **2건**(사용자 확인 + 내역), 엔티티 로드 0
+
+### API
+
+| 메서드 | 경로 | before | after |
+|---|---|---|---|
+| POST | `/api/reservations` | body `{screeningId, userId, seats}` | body `{screeningId, seats}` + Bearer |
+| POST | `/api/reservations/{id}/payment` | — | Bearer, 남의 예매 404 |
+| GET | `/api/reservations/{id}` | — | Bearer, 남의 예매 404 |
+| DELETE | `/api/reservations/{id}` | — | Bearer, 남의 예매 404 |
+| GET | `/api/reservations` | 없음 | **신규** 내 예매 내역 |
+| POST/DELETE/GET | `/api/branches/{id}/likes`, `/api/branches/likes` | `?userId=` | Bearer |
+| POST/DELETE/GET | `/api/movies/{id}/likes`, `/api/movies/likes` | `?userId=` | Bearer |
+| POST | `/api/purchases` | body에 `userId` | body에서 제거 + Bearer |
+| GET | `/api/purchases` | `?userId=` | Bearer |
+| GET | `/api/admin/check` | 없음 | **신규** USER 403 / ADMIN 200 / 없음 401 |
+
+예전 형식으로 `userId`를 보내도 오류 없이 무시된다. Jackson은 모르는 본문 필드를, Spring MVC는 선언하지 않은
+쿼리 파라미터를 버린다. 테스트가 본문에 남의 `userId`를 실어도 토큰 사용자로 처리되는 것까지 확인한다.
+springdoc은 `@AuthenticationPrincipal` 파라미터를 문서에서 뺀다. `/v3/api-docs`에 `userId`·`authUser`가 없는 것을
+임시 테스트로 확인하고 지웠다.
+
+### 테스트 구조 변경
+
+`ControllerIntegrationTest`가 `springSecurity()`를 적용한다. 모든 컨트롤러 테스트가 실제 필터 체인을 탄다.
+
+- `bearer(User)` — `RequestPostProcessor`라 `perform()` 시점에 토큰을 발급한다. `@MockitoBean Clock`으로 시간을
+  몇 시간씩 밀어도 발급·검증이 같은 시계를 봐서 만료되지 않는다
+- `missingUser()` — DB에 없는 id 9999의 사용자. 탈퇴 후에도 만료 전까지 유효한 토큰을 흉내 낸다
+- 공개 경로 규칙이 빠지면 이제 해당 컨트롤러 테스트가 401로 깨진다. 전에는 필터를 안 타서 통과했다
+- 커밋 1에서는 예매 테스트만 임시로 필터를 태웠고 커밋 3에서 기반 클래스로 옮겼다(찜·구매 테스트가 아직 `userId`를 쓰고 있었다)
+
+| 클래스 | 추가·변경 |
+|---|---|
+| `ReservationControllerTest` | 소유권 4(취소·결제 실패·재취소·조회 본문 동일성), 본문 `userId` 무시, 토큰 없음 401, 사라진 사용자 404, 내역 4 |
+| `ReservationServiceTest` | 남의 예매 결제 → `RESERVATION_NOT_FOUND` |
+| `ReservationQueryCountTest` | 내역 SQL 2건 + 엔티티 로드 0 |
+| `PurchaseControllerTest` | 본문 `userId` 무시(남의 내역 0건), 토큰 없음 401 |
+| 찜 컨트롤러 테스트 2개 | `userId` 누락 400 → 토큰 없음 401 |
+| `AdminControllerTest` | ADMIN 200, USER 403, 없음 401, `hasRole`/`hasAuthority` 동등성 |
+| `AdminAccountInitializerTest` | 해시된 ADMIN 생성, 재실행 멱등, **로그인 → 토큰 → `/api/admin/check` 200**, 빈 비밀번호 기동 실패(`BindValidationException`), local 아니면 러너 없음 |
+
+`AdminAccountInitializerTest`는 러너가 테스트 트랜잭션 밖에서 커밋하므로 `@Transactional` 대신 `@AfterAll`에서
+관리자 행을 지운다. 프로필·검증 조건은 `ApplicationContextRunner`로 러너와 바인딩만 띄워 확인한다.
+
+### 확인
+
+`./gradlew test` 216개 통과(기존 193 + 신규 23). 엔티티 변경은 `User.createAdmin()` 하나다.
