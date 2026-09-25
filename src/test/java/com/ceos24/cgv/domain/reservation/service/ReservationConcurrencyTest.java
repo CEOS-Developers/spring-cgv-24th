@@ -147,7 +147,7 @@ class ReservationConcurrencyTest {
     // ─── helpers ──────────────────────────────────────────────────────────────
 
     private List<Outcome> runConcurrently(int threads,
-                                          IntFunction<ReservationCreateRequest> requestOf)
+                                          IntFunction<Attempt> attemptOf)
             throws Exception {
         ExecutorService pool = Executors.newFixedThreadPool(threads);
         CountDownLatch ready = new CountDownLatch(threads);
@@ -155,12 +155,12 @@ class ReservationConcurrencyTest {
 
         List<Callable<Outcome>> tasks = new ArrayList<>();
         for (int i = 0; i < threads; i++) {
-            ReservationCreateRequest req = requestOf.apply(i);
+            Attempt attempt = attemptOf.apply(i);
             tasks.add(() -> {
                 ready.countDown();
                 go.await();
                 try {
-                    reservationService.create(req);
+                    reservationService.create(attempt.userId(), attempt.request());
                     return new Outcome(true, null);
                 } catch (Throwable t) {
                     return new Outcome(false, t);
@@ -210,14 +210,15 @@ class ReservationConcurrencyTest {
                 .getSingleResult());
     }
 
-    private ReservationCreateRequest request(Long userId,
-                                             ReservationCreateRequest.SeatRequest... seats) {
-        return new ReservationCreateRequest(screeningId, userId, List.of(seats));
+    private Attempt request(Long userId, ReservationCreateRequest.SeatRequest... seats) {
+        return new Attempt(userId, new ReservationCreateRequest(screeningId, List.of(seats)));
     }
 
     private ReservationCreateRequest.SeatRequest seat(int row, int col) {
         return new ReservationCreateRequest.SeatRequest(row, col, AudienceType.ADULT);
     }
+
+    private record Attempt(Long userId, ReservationCreateRequest request) {}
 
     private record Outcome(boolean success, Throwable error) {}
 }

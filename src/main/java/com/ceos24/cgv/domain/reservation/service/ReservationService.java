@@ -40,15 +40,15 @@ public class ReservationService {
     private final Clock clock;
 
     @Transactional
-    public ReservationResponse create(ReservationCreateRequest req) {
+    public ReservationResponse create(Long userId, ReservationCreateRequest req) {
         LocalDateTime now = LocalDateTime.now(clock);
 
         // 1. 회차 존재 (응답이 읽는 영화·상영관·지점까지 함께 로딩)
         Screening screening = screeningRepository.findByIdWithDetails(req.screeningId())
                 .orElseThrow(() -> new CustomException(ErrorCode.SCREENING_NOT_FOUND));
 
-        // 2. 사용자 존재
-        User user = userRepository.findById(req.userId())
+        // 2. 사용자 존재. 토큰은 만료 전까지 유효하므로 탈퇴한 사용자의 토큰도 여기까지 온다
+        User user = userRepository.findById(userId)
                 .orElseThrow(() -> new CustomException(ErrorCode.USER_NOT_FOUND));
 
         // 3. 좌석 범위 검증
@@ -106,9 +106,9 @@ public class ReservationService {
 
     // 결제 실패는 예외로 알리지만 좌석 해제는 남아야 하므로 롤백 대상에서 뺀다.
     @Transactional(noRollbackFor = CustomException.class)
-    public ReservationResponse pay(Long id, PaymentRequest req) {
+    public ReservationResponse pay(Long id, Long userId, PaymentRequest req) {
         LocalDateTime now = LocalDateTime.now(clock);
-        Reservation reservation = findWithDetails(id);
+        Reservation reservation = findOwnedWithDetails(id, userId);
 
         if (req.result() == PaymentRequest.PaymentResult.FAILURE) {
             reservation.cancel(now);
@@ -121,8 +121,8 @@ public class ReservationService {
 
     // 조회는 상태를 바꾸지 않으므로 엔티티가 필요 없다. 프로젝션으로 받으면 응답이 쓰는
     // 스칼라만 읽고, 영속성 컨텍스트에 엔티티와 더티 체킹 스냅샷도 남지 않는다.
-    public ReservationResponse getById(Long id) {
-        List<ReservationDetailRow> rows = reservationRepository.findDetailRowsById(id);
+    public ReservationResponse getById(Long id, Long userId) {
+        List<ReservationDetailRow> rows = reservationRepository.findOwnedDetailRows(id, userId);
         if (rows.isEmpty()) {
             throw new CustomException(ErrorCode.RESERVATION_NOT_FOUND);
         }
@@ -130,19 +130,21 @@ public class ReservationService {
     }
 
     @Transactional
-    public void cancel(Long id) {
-        findWithSeats(id).cancel(LocalDateTime.now(clock));
+    public void cancel(Long id, Long userId) {
+        findOwnedWithSeats(id, userId).cancel(LocalDateTime.now(clock));
     }
 
     // 결제는 상태를 바꿔야 해서 관리 상태 엔티티가 필요하다. 응답까지 한 쿼리로 만들려고
     // 영화·지점을 함께 가져온다.
-    private Reservation findWithDetails(Long id) {
-        return reservationRepository.findByIdWithDetails(id)
+    // 남의 예매도 RESERVATION_NOT_FOUND다. 403이나 별도 코드를 주면 순차 id를 넣어 보며
+    // 어떤 예매가 존재하는지 알아낼 수 있다. 조회 단계에서 걸러지므로 상태 변경 메서드에 닿지 않는다.
+    private Reservation findOwnedWithDetails(Long id, Long userId) {
+        return reservationRepository.findOwnedWithDetails(id, userId)
                 .orElseThrow(() -> new CustomException(ErrorCode.RESERVATION_NOT_FOUND));
     }
 
-    private Reservation findWithSeats(Long id) {
-        return reservationRepository.findByIdWithSeats(id)
+    private Reservation findOwnedWithSeats(Long id, Long userId) {
+        return reservationRepository.findOwnedWithSeats(id, userId)
                 .orElseThrow(() -> new CustomException(ErrorCode.RESERVATION_NOT_FOUND));
     }
 

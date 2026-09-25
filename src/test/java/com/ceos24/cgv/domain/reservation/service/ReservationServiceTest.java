@@ -76,7 +76,7 @@ class ReservationServiceTest {
     void 없는_회차면_SCREENING_NOT_FOUND() {
         given(screeningRepository.findByIdWithDetails(1L)).willReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.create(reqOf(1L, 1L, new int[]{1, 1})))
+        assertThatThrownBy(() -> service.create(1L, reqOf(1L, new int[]{1, 1})))
                 .isInstanceOf(CustomException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.SCREENING_NOT_FOUND);
         verify(userRepository, never()).findById(any());
@@ -87,7 +87,7 @@ class ReservationServiceTest {
         given(screeningRepository.findByIdWithDetails(1L)).willReturn(Optional.of(screeningWith(1L, 14000, START)));
         given(userRepository.findById(99L)).willReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.create(reqOf(1L, 99L, new int[]{1, 1})))
+        assertThatThrownBy(() -> service.create(99L, reqOf(1L, new int[]{1, 1})))
                 .isInstanceOf(CustomException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.USER_NOT_FOUND);
     }
@@ -97,7 +97,7 @@ class ReservationServiceTest {
         givenScreeningAndUser(1L, 1L);
 
         // STANDARD rowCount=8 인 상영관에 row=9 요청
-        assertThatThrownBy(() -> service.create(reqOf(1L, 1L, new int[]{9, 1})))
+        assertThatThrownBy(() -> service.create(1L, reqOf(1L, new int[]{9, 1})))
                 .isInstanceOf(CustomException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.SEAT_OUT_OF_RANGE);
         verify(reservationSeatRepository, never()).findOccupiedPositionsByScreeningId(any(), any(), any());
@@ -107,7 +107,7 @@ class ReservationServiceTest {
     void 요청_내_좌석이_중복이면_DUPLICATE_SEAT_IN_REQUEST() {
         givenScreeningAndUser(1L, 1L);
 
-        assertThatThrownBy(() -> service.create(reqOf(1L, 1L, new int[]{1, 1}, new int[]{1, 1})))
+        assertThatThrownBy(() -> service.create(1L, reqOf(1L, new int[]{1, 1}, new int[]{1, 1})))
                 .isInstanceOf(CustomException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.DUPLICATE_SEAT_IN_REQUEST);
         verify(reservationSeatRepository, never()).findOccupiedPositionsByScreeningId(any(), any(), any());
@@ -121,7 +121,7 @@ class ReservationServiceTest {
         given(reservationSeatRepository.findOccupiedPositionsByScreeningId(1L, ReservationStatus.PENDING, NOW))
                 .willReturn(occupied);
 
-        assertThatThrownBy(() -> service.create(reqOf(1L, 1L, new int[]{1, 1})))
+        assertThatThrownBy(() -> service.create(1L, reqOf(1L, new int[]{1, 1})))
                 .isInstanceOf(CustomException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.SEAT_ALREADY_RESERVED);
         verify(reservationRepository, never()).saveAndFlush(any());
@@ -133,7 +133,7 @@ class ReservationServiceTest {
         given(reservationRepository.saveAndFlush(any()))
                 .willThrow(new DataIntegrityViolationException("uk_seat_screening_row_col_release"));
 
-        assertThatThrownBy(() -> service.create(reqOf(1L, 1L, new int[]{1, 1})))
+        assertThatThrownBy(() -> service.create(1L, reqOf(1L, new int[]{1, 1})))
                 .isInstanceOf(CustomException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.SEAT_ALREADY_RESERVED);
     }
@@ -144,8 +144,8 @@ class ReservationServiceTest {
         givenSaveAssignsId(10L);
 
         // 정렬 검증을 위해 순서를 뒤섞어 요청 (B3 → A2 → A1)
-        ReservationResponse response = service.create(
-                reqOf(1L, 2L, new int[]{2, 3}, new int[]{1, 2}, new int[]{1, 1}));
+        ReservationResponse response = service.create(2L,
+                reqOf(1L, new int[]{2, 3}, new int[]{1, 2}, new int[]{1, 1}));
 
         assertThat(response.id()).isEqualTo(10L);
         assertThat(response.status()).isEqualTo(ReservationStatus.PENDING);
@@ -161,7 +161,7 @@ class ReservationServiceTest {
         givenScreeningAndUser(1L, 1L);
         givenSaveAssignsId(1L);
 
-        service.create(new ReservationCreateRequest(1L, 1L, List.of(
+        service.create(1L, new ReservationCreateRequest(1L, List.of(
                 new ReservationCreateRequest.SeatRequest(1, 1, AudienceType.ADULT),
                 new ReservationCreateRequest.SeatRequest(1, 2, AudienceType.YOUTH),
                 new ReservationCreateRequest.SeatRequest(1, 3, AudienceType.SENIOR))));
@@ -182,7 +182,7 @@ class ReservationServiceTest {
                 eq(1L), anyList(), eq(ReservationStatus.PENDING), eq(NOW)))
                 .willReturn(List.of(stale));
 
-        service.create(reqOf(1L, 1L, new int[]{1, 1}));
+        service.create(1L, reqOf(1L, new int[]{1, 1}));
 
         assertThat(stale.getStatus()).isEqualTo(ReservationStatus.EXPIRED);
         assertThat(stale.getSeats()).noneMatch(ReservationSeat::isOccupied);
@@ -195,7 +195,7 @@ class ReservationServiceTest {
         givenScreeningAndUser(1L, 1L);
         givenSaveAssignsId(2L);
 
-        service.create(reqOf(1L, 1L, new int[]{2, 3}, new int[]{1, 5}));
+        service.create(1L, reqOf(1L, new int[]{2, 3}, new int[]{1, 5}));
 
         // 회차의 만료 선점을 전부 풀면 그 행들에 UPDATE 락이 걸려, 같은 회차를 골랐을 뿐인
         // 다른 좌석 요청까지 서로를 기다린다. 요청한 좌석만 키로 넘긴다.
@@ -210,7 +210,7 @@ class ReservationServiceTest {
         givenScreeningAndUser(1L, 1L);
         givenSaveAssignsId(2L);
 
-        service.create(reqOf(1L, 1L, new int[]{2, 3}, new int[]{1, 5}, new int[]{2, 1}));
+        service.create(1L, reqOf(1L, new int[]{2, 3}, new int[]{1, 5}, new int[]{2, 1}));
 
         // INSERT 순서가 곧 락 획득 순서다. 모든 요청이 같은 순서를 쓰면 데드락이 생길 수 없다.
         ArgumentCaptor<Reservation> captor = ArgumentCaptor.forClass(Reservation.class);
@@ -225,7 +225,7 @@ class ReservationServiceTest {
         given(reservationRepository.saveAndFlush(any(Reservation.class)))
                 .willThrow(new CannotAcquireLockException("lock wait timeout"));
 
-        assertThatThrownBy(() -> service.create(reqOf(1L, 1L, new int[]{1, 1})))
+        assertThatThrownBy(() -> service.create(1L, reqOf(1L, new int[]{1, 1})))
                 .isInstanceOf(CustomException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.SEAT_RESERVATION_CONFLICT);
     }
@@ -235,9 +235,9 @@ class ReservationServiceTest {
     @Test
     void 결제_성공이면_RESERVED로_확정된다() {
         Reservation hold = holdWithId(1L, NOW, 1, 1);
-        given(reservationRepository.findByIdWithDetails(1L)).willReturn(Optional.of(hold));
+        given(reservationRepository.findOwnedWithDetails(1L, 2L)).willReturn(Optional.of(hold));
 
-        ReservationResponse response = service.pay(1L, new PaymentRequest(PaymentResult.SUCCESS));
+        ReservationResponse response = service.pay(1L, 2L, new PaymentRequest(PaymentResult.SUCCESS));
 
         assertThat(response.status()).isEqualTo(ReservationStatus.RESERVED);
         assertThat(hold.getConfirmedAt()).isEqualTo(NOW);
@@ -247,9 +247,9 @@ class ReservationServiceTest {
     @Test
     void 결제_실패면_좌석이_풀리고_PAYMENT_FAILED() {
         Reservation hold = holdWithId(1L, NOW, 1, 1);
-        given(reservationRepository.findByIdWithDetails(1L)).willReturn(Optional.of(hold));
+        given(reservationRepository.findOwnedWithDetails(1L, 2L)).willReturn(Optional.of(hold));
 
-        assertThatThrownBy(() -> service.pay(1L, new PaymentRequest(PaymentResult.FAILURE)))
+        assertThatThrownBy(() -> service.pay(1L, 2L, new PaymentRequest(PaymentResult.FAILURE)))
                 .isInstanceOf(CustomException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.PAYMENT_FAILED);
 
@@ -260,9 +260,9 @@ class ReservationServiceTest {
     @Test
     void 만료된_선점을_결제하면_RESERVATION_EXPIRED() {
         Reservation hold = holdWithId(1L, NOW.minusMinutes(20), 1, 1);
-        given(reservationRepository.findByIdWithDetails(1L)).willReturn(Optional.of(hold));
+        given(reservationRepository.findOwnedWithDetails(1L, 2L)).willReturn(Optional.of(hold));
 
-        assertThatThrownBy(() -> service.pay(1L, new PaymentRequest(PaymentResult.SUCCESS)))
+        assertThatThrownBy(() -> service.pay(1L, 2L, new PaymentRequest(PaymentResult.SUCCESS)))
                 .isInstanceOf(CustomException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.RESERVATION_EXPIRED);
         assertThat(hold.getStatus()).isEqualTo(ReservationStatus.PENDING);
@@ -272,31 +272,41 @@ class ReservationServiceTest {
     void 이미_확정된_예매를_다시_결제하면_RESERVATION_NOT_PENDING() {
         Reservation hold = holdWithId(1L, NOW, 1, 1);
         hold.confirm(NOW);
-        given(reservationRepository.findByIdWithDetails(1L)).willReturn(Optional.of(hold));
+        given(reservationRepository.findOwnedWithDetails(1L, 2L)).willReturn(Optional.of(hold));
 
-        assertThatThrownBy(() -> service.pay(1L, new PaymentRequest(PaymentResult.SUCCESS)))
+        assertThatThrownBy(() -> service.pay(1L, 2L, new PaymentRequest(PaymentResult.SUCCESS)))
                 .isInstanceOf(CustomException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.RESERVATION_NOT_PENDING);
+    }
+
+    @Test
+    void 남의_예매를_결제하면_RESERVATION_NOT_FOUND() {
+        // 소유자 조건이 붙은 조회가 비므로 엔티티가 로딩되지 않는다. 확정도 해제도 일어날 수 없다
+        given(reservationRepository.findOwnedWithDetails(1L, 3L)).willReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.pay(1L, 3L, new PaymentRequest(PaymentResult.FAILURE)))
+                .isInstanceOf(CustomException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.RESERVATION_NOT_FOUND);
     }
 
     // ─── getById ──────────────────────────────────────────────────────────────
 
     @Test
     void 없는_예매_조회시_RESERVATION_NOT_FOUND() {
-        given(reservationRepository.findDetailRowsById(99L)).willReturn(List.of());
+        given(reservationRepository.findOwnedDetailRows(99L, 2L)).willReturn(List.of());
 
-        assertThatThrownBy(() -> service.getById(99L))
+        assertThatThrownBy(() -> service.getById(99L, 2L))
                 .isInstanceOf(CustomException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.RESERVATION_NOT_FOUND);
     }
 
     @Test
     void 예매_조회_정상() {
-        given(reservationRepository.findDetailRowsById(5L))
+        given(reservationRepository.findOwnedDetailRows(5L, 2L))
                 .willReturn(List.of(detailRow(5L, NOW.plusMinutes(10), ReservationStatus.PENDING, 1, 1),
                         detailRow(5L, NOW.plusMinutes(10), ReservationStatus.PENDING, 1, 2)));
 
-        ReservationResponse response = service.getById(5L);
+        ReservationResponse response = service.getById(5L, 2L);
 
         assertThat(response.id()).isEqualTo(5L);
         assertThat(response.userId()).isEqualTo(2L);
@@ -311,19 +321,19 @@ class ReservationServiceTest {
     @Test
     void 만료된_선점은_조회하면_EXPIRED로_보인다() {
         // DB 상태는 아직 PENDING이지만 이미 좌석을 놓은 것이나 마찬가지다
-        given(reservationRepository.findDetailRowsById(5L))
+        given(reservationRepository.findOwnedDetailRows(5L, 2L))
                 .willReturn(List.of(detailRow(5L, NOW.minusMinutes(10), ReservationStatus.PENDING, 1, 1)));
 
-        assertThat(service.getById(5L).status()).isEqualTo(ReservationStatus.EXPIRED);
+        assertThat(service.getById(5L, 2L).status()).isEqualTo(ReservationStatus.EXPIRED);
     }
 
     // ─── cancel ───────────────────────────────────────────────────────────────
 
     @Test
     void 없는_예매_취소시_RESERVATION_NOT_FOUND() {
-        given(reservationRepository.findByIdWithSeats(99L)).willReturn(Optional.empty());
+        given(reservationRepository.findOwnedWithSeats(99L, 2L)).willReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.cancel(99L))
+        assertThatThrownBy(() -> service.cancel(99L, 2L))
                 .isInstanceOf(CustomException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.RESERVATION_NOT_FOUND);
     }
@@ -331,9 +341,9 @@ class ReservationServiceTest {
     @Test
     void 취소해도_어느_좌석을_얼마에_잡았는지가_남는다() {
         Reservation hold = holdWithId(1L, NOW, 1, 1, 1, 2);
-        given(reservationRepository.findByIdWithSeats(1L)).willReturn(Optional.of(hold));
+        given(reservationRepository.findOwnedWithSeats(1L, 2L)).willReturn(Optional.of(hold));
 
-        service.cancel(1L);
+        service.cancel(1L, 2L);
 
         assertThat(hold.getStatus()).isEqualTo(ReservationStatus.CANCELLED);
         assertThat(hold.getCancelledAt()).isEqualTo(NOW);
@@ -346,9 +356,9 @@ class ReservationServiceTest {
     void 이미_취소된_예매_취소시_ALREADY_CANCELLED() {
         Reservation hold = holdWithId(1L, NOW, 1, 1);
         hold.cancel(NOW);
-        given(reservationRepository.findByIdWithSeats(1L)).willReturn(Optional.of(hold));
+        given(reservationRepository.findOwnedWithSeats(1L, 2L)).willReturn(Optional.of(hold));
 
-        assertThatThrownBy(() -> service.cancel(1L))
+        assertThatThrownBy(() -> service.cancel(1L, 2L))
                 .isInstanceOf(CustomException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.ALREADY_CANCELLED);
     }
@@ -357,9 +367,9 @@ class ReservationServiceTest {
     void 상영_20분_이내면_확정된_예매를_취소할_수_없다() {
         Reservation hold = holdWithId(1L, NOW, NOW.plusMinutes(19), 1, 1);
         hold.confirm(NOW);
-        given(reservationRepository.findByIdWithSeats(1L)).willReturn(Optional.of(hold));
+        given(reservationRepository.findOwnedWithSeats(1L, 2L)).willReturn(Optional.of(hold));
 
-        assertThatThrownBy(() -> service.cancel(1L))
+        assertThatThrownBy(() -> service.cancel(1L, 2L))
                 .isInstanceOf(CustomException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.CANCEL_DEADLINE_PASSED);
         assertThat(hold.getSeats()).allMatch(ReservationSeat::isOccupied);
@@ -368,9 +378,9 @@ class ReservationServiceTest {
     @Test
     void 선점은_상영_20분_이내여도_놓을_수_있다() {
         Reservation hold = holdWithId(1L, NOW, NOW.plusMinutes(19), 1, 1);
-        given(reservationRepository.findByIdWithSeats(1L)).willReturn(Optional.of(hold));
+        given(reservationRepository.findOwnedWithSeats(1L, 2L)).willReturn(Optional.of(hold));
 
-        service.cancel(1L);
+        service.cancel(1L, 2L);
 
         assertThat(hold.getStatus()).isEqualTo(ReservationStatus.CANCELLED);
     }
@@ -446,10 +456,10 @@ class ReservationServiceTest {
         return projection;
     }
 
-    private ReservationCreateRequest reqOf(long screeningId, long userId, int[]... seats) {
+    private ReservationCreateRequest reqOf(long screeningId, int[]... seats) {
         List<ReservationCreateRequest.SeatRequest> seatRequests = Arrays.stream(seats)
                 .map(s -> new ReservationCreateRequest.SeatRequest(s[0], s[1], AudienceType.ADULT))
                 .toList();
-        return new ReservationCreateRequest(screeningId, userId, seatRequests);
+        return new ReservationCreateRequest(screeningId, seatRequests);
     }
 }

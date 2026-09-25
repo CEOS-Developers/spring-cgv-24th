@@ -13,7 +13,9 @@ import com.ceos24.cgv.support.TestFixtures;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.ResultActions;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.time.Clock;
 import java.time.LocalDateTime;
@@ -22,7 +24,9 @@ import java.util.stream.IntStream;
 
 import static com.ceos24.cgv.domain.reservation.entity.AudienceType.ADULT;
 import static com.ceos24.cgv.domain.reservation.entity.AudienceType.YOUTH;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.BDDMockito.given;
+import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
@@ -37,9 +41,12 @@ class ReservationControllerTest extends ControllerIntegrationTest {
 
     private Screening screening;
     private User user;
+    private User other;
 
     @BeforeEach
     void setUp() {
+        // 토큰을 필터가 풀어 SecurityContext에 넣어야 컨트롤러가 principal을 받는다
+        mockMvc = MockMvcBuilders.webAppContextSetup(wac).apply(springSecurity()).build();
         setNow(NOW);
 
         Branch branch = persist(TestFixtures.branch("강남점"));
@@ -47,6 +54,7 @@ class ReservationControllerTest extends ControllerIntegrationTest {
         Movie movie = persist(TestFixtures.movie("범죄도시4"));
         screening = persist(TestFixtures.screening(theater, movie, START, 14000));
         user = persist(TestFixtures.user("testuser01"));
+        other = persist(TestFixtures.user("testuser02"));
         flushAndClear();
     }
 
@@ -56,6 +64,7 @@ class ReservationControllerTest extends ControllerIntegrationTest {
     void 좌석_선점_성공() throws Exception {
         선점요청(seat(1, 1, ADULT), seat(1, 2, YOUTH))
                 .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.userId").value(user.getId()))
                 .andExpect(jsonPath("$.data.status").value("PENDING"))
                 .andExpect(jsonPath("$.data.statusName").value("결제대기"))
                 .andExpect(jsonPath("$.data.expiresAt").value("2024-06-01T09:10:00"))
@@ -70,15 +79,41 @@ class ReservationControllerTest extends ControllerIntegrationTest {
     }
 
     @Test
+    void 본문에_남의_userId를_실어도_토큰의_사용자로_선점된다() throws Exception {
+        String body = "{\"screeningId\":%d,\"userId\":%d,\"seats\":[%s]}"
+                .formatted(screening.getId(), other.getId(), seat(1, 1, ADULT));
+
+        mockMvc.perform(post("/api/reservations").with(bearer(user))
+                        .contentType("application/json")
+                        .content(body))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.userId").value(user.getId()));
+    }
+
+    @Test
+    void 토큰_없이_선점하면_401() throws Exception {
+        mockMvc.perform(post("/api/reservations")
+                        .contentType("application/json")
+                        .content("{\"screeningId\":%d,\"seats\":[%s]}"
+                                .formatted(screening.getId(), seat(1, 1, ADULT))))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("TOKEN_NOT_EXIST"));
+    }
+
+    @Test
     void 존재하지_않는_회차_404() throws Exception {
-        선점요청(9999L, user.getId(), seat(1, 1, ADULT))
+        선점요청(user, 9999L, seat(1, 1, ADULT))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("SCREENING_NOT_FOUND"));
     }
 
     @Test
-    void 존재하지_않는_사용자_404() throws Exception {
-        선점요청(screening.getId(), 9999L, seat(1, 1, ADULT))
+    void 토큰은_유효하지만_사용자가_없으면_404() throws Exception {
+        // 탈퇴한 사용자의 토큰도 만료 전까지는 서명 검증을 통과한다
+        User ghost = TestFixtures.user("ghostuser1");
+        ReflectionTestUtils.setField(ghost, "id", 9999L);
+
+        선점요청(ghost, screening.getId(), seat(1, 1, ADULT))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("USER_NOT_FOUND"));
     }
@@ -101,7 +136,7 @@ class ReservationControllerTest extends ControllerIntegrationTest {
     void 선점_중인_좌석은_다른_사람이_잡을_수_없다() throws Exception {
         선점(1, 1);
 
-        선점요청(seat(1, 1, ADULT))
+        선점요청(other, screening.getId(), seat(1, 1, ADULT))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("SEAT_ALREADY_RESERVED"));
     }
@@ -145,7 +180,7 @@ class ReservationControllerTest extends ControllerIntegrationTest {
                 .andExpect(jsonPath("$.code").value("PAYMENT_FAILED"));
         flushAndClear();
 
-        mockMvc.perform(get("/api/reservations/{id}", id))
+        조회요청(id, user)
                 .andExpect(jsonPath("$.data.status").value("CANCELLED"));
         // 좌석 선택부터 다시 할 수 있어야 한다
         선점요청(seat(1, 1, ADULT)).andExpect(status().isCreated());
@@ -181,7 +216,7 @@ class ReservationControllerTest extends ControllerIntegrationTest {
         선점요청(seat(1, 1, ADULT)).andExpect(status().isCreated());
         flushAndClear();
 
-        mockMvc.perform(get("/api/reservations/{id}", id))
+        조회요청(id, user)
                 .andExpect(jsonPath("$.data.status").value("EXPIRED"));
     }
 
@@ -203,7 +238,7 @@ class ReservationControllerTest extends ControllerIntegrationTest {
     void 예매_단건_조회() throws Exception {
         Long id = 선점(1, 1);
 
-        mockMvc.perform(get("/api/reservations/{id}", id))
+        조회요청(id, user)
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.id").value(id))
                 .andExpect(jsonPath("$.data.userId").value(user.getId()))
@@ -213,7 +248,7 @@ class ReservationControllerTest extends ControllerIntegrationTest {
 
     @Test
     void 없는_예매_조회_404() throws Exception {
-        mockMvc.perform(get("/api/reservations/9999"))
+        조회요청(9999L, user)
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("RESERVATION_NOT_FOUND"));
     }
@@ -223,10 +258,10 @@ class ReservationControllerTest extends ControllerIntegrationTest {
         Long id = 선점(1, 1, 1, 2);
         결제(id, "SUCCESS");
 
-        mockMvc.perform(delete("/api/reservations/{id}", id)).andExpect(status().isOk());
+        취소요청(id, user).andExpect(status().isOk());
         flushAndClear();
 
-        mockMvc.perform(get("/api/reservations/{id}", id))
+        조회요청(id, user)
                 .andExpect(jsonPath("$.data.status").value("CANCELLED"))
                 .andExpect(jsonPath("$.data.cancelledAt").exists())
                 .andExpect(jsonPath("$.data.seats.length()").value(2))
@@ -236,7 +271,7 @@ class ReservationControllerTest extends ControllerIntegrationTest {
     @Test
     void 취소한_좌석은_재예매_가능() throws Exception {
         Long id = 선점(1, 1);
-        mockMvc.perform(delete("/api/reservations/{id}", id)).andExpect(status().isOk());
+        취소요청(id, user).andExpect(status().isOk());
         flushAndClear();
 
         선점요청(seat(1, 1, ADULT)).andExpect(status().isCreated());
@@ -245,17 +280,17 @@ class ReservationControllerTest extends ControllerIntegrationTest {
     @Test
     void 이미_취소된_예매_재취소_409() throws Exception {
         Long id = 선점(1, 1);
-        mockMvc.perform(delete("/api/reservations/{id}", id)).andExpect(status().isOk());
+        취소요청(id, user).andExpect(status().isOk());
         flushAndClear();
 
-        mockMvc.perform(delete("/api/reservations/{id}", id))
+        취소요청(id, user)
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("ALREADY_CANCELLED"));
     }
 
     @Test
     void 없는_예매_취소_404() throws Exception {
-        mockMvc.perform(delete("/api/reservations/9999"))
+        취소요청(9999L, user)
                 .andExpect(status().isNotFound());
     }
 
@@ -265,7 +300,7 @@ class ReservationControllerTest extends ControllerIntegrationTest {
         결제(id, "SUCCESS");
         setNow(START.minusMinutes(19));
 
-        mockMvc.perform(delete("/api/reservations/{id}", id))
+        취소요청(id, user)
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("CANCEL_DEADLINE_PASSED"));
     }
@@ -276,8 +311,69 @@ class ReservationControllerTest extends ControllerIntegrationTest {
         결제(id, "SUCCESS");
         setNow(START.minusMinutes(21));
 
-        mockMvc.perform(delete("/api/reservations/{id}", id))
+        취소요청(id, user)
                 .andExpect(status().isOk());
+    }
+
+    // ─── 소유권 ───────────────────────────────────────────────────────────────
+    // 남의 예매는 없는 예매와 구분되지 않아야 한다. 응답이 다르면 id를 차례로 넣어
+    // 어떤 예매가 존재하는지 알아낼 수 있다.
+
+    @Test
+    void 남의_예매는_조회되지_않고_응답이_없는_예매와_같다() throws Exception {
+        Long id = 선점(1, 1);
+
+        String othersReservation = 조회요청(id, other)
+                .andExpect(status().isNotFound())
+                .andReturn().getResponse().getContentAsString();
+        String missingReservation = 조회요청(9999L, other)
+                .andExpect(status().isNotFound())
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(othersReservation).isEqualTo(missingReservation);
+    }
+
+    @Test
+    void 남의_예매를_취소할_수_없고_상태도_바뀌지_않는다() throws Exception {
+        Long id = 선점(1, 1);
+        결제(id, "SUCCESS");
+
+        취소요청(id, other)
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("RESERVATION_NOT_FOUND"));
+        flushAndClear();
+
+        조회요청(id, user)
+                .andExpect(jsonPath("$.data.status").value("RESERVED"))
+                .andExpect(jsonPath("$.data.cancelledAt").doesNotExist());
+    }
+
+    @Test
+    void 남의_선점에_결제_실패를_보내도_좌석이_풀리지_않는다() throws Exception {
+        // 결제 실패 경로는 롤백하지 않는다. 상태 변경이 소유권 검사보다 먼저면 남의 좌석이 풀린 채 커밋된다
+        Long id = 선점(1, 1);
+
+        결제요청(id, other, "FAILURE")
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("RESERVATION_NOT_FOUND"));
+        flushAndClear();
+
+        조회요청(id, user).andExpect(jsonPath("$.data.status").value("PENDING"));
+        선점요청(other, screening.getId(), seat(1, 1, ADULT))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("SEAT_ALREADY_RESERVED"));
+    }
+
+    @Test
+    void 남의_취소된_예매를_취소하면_409가_아니라_404() throws Exception {
+        // 상태 검사가 먼저면 409가 나와 남의 예매가 존재하고 이미 취소됐다는 사실이 드러난다
+        Long id = 선점(1, 1);
+        취소요청(id, user).andExpect(status().isOk());
+        flushAndClear();
+
+        취소요청(id, other)
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("RESERVATION_NOT_FOUND"));
     }
 
     // ─── 헬퍼 ─────────────────────────────────────────────────────────────────
@@ -293,19 +389,23 @@ class ReservationControllerTest extends ControllerIntegrationTest {
     }
 
     private ResultActions 선점요청(String... seats) throws Exception {
-        return 선점요청(screening.getId(), user.getId(), seats);
+        return 선점요청(user, screening.getId(), seats);
     }
 
-    private ResultActions 선점요청(Long screeningId, Long userId, String... seats) throws Exception {
-        String body = "{\"screeningId\":%d,\"userId\":%d,\"seats\":[%s]}"
-                .formatted(screeningId, userId, String.join(",", seats));
-        return mockMvc.perform(post("/api/reservations")
+    private ResultActions 선점요청(User requester, Long screeningId, String... seats) throws Exception {
+        String body = "{\"screeningId\":%d,\"seats\":[%s]}"
+                .formatted(screeningId, String.join(",", seats));
+        return mockMvc.perform(post("/api/reservations").with(bearer(requester))
                 .contentType("application/json")
                 .content(body));
     }
 
     private ResultActions 결제요청(Long id, String result) throws Exception {
-        return mockMvc.perform(post("/api/reservations/{id}/payment", id)
+        return 결제요청(id, user, result);
+    }
+
+    private ResultActions 결제요청(Long id, User requester, String result) throws Exception {
+        return mockMvc.perform(post("/api/reservations/{id}/payment", id).with(bearer(requester))
                 .contentType("application/json")
                 .content("{\"result\":\"%s\"}".formatted(result)));
     }
@@ -313,6 +413,14 @@ class ReservationControllerTest extends ControllerIntegrationTest {
     private void 결제(Long id, String result) throws Exception {
         결제요청(id, result);
         flushAndClear();
+    }
+
+    private ResultActions 조회요청(Long id, User requester) throws Exception {
+        return mockMvc.perform(get("/api/reservations/{id}", id).with(bearer(requester)));
+    }
+
+    private ResultActions 취소요청(Long id, User requester) throws Exception {
+        return mockMvc.perform(delete("/api/reservations/{id}", id).with(bearer(requester)));
     }
 
     // API를 거치지 않고 선점 상태를 만들어 둔다

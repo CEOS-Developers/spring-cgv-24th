@@ -68,7 +68,7 @@ class ReservationQueryCountTest {
 
     @Test
     void 좌석_선점은_SQL_7회로_끝난다() {
-        ReservationResponse response = reservationService.create(requestOf(
+        ReservationResponse response = reservationService.create(userId, requestOf(
                 new SeatRequest(1, 1, AudienceType.ADULT),
                 new SeatRequest(1, 2, AudienceType.YOUTH)));
 
@@ -81,13 +81,13 @@ class ReservationQueryCountTest {
 
     @Test
     void 예매_단건_조회는_SQL_1회로_끝난다() {
-        Long reservationId = reservationService.create(requestOf(
+        Long reservationId = reservationService.create(userId, requestOf(
                 new SeatRequest(2, 1, AudienceType.ADULT))).id();
         em.flush();
         em.clear();
         statistics.clear();
 
-        ReservationResponse response = reservationService.getById(reservationId);
+        ReservationResponse response = reservationService.getById(reservationId, userId);
 
         assertThat(statistics.getPrepareStatementCount()).isEqualTo(1);
         // 응답이 쓰는 스칼라만 읽으므로 엔티티는 한 개도 올라오지 않는다.
@@ -98,6 +98,6 @@ class ReservationQueryCountTest {
     }
 
     private ReservationCreateRequest requestOf(SeatRequest... seats) {
-        return new ReservationCreateRequest(screeningId, userId, List.of(seats));
+        return new ReservationCreateRequest(screeningId, List.of(seats));
     }
 }
