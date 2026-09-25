@@ -99,6 +99,8 @@ public class TestFixtures {
                 .password("pw")
                 .name("테스트유저")
                 .birthDate(LocalDate.of(2000, 1, 1))
+                .email(loginId + "@test.com")
+                .phoneNumber("01012345678")
                 .build();
     }
 }

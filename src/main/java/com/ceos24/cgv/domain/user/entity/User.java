@@ -32,11 +32,27 @@ public class User extends BaseTimeEntity {
     @Column(nullable = false)
     private LocalDate birthDate;
 
+    @Column(nullable = false, length = 100)
+    private String email;
+
+    // 하이픈 없이 숫자만 저장한다. 표시 형식은 클라이언트가 정한다.
+    @Column(nullable = false, length = 11)
+    private String phoneNumber;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    private Role role;
+
+    // role을 빌더 파라미터로 열지 않는다. 가입 경로가 어디든 ADMIN이 섞여 들어올 틈을 없앤다.
     @Builder
-    private User(String loginId, String password, String name, LocalDate birthDate) {
+    private User(String loginId, String password, String name, LocalDate birthDate,
+                 String email, String phoneNumber) {
         this.loginId = loginId;
         this.password = password;
         this.name = name;
         this.birthDate = birthDate;
+        this.email = email;
+        this.phoneNumber = phoneNumber;
+        this.role = Role.USER;
     }
 }
