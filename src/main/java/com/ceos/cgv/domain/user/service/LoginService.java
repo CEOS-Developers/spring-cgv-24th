@@ -3,7 +3,6 @@ package com.ceos.cgv.domain.user.service;
 import com.ceos.cgv.domain.user.dto.LoginRequest;
 import com.ceos.cgv.domain.user.dto.LoginResponse;
 import com.ceos.cgv.domain.user.security.CgvUserDetails;
-import com.ceos.cgv.domain.user.security.JwtService;
 import com.ceos.cgv.global.exception.BusinessException;
 import com.ceos.cgv.global.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
@@ -17,7 +16,7 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class LoginService {
     private final AuthenticationManager authenticationManager;
-    private final JwtService jwtService;
+    private final RefreshTokenService refreshTokenService;
 
     public LoginResponse login(LoginRequest request) {
         Authentication authentication;
@@ -28,7 +27,6 @@ public class LoginService {
             throw new BusinessException(ErrorCode.LOGIN_FAILED);
         }
         CgvUserDetails user = (CgvUserDetails) authentication.getPrincipal();
-        return LoginResponse.bearer(jwtService.issue(user.userId(), user.role()),
-                jwtService.expiresInSeconds());
+        return refreshTokenService.issueForLogin(user.userId());
     }
 }

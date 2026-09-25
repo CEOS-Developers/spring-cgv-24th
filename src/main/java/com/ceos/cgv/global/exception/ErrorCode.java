@@ -12,6 +12,8 @@ public enum ErrorCode {
     TOKEN_NOT_EXIST(HttpStatus.UNAUTHORIZED, "인증 토큰이 필요합니다."),
     TOKEN_EXPIRED(HttpStatus.UNAUTHORIZED, "토큰이 만료되었습니다."),
     TOKEN_INVALID(HttpStatus.UNAUTHORIZED, "유효하지 않은 토큰입니다."),
+    REFRESH_TOKEN_INVALID(HttpStatus.UNAUTHORIZED, "유효하지 않거나 폐기된 재발급 토큰입니다."),
+    REFRESH_TOKEN_EXPIRED(HttpStatus.UNAUTHORIZED, "재발급 토큰이 만료되었습니다."),
     ACCESS_DENIED(HttpStatus.FORBIDDEN, "접근 권한이 없습니다."),
     CINEMA_NOT_FOUND(HttpStatus.NOT_FOUND, "영화관을 찾을 수 없습니다."),
     SCREEN_NOT_FOUND(HttpStatus.NOT_FOUND, "상영관을 찾을 수 없습니다."),

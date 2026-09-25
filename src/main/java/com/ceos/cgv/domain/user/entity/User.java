@@ -35,6 +35,9 @@ public class User {
             columnDefinition = "varchar(16) default 'USER'")
     private UserRole role = UserRole.USER;
 
+    @Column(name = "refresh_token_hash", length = 64)
+    private String refreshTokenHash;
+
     @Builder
     public User(String name, String email) {
         this.name = name;
@@ -46,5 +49,13 @@ public class User {
         user.loginId = loginId;
         user.passwordHash = passwordHash;
         return user;
+    }
+
+    public void replaceRefreshTokenHash(String hash) {
+        this.refreshTokenHash = hash;
+    }
+
+    public void revokeRefreshToken() {
+        this.refreshTokenHash = null;
     }
 }

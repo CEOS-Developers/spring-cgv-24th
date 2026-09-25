@@ -1,7 +1,10 @@
 package com.ceos.cgv.domain.user.dto;
 
-public record LoginResponse(String accessToken, String tokenType, long expiresInSeconds) {
-    public static LoginResponse bearer(String accessToken, long expiresInSeconds) {
-        return new LoginResponse(accessToken, "Bearer", expiresInSeconds);
+public record LoginResponse(String accessToken, String refreshToken, String tokenType,
+                            long expiresInSeconds, long refreshExpiresInSeconds) {
+    public static LoginResponse bearer(String accessToken, String refreshToken,
+                                       long expiresInSeconds, long refreshExpiresInSeconds) {
+        return new LoginResponse(accessToken, refreshToken, "Bearer",
+                expiresInSeconds, refreshExpiresInSeconds);
     }
 }
