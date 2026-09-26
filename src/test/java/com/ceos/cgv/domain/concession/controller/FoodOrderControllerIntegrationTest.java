@@ -116,6 +116,17 @@ class FoodOrderControllerIntegrationTest {
     }
 
     @Test
+    void null_주문_항목은_사용자_조회_전에_400으로_거절한다() throws Exception {
+        // 없는 회원이라도 서비스의 USER_NOT_FOUND보다 요청 검증이 먼저 처리되어야 한다.
+        mockMvc.perform(post("/api/v1/food-orders")
+                        .header("Authorization", userToken(999999, UserRole.USER))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"cinemaId\":92,\"items\":[null]}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
+    }
+
+    @Test
     void 상품_메뉴는_영화관과_상관없이_공통으로_조회된다() throws Exception {
         mockMvc.perform(get("/api/v1/products"))
                 .andExpect(status().isOk())

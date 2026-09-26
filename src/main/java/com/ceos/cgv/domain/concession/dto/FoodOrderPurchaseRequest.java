@@ -8,7 +8,7 @@ import java.util.List;
 
 public record FoodOrderPurchaseRequest(
         @NotNull Long cinemaId,
-        @NotEmpty List<@Valid FoodOrderItemRequest> items
+        @NotEmpty List<@NotNull @Valid FoodOrderItemRequest> items
 ) {
     public FoodOrderCreateRequest forUser(Long userId) {
         return new FoodOrderCreateRequest(userId, cinemaId, items);
