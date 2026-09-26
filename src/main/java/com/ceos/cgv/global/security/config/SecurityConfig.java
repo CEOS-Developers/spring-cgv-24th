@@ -13,6 +13,7 @@ import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.AnonymousAuthenticationFilter;
 import org.springframework.security.web.util.matcher.RequestMatcher;
+import tools.jackson.databind.ObjectMapper;
 
 import java.util.Set;
 
@@ -20,9 +21,10 @@ import java.util.Set;
 @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
 public class SecurityConfig {
     @Bean
-    public SecurityFilterChain securityFilterChain(HttpSecurity http, JwtService jwtService) throws Exception {
+    public SecurityFilterChain securityFilterChain(HttpSecurity http, JwtService jwtService,
+                                                   ObjectMapper objectMapper) throws Exception {
         PublicApiRequestMatcher publicApiMatcher = new PublicApiRequestMatcher();
-        RestAuthenticationEntryPoint entryPoint = new RestAuthenticationEntryPoint();
+        RestAuthenticationEntryPoint entryPoint = new RestAuthenticationEntryPoint(objectMapper);
         RequestMatcher movieLike = request -> "POST".equals(request.getMethod())
                 && request.getRequestURI().substring(request.getContextPath().length())
                 .matches("/api/v1/movies/[^/]+/likes");
@@ -60,7 +62,7 @@ public class SecurityConfig {
                 .httpBasic(AbstractHttpConfigurer::disable)
                 .exceptionHandling(exceptions -> exceptions
                         .authenticationEntryPoint(entryPoint)
-                        .accessDeniedHandler(new RestAccessDeniedHandler()))
+                        .accessDeniedHandler(new RestAccessDeniedHandler(objectMapper)))
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers(publicApiMatcher).permitAll()
                         .requestMatchers(movieLike).authenticated()
