@@ -1,7 +1,7 @@
 package com.ceos.cgv.domain.movie.controller;
 
 import com.ceos.cgv.domain.user.enums.UserRole;
-import com.ceos.cgv.global.security.JwtService;
+import com.ceos.cgv.global.security.jwt.JwtService;
 import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;

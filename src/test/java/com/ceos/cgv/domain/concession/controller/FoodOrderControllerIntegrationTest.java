@@ -1,7 +1,7 @@
 package com.ceos.cgv.domain.concession.controller;
 
 import com.ceos.cgv.domain.user.enums.UserRole;
-import com.ceos.cgv.global.security.JwtService;
+import com.ceos.cgv.global.security.jwt.JwtService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.BeforeEach;
 import org.springframework.beans.factory.annotation.Autowired;

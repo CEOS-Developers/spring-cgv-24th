@@ -2,7 +2,7 @@ package com.ceos.cgv.domain.cinema.controller;
 
 import com.ceos.cgv.domain.auth.dto.SignupRequest;
 import com.ceos.cgv.domain.user.enums.UserRole;
-import com.ceos.cgv.global.security.JwtService;
+import com.ceos.cgv.global.security.jwt.JwtService;
 import com.ceos.cgv.domain.auth.service.RegistrationService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;

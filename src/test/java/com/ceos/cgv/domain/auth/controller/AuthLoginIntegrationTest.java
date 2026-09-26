@@ -1,7 +1,7 @@
 package com.ceos.cgv.domain.auth.controller;
 
 import com.ceos.cgv.domain.user.enums.UserRole;
-import com.ceos.cgv.global.security.JwtService;
+import com.ceos.cgv.global.security.jwt.JwtService;
 import com.jayway.jsonpath.JsonPath;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;

@@ -1,4 +1,4 @@
-package com.ceos.cgv.global.security;
+package com.ceos.cgv.global.security.handler;
 
 import com.ceos.cgv.global.security.exception.SecurityErrorCode;
 import jakarta.servlet.http.HttpServletRequest;
@@ -9,7 +9,7 @@ import org.springframework.security.web.AuthenticationEntryPoint;
 import java.io.IOException;
 
 public class RestAuthenticationEntryPoint implements AuthenticationEntryPoint {
-    static final String ERROR_ATTRIBUTE = RestAuthenticationEntryPoint.class.getName() + ".error";
+    public static final String ERROR_ATTRIBUTE = RestAuthenticationEntryPoint.class.getName() + ".error";
 
     @Override
     public void commence(HttpServletRequest request, HttpServletResponse response,

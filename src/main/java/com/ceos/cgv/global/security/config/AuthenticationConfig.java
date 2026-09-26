@@ -1,5 +1,6 @@
-package com.ceos.cgv.global.security;
+package com.ceos.cgv.global.security.config;
 
+import com.ceos.cgv.global.security.principal.CgvUserDetailsService;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.authentication.AuthenticationManager;

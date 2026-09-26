@@ -1,4 +1,4 @@
-package com.ceos.cgv.global.security;
+package com.ceos.cgv.global.security.principal;
 
 import com.ceos.cgv.domain.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;

@@ -1,6 +1,7 @@
-package com.ceos.cgv.global.security;
+package com.ceos.cgv.global.security.config;
 
 import com.ceos.cgv.domain.user.enums.UserRole;
+import com.ceos.cgv.global.security.jwt.JwtService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;

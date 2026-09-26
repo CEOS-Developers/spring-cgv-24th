@@ -1,4 +1,4 @@
-package com.ceos.cgv.global.security;
+package com.ceos.cgv.global.security.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;

@@ -1,4 +1,4 @@
-package com.ceos.cgv.global.security;
+package com.ceos.cgv.global.security.handler;
 
 import com.ceos.cgv.global.security.exception.SecurityErrorCode;
 import jakarta.servlet.http.HttpServletRequest;
