@@ -2,6 +2,7 @@ package com.ceos.cgv.domain.reservation.service;
 
 import com.ceos.cgv.domain.movie.entity.ScreeningSeat;
 import com.ceos.cgv.domain.reservation.dto.ReservationCreateRequest;
+import com.ceos.cgv.domain.reservation.dto.ReservationResponse;
 import com.ceos.cgv.domain.reservation.dto.ReservationSnapshot;
 import com.ceos.cgv.domain.reservation.dto.SeatCoordinate;
 import com.ceos.cgv.domain.reservation.entity.Reservation;
@@ -16,6 +17,7 @@ import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.time.Clock;
 
 @Service
 @RequiredArgsConstructor
@@ -24,6 +26,7 @@ public class ReservationService {
     private final ReservationRepository reservationRepository;
     private final ScreeningSeatLockService screeningSeatLockService;
     private final SeatHoldExpiryService seatHoldExpiryService;
+    private final Clock seatHoldClock;
 
     public Reservation create(ReservationCreateRequest request) {
         int maxCleanups = request.seats() == null ? 0 : request.seats().size();
@@ -38,7 +41,11 @@ public class ReservationService {
     }
 
     @Transactional(readOnly = true)
-    public Reservation findById(Long reservationId, Long userId) {
+    public ReservationResponse findById(Long reservationId, Long userId) {
+        return ReservationResponse.from(owned(reservationId, userId), seatHoldClock.instant());
+    }
+
+    private Reservation owned(Long reservationId, Long userId) {
         Reservation reservation = reservationRepository.findWithSeatsById(reservationId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.RESERVATION_NOT_FOUND));
         if (!reservation.getUser().getId().equals(userId)) {
@@ -49,7 +56,7 @@ public class ReservationService {
 
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public void cancel(Long reservationId, Long userId) {
-        Reservation reservation = findById(reservationId, userId);
+        Reservation reservation = owned(reservationId, userId);
         if (reservation.getStatus() == ReservationStatus.CANCELED) {
             throw new BusinessException(ErrorCode.RESERVATION_ALREADY_CANCELED);
         }

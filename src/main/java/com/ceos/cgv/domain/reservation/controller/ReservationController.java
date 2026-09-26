@@ -49,8 +49,8 @@ public class ReservationController {
     @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "본인 예매만 조회할 수 있습니다.")
     public ResponseEntity<ApiResponse<ReservationResponse>> findById(
             @PathVariable Long reservationId, @AuthenticationPrincipal AuthenticatedUser user) {
-        return ResponseEntity.ok(ApiResponse.success(ReservationResponse.from(
-                reservationService.findById(reservationId, user.userId()))));
+        return ResponseEntity.ok(ApiResponse.success(
+                reservationService.findById(reservationId, user.userId())));
     }
 
     @DeleteMapping("/{reservationId}")
