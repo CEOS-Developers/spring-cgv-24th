@@ -3,7 +3,7 @@ package com.ceos.cgv.domain.concession.controller;
 import com.ceos.cgv.domain.concession.dto.FoodOrderPurchaseRequest;
 import com.ceos.cgv.domain.concession.dto.FoodOrderResponse;
 import com.ceos.cgv.domain.concession.service.FoodOrderService;
-import com.ceos.cgv.domain.user.security.AuthenticatedUser;
+import com.ceos.cgv.domain.auth.security.AuthenticatedUser;
 import com.ceos.cgv.global.common.dto.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;

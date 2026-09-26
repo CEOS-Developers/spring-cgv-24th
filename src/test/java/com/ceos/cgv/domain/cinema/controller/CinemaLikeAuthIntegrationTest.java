@@ -1,9 +1,9 @@
 package com.ceos.cgv.domain.cinema.controller;
 
-import com.ceos.cgv.domain.user.dto.SignupRequest;
+import com.ceos.cgv.domain.auth.dto.SignupRequest;
 import com.ceos.cgv.domain.user.enums.UserRole;
-import com.ceos.cgv.domain.user.security.JwtService;
-import com.ceos.cgv.domain.user.service.RegistrationService;
+import com.ceos.cgv.domain.auth.security.JwtService;
+import com.ceos.cgv.domain.auth.service.RegistrationService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;

@@ -1,7 +1,7 @@
 package com.ceos.cgv.domain.cinema.controller;
 
 import com.ceos.cgv.domain.cinema.service.CinemaLikeService;
-import com.ceos.cgv.domain.user.security.AuthenticatedUser;
+import com.ceos.cgv.domain.auth.security.AuthenticatedUser;
 import com.ceos.cgv.global.common.dto.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
