@@ -57,6 +57,8 @@ class ReservationServiceTest {
     private ScreeningSeatLockService screeningSeatLockService;
     @InjectMocks
     private ReservationService reservationService;
+    @InjectMocks
+    private ReservationCreationService creationService;
 
     @Test
     void 이미_예약된_좌석은_다시_예매할_수_없다() {
@@ -79,7 +81,7 @@ class ReservationServiceTest {
                 1L, 8L, List.of(new ReservedSeatRequest("A", 1))
         );
 
-        assertThatThrownBy(() -> reservationService.create(request))
+        assertThatThrownBy(() -> creationService.create(request))
                 .isInstanceOf(BusinessException.class)
                 .extracting(exception -> ((BusinessException) exception).getErrorCode())
                 .isEqualTo(ErrorCode.SEAT_ALREADY_RESERVED);

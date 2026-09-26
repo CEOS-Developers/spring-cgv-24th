@@ -34,7 +34,7 @@ class ReservationBatchValidationTest {
     @Mock ReservationRepository reservations;
     @Mock ReservedSeatRepository seats;
     @Mock ScreeningSeatRepository screeningSeats;
-    @InjectMocks ReservationService service;
+    @InjectMocks ReservationCreationService service;
     private Screening screening;
 
     @BeforeEach
