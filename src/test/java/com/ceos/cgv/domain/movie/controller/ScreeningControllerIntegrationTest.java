@@ -4,7 +4,7 @@ import com.ceos.cgv.domain.movie.entity.Movie;
 import com.ceos.cgv.domain.movie.enums.AgeRating;
 import com.ceos.cgv.domain.movie.repository.MovieRepository;
 import com.ceos.cgv.domain.user.enums.UserRole;
-import com.ceos.cgv.domain.auth.security.JwtService;
+import com.ceos.cgv.global.security.JwtService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;

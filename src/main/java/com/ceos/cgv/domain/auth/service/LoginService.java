@@ -2,7 +2,7 @@ package com.ceos.cgv.domain.auth.service;
 
 import com.ceos.cgv.domain.auth.dto.LoginRequest;
 import com.ceos.cgv.domain.auth.dto.LoginResponse;
-import com.ceos.cgv.domain.auth.security.CgvUserDetails;
+import com.ceos.cgv.global.security.CgvUserDetails;
 import com.ceos.cgv.global.exception.BusinessException;
 import com.ceos.cgv.global.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;

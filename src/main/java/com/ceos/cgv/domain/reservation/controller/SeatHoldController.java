@@ -4,7 +4,7 @@ import com.ceos.cgv.domain.reservation.dto.SeatHoldCreateRequest;
 import com.ceos.cgv.domain.reservation.dto.SeatHoldResponse;
 import com.ceos.cgv.domain.reservation.service.SeatHoldService;
 import com.ceos.cgv.domain.reservation.service.SeatHoldTransitionService;
-import com.ceos.cgv.domain.auth.security.AuthenticatedUser;
+import com.ceos.cgv.global.security.AuthenticatedUser;
 import com.ceos.cgv.global.common.dto.ApiResponse;
 import com.ceos.cgv.global.exception.BusinessException;
 import com.ceos.cgv.global.exception.ErrorCode;

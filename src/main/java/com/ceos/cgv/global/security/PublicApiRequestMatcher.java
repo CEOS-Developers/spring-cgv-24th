@@ -1,4 +1,4 @@
-package com.ceos.cgv.domain.auth.security;
+package com.ceos.cgv.global.security;
 
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.security.web.util.matcher.RequestMatcher;

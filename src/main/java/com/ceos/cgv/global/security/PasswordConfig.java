@@ -1,4 +1,4 @@
-package com.ceos.cgv.domain.auth.config;
+package com.ceos.cgv.global.security;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;

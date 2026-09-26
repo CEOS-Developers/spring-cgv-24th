@@ -1,10 +1,5 @@
-package com.ceos.cgv.domain.auth.config;
+package com.ceos.cgv.global.security;
 
-import com.ceos.cgv.domain.auth.security.JwtAuthenticationFilter;
-import com.ceos.cgv.domain.auth.security.JwtService;
-import com.ceos.cgv.domain.auth.security.PublicApiRequestMatcher;
-import com.ceos.cgv.domain.auth.security.RestAccessDeniedHandler;
-import com.ceos.cgv.domain.auth.security.RestAuthenticationEntryPoint;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;

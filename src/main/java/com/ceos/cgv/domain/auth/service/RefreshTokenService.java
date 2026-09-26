@@ -3,7 +3,7 @@ package com.ceos.cgv.domain.auth.service;
 import com.ceos.cgv.domain.auth.dto.LoginResponse;
 import com.ceos.cgv.domain.user.entity.User;
 import com.ceos.cgv.domain.user.repository.UserRepository;
-import com.ceos.cgv.domain.auth.security.JwtService;
+import com.ceos.cgv.global.security.JwtService;
 import com.ceos.cgv.global.exception.BusinessException;
 import com.ceos.cgv.global.exception.ErrorCode;
 import io.jsonwebtoken.ExpiredJwtException;

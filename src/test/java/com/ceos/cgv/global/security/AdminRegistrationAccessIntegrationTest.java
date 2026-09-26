@@ -1,4 +1,4 @@
-package com.ceos.cgv.domain.auth.security;
+package com.ceos.cgv.global.security;
 
 import com.ceos.cgv.domain.user.enums.UserRole;
 import org.junit.jupiter.api.Test;

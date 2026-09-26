@@ -5,7 +5,7 @@ import com.ceos.cgv.domain.reservation.repository.ReservationRepository;
 import com.ceos.cgv.domain.reservation.service.SeatHoldCleanupTask;
 import com.ceos.cgv.domain.reservation.service.SeatHoldExpiryService;
 import com.ceos.cgv.domain.user.enums.UserRole;
-import com.ceos.cgv.domain.auth.security.JwtService;
+import com.ceos.cgv.global.security.JwtService;
 import com.jayway.jsonpath.JsonPath;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;

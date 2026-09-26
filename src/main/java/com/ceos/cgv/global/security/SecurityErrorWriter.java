@@ -1,4 +1,4 @@
-package com.ceos.cgv.domain.auth.security;
+package com.ceos.cgv.global.security;
 
 import com.ceos.cgv.global.exception.ErrorCode;
 import jakarta.servlet.http.HttpServletResponse;
