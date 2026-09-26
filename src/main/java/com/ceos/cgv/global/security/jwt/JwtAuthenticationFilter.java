@@ -1,6 +1,5 @@
 package com.ceos.cgv.global.security.jwt;
 
-import com.ceos.cgv.global.security.config.PublicApiRequestMatcher;
 import com.ceos.cgv.global.security.exception.SecurityErrorCode;
 import com.ceos.cgv.global.security.handler.RestAuthenticationEntryPoint;
 import com.ceos.cgv.global.security.principal.AuthenticatedUser;
@@ -16,6 +15,7 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.web.util.matcher.RequestMatcher;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
@@ -24,11 +24,11 @@ import java.util.List;
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private final JwtService jwtService;
     private final RestAuthenticationEntryPoint entryPoint;
-    private final PublicApiRequestMatcher publicApiMatcher;
+    private final RequestMatcher publicApiMatcher;
 
     public JwtAuthenticationFilter(JwtService jwtService,
                                    RestAuthenticationEntryPoint entryPoint,
-                                   PublicApiRequestMatcher publicApiMatcher) {
+                                   RequestMatcher publicApiMatcher) {
         this.jwtService = jwtService;
         this.entryPoint = entryPoint;
         this.publicApiMatcher = publicApiMatcher;

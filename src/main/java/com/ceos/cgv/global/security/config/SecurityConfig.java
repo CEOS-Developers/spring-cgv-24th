@@ -23,7 +23,7 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http, JwtService jwtService,
                                                    ObjectMapper objectMapper) throws Exception {
-        PublicApiRequestMatcher publicApiMatcher = new PublicApiRequestMatcher();
+        RequestMatcher publicApiMatcher = new PublicApiRequestMatcher();
         RestAuthenticationEntryPoint entryPoint = new RestAuthenticationEntryPoint(objectMapper);
         RequestMatcher movieLike = request -> "POST".equals(request.getMethod())
                 && request.getRequestURI().substring(request.getContextPath().length())
