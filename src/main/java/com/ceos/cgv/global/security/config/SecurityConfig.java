@@ -4,6 +4,7 @@ import com.ceos.cgv.global.security.handler.RestAccessDeniedHandler;
 import com.ceos.cgv.global.security.handler.RestAuthenticationEntryPoint;
 import com.ceos.cgv.global.security.jwt.JwtAuthenticationFilter;
 import com.ceos.cgv.global.security.jwt.JwtService;
+import jakarta.servlet.DispatcherType;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
@@ -64,6 +65,7 @@ public class SecurityConfig {
                         .authenticationEntryPoint(entryPoint)
                         .accessDeniedHandler(new RestAccessDeniedHandler(objectMapper)))
                 .authorizeHttpRequests(authorize -> authorize
+                        .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
                         .requestMatchers(publicApiMatcher).permitAll()
                         .requestMatchers(movieLike).authenticated()
                         .requestMatchers(cinemaLike).authenticated()
