@@ -1,6 +1,6 @@
 package com.ceos.cgv.global.security;
 
-import com.ceos.cgv.global.exception.ErrorCode;
+import com.ceos.cgv.global.security.exception.SecurityErrorCode;
 import jakarta.servlet.http.HttpServletResponse;
 
 import java.io.IOException;
@@ -10,7 +10,7 @@ final class SecurityErrorWriter {
     private SecurityErrorWriter() {
     }
 
-    static void write(HttpServletResponse response, ErrorCode errorCode) throws IOException {
+    static void write(HttpServletResponse response, SecurityErrorCode errorCode) throws IOException {
         response.setStatus(errorCode.httpStatus().value());
         response.setContentType("application/json");
         response.setCharacterEncoding(StandardCharsets.UTF_8.name());

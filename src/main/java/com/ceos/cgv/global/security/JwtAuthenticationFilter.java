@@ -1,6 +1,6 @@
 package com.ceos.cgv.global.security;
 
-import com.ceos.cgv.global.exception.ErrorCode;
+import com.ceos.cgv.global.security.exception.SecurityErrorCode;
 import io.jsonwebtoken.ExpiredJwtException;
 import io.jsonwebtoken.JwtException;
 import jakarta.servlet.FilterChain;
@@ -45,7 +45,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             return;
         }
         if (!header.startsWith("Bearer ") || header.length() == "Bearer ".length()) {
-            reject(request, response, ErrorCode.TOKEN_INVALID);
+            reject(request, response, SecurityErrorCode.TOKEN_INVALID);
             return;
         }
         try {
@@ -58,17 +58,17 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             context.setAuthentication(authentication);
             SecurityContextHolder.setContext(context);
         } catch (ExpiredJwtException exception) {
-            reject(request, response, ErrorCode.TOKEN_EXPIRED);
+            reject(request, response, SecurityErrorCode.TOKEN_EXPIRED);
             return;
         } catch (JwtException | IllegalArgumentException exception) {
-            reject(request, response, ErrorCode.TOKEN_INVALID);
+            reject(request, response, SecurityErrorCode.TOKEN_INVALID);
             return;
         }
         chain.doFilter(request, response);
     }
 
     private void reject(HttpServletRequest request, HttpServletResponse response,
-                        ErrorCode errorCode) throws IOException {
+                        SecurityErrorCode errorCode) throws IOException {
         SecurityContextHolder.clearContext();
         request.setAttribute(RestAuthenticationEntryPoint.ERROR_ATTRIBUTE, errorCode);
         entryPoint.commence(request, response, new BadCredentialsException(errorCode.name()));

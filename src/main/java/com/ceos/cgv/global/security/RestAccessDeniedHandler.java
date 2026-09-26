@@ -1,6 +1,6 @@
 package com.ceos.cgv.global.security;
 
-import com.ceos.cgv.global.exception.ErrorCode;
+import com.ceos.cgv.global.security.exception.SecurityErrorCode;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.security.access.AccessDeniedException;
@@ -12,6 +12,6 @@ public class RestAccessDeniedHandler implements AccessDeniedHandler {
     @Override
     public void handle(HttpServletRequest request, HttpServletResponse response,
                        AccessDeniedException accessDeniedException) throws IOException {
-        SecurityErrorWriter.write(response, ErrorCode.ACCESS_DENIED);
+        SecurityErrorWriter.write(response, SecurityErrorCode.ACCESS_DENIED);
     }
 }
