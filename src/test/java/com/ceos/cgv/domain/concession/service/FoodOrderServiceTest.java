@@ -152,7 +152,6 @@ class FoodOrderServiceTest {
         when(cinema.getId()).thenReturn(2L);
         when(product3.getId()).thenReturn(3L);
         when(product1.getId()).thenReturn(1L);
-        when(product1.getPrice()).thenReturn(1000L);
 
         Inventory inventory3 = new Inventory(cinema, product3, 2);
         Inventory inventory1 = new Inventory(cinema, product1, 5);

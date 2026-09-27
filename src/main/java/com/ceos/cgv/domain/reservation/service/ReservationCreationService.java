@@ -11,7 +11,6 @@ import com.ceos.cgv.domain.reservation.dto.ReservationCreateRequest;
 import com.ceos.cgv.domain.reservation.dto.ReservedSeatRequest;
 import com.ceos.cgv.domain.reservation.dto.SeatCoordinate;
 import com.ceos.cgv.domain.reservation.entity.Reservation;
-import com.ceos.cgv.domain.reservation.entity.ReservedSeat;
 import com.ceos.cgv.domain.reservation.repository.ReservationRepository;
 import com.ceos.cgv.domain.reservation.repository.ReservedSeatRepository;
 import com.ceos.cgv.domain.user.entity.User;
@@ -91,13 +90,8 @@ public class ReservationCreationService {
 
         // 요청받은 좌석마다 예매 좌석 자식 엔티티를 만듦
         for (ReservedSeatRequest seat : request.seats()) {
-            reservation.addReservedSeat(ReservedSeat.builder()
-                    .reservation(reservation)
-                    .seatRow(seat.seatRow())
-                    .seatNumber(seat.seatNumber())
-                    .screeningSeat(screeningSeatsByCoordinate.get(
-                            new SeatCoordinate(seat.seatRow(), seat.seatNumber())))
-                    .build());
+            reservation.addSeat(seat.seatRow(), seat.seatNumber(), screeningSeatsByCoordinate.get(
+                    new SeatCoordinate(seat.seatRow(), seat.seatNumber())));
         }
 
         // Reservation의 cascade 설정을 이용해 예매와 좌석을 함께 저장

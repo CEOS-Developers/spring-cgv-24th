@@ -14,7 +14,6 @@ import com.ceos.cgv.domain.reservation.dto.SeatCoordinate;
 import com.ceos.cgv.domain.reservation.dto.SeatHoldCreateRequest;
 import com.ceos.cgv.domain.reservation.dto.SeatHoldResponse;
 import com.ceos.cgv.domain.reservation.entity.Reservation;
-import com.ceos.cgv.domain.reservation.entity.ReservedSeat;
 import com.ceos.cgv.domain.reservation.enums.ReservationStatus;
 import com.ceos.cgv.domain.reservation.repository.ReservationRepository;
 import com.ceos.cgv.domain.reservation.repository.ReservedSeatRepository;
@@ -106,13 +105,8 @@ public class SeatHoldCreationService {
                 .collect(Collectors.toMap(
                         seat -> new SeatCoordinate(seat.getSeatRow(), seat.getSeatNumber()), Function.identity()));
         for (ReservedSeatRequest requested : request.seats()) {
-            hold.addReservedSeat(ReservedSeat.builder()
-                    .reservation(hold)
-                    .seatRow(requested.seatRow())
-                    .seatNumber(requested.seatNumber())
-                    .screeningSeat(byCoordinate.get(new SeatCoordinate(
-                            requested.seatRow(), requested.seatNumber())))
-                    .build());
+            hold.addSeat(requested.seatRow(), requested.seatNumber(), byCoordinate.get(
+                    new SeatCoordinate(requested.seatRow(), requested.seatNumber())));
         }
         reservationRepository.saveAndFlush(hold);
         seats.forEach(seat -> seat.occupy(hold));

@@ -50,6 +50,9 @@ public class Inventory {
     }
 
     public void decrease(Integer quantity) {
+        if (quantity == null || quantity <= 0) {
+            throw new BusinessException(ErrorCode.INVALID_REQUEST);
+        }
         if (stockQuantity < quantity) {
             throw new BusinessException(ErrorCode.STOCK_NOT_ENOUGH);
         }

@@ -6,7 +6,6 @@ import com.ceos.cgv.domain.concession.dto.FoodOrderCreateRequest;
 import com.ceos.cgv.domain.concession.dto.FoodOrderItemRequest;
 import com.ceos.cgv.domain.concession.entity.FoodOrder;
 import com.ceos.cgv.domain.concession.entity.Inventory;
-import com.ceos.cgv.domain.concession.entity.OrderItem;
 import com.ceos.cgv.domain.concession.entity.Product;
 import com.ceos.cgv.domain.concession.repository.FoodOrderRepository;
 import com.ceos.cgv.domain.concession.repository.InventoryRepository;
@@ -59,7 +58,6 @@ public class FoodOrderService {
         // 상품을 하나씩 조회하지 않고 모든 상품을 한 번의 쿼리로 조회
         Map<Long, Product> productsById = productRepository.findAllById(quantitiesByProduct.keySet()).stream()
                 .collect(Collectors.toMap(Product::getId, product -> product));
-        long totalPrice = 0;
         for (Map.Entry<Long, Integer> item : lockOrder) {
             // 상품 id로 조회한 상품을 가져옴
             Product product = productsById.get(item.getKey());
@@ -73,29 +71,20 @@ public class FoodOrderService {
             if (inventory.getStockQuantity() < item.getValue()) {
                 throw new BusinessException(ErrorCode.STOCK_NOT_ENOUGH);
             }
-            // 주문 시점의 상품 가격과 수량으로 총 주문 금액을 계산
-            totalPrice = Math.addExact(totalPrice, Math.multiplyExact(product.getPrice(), item.getValue()));
             // 검증이 끝난 상품·재고·수량을 나중에 재사용할 수 있도록 보관
             orderLinesByProduct.put(item.getKey(),
                     new OrderLine(product, inventory, item.getValue()));
         }
 
-        // 모든 상품과 재고 검증이 끝난 뒤 주문 엔티티 객체를 생성함
-        FoodOrder order = FoodOrder.builder()
-                .user(user)
-                .cinema(cinema)
-                .totalPrice(totalPrice)
-                .build();
+        // 항목의 단가 스냅샷과 총액이 완성된 뒤에만 재고를 차감한다.
+        FoodOrder order = FoodOrder.create(user, cinema, quantitiesByProduct.keySet().stream()
+                .map(productId -> {
+                    OrderLine line = orderLinesByProduct.get(productId);
+                    return new FoodOrder.ItemSelection(line.product(), line.quantity());
+                }).toList());
         for (Long productId : quantitiesByProduct.keySet()) {
             OrderLine line = orderLinesByProduct.get(productId);
-            // 검증이 끝난 재고에서 주문 수량만큼 차감
             line.inventory().decrease(line.quantity());
-            // 주문 엔티티 객체와 상품을 주문 항목 객체로 연결함
-            order.addItem(OrderItem.builder()
-                    .foodOrder(order)
-                    .product(line.product())
-                    .quantity(line.quantity())
-                    .build());
         }
         // cascade 설정으로 주문과 주문 항목을 함께 저장
         return foodOrderRepository.save(order);

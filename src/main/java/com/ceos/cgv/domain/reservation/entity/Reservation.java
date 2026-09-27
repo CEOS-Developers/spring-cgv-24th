@@ -1,6 +1,7 @@
 package com.ceos.cgv.domain.reservation.entity;
 
 import com.ceos.cgv.domain.movie.entity.Screening;
+import com.ceos.cgv.domain.movie.entity.ScreeningSeat;
 import com.ceos.cgv.domain.reservation.enums.ReservationStatus;
 import com.ceos.cgv.domain.user.entity.User;
 import com.ceos.cgv.global.entity.BaseTimeEntity;
@@ -27,6 +28,7 @@ import lombok.NoArgsConstructor;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Collections;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -113,7 +115,37 @@ public class Reservation extends BaseTimeEntity {
     }
 
     public void addReservedSeat(ReservedSeat reservedSeat) {
+        if (reservedSeat == null || reservedSeat.getReservation() != this) {
+            throw new BusinessException(ErrorCode.INVALID_REQUEST);
+        }
+        String row = reservedSeat.getSeatRow();
+        Integer number = reservedSeat.getSeatNumber();
+        if (row == null || !row.matches("[A-Z]") || number == null || number < 1) {
+            throw new BusinessException(ErrorCode.INVALID_SEAT);
+        }
+        ScreeningSeat linked = reservedSeat.getScreeningSeat();
+        if (linked != null && (!row.equals(linked.getSeatRow()) || !number.equals(linked.getSeatNumber())
+                || !sameScreening(linked.getScreening()))) {
+            throw new BusinessException(ErrorCode.INVALID_SEAT);
+        }
+        if (reservedSeats.stream().anyMatch(seat -> row.equals(seat.getSeatRow())
+                && number.equals(seat.getSeatNumber()))) {
+            throw new BusinessException(ErrorCode.DUPLICATE_SEAT_IN_REQUEST);
+        }
         reservedSeats.add(reservedSeat);
+    }
+
+    public void addSeat(String row, Integer number, ScreeningSeat screeningSeat) {
+        addReservedSeat(new ReservedSeat(this, row, number, screeningSeat));
+    }
+
+    public List<ReservedSeat> getReservedSeats() {
+        return Collections.unmodifiableList(reservedSeats);
+    }
+
+    private boolean sameScreening(Screening other) {
+        return screening == other || (screening != null && other != null
+                && screening.getId() != null && screening.getId().equals(other.getId()));
     }
 
     public void cancel() {

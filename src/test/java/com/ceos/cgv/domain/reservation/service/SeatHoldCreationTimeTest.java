@@ -70,6 +70,7 @@ class SeatHoldCreationTimeTest {
         when(seats.countByScreening_Id(8L)).thenReturn(1L);
         when(locks.lockSeats(8L, java.util.Set.of(new SeatCoordinate("A", 1))))
                 .thenReturn(List.of(seat));
+        when(seat.getScreening()).thenReturn(screening);
         when(seat.getSeatRow()).thenReturn("A");
         when(seat.getSeatNumber()).thenReturn(1);
         when(reservations.saveAndFlush(any(Reservation.class)))
