@@ -28,6 +28,7 @@ import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 class ReservationBatchValidationTest {
+    @Mock Clock clock;
     @Mock UserRepository users;
     @Mock MovieRepository movies;
     @Mock ScreeningRepository screenings;
@@ -79,6 +80,22 @@ class ReservationBatchValidationTest {
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException)e).getErrorCode())
                 .isEqualTo(ErrorCode.INVALID_SEAT);
+        verifyNoInteractions(seats, reservations);
+    }
+
+    @Test
+    void 내부_호출에서도_null과_잘못된_좌표를_업무_오류로_거절한다() {
+        List<ReservedSeatRequest> invalid = Arrays.asList(null,
+                new ReservedSeatRequest(null, 1), new ReservedSeatRequest("", 1),
+                new ReservedSeatRequest("AA", 1), new ReservedSeatRequest("a", 1),
+                new ReservedSeatRequest("A", null), new ReservedSeatRequest("A", 0));
+        for (ReservedSeatRequest seat : invalid) {
+            assertThatThrownBy(() -> service.create(new ReservationCreateRequest(1L, 8L,
+                    Collections.singletonList(seat))))
+                    .isInstanceOf(BusinessException.class)
+                    .extracting(error -> ((BusinessException) error).getErrorCode())
+                    .isEqualTo(ErrorCode.INVALID_SEAT);
+        }
         verifyNoInteractions(seats, reservations);
     }
 }

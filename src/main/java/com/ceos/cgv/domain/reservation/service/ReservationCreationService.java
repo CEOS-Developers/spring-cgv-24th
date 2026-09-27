@@ -24,7 +24,6 @@ import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
-import java.util.HashSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -61,47 +60,21 @@ public class ReservationCreationService {
         // 좌석 유효성 검증에 필요한 상영관 좌석 구조를 가져옴
         Screen screen = screening.getScreen();
 
-        if (request.seats() == null || request.seats().isEmpty()) {
-            throw new BusinessException(ErrorCode.INVALID_REQUEST);
-        }
-
-        // 모든 좌석을 검증한 뒤 요청 좌표의 중복 여부를 확인
-        Set<SeatCoordinate> requestedSeats = new HashSet<>();
-        for (ReservedSeatRequest seat : request.seats()) {
-            // 상영관의 좌석 범위를 벗어난 좌석인지 확인
-            validateSeat(screen, seat);
-
-            if (!requestedSeats.add(new SeatCoordinate(seat.seatRow(), seat.seatNumber()))) {
-                throw new BusinessException(ErrorCode.DUPLICATE_SEAT_IN_REQUEST);
-            }
-        }
-
-        long seatCount = screeningSeatRepository.countByScreening_Id(screening.getId());
-        boolean legacyScreening = seatCount == 0;
+        Set<SeatCoordinate> requestedSeats = ReservationSeatPolicy.coordinates(request.seats());
+        ReservationSeatPolicy.validateBounds(screen, requestedSeats);
+        boolean legacyScreening = ReservationSeatPolicy.validateInventory(screen,
+                screeningSeatRepository.countByScreening_Id(screening.getId()), true);
         if (legacyScreening) {
-            // 이관 전 회차의 기존 직렬화 경로는 좌석 데이터가 준비될 때까지 유지한다.
             screeningRepository.findByIdWithLock(screening.getId())
                     .orElseThrow(() -> new BusinessException(ErrorCode.SCREENING_NOT_FOUND));
-        } else if (seatCount != (long) screen.getRowCount() * screen.getSeatsPerRow()) {
-            throw new BusinessException(ErrorCode.SCREENING_SEATS_NOT_READY);
         }
 
         List<ScreeningSeat> lockedSeats = legacyScreening ? List.of()
                 : screeningSeatLockService.lockSeats(screening.getId(), requestedSeats);
+        ReservationSeatPolicy.ensureAvailable(lockedSeats, seatHoldClock.instant());
         Map<SeatCoordinate, ScreeningSeat> screeningSeatsByCoordinate = new HashMap<>();
         for (ScreeningSeat seat : lockedSeats) {
             screeningSeatsByCoordinate.put(new SeatCoordinate(seat.getSeatRow(), seat.getSeatNumber()), seat);
-            if (seat.getCurrentReservation() != null) {
-                if (seat.getCurrentReservation().isExpiredAt(seatHoldClock.instant())) {
-                    throw new ExpiredHoldEncountered(seat.getCurrentReservation().getId());
-                }
-                ErrorCode error = switch (seat.getCurrentReservation().getStatus()) {
-                    case HELD -> ErrorCode.SEAT_HELD;
-                    case RESERVED -> ErrorCode.SEAT_ALREADY_RESERVED;
-                    case EXPIRED, RELEASED, CANCELED -> ErrorCode.SCREENING_SEATS_NOT_READY;
-                };
-                throw new BusinessException(error);
-            }
         }
 
         // 기존 이력 조회도 유지해 이관 전 좌석 점유와 데이터 불일치를 방어한다.
@@ -135,22 +108,4 @@ public class ReservationCreationService {
         return saved;
     }
 
-    private void validateSeat(Screen screen, ReservedSeatRequest seat) {
-        int rowNumber = seat.seatRow().charAt(0) - 'A' + 1;
-        if (rowNumber > screen.getRowCount() || seat.seatNumber() > screen.getSeatsPerRow()) {
-            throw new BusinessException(ErrorCode.INVALID_SEAT);
-        }
-    }
-
-    static final class ExpiredHoldEncountered extends RuntimeException {
-        private final Long reservationId;
-
-        ExpiredHoldEncountered(Long reservationId) {
-            this.reservationId = reservationId;
-        }
-
-        Long reservationId() {
-            return reservationId;
-        }
-    }
 }

@@ -23,7 +23,7 @@ public class SeatHoldService {
         for (int attempt = 0; attempt <= properties.maxSeats(); attempt++) {
             try {
                 return creationService.create(userId, requestKey, request);
-            } catch (SeatHoldCreationService.ExpiredHoldEncountered expired) {
+            } catch (ExpiredHoldEncountered expired) {
                 boolean cleaned = expiryService.expireIfElapsed(expired.reservationId());
                 if (expired.sameRequestKey() && cleaned) {
                     throw new BusinessException(ErrorCode.HOLD_EXPIRED);

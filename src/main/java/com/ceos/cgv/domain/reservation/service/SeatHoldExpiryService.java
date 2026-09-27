@@ -44,14 +44,7 @@ public class SeatHoldExpiryService {
         if (!reservation.isExpiredAt(now)) {
             return false;
         }
-        for (ScreeningSeat seat : seats) {
-            if (seat.getCurrentReservation() == null
-                    || !seat.getCurrentReservation().getId().equals(reservationId)) {
-                throw new BusinessException(ErrorCode.SEAT_OWNER_MISMATCH);
-            }
-        }
-        reservation.expire(now);
-        seats.forEach(seat -> seat.releaseIfOwnedBy(reservation));
+        ReservationSeatLifecycle.expire(reservation, seats, now);
         return true;
     }
 }

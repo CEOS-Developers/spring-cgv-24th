@@ -33,7 +33,7 @@ public class ReservationService {
         for (int attempt = 0; attempt <= maxCleanups; attempt++) {
             try {
                 return creationService.create(request);
-            } catch (ReservationCreationService.ExpiredHoldEncountered expired) {
+            } catch (ExpiredHoldEncountered expired) {
                 seatHoldExpiryService.expireIfElapsed(expired.reservationId());
             }
         }
@@ -79,9 +79,8 @@ public class ReservationService {
             if (current.status() != ReservationStatus.RESERVED) {
                 throw new BusinessException(ErrorCode.HOLD_NOT_ACTIVE);
             }
-            for (ScreeningSeat seat : locked) {
-                seat.releaseIfOwnedBy(reservation);
-            }
+            ReservationSeatLifecycle.cancel(reservation, locked);
+            return;
         }
         reservation.cancel();
     }

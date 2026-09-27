@@ -29,7 +29,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.Instant;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -57,12 +56,7 @@ public class SeatHoldCreationService {
                 || request.seats().size() > properties.maxSeats()) {
             throw new BusinessException(ErrorCode.INVALID_REQUEST);
         }
-        Set<SeatCoordinate> coordinates = new HashSet<>();
-        for (ReservedSeatRequest seat : request.seats()) {
-            if (!coordinates.add(new SeatCoordinate(seat.seatRow(), seat.seatNumber()))) {
-                throw new BusinessException(ErrorCode.DUPLICATE_SEAT_IN_REQUEST);
-            }
-        }
+        Set<SeatCoordinate> coordinates = ReservationSeatPolicy.coordinates(request.seats());
         User user = userRepository.findByIdForUpdate(userId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
         Instant now = seatHoldClock.instant();
@@ -97,34 +91,12 @@ public class SeatHoldCreationService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.MOVIE_NOT_FOUND));
         movie.ensurePublic();
         Screen screen = screening.getScreen();
-        for (SeatCoordinate coordinate : coordinates) {
-            int row = coordinate.row().charAt(0) - 'A' + 1;
-            if (row < 1 || row > screen.getRowCount()
-                    || coordinate.number() < 1 || coordinate.number() > screen.getSeatsPerRow()) {
-                throw new BusinessException(ErrorCode.INVALID_SEAT);
-            }
-        }
-        if (screeningSeatRepository.countByScreening_Id(screening.getId())
-                != (long) screen.getRowCount() * screen.getSeatsPerRow()) {
-            throw new BusinessException(ErrorCode.SCREENING_SEATS_NOT_READY);
-        }
-
+        ReservationSeatPolicy.validateBounds(screen, coordinates);
+        ReservationSeatPolicy.validateInventory(screen,
+                screeningSeatRepository.countByScreening_Id(screening.getId()), false);
         List<ScreeningSeat> seats = seatLockService.lockSeats(screening.getId(), coordinates);
         now = seatHoldClock.instant();
-        for (ScreeningSeat seat : seats) {
-            Reservation occupant = seat.getCurrentReservation();
-            if (occupant != null) {
-                if (occupant.isExpiredAt(now)) {
-                    throw new ExpiredHoldEncountered(occupant.getId(), false);
-                }
-                ErrorCode error = switch (occupant.getStatus()) {
-                    case HELD -> ErrorCode.SEAT_HELD;
-                    case RESERVED -> ErrorCode.SEAT_ALREADY_RESERVED;
-                    case EXPIRED, RELEASED, CANCELED -> ErrorCode.SCREENING_SEATS_NOT_READY;
-                };
-                throw new BusinessException(error);
-            }
-        }
+        ReservationSeatPolicy.ensureAvailable(seats, now);
         if (reservedSeatRepository.existsReservedByScreeningIdAndCoordinates(screening.getId(), coordinates)) {
             throw new BusinessException(ErrorCode.SEAT_ALREADY_RESERVED);
         }
@@ -147,21 +119,4 @@ public class SeatHoldCreationService {
         return new HoldCreationResult(SeatHoldResponse.from(hold), true);
     }
 
-    static final class ExpiredHoldEncountered extends RuntimeException {
-        private final Long reservationId;
-        private final boolean sameRequestKey;
-
-        ExpiredHoldEncountered(Long reservationId, boolean sameRequestKey) {
-            this.reservationId = reservationId;
-            this.sameRequestKey = sameRequestKey;
-        }
-
-        Long reservationId() {
-            return reservationId;
-        }
-
-        boolean sameRequestKey() {
-            return sameRequestKey;
-        }
-    }
 }

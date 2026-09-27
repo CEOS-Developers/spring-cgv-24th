@@ -54,18 +54,16 @@ public class SeatHoldTransitionService {
         if (reservation.getStatus() != ReservationStatus.HELD) {
             return HoldTransitionResult.failure(ErrorCode.HOLD_NOT_ACTIVE);
         }
-        verifyOccupancy(seats, reservation);
         Instant now = seatHoldClock.instant();
         if (reservation.isExpiredAt(now)) {
-            reservation.expire(now);
-            seats.forEach(seat -> seat.releaseIfOwnedBy(reservation));
+            ReservationSeatLifecycle.expire(reservation, seats, now);
             return HoldTransitionResult.failure(ErrorCode.HOLD_EXPIRED);
         }
         if (movie.getVisibility() != MovieVisibility.PUBLIC) {
-            reservation.release();
-            seats.forEach(seat -> seat.releaseIfOwnedBy(reservation));
+            ReservationSeatLifecycle.release(reservation, seats);
             return HoldTransitionResult.failure(ErrorCode.MOVIE_NOT_AVAILABLE);
         }
+        ReservationSeatLifecycle.verifyOccupancy(seats, reservation);
         reservation.confirm(now);
         return HoldTransitionResult.success(SeatHoldResponse.from(reservation));
     }
@@ -81,15 +79,12 @@ public class SeatHoldTransitionService {
         if (reservation.getStatus() != ReservationStatus.HELD) {
             return HoldTransitionResult.failure(ErrorCode.HOLD_NOT_ACTIVE);
         }
-        verifyOccupancy(seats, reservation);
         Instant now = seatHoldClock.instant();
         if (reservation.isExpiredAt(now)) {
-            reservation.expire(now);
-            seats.forEach(seat -> seat.releaseIfOwnedBy(reservation));
+            ReservationSeatLifecycle.expire(reservation, seats, now);
             return HoldTransitionResult.failure(ErrorCode.HOLD_EXPIRED);
         }
-        reservation.release();
-        seats.forEach(seat -> seat.releaseIfOwnedBy(reservation));
+        ReservationSeatLifecycle.release(reservation, seats);
         return HoldTransitionResult.success(SeatHoldResponse.from(reservation));
     }
 
@@ -115,15 +110,6 @@ public class SeatHoldTransitionService {
         List<SeatCoordinate> coordinates =
                 reservedSeatRepository.findCoordinatesByReservationId(reservationId);
         return seatLockService.lockSeats(screeningId, coordinates);
-    }
-
-    private static void verifyOccupancy(List<ScreeningSeat> seats, Reservation reservation) {
-        for (ScreeningSeat seat : seats) {
-            if (seat.getCurrentReservation() == null
-                    || !seat.getCurrentReservation().getId().equals(reservation.getId())) {
-                throw new BusinessException(ErrorCode.SEAT_OWNER_MISMATCH);
-            }
-        }
     }
 
 }

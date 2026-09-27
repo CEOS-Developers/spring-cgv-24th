@@ -41,6 +41,7 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class ReservationServiceTest {
 
+    @Mock java.time.Clock clock;
     @Mock
     private UserRepository userRepository;
     @Mock
