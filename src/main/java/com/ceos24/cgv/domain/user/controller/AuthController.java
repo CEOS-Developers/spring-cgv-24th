@@ -4,6 +4,8 @@ import com.ceos24.cgv.domain.user.dto.LoginRequest;
 import com.ceos24.cgv.domain.user.dto.LoginResponse;
 import com.ceos24.cgv.domain.user.dto.SignupRequest;
 import com.ceos24.cgv.domain.user.dto.SignupResponse;
+import com.ceos24.cgv.domain.user.dto.TokenReissueRequest;
+import com.ceos24.cgv.domain.user.dto.TokenReissueResponse;
 import com.ceos24.cgv.domain.user.service.AuthService;
 import com.ceos24.cgv.global.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
@@ -36,5 +38,11 @@ public class AuthController {
     @PostMapping("/login")
     public ApiResponse<LoginResponse> login(@Valid @RequestBody LoginRequest req) {
         return ApiResponse.success(authService.login(req));
+    }
+
+    @Operation(summary = "액세스 토큰 재발급 — 본문의 리프레시 토큰으로. 리프레시 토큰은 그대로 유지")
+    @PostMapping("/reissue")
+    public ApiResponse<TokenReissueResponse> reissue(@Valid @RequestBody TokenReissueRequest req) {
+        return ApiResponse.success(authService.reissue(req));
     }
 }

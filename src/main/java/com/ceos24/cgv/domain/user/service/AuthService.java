@@ -4,6 +4,8 @@ import com.ceos24.cgv.domain.user.dto.LoginRequest;
 import com.ceos24.cgv.domain.user.dto.LoginResponse;
 import com.ceos24.cgv.domain.user.dto.SignupRequest;
 import com.ceos24.cgv.domain.user.dto.SignupResponse;
+import com.ceos24.cgv.domain.user.dto.TokenReissueRequest;
+import com.ceos24.cgv.domain.user.dto.TokenReissueResponse;
 import com.ceos24.cgv.domain.user.entity.RefreshToken;
 import com.ceos24.cgv.domain.user.entity.User;
 import com.ceos24.cgv.domain.user.repository.RefreshTokenRepository;
@@ -14,6 +16,7 @@ import com.ceos24.cgv.global.security.LoginUserDetails;
 import com.ceos24.cgv.global.security.RefreshTokenProvider;
 import com.ceos24.cgv.global.security.jwt.JwtProvider;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.BadCredentialsException;
@@ -26,6 +29,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Clock;
 import java.time.LocalDateTime;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
@@ -81,6 +85,27 @@ public class AuthService {
         String refreshToken = issueRefreshToken(principal.getUserId());
         return LoginResponse.of(accessToken, jwtProvider.getAccessTokenValiditySeconds(),
                 refreshToken, refreshTokenProvider.getValiditySeconds());
+    }
+
+    // 역할은 리프레시 토큰이 아니라 DB의 사용자에서 읽는다. 권한이 바뀌었다면 재발급 시점에 반영된다.
+    public TokenReissueResponse reissue(TokenReissueRequest req) {
+        RefreshToken refreshToken = refreshTokenRepository
+                .findWithUserByTokenHash(refreshTokenProvider.hash(req.refreshToken()))
+                .orElseThrow(() -> refreshTokenRejected("not_found", null));
+
+        if (!refreshToken.isUsableAt(LocalDateTime.now(clock))) {
+            throw refreshTokenRejected(refreshToken.isRevoked() ? "revoked" : "expired", refreshToken.getId());
+        }
+
+        User user = refreshToken.getUser();
+        String accessToken = jwtProvider.createAccessToken(user.getId(), user.getRole());
+        return TokenReissueResponse.of(accessToken, jwtProvider.getAccessTokenValiditySeconds());
+    }
+
+    // 응답은 원인을 나누지 않지만 서버 로그에는 남긴다. 원문 토큰은 로그에 쓰지 않는다.
+    private CustomException refreshTokenRejected(String reason, Long tokenId) {
+        log.warn("[RefreshToken] 재발급 거부 reason={} tokenId={}", reason, tokenId);
+        return new CustomException(ErrorCode.REFRESH_TOKEN_INVALID);
     }
 
     // 원문은 응답으로 한 번만 내보내고 DB에는 해시만 남긴다. 로그인마다 새 행이라 기기별 토큰이 따로 산다.
