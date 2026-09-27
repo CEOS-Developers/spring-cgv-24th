@@ -1,6 +1,5 @@
 package com.ceos24.spring_cgv.global.security.filter;
 
-import com.ceos24.spring_cgv.domain.auth.exception.AuthException;
 import com.ceos24.spring_cgv.domain.auth.exception.code.AuthErrorCode;
 import com.ceos24.spring_cgv.domain.member.enums.Role;
 import com.ceos24.spring_cgv.global.apipayload.exception.ProjectException;

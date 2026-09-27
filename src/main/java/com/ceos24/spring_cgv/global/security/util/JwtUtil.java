@@ -80,8 +80,6 @@ public class JwtUtil {
             }
 
             return claims;
-        } catch (AuthException e){
-            throw e;
         } catch (ExpiredJwtException e){
             log.warn("만료된 토큰입니다. {}", e.getMessage());
             throw new AuthException(AuthErrorCode.EXPIRED_TOKEN);
