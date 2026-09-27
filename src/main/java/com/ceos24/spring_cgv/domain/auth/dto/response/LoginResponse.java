@@ -10,6 +10,14 @@ public record LoginResponse(
         RtInfo rtInfo,
         MemberInfo memberInfo
 ){
+
+    public static LoginResponse of(AtInfo atInfo, RtInfo rtInfo, MemberInfo memberInfo){
+        return LoginResponse.builder()
+                .atInfo(atInfo)
+                .rtInfo(rtInfo)
+                .memberInfo(memberInfo).build();
+    }
+
     @Builder
     public record AtInfo(
             String accessToken,
@@ -38,20 +46,18 @@ public record LoginResponse(
         }
     }
 
+    @Builder
     public record MemberInfo(
             Long memberId,
             String name,
             String email
     ){
         public static MemberInfo from(Member member){
-            return new MemberInfo(member.getId(), member.getName(), member.getEmail());
+            return MemberInfo.builder()
+                    .memberId(member.getId())
+                    .name(member.getName())
+                    .email(member.getEmail())
+                    .build();
         }
-    }
-
-    public static LoginResponse of(AtInfo atInfo, RtInfo rtInfo, MemberInfo memberInfo){
-        return LoginResponse.builder()
-                .atInfo(atInfo)
-                .rtInfo(rtInfo)
-                .memberInfo(memberInfo).build();
     }
 }
