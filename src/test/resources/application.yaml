@@ -16,3 +16,6 @@ spring:
 jwt:
   secret: Y2d2LXRlc3Qtb25seS1kdW1teS1oczI1Ni1rZXktbm90LWZvci1wcm9kdWN0aW9uISE=
   access-token-validity: 30m
+
+refresh-token:
+  validity: 14d
