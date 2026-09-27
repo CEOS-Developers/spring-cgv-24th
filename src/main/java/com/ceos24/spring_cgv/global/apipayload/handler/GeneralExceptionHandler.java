@@ -6,6 +6,7 @@ import com.ceos24.spring_cgv.global.apipayload.code.GeneralErrorCode;
 import com.ceos24.spring_cgv.global.apipayload.exception.ProjectException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.authorization.AuthorizationDeniedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -76,6 +77,17 @@ public class GeneralExceptionHandler {
 
         return ResponseEntity.status(errorCode.getStatus())
                 .body(ApiResponse.onFailure(errorCode, errors));
+    }
+
+    // @PreAuthorize 인가 실패
+    @ExceptionHandler(AuthorizationDeniedException.class)
+    public ResponseEntity<ApiResponse<Void>> handleAuthorizationDenied(AuthorizationDeniedException e){
+
+        BaseErrorCode errorCode = GeneralErrorCode.FORBIDDEN;
+        log.warn("[인가 실패] code={}, message={}", errorCode.getCode(), errorCode.getMessage());
+
+        return ResponseEntity.status(errorCode.getStatus())
+                .body(ApiResponse.onFailure(errorCode));
     }
 
     // 그 외 지정되지 않은 예외
