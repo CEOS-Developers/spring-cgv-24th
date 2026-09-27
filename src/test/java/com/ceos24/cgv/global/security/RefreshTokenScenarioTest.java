@@ -21,6 +21,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -131,14 +132,74 @@ class RefreshTokenScenarioTest extends AuthScenarioTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.tokenType").value("Bearer"))
                 .andExpect(jsonPath("$.data.expiresIn").value(jwtProperties.accessTokenValidity().toSeconds()))
-                // 순환 발급 전이라 리프레시 토큰은 다시 주지 않는다
-                .andExpect(jsonPath("$.data.refreshToken").doesNotExist())
                 .andReturn().getResponse().getContentAsString();
         String reissued = JsonPath.read(body, "$.data.accessToken");
 
         assertThat(jwtProvider.parse(reissued)).isEqualTo(new AuthUser(userId, Role.USER));
         mockMvc.perform(get(PROTECTED_API).with(bearer(reissued)))
                 .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("재발급하면 새 리프레시 토큰을 함께 주고, 보낸 토큰은 사용 완료되며 새 토큰은 같은 묶음·만료 시각을 이어받는다")
+    void 재발급하면_새_리프레시_토큰을_주고_이전_토큰은_사용_완료된다() throws Exception {
+        Long userId = signup("refresh01");
+        String oldToken = loginForRefreshToken("refresh01");
+        flushAndClear();
+        LocalDateTime loginExpiresAt = tokenOf(oldToken).getExpiresAt();
+
+        String body = reissueRequest(oldToken)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.accessToken").exists())
+                .andReturn().getResponse().getContentAsString();
+        String newToken = JsonPath.read(body, "$.data.refreshToken");
+        long refreshTokenExpiresIn = ((Number) JsonPath.read(body, "$.data.refreshTokenExpiresIn")).longValue();
+        flushAndClear();
+
+        assertThat(newToken).hasSize(43).isNotEqualTo(oldToken);
+        // 만료는 로그인 시점 기준으로 고정이라 남은 시간은 전체 수명을 넘지 않는다
+        assertThat(refreshTokenExpiresIn).isPositive()
+                .isLessThanOrEqualTo(refreshTokenProperties.validity().toSeconds());
+
+        RefreshToken used = tokenOf(oldToken);
+        assertThat(used.isUsed()).isTrue();
+        assertThat(used.isRevoked()).isFalse();
+
+        RefreshToken next = tokenOf(newToken);
+        assertThat(next.isUsed()).isFalse();
+        assertThat(next.getFamilyId()).isEqualTo(used.getFamilyId());
+        assertThat(next.getExpiresAt()).isEqualTo(loginExpiresAt);
+        assertThat(tokensOf(userId)).hasSize(2);
+    }
+
+    @Test
+    @DisplayName("재발급으로 받은 새 리프레시 토큰으로 다시 재발급할 수 있다")
+    void 새_리프레시_토큰으로_다시_재발급할_수_있다() throws Exception {
+        signup("refresh01");
+        String first = loginForRefreshToken("refresh01");
+        String second = reissuedRefreshToken(first);
+
+        String body = reissueRequest(second)
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        String third = JsonPath.read(body, "$.data.refreshToken");
+
+        assertThat(third).isNotEqualTo(first).isNotEqualTo(second);
+        mockMvc.perform(get(PROTECTED_API).with(bearer((String) JsonPath.read(body, "$.data.accessToken"))))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("사용 완료된 리프레시 토큰으로 다시 재발급하면 401 REFRESH_TOKEN_INVALID")
+    void 사용_완료된_리프레시_토큰으로_재발급하면_401() throws Exception {
+        signup("refresh01");
+        String oldToken = loginForRefreshToken("refresh01");
+        reissuedRefreshToken(oldToken);
+        flushAndClear();
+
+        reissueRequest(oldToken)
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("REFRESH_TOKEN_INVALID"));
     }
 
     // 실제 재발급 상황은 액세스 토큰이 만료된 뒤다. 클라이언트가 만료된 토큰을 헤더에 남겨 둔 채 불러도 막히면 안 된다.
@@ -346,6 +407,17 @@ class RefreshTokenScenarioTest extends AuthScenarioTest {
                 .content("{\"refreshToken\":\"%s\"}".formatted(refreshToken)));
     }
 
+    private String reissuedRefreshToken(String refreshToken) throws Exception {
+        String body = reissueRequest(refreshToken)
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        return JsonPath.read(body, "$.data.refreshToken");
+    }
+
+    private RefreshToken tokenOf(String rawToken) {
+        return refreshTokenRepository.findByTokenHash(refreshTokenProvider.hash(rawToken)).orElseThrow();
+    }
+
     private String rejectedBody(String refreshToken) throws Exception {
         return reissueRequest(refreshToken)
                 .andExpect(status().isUnauthorized())
@@ -358,6 +430,7 @@ class RefreshTokenScenarioTest extends AuthScenarioTest {
         persist(RefreshToken.builder()
                 .user(user)
                 .tokenHash(refreshTokenProvider.hash(rawToken))
+                .familyId(UUID.randomUUID().toString())
                 .expiresAt(expiresAt)
                 .build());
         flushAndClear();

@@ -7,7 +7,6 @@ import com.ceos24.cgv.domain.user.dto.SignupRequest;
 import com.ceos24.cgv.domain.user.dto.SignupResponse;
 import com.ceos24.cgv.domain.user.dto.TokenReissueRequest;
 import com.ceos24.cgv.domain.user.dto.TokenReissueResponse;
-import com.ceos24.cgv.domain.user.entity.RefreshToken;
 import com.ceos24.cgv.domain.user.entity.User;
 import com.ceos24.cgv.domain.user.repository.RefreshTokenRepository;
 import com.ceos24.cgv.domain.user.repository.UserRepository;
@@ -18,6 +17,7 @@ import com.ceos24.cgv.global.security.RefreshTokenProvider;
 import com.ceos24.cgv.global.security.jwt.JwtProvider;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.ConcurrencyFailureException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.BadCredentialsException;
@@ -25,6 +25,7 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
@@ -42,6 +43,7 @@ public class AuthService {
     private final JwtProvider jwtProvider;
     private final RefreshTokenRepository refreshTokenRepository;
     private final RefreshTokenProvider refreshTokenProvider;
+    private final RefreshTokenService refreshTokenService;
     private final Clock clock;
 
     @Transactional
@@ -83,24 +85,23 @@ public class AuthService {
 
         LoginUserDetails principal = (LoginUserDetails) authentication.getPrincipal();
         String accessToken = jwtProvider.createAccessToken(principal.getUserId(), principal.getRole());
-        String refreshToken = issueRefreshToken(principal.getUserId());
+        String refreshToken = refreshTokenService.issue(principal.getUserId());
         return LoginResponse.of(accessToken, jwtProvider.getAccessTokenValiditySeconds(),
                 refreshToken, refreshTokenProvider.getValiditySeconds());
     }
 
-    // 역할은 리프레시 토큰이 아니라 DB의 사용자에서 읽는다. 권한이 바뀌었다면 재발급 시점에 반영된다.
+    // 잠금 대기 초과는 트랜잭션이 끝난 뒤에 바꾼다. 안에서 잡으면 트랜잭션이 이미 롤백 전용인지가 저장소 메서드의
+    // 트랜잭션 설정과 DB 오류 분류에 달려 있고, 롤백 전용이면 커밋 시점에 UnexpectedRollbackException(500)이 된다.
+    // SUPPORTS인 이유: 스스로 트랜잭션을 열지 않되, 바깥 트랜잭션이 있으면(시나리오 테스트) 합류해 미커밋 데이터를 본다.
+    @Transactional(propagation = Propagation.SUPPORTS)
     public TokenReissueResponse reissue(TokenReissueRequest req) {
-        RefreshToken refreshToken = refreshTokenRepository
-                .findWithUserByTokenHash(refreshTokenProvider.hash(req.refreshToken()))
-                .orElseThrow(() -> refreshTokenRejected("not_found", null));
-
-        if (!refreshToken.isUsableAt(LocalDateTime.now(clock))) {
-            throw refreshTokenRejected(refreshToken.isRevoked() ? "revoked" : "expired", refreshToken.getId());
+        try {
+            return refreshTokenService.reissue(req.refreshToken());
+        } catch (ConcurrencyFailureException e) {
+            // 같은 토큰을 쥔 앞 요청이 끝나지 않았다. 409로 재시도를 안내하면 그 재시도는 사용 완료 토큰이 되므로 재로그인으로 보낸다.
+            log.warn("[RefreshToken] 재발급 거부 reason=lock_timeout");
+            throw new CustomException(ErrorCode.REFRESH_TOKEN_INVALID);
         }
-
-        User user = refreshToken.getUser();
-        String accessToken = jwtProvider.createAccessToken(user.getId(), user.getRole());
-        return TokenReissueResponse.of(accessToken, jwtProvider.getAccessTokenValiditySeconds());
     }
 
     // 없는 토큰이어도 실패로 알리지 않는다. 클라이언트는 어차피 가진 토큰을 버리므로 알려도 할 일이 없다.
@@ -109,22 +110,5 @@ public class AuthService {
     public void logout(LogoutRequest req) {
         refreshTokenRepository.findByTokenHash(refreshTokenProvider.hash(req.refreshToken()))
                 .ifPresent(token -> token.revoke(LocalDateTime.now(clock)));
-    }
-
-    // 응답은 원인을 나누지 않지만 서버 로그에는 남긴다. 원문 토큰은 로그에 쓰지 않는다.
-    private CustomException refreshTokenRejected(String reason, Long tokenId) {
-        log.warn("[RefreshToken] 재발급 거부 reason={} tokenId={}", reason, tokenId);
-        return new CustomException(ErrorCode.REFRESH_TOKEN_INVALID);
-    }
-
-    // 원문은 응답으로 한 번만 내보내고 DB에는 해시만 남긴다. 로그인마다 새 행이라 기기별 토큰이 따로 산다.
-    private String issueRefreshToken(Long userId) {
-        String rawToken = refreshTokenProvider.generate();
-        refreshTokenRepository.save(RefreshToken.builder()
-                .user(userRepository.getReferenceById(userId))
-                .tokenHash(refreshTokenProvider.hash(rawToken))
-                .expiresAt(refreshTokenProvider.expiresAt(LocalDateTime.now(clock)))
-                .build());
-        return rawToken;
     }
 }

@@ -24,17 +24,17 @@ class RefreshTokenRepositoryTest {
     @Autowired EntityManager em;
 
     @Test
-    @DisplayName("해시로 조회하면 주인 사용자까지 한 번에 가져온다")
-    void 해시로_조회하면_사용자까지_가져온다() {
+    @DisplayName("잠금 조회도 해시로 해당 토큰 한 건만 찾는다")
+    void 잠금_조회는_해시로_토큰을_찾는다() {
         User user = persistUser("tokenuser");
         refreshTokenRepository.save(token(user, "a".repeat(64)));
         em.flush();
         em.clear();
 
-        RefreshToken found = refreshTokenRepository.findWithUserByTokenHash("a".repeat(64)).orElseThrow();
+        RefreshToken found = refreshTokenRepository.findByTokenHashForUpdate("a".repeat(64)).orElseThrow();
 
         assertThat(found.getUser().getLoginId()).isEqualTo("tokenuser");
-        assertThat(refreshTokenRepository.findByTokenHash("b".repeat(64))).isEmpty();
+        assertThat(refreshTokenRepository.findByTokenHashForUpdate("b".repeat(64))).isEmpty();
     }
 
     // 해시가 겹치면 조회 결과가 둘이 되어 어느 사용자의 토큰인지 정할 수 없다.
@@ -58,6 +58,7 @@ class RefreshTokenRepositoryTest {
         return RefreshToken.builder()
                 .user(user)
                 .tokenHash(hash)
+                .familyId("family-1")
                 .expiresAt(LocalDateTime.of(2030, 1, 1, 0, 0))
                 .build();
     }

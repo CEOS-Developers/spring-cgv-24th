@@ -41,7 +41,7 @@ public class AuthController {
         return ApiResponse.success(authService.login(req));
     }
 
-    @Operation(summary = "액세스 토큰 재발급 — 본문의 리프레시 토큰으로. 리프레시 토큰은 그대로 유지")
+    @Operation(summary = "액세스 토큰 재발급 — 리프레시 토큰도 새로 발급하고, 보낸 토큰은 사용 완료되어 다시 쓸 수 없음")
     @PostMapping("/reissue")
     public ApiResponse<TokenReissueResponse> reissue(@Valid @RequestBody TokenReissueRequest req) {
         return ApiResponse.success(authService.reissue(req));
