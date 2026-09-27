@@ -1,6 +1,6 @@
 package com.ceos24.cgv.domain.cinema.entity;
 
-import com.ceos24.cgv.domain.user.entity.User;
+import com.ceos24.cgv.domain.user.entity.UserEntity;
 import jakarta.persistence.*;
 import lombok.Getter;
 
@@ -25,7 +25,7 @@ public class CinemaFavorite {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "user_id", nullable = false)
-    private User user;
+    private UserEntity userEntity;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "cinema_id", nullable = false)
@@ -34,9 +34,9 @@ public class CinemaFavorite {
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
-    public static CinemaFavorite create(User user, Cinema cinema) {
+    public static CinemaFavorite create(UserEntity userEntity, Cinema cinema) {
         CinemaFavorite favorite = new CinemaFavorite();
-        favorite.user = user;
+        favorite.userEntity = userEntity;
         favorite.cinema = cinema;
         favorite.createdAt = LocalDateTime.now();
         return favorite;

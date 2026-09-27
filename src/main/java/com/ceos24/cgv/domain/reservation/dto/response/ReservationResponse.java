@@ -43,7 +43,7 @@ public record ReservationResponse(
 
         return new ReservationResponse(
                 reservation.getId(),
-                reservation.getUser().getId(),
+                reservation.getUserEntity().getId(),
                 screening.getId(),
                 movie.getId(),
                 movie.getName(),

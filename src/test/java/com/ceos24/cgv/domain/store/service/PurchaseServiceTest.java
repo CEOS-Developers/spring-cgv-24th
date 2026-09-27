@@ -11,7 +11,7 @@ import com.ceos24.cgv.domain.store.entity.Purchase;
 import com.ceos24.cgv.domain.store.repository.CinemaStockRepository;
 import com.ceos24.cgv.domain.store.repository.PurchaseItemRepository;
 import com.ceos24.cgv.domain.store.repository.PurchaseRepository;
-import com.ceos24.cgv.domain.user.entity.User;
+import com.ceos24.cgv.domain.user.entity.UserEntity;
 import com.ceos24.cgv.domain.user.repository.UserRepository;
 import com.ceos24.cgv.global.apiPayload.code.ErrorCode;
 import com.ceos24.cgv.global.exception.BusinessException;
@@ -73,7 +73,7 @@ class PurchaseServiceTest {
 
     @Test
     void 구매하면_구매내역과_상품을_저장하고_재고를_차감한다() {
-        User user = user(1L);
+        UserEntity userEntity = user(1L);
         Cinema cinema = cinema(2L);
         Product product = product(10L, "고소팝콘(M)", 5_000);
         CinemaStock stock = CinemaStock.create(cinema, product, 10);
@@ -82,7 +82,7 @@ class PurchaseServiceTest {
                 List.of(new PurchaseItemRequest(10L, 2))
         );
 
-        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+        when(userRepository.findById(1L)).thenReturn(Optional.of(userEntity));
         when(cinemaRepository.findByIdAndActiveTrue(2L)).thenReturn(Optional.of(cinema));
         when(cinemaStockRepository.findAllByCinemaIdAndProductIdsForUpdate(
                 2L,
@@ -104,7 +104,7 @@ class PurchaseServiceTest {
 
     @Test
     void 재고가_부족하면_구매를_저장하거나_재고를_차감하지_않는다() {
-        User user = user(1L);
+        UserEntity userEntity = user(1L);
         Cinema cinema = cinema(2L);
         Product product = product(10L, "고소팝콘(M)", 5_000);
         CinemaStock stock = CinemaStock.create(cinema, product, 1);
@@ -113,7 +113,7 @@ class PurchaseServiceTest {
                 List.of(new PurchaseItemRequest(10L, 2))
         );
 
-        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+        when(userRepository.findById(1L)).thenReturn(Optional.of(userEntity));
         when(cinemaRepository.findByIdAndActiveTrue(2L)).thenReturn(Optional.of(cinema));
         when(cinemaStockRepository.findAllByCinemaIdAndProductIdsForUpdate(
                 2L,
@@ -147,10 +147,10 @@ class PurchaseServiceTest {
                 .findAllByPurchaseIdOrderByIdAsc(any());
     }
 
-    private User user(Long id) {
-        User user = User.create("테스트 사용자");
-        ReflectionTestUtils.setField(user, "id", id);
-        return user;
+    private UserEntity user(Long id) {
+        UserEntity userEntity = UserEntity.create("테스트 사용자");
+        ReflectionTestUtils.setField(userEntity, "id", id);
+        return userEntity;
     }
 
     private Cinema cinema(Long id) {

@@ -31,7 +31,7 @@ public record PurchaseResponse(
 
         return new PurchaseResponse(
                 purchase.getId(),
-                purchase.getUser().getId(),
+                purchase.getUserEntity().getId(),
                 purchase.getCinema().getId(),
                 purchase.getCinema().getName(),
                 purchase.getPurchasedAt(),

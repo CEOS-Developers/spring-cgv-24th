@@ -1,13 +1,15 @@
 package com.ceos24.cgv.domain.user.service;
 
 import com.ceos24.cgv.domain.user.dto.request.UserRequest;
-import com.ceos24.cgv.domain.user.entity.User;
-import com.ceos24.cgv.domain.user.entity.UserRoleType;
+import com.ceos24.cgv.domain.user.entity.UserEntity;
 import com.ceos24.cgv.domain.user.repository.UserRepository;
 import com.ceos24.cgv.global.apiPayload.code.ErrorCode;
 import com.ceos24.cgv.global.exception.BusinessException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.core.userdetails.User;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -18,7 +20,7 @@ import java.nio.file.AccessDeniedException;
 @Service
 @Transactional(readOnly = true)
 @RequiredArgsConstructor
-public class UserService {
+public class UserService implements UserDetailsService {
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
@@ -35,16 +37,29 @@ public class UserService {
             throw new BusinessException(ErrorCode.USER_ALREADY_EXISTS);
         }
 
-        User user = User.createLocalUser(
+        UserEntity userEntity = UserEntity.createLocalUser(
                 request.username(),
                 passwordEncoder.encode(request.password())
         );
 
-        return userRepository.save(user).getId();
+        return userRepository.save(userEntity).getId();
     }
 
 
     //자체 로그인
+    @Override
+    public UserDetails loadUserByUsername(String username) throws UsernameNotFoundException {
+
+        UserEntity userEntity = userRepository.findByUsernameAndIsLockAndIsSocial(username, false, false)
+                .orElseThrow(() -> new UsernameNotFoundException(username));
+
+        return User.builder()
+                .username(userEntity.getUsername())
+                .password(userEntity.getPassword())
+                .roles(userEntity.getRoleType().name())
+                .accountLocked(userEntity.getIsLock())
+                .build();
+    }
 
     // 자체 로그인 회원 정보 수정
     public Long updateUser(UserRequest request) throws AccessDeniedException {
@@ -54,15 +69,15 @@ public class UserService {
             throw new AccessDeniedException("본인 계정만 수정 가능");
         }
 
-        User user = userRepository.findByUsernameAndIsLockAndIsSocial(
+        UserEntity userEntity = userRepository.findByUsernameAndIsLockAndIsSocial(
                 request.username(),
                 false,
                 false
         ).orElseThrow(() -> new UsernameNotFoundException(request.username()));
 
-        user.updateUser(request);
+        userEntity.updateUser(request);
 
-        return userRepository.save(user).getId();
+        return userRepository.save(userEntity).getId();
     }
 
 

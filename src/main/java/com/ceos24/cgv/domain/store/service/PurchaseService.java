@@ -12,7 +12,7 @@ import com.ceos24.cgv.domain.store.entity.PurchaseItem;
 import com.ceos24.cgv.domain.store.repository.CinemaStockRepository;
 import com.ceos24.cgv.domain.store.repository.PurchaseItemRepository;
 import com.ceos24.cgv.domain.store.repository.PurchaseRepository;
-import com.ceos24.cgv.domain.user.entity.User;
+import com.ceos24.cgv.domain.user.entity.UserEntity;
 import com.ceos24.cgv.domain.user.repository.UserRepository;
 import com.ceos24.cgv.global.apiPayload.code.ErrorCode;
 import com.ceos24.cgv.global.exception.BusinessException;
@@ -55,7 +55,7 @@ public class PurchaseService {
             PurchaseCreateRequest request
     ) {
         // 사용자 조회
-        User user = userRepository.findById(userId)
+        UserEntity userEntity = userRepository.findById(userId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
 
         // 영화관 조회
@@ -110,7 +110,7 @@ public class PurchaseService {
         }
 
         Purchase purchase = purchaseRepository.save(
-                Purchase.create(user, cinema)
+                Purchase.create(userEntity, cinema)
         );
 
         // 재고 차감과 PurchaseItem 생성
@@ -158,7 +158,7 @@ public class PurchaseService {
         Purchase purchase = purchaseRepository.findById(purchaseId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.PURCHASE_NOT_FOUND));
 
-        if (!purchase.getUser().getId().equals(userId)) {
+        if (!purchase.getUserEntity().getId().equals(userId)) {
             throw new BusinessException(ErrorCode.PURCHASE_ACCESS_DENIED);
         }
 

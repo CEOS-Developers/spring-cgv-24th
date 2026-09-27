@@ -1,7 +1,7 @@
 package com.ceos24.cgv.domain.store.entity;
 
 import com.ceos24.cgv.domain.cinema.entity.Cinema;
-import com.ceos24.cgv.domain.user.entity.User;
+import com.ceos24.cgv.domain.user.entity.UserEntity;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
@@ -26,7 +26,7 @@ public class Purchase {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "user_id", nullable = false)
-    private User user;
+    private UserEntity userEntity;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "cinema_id", nullable = false)
@@ -35,13 +35,13 @@ public class Purchase {
     @Column(name = "purchased_at", nullable = false)
     private LocalDateTime purchasedAt;
 
-    public static Purchase create(User user, Cinema cinema) {
-        if (user == null || cinema == null) {
+    public static Purchase create(UserEntity userEntity, Cinema cinema) {
+        if (userEntity == null || cinema == null) {
             throw new IllegalArgumentException("사용자와 영화관은 필수입니다.");
         }
 
         Purchase purchase = new Purchase();
-        purchase.user = user;
+        purchase.userEntity = userEntity;
         purchase.cinema = cinema;
         purchase.purchasedAt = LocalDateTime.now();
         return purchase;

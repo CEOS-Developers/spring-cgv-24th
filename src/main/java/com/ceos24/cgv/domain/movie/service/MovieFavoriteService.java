@@ -5,7 +5,7 @@ import com.ceos24.cgv.domain.movie.entity.Movie;
 import com.ceos24.cgv.domain.movie.entity.MovieFavorite;
 import com.ceos24.cgv.domain.movie.repository.MovieFavoriteRepository;
 import com.ceos24.cgv.domain.movie.repository.MovieRepository;
-import com.ceos24.cgv.domain.user.entity.User;
+import com.ceos24.cgv.domain.user.entity.UserEntity;
 import com.ceos24.cgv.domain.user.repository.UserRepository;
 import com.ceos24.cgv.global.apiPayload.code.ErrorCode;
 import com.ceos24.cgv.global.exception.BusinessException;
@@ -30,7 +30,7 @@ public class MovieFavoriteService {
             Long userId,
             Long movieId
     ) {
-        User user = userRepository.findById(userId)
+        UserEntity userEntity = userRepository.findById(userId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
 
         Movie movie = movieRepository.findById(movieId)
@@ -42,7 +42,7 @@ public class MovieFavoriteService {
             throw new BusinessException(ErrorCode.MOVIE_ALREADY_FAVORITED);
         }
 
-        MovieFavorite favorite = MovieFavorite.create(user, movie);
+        MovieFavorite favorite = MovieFavorite.create(userEntity, movie);
 
         return movieFavoriteRepository.save(favorite).getId();
     }

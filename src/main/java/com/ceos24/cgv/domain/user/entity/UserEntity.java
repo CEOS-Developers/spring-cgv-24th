@@ -7,7 +7,7 @@ import lombok.Getter;
 @Entity
 @Getter
 @Table(name = "users")
-public class User {
+public class UserEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -36,18 +36,18 @@ public class User {
     private UserRoleType roleType;
 
 
-    public static User createLocalUser(
+    public static UserEntity createLocalUser(
             String username,
             String encodedPassword
     ) {
-        User user = new User();
-        user.username = username;
-        user.password = encodedPassword;
-        user.isLock = false;
-        user.isSocial = false;
-        user.socialProviderType = null;
-        user.roleType = UserRoleType.USER;
-        return user;
+        UserEntity userEntity = new UserEntity();
+        userEntity.username = username;
+        userEntity.password = encodedPassword;
+        userEntity.isLock = false;
+        userEntity.isSocial = false;
+        userEntity.socialProviderType = null;
+        userEntity.roleType = UserRoleType.USER;
+        return userEntity;
     }
 
     public void updateUser(UserRequest request) {

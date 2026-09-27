@@ -11,7 +11,7 @@ import com.ceos24.cgv.domain.reservation.repository.ReservationRepository;
 import com.ceos24.cgv.domain.reservation.repository.ReservationSeatRepository;
 import com.ceos24.cgv.domain.screening.entity.Screening;
 import com.ceos24.cgv.domain.screening.repository.ScreeningRepository;
-import com.ceos24.cgv.domain.user.entity.User;
+import com.ceos24.cgv.domain.user.entity.UserEntity;
 import com.ceos24.cgv.domain.user.repository.UserRepository;
 import com.ceos24.cgv.global.apiPayload.code.ErrorCode;
 import com.ceos24.cgv.global.exception.BusinessException;
@@ -40,7 +40,7 @@ public class ReservationService {
     public Long createReservation(Long userId, ReservationCreateRequest request) {
 
         // 사용자 조회
-        User user = userRepository.findById(userId)
+        UserEntity userEntity = userRepository.findById(userId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
 
         // 상영 정보 조회
@@ -95,7 +95,7 @@ public class ReservationService {
         }
 
         Reservation reservation = reservationRepository.save(
-                Reservation.create(screening, user)
+                Reservation.create(screening, userEntity)
         );
 
         List<ReservationSeat> reservationSeats = seats.stream()
@@ -137,7 +137,7 @@ public class ReservationService {
         Reservation reservation = reservationRepository.findById(reservationId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.RESERVATION_NOT_FOUND));
 
-        if (!reservation.getUser().getId().equals(userId)) {
+        if (!reservation.getUserEntity().getId().equals(userId)) {
             throw new BusinessException(ErrorCode.RESERVATION_ACCESS_DENIED);
         }
 

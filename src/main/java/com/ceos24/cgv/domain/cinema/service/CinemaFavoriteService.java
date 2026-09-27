@@ -5,7 +5,7 @@ import com.ceos24.cgv.domain.cinema.entity.Cinema;
 import com.ceos24.cgv.domain.cinema.entity.CinemaFavorite;
 import com.ceos24.cgv.domain.cinema.repository.CinemaFavoriteRepository;
 import com.ceos24.cgv.domain.cinema.repository.CinemaRepository;
-import com.ceos24.cgv.domain.user.entity.User;
+import com.ceos24.cgv.domain.user.entity.UserEntity;
 import com.ceos24.cgv.domain.user.repository.UserRepository;
 import com.ceos24.cgv.global.apiPayload.code.ErrorCode;
 import com.ceos24.cgv.global.exception.BusinessException;
@@ -26,7 +26,7 @@ public class CinemaFavoriteService {
 
     @Transactional
     public Long createCinemaFavorite(Long userId, Long cinemaId) {
-        User user = userRepository.findById(userId)
+        UserEntity userEntity = userRepository.findById(userId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
 
         Cinema cinema = cinemaRepository.findByIdAndActiveTrue(cinemaId)
@@ -36,7 +36,7 @@ public class CinemaFavoriteService {
             throw new BusinessException(ErrorCode.CINEMA_ALREADY_FAVORITED);
         }
 
-        CinemaFavorite favorite = CinemaFavorite.create(user, cinema);
+        CinemaFavorite favorite = CinemaFavorite.create(userEntity, cinema);
         return cinemaFavoriteRepository.save(favorite).getId();
     }
 
