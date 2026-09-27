@@ -12,6 +12,11 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import lombok.RequiredArgsConstructor;
 import com.ceos24.springboot.user.security.CustomUserDetailsService;
 
+import com.ceos24.springboot.global.exception.ErrorCode;
+import io.jsonwebtoken.ExpiredJwtException;
+import io.jsonwebtoken.JwtException;
+import org.springframework.security.authentication.InsufficientAuthenticationException;
+
 import java.io.IOException;
 
 @RequiredArgsConstructor
@@ -20,6 +25,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtProvider jwtProvider;
     private final CustomUserDetailsService customUserDetailsService;
+    private final JwtAuthenticationEntryPoint jwtAuthenticationEntryPoint;
 
     @Override
     protected void doFilterInternal(
@@ -37,8 +43,34 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         }
 
         // JWT 검증 로직
-        if (!jwtProvider.validateToken(token)) {
-            filterChain.doFilter(request, response);
+        try {
+            jwtProvider.validateToken(token);
+        } catch (ExpiredJwtException e) {
+
+            request.setAttribute("errorCode", ErrorCode.TOKEN_EXPIRED);
+
+            jwtAuthenticationEntryPoint.commence(
+                    request,
+                    response,
+                    new InsufficientAuthenticationException(
+                            "토큰이 만료되었습니다.",
+                            e
+                    )
+            );
+            return;
+
+        } catch (JwtException | IllegalArgumentException e) {
+
+            request.setAttribute("errorCode", ErrorCode.TOKEN_INVALID);
+
+            jwtAuthenticationEntryPoint.commence(
+                    request,
+                    response,
+                    new InsufficientAuthenticationException(
+                            "유효하지 않은 토큰입니다.",
+                            e
+                    )
+            );
             return;
         }
 

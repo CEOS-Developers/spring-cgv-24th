@@ -16,6 +16,8 @@ import com.ceos24.springboot.auth.jwt.JwtAuthenticationFilter;
 import com.ceos24.springboot.auth.jwt.JwtProvider;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
+import com.ceos24.springboot.auth.jwt.JwtAuthenticationEntryPoint;
+import com.ceos24.springboot.auth.jwt.JwtAccessDeniedHandler;
 
 @Configuration
 public class SecurityConfig {
@@ -50,7 +52,9 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain securityFilterChain(
             HttpSecurity http,
-            JwtAuthenticationFilter jwtAuthenticationFilter
+            JwtAuthenticationFilter jwtAuthenticationFilter,
+            JwtAuthenticationEntryPoint jwtAuthenticationEntryPoint,
+            JwtAccessDeniedHandler jwtAccessDeniedHandler
     ) throws Exception {
 
         http
@@ -62,6 +66,12 @@ public class SecurityConfig {
 
                 .formLogin(form -> form.disable())
                 .httpBasic(basic -> basic.disable())
+
+                // 인증&인가 실패 처리
+                .exceptionHandling(exception -> exception
+                        .authenticationEntryPoint(jwtAuthenticationEntryPoint)
+                        .accessDeniedHandler(jwtAccessDeniedHandler)
+                )
 
                 .authorizeHttpRequests(auth -> auth
                         // 로그인
@@ -94,11 +104,13 @@ public class SecurityConfig {
     @Bean
     public JwtAuthenticationFilter jwtAuthenticationFilter(
             JwtProvider jwtProvider,
-            CustomUserDetailsService customUserDetailsService
+            CustomUserDetailsService customUserDetailsService,
+            JwtAuthenticationEntryPoint jwtAuthenticationEntryPoint
     ) {
         return new JwtAuthenticationFilter(
                 jwtProvider,
-                customUserDetailsService
+                customUserDetailsService,
+                jwtAuthenticationEntryPoint
         );
     }
 

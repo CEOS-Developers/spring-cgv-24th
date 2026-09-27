@@ -17,10 +17,7 @@ public class GlobalExceptionHandler {
     ) {
         ErrorCode errorCode = e.getErrorCode();
 
-        ErrorResponse response = ErrorResponse.of(
-                errorCode.getStatus(),
-                errorCode.getMessage()
-        );
+        ErrorResponse response = ErrorResponse.of(errorCode);
 
         return ResponseEntity
                 .status(errorCode.getStatus())
