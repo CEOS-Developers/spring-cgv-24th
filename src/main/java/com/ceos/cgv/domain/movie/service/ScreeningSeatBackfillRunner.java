@@ -28,10 +28,12 @@ public class ScreeningSeatBackfillRunner implements ApplicationRunner {
         int migrated = 0;
         for (Long screeningId : screeningRepository.findAllIdsOrderById()) {
             ScreeningSeatBackfillService.BackfillResult result = backfillService.backfill(screeningId);
-            if (result.seatsCreated() > 0 || result.historiesLinked() > 0 || result.occupantsLinked() > 0) {
+            if (result.seatsCreated() > 0 || result.historiesLinked() > 0 || result.occupantsLinked() > 0
+                    || result.reservationsExpired() > 0) {
                 migrated++;
-                log.info("Backfilled screening {}: {} seats, {} histories, {} occupants",
-                        screeningId, result.seatsCreated(), result.historiesLinked(), result.occupantsLinked());
+                log.info("Backfilled screening {}: {} seats, {} histories, {} occupants, {} expired holds",
+                        screeningId, result.seatsCreated(), result.historiesLinked(), result.occupantsLinked(),
+                        result.reservationsExpired());
             }
         }
         log.info("Screening seat backfill finished: {} screenings changed", migrated);

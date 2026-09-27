@@ -50,7 +50,7 @@ class ScreeningSeatBackfillIntegrationTest {
         history(781, 778, "B", 2);
 
         assertThat(backfillService.backfill(SCREENING_ID))
-                .isEqualTo(new ScreeningSeatBackfillService.BackfillResult(4, 3, 2));
+                .isEqualTo(new ScreeningSeatBackfillService.BackfillResult(4, 3, 2, 0));
         assertThat(jdbc.queryForObject("""
                 SELECT COUNT(*) FROM screening_seats WHERE screening_id = 775
                 """, Integer.class)).isEqualTo(4);
@@ -75,7 +75,7 @@ class ScreeningSeatBackfillIntegrationTest {
                 """, Long.class));
 
         assertThat(backfillService.backfill(SCREENING_ID))
-                .isEqualTo(new ScreeningSeatBackfillService.BackfillResult(0, 0, 0));
+                .isEqualTo(new ScreeningSeatBackfillService.BackfillResult(0, 0, 0, 0));
     }
 
     @Test
@@ -139,9 +139,42 @@ class ScreeningSeatBackfillIntegrationTest {
         history(780, 777, "B", 2);
 
         assertThat(backfillService.backfill(SCREENING_ID))
-                .isEqualTo(new ScreeningSeatBackfillService.BackfillResult(4, 2, 1));
+                .isEqualTo(new ScreeningSeatBackfillService.BackfillResult(4, 2, 1, 0));
         assertThat(backfillService.backfill(SCREENING_ID))
-                .isEqualTo(new ScreeningSeatBackfillService.BackfillResult(0, 0, 0));
+                .isEqualTo(new ScreeningSeatBackfillService.BackfillResult(0, 0, 0, 0));
+    }
+
+    @Test
+    void 연결된_선점이_만료되면_모든_점유를_해제하고_다시_실행할_수_있다() {
+        reservation(776, "HELD");
+        jdbc.update("UPDATE reservations SET expires_at=DATEADD('MINUTE',5,CURRENT_TIMESTAMP) WHERE reservation_id=776");
+        history(779, 776, "A", 1);
+        history(780, 776, "B", 2);
+        backfillService.backfill(SCREENING_ID);
+        jdbc.update("UPDATE reservations SET expires_at=DATEADD('MINUTE',-5,CURRENT_TIMESTAMP) WHERE reservation_id=776");
+
+        assertThat(backfillService.backfill(SCREENING_ID).reservationsExpired()).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT status FROM reservations WHERE reservation_id=776", String.class)).isEqualTo("EXPIRED");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM screening_seats WHERE current_reservation_id=776", Integer.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM reserved_seats WHERE reservation_id=776 AND screening_seat_id IS NOT NULL", Integer.class)).isEqualTo(2);
+        backfillService.backfill(SCREENING_ID);
+    }
+
+    @Test
+    void 만료_이력이_있어도_다른_예매의_점유는_해제하지_않는다() {
+        reservation(776, "HELD");
+        jdbc.update("UPDATE reservations SET expires_at=DATEADD('MINUTE',5,CURRENT_TIMESTAMP) WHERE reservation_id=776");
+        history(779, 776, "A", 1);
+        backfillService.backfill(SCREENING_ID);
+        jdbc.update("UPDATE reservations SET expires_at=DATEADD('MINUTE',-5,CURRENT_TIMESTAMP) WHERE reservation_id=776");
+        reservation(777, "RESERVED");
+        jdbc.update("UPDATE screening_seats SET current_reservation_id=777 WHERE seat_row='A' AND seat_number=1");
+
+        assertThatThrownBy(() -> backfillService.backfill(SCREENING_ID))
+                .isInstanceOf(BusinessException.class)
+                .extracting(error -> ((BusinessException) error).getErrorCode()).isEqualTo(ErrorCode.SEAT_MIGRATION_CONFLICT);
+        assertThat(jdbc.queryForObject("SELECT current_reservation_id FROM screening_seats WHERE seat_row='A' AND seat_number=1", Long.class)).isEqualTo(777L);
+        assertThat(jdbc.queryForObject("SELECT status FROM reservations WHERE reservation_id=776", String.class)).isEqualTo("HELD");
     }
 
     private void reservation(long id, String status) {

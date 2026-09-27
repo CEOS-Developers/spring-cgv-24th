@@ -78,6 +78,7 @@ public class ScreeningSeatBackfillService {
 
         List<ReservedSeat> histories = reservedSeatRepository.findAllByReservation_Screening_Id(screeningId);
         Map<SeatCoordinate, Reservation> activeReservations = new HashMap<>();
+        Map<Long, Reservation> expiredHolds = new HashMap<>();
         Set<HistoryCoordinate> seenHistoryCoordinates = new HashSet<>();
         Instant now = seatHoldClock.instant();
         for (ReservedSeat history : histories) {
@@ -98,7 +99,11 @@ public class ScreeningSeatBackfillService {
                     if (reservation.getExpiresAt() == null) {
                         throw conflict();
                     }
-                    yield !reservation.isExpiredAt(now);
+                    boolean expired = reservation.isExpiredAt(now);
+                    if (expired) {
+                        expiredHolds.put(reservation.getId(), reservation);
+                    }
+                    yield !expired;
                 }
                 case CANCELED, EXPIRED, RELEASED -> false;
             };
@@ -122,21 +127,28 @@ public class ScreeningSeatBackfillService {
             Reservation expected = activeReservations.get(entry.getKey());
             Reservation current = entry.getValue().getCurrentReservation();
             if (current != null && (expected == null || !current.getId().equals(expected.getId()))) {
-                throw conflict();
+                // 이 좌석의 정상 만료 이력과 일치하는 점유만 정리한다.
+                if (expected != null || !expiredHolds.containsKey(current.getId())
+                        || !seenHistoryCoordinates.contains(new HistoryCoordinate(current.getId(), entry.getKey()))) {
+                    throw conflict();
+                }
+                entry.getValue().releaseIfOwnedBy(current);
             }
             if (current == null && expected != null) {
                 entry.getValue().restoreCurrentReservation(expected);
                 occupantsLinked++;
             }
         }
-        return new BackfillResult(seatsCreated, historiesLinked, occupantsLinked);
+        // 여러 좌석을 가진 선점도 모든 점유를 검사한 뒤 한 번만 만료시킨다.
+        expiredHolds.values().forEach(reservation -> reservation.expire(now));
+        return new BackfillResult(seatsCreated, historiesLinked, occupantsLinked, expiredHolds.size());
     }
 
     private static BusinessException conflict() {
         return new BusinessException(ErrorCode.SEAT_MIGRATION_CONFLICT);
     }
 
-    public record BackfillResult(int seatsCreated, int historiesLinked, int occupantsLinked) {
+    public record BackfillResult(int seatsCreated, int historiesLinked, int occupantsLinked, int reservationsExpired) {
     }
 
     private record HistoryCoordinate(Long reservationId, SeatCoordinate coordinate) {
