@@ -1,6 +1,7 @@
 package com.ceos.cgv.domain.reservation.service;
 
-import com.ceos.cgv.domain.reservation.dto.SeatCoordinate;
+import com.ceos.cgv.domain.reservation.service.seat.ScreeningSeatLockService;
+import com.ceos.cgv.domain.reservation.value.SeatCoordinate;
 import com.ceos.cgv.global.exception.BusinessException;
 import com.ceos.cgv.global.exception.ErrorCode;
 import org.junit.jupiter.api.Test;

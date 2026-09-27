@@ -1,12 +1,14 @@
-package com.ceos.cgv.domain.reservation.service;
+package com.ceos.cgv.domain.reservation.service.hold;
 
 import com.ceos.cgv.domain.movie.entity.ScreeningSeat;
 import com.ceos.cgv.domain.reservation.dto.ReservationSnapshot;
-import com.ceos.cgv.domain.reservation.dto.SeatCoordinate;
 import com.ceos.cgv.domain.reservation.entity.Reservation;
 import com.ceos.cgv.domain.reservation.enums.ReservationStatus;
 import com.ceos.cgv.domain.reservation.repository.ReservationRepository;
 import com.ceos.cgv.domain.reservation.repository.ReservedSeatRepository;
+import com.ceos.cgv.domain.reservation.service.seat.ReservationSeatLifecycle;
+import com.ceos.cgv.domain.reservation.service.seat.ScreeningSeatLockService;
+import com.ceos.cgv.domain.reservation.value.SeatCoordinate;
 import com.ceos.cgv.global.exception.BusinessException;
 import com.ceos.cgv.global.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;

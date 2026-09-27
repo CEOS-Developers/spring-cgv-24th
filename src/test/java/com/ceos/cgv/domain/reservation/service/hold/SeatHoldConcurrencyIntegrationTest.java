@@ -1,9 +1,8 @@
-package com.ceos.cgv.domain.reservation.service;
-
-import com.ceos.cgv.domain.reservation.service.result.HoldCreationResult;
+package com.ceos.cgv.domain.reservation.service.hold;
 
 import com.ceos.cgv.domain.reservation.dto.ReservedSeatRequest;
 import com.ceos.cgv.domain.reservation.dto.SeatHoldCreateRequest;
+import com.ceos.cgv.domain.reservation.service.result.HoldCreationResult;
 import com.ceos.cgv.global.exception.BusinessException;
 import com.ceos.cgv.global.exception.ErrorCode;
 import org.junit.jupiter.api.BeforeEach;

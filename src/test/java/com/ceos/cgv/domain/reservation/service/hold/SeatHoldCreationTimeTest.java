@@ -1,4 +1,4 @@
-package com.ceos.cgv.domain.reservation.service;
+package com.ceos.cgv.domain.reservation.service.hold;
 
 import com.ceos.cgv.domain.cinema.entity.Screen;
 import com.ceos.cgv.domain.movie.entity.Movie;
@@ -9,11 +9,12 @@ import com.ceos.cgv.domain.movie.repository.ScreeningRepository;
 import com.ceos.cgv.domain.movie.repository.ScreeningSeatRepository;
 import com.ceos.cgv.domain.reservation.config.SeatHoldProperties;
 import com.ceos.cgv.domain.reservation.dto.ReservedSeatRequest;
-import com.ceos.cgv.domain.reservation.dto.SeatCoordinate;
 import com.ceos.cgv.domain.reservation.dto.SeatHoldCreateRequest;
 import com.ceos.cgv.domain.reservation.entity.Reservation;
 import com.ceos.cgv.domain.reservation.repository.ReservationRepository;
 import com.ceos.cgv.domain.reservation.repository.ReservedSeatRepository;
+import com.ceos.cgv.domain.reservation.service.seat.ScreeningSeatLockService;
+import com.ceos.cgv.domain.reservation.value.SeatCoordinate;
 import com.ceos.cgv.domain.user.entity.User;
 import com.ceos.cgv.domain.user.repository.UserRepository;
 import org.junit.jupiter.api.Test;

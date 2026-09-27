@@ -1,4 +1,4 @@
-package com.ceos.cgv.domain.reservation.service;
+package com.ceos.cgv.domain.reservation.service.seat;
 
 import com.ceos.cgv.domain.movie.entity.ScreeningSeat;
 import com.ceos.cgv.domain.reservation.entity.Reservation;
@@ -9,11 +9,11 @@ import java.time.Instant;
 import java.util.List;
 
 // 호출자의 트랜잭션과 좌석 잠금 안에서 상태와 점유를 함께 변경한다.
-final class ReservationSeatLifecycle {
+public final class ReservationSeatLifecycle {
     private ReservationSeatLifecycle() {
     }
 
-    static void verifyOccupancy(List<ScreeningSeat> seats, Reservation reservation) {
+    public static void verifyOccupancy(List<ScreeningSeat> seats, Reservation reservation) {
         for (ScreeningSeat seat : seats) {
             if (seat.getCurrentReservation() == null
                     || !seat.getCurrentReservation().getId().equals(reservation.getId())) {
@@ -22,19 +22,19 @@ final class ReservationSeatLifecycle {
         }
     }
 
-    static void expire(Reservation reservation, List<ScreeningSeat> seats, Instant now) {
+    public static void expire(Reservation reservation, List<ScreeningSeat> seats, Instant now) {
         verifyOccupancy(seats, reservation);
         reservation.expire(now);
         seats.forEach(seat -> seat.releaseIfOwnedBy(reservation));
     }
 
-    static void release(Reservation reservation, List<ScreeningSeat> seats) {
+    public static void release(Reservation reservation, List<ScreeningSeat> seats) {
         verifyOccupancy(seats, reservation);
         reservation.release();
         seats.forEach(seat -> seat.releaseIfOwnedBy(reservation));
     }
 
-    static void cancel(Reservation reservation, List<ScreeningSeat> seats) {
+    public static void cancel(Reservation reservation, List<ScreeningSeat> seats) {
         verifyOccupancy(seats, reservation);
         reservation.cancel();
         seats.forEach(seat -> seat.releaseIfOwnedBy(reservation));

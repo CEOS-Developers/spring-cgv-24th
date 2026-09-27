@@ -1,15 +1,15 @@
 package com.ceos.cgv.domain.reservation.repository;
 
-import com.ceos.cgv.domain.reservation.dto.SeatCoordinate;
 import com.ceos.cgv.domain.reservation.entity.Reservation;
 import com.ceos.cgv.domain.reservation.entity.ReservedSeat;
 import com.ceos.cgv.domain.reservation.enums.ReservationStatus;
+import com.ceos.cgv.domain.reservation.value.SeatCoordinate;
 import jakarta.persistence.criteria.Join;
 import jakarta.persistence.criteria.Predicate;
 import org.springframework.data.jpa.domain.Specification;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
-import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -43,7 +43,7 @@ public interface ReservedSeatRepository extends JpaRepository<ReservedSeat, Long
     List<ReservedSeat> findAllByReservation_Screening_Id(Long screeningId);
 
     @Query("""
-            select new com.ceos.cgv.domain.reservation.dto.SeatCoordinate(
+            select new com.ceos.cgv.domain.reservation.value.SeatCoordinate(
                 rs.seatRow, rs.seatNumber)
             from ReservedSeat rs where rs.reservation.id = :reservationId
             """)

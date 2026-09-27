@@ -10,10 +10,14 @@ import com.ceos.cgv.domain.movie.repository.ScreeningSeatRepository;
 import com.ceos.cgv.domain.reservation.dto.ReservationCreateRequest;
 import com.ceos.cgv.domain.reservation.dto.ReservationResponse;
 import com.ceos.cgv.domain.reservation.dto.ReservedSeatRequest;
-import com.ceos.cgv.domain.reservation.dto.SeatCoordinate;
 import com.ceos.cgv.domain.reservation.entity.Reservation;
+import com.ceos.cgv.domain.reservation.policy.ReservationSeatPolicy;
 import com.ceos.cgv.domain.reservation.repository.ReservationRepository;
 import com.ceos.cgv.domain.reservation.repository.ReservedSeatRepository;
+import com.ceos.cgv.domain.reservation.service.seat.ScreeningSeatLockService;
+import com.ceos.cgv.domain.reservation.service.seat.SeatOccupancyGuard;
+import com.ceos.cgv.domain.reservation.service.seat.SeatRequestMapper;
+import com.ceos.cgv.domain.reservation.value.SeatCoordinate;
 import com.ceos.cgv.domain.user.entity.User;
 import com.ceos.cgv.domain.user.repository.UserRepository;
 import com.ceos.cgv.global.exception.BusinessException;
@@ -60,7 +64,7 @@ public class ReservationCreationService {
         // 좌석 유효성 검증에 필요한 상영관 좌석 구조를 가져옴
         Screen screen = screening.getScreen();
 
-        Set<SeatCoordinate> requestedSeats = ReservationSeatPolicy.coordinates(request.seats());
+        Set<SeatCoordinate> requestedSeats = ReservationSeatPolicy.uniqueCoordinates(SeatRequestMapper.toCoordinates(request.seats()));
         ReservationSeatPolicy.validateBounds(screen, requestedSeats);
         boolean legacyScreening = ReservationSeatPolicy.validateInventory(screen,
                 screeningSeatRepository.countByScreening_Id(screening.getId()), true);
@@ -71,7 +75,7 @@ public class ReservationCreationService {
 
         List<ScreeningSeat> lockedSeats = legacyScreening ? List.of()
                 : screeningSeatLockService.lockSeats(screening.getId(), requestedSeats);
-        ReservationSeatPolicy.ensureAvailable(lockedSeats, seatHoldClock.instant());
+        SeatOccupancyGuard.ensureAvailable(lockedSeats, seatHoldClock.instant());
         Map<SeatCoordinate, ScreeningSeat> screeningSeatsByCoordinate = new HashMap<>();
         for (ScreeningSeat seat : lockedSeats) {
             screeningSeatsByCoordinate.put(new SeatCoordinate(seat.getSeatRow(), seat.getSeatNumber()), seat);

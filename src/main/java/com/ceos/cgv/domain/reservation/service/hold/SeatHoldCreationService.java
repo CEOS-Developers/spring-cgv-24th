@@ -1,4 +1,4 @@
-package com.ceos.cgv.domain.reservation.service;
+package com.ceos.cgv.domain.reservation.service.hold;
 
 import com.ceos.cgv.domain.cinema.entity.Screen;
 import com.ceos.cgv.domain.movie.entity.Movie;
@@ -8,15 +8,20 @@ import com.ceos.cgv.domain.movie.repository.MovieRepository;
 import com.ceos.cgv.domain.movie.repository.ScreeningRepository;
 import com.ceos.cgv.domain.movie.repository.ScreeningSeatRepository;
 import com.ceos.cgv.domain.reservation.config.SeatHoldProperties;
-import com.ceos.cgv.domain.reservation.service.result.HoldCreationResult;
 import com.ceos.cgv.domain.reservation.dto.ReservedSeatRequest;
-import com.ceos.cgv.domain.reservation.dto.SeatCoordinate;
 import com.ceos.cgv.domain.reservation.dto.SeatHoldCreateRequest;
 import com.ceos.cgv.domain.reservation.dto.SeatHoldResponse;
 import com.ceos.cgv.domain.reservation.entity.Reservation;
 import com.ceos.cgv.domain.reservation.enums.ReservationStatus;
+import com.ceos.cgv.domain.reservation.policy.ReservationSeatPolicy;
 import com.ceos.cgv.domain.reservation.repository.ReservationRepository;
 import com.ceos.cgv.domain.reservation.repository.ReservedSeatRepository;
+import com.ceos.cgv.domain.reservation.service.exception.ExpiredHoldEncountered;
+import com.ceos.cgv.domain.reservation.service.result.HoldCreationResult;
+import com.ceos.cgv.domain.reservation.service.seat.ScreeningSeatLockService;
+import com.ceos.cgv.domain.reservation.service.seat.SeatOccupancyGuard;
+import com.ceos.cgv.domain.reservation.service.seat.SeatRequestMapper;
+import com.ceos.cgv.domain.reservation.value.SeatCoordinate;
 import com.ceos.cgv.domain.user.entity.User;
 import com.ceos.cgv.domain.user.repository.UserRepository;
 import com.ceos.cgv.global.exception.BusinessException;
@@ -55,7 +60,7 @@ public class SeatHoldCreationService {
                 || request.seats().size() > properties.maxSeats()) {
             throw new BusinessException(ErrorCode.INVALID_REQUEST);
         }
-        Set<SeatCoordinate> coordinates = ReservationSeatPolicy.coordinates(request.seats());
+        Set<SeatCoordinate> coordinates = ReservationSeatPolicy.uniqueCoordinates(SeatRequestMapper.toCoordinates(request.seats()));
         User user = userRepository.findByIdForUpdate(userId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
         Instant now = seatHoldClock.instant();
@@ -95,7 +100,7 @@ public class SeatHoldCreationService {
                 screeningSeatRepository.countByScreening_Id(screening.getId()), false);
         List<ScreeningSeat> seats = seatLockService.lockSeats(screening.getId(), coordinates);
         now = seatHoldClock.instant();
-        ReservationSeatPolicy.ensureAvailable(seats, now);
+        SeatOccupancyGuard.ensureAvailable(seats, now);
         if (reservedSeatRepository.existsReservedByScreeningIdAndCoordinates(screening.getId(), coordinates)) {
             throw new BusinessException(ErrorCode.SEAT_ALREADY_RESERVED);
         }

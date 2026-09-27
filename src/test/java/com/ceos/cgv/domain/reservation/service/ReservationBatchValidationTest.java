@@ -10,6 +10,7 @@ import com.ceos.cgv.domain.movie.repository.ScreeningRepository;
 import com.ceos.cgv.domain.movie.repository.ScreeningSeatRepository;
 import com.ceos.cgv.domain.reservation.dto.*;
 import com.ceos.cgv.domain.reservation.repository.*;
+import com.ceos.cgv.domain.reservation.value.SeatCoordinate;
 import com.ceos.cgv.domain.user.entity.User;
 import com.ceos.cgv.domain.user.repository.UserRepository;
 import com.ceos.cgv.global.exception.*;
@@ -20,8 +21,10 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
+
 import java.time.*;
 import java.util.*;
+
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.Mockito.*;
 

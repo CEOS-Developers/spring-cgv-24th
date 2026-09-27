@@ -1,10 +1,10 @@
-package com.ceos.cgv.domain.reservation.service;
+package com.ceos.cgv.domain.reservation.service.hold;
 
 import com.ceos.cgv.domain.reservation.dto.ReservationSnapshot;
-import com.ceos.cgv.domain.reservation.service.result.HoldTransitionResult;
 import com.ceos.cgv.domain.reservation.entity.Reservation;
 import com.ceos.cgv.domain.reservation.enums.ReservationStatus;
 import com.ceos.cgv.domain.reservation.repository.ReservationRepository;
+import com.ceos.cgv.domain.reservation.service.result.HoldTransitionResult;
 import com.ceos.cgv.domain.user.entity.User;
 import com.ceos.cgv.global.exception.ErrorCode;
 import org.junit.jupiter.api.Test;

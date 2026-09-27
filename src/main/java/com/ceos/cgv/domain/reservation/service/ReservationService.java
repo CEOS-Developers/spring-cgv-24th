@@ -4,11 +4,15 @@ import com.ceos.cgv.domain.movie.entity.ScreeningSeat;
 import com.ceos.cgv.domain.reservation.dto.ReservationCreateRequest;
 import com.ceos.cgv.domain.reservation.dto.ReservationResponse;
 import com.ceos.cgv.domain.reservation.dto.ReservationSnapshot;
-import com.ceos.cgv.domain.reservation.dto.SeatCoordinate;
 import com.ceos.cgv.domain.reservation.entity.Reservation;
 import com.ceos.cgv.domain.reservation.entity.ReservedSeat;
 import com.ceos.cgv.domain.reservation.enums.ReservationStatus;
 import com.ceos.cgv.domain.reservation.repository.ReservationRepository;
+import com.ceos.cgv.domain.reservation.service.exception.ExpiredHoldEncountered;
+import com.ceos.cgv.domain.reservation.service.hold.SeatHoldExpiryService;
+import com.ceos.cgv.domain.reservation.service.seat.ReservationSeatLifecycle;
+import com.ceos.cgv.domain.reservation.service.seat.ScreeningSeatLockService;
+import com.ceos.cgv.domain.reservation.value.SeatCoordinate;
 import com.ceos.cgv.global.exception.BusinessException;
 import com.ceos.cgv.global.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
@@ -16,8 +20,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.List;
 import java.time.Clock;
+import java.util.List;
 
 @Service
 @RequiredArgsConstructor

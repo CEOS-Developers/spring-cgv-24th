@@ -3,7 +3,7 @@ package com.ceos.cgv.domain.reservation.controller;
 import com.ceos.cgv.domain.reservation.dto.ReservedSeatRequest;
 import com.ceos.cgv.domain.reservation.dto.SeatHoldCreateRequest;
 import com.ceos.cgv.domain.reservation.service.ReservationCreationService;
-import com.ceos.cgv.domain.reservation.service.SeatHoldService;
+import com.ceos.cgv.domain.reservation.service.hold.SeatHoldService;
 import com.ceos.cgv.domain.user.enums.UserRole;
 import com.ceos.cgv.global.security.jwt.JwtService;
 import org.junit.jupiter.api.Test;

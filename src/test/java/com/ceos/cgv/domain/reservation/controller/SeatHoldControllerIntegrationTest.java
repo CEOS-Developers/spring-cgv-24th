@@ -2,16 +2,16 @@ package com.ceos.cgv.domain.reservation.controller;
 
 import com.ceos.cgv.domain.reservation.config.SeatHoldProperties;
 import com.ceos.cgv.domain.reservation.repository.ReservationRepository;
-import com.ceos.cgv.domain.reservation.service.SeatHoldCleanupTask;
-import com.ceos.cgv.domain.reservation.service.SeatHoldExpiryService;
+import com.ceos.cgv.domain.reservation.service.hold.SeatHoldCleanupService;
+import com.ceos.cgv.domain.reservation.service.hold.SeatHoldExpiryService;
 import com.ceos.cgv.domain.user.enums.UserRole;
 import com.ceos.cgv.global.security.jwt.JwtService;
 import com.jayway.jsonpath.JsonPath;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.annotation.DirtiesContext;
@@ -39,7 +39,7 @@ class SeatHoldControllerIntegrationTest {
     @Autowired MockMvc mockMvc;
     @Autowired JdbcTemplate jdbc;
     @Autowired JwtService jwtService;
-    @Autowired SeatHoldCleanupTask cleanupTask;
+    @Autowired SeatHoldCleanupService cleanupService;
     @Autowired ReservationRepository reservationRepository;
     @Autowired SeatHoldExpiryService expiryService;
     @Autowired Clock seatHoldClock;
@@ -511,8 +511,8 @@ class SeatHoldControllerIntegrationTest {
                 """);
         jdbc.update("UPDATE screening_seats SET current_reservation_id=8623 WHERE screening_seat_id=8618");
 
-        cleanupTask.cleanup();
-        cleanupTask.cleanup();
+        cleanupService.cleanup();
+        cleanupService.cleanup();
 
         assertThat(jdbc.queryForObject("SELECT status FROM reservations WHERE reservation_id=8621",
                 String.class)).isEqualTo("EXPIRED");
@@ -541,7 +541,7 @@ class SeatHoldControllerIntegrationTest {
                 VALUES (8622,'A',2,8618)
                 """);
         jdbc.update("UPDATE screening_seats SET current_reservation_id=8622 WHERE screening_seat_id=8618");
-        SeatHoldCleanupTask oneAtATime = new SeatHoldCleanupTask(reservationRepository, expiryService,
+        SeatHoldCleanupService oneAtATime = new SeatHoldCleanupService(reservationRepository, expiryService,
                 new SeatHoldProperties(Duration.ofMinutes(5), 8, 1, 1), seatHoldClock);
 
         oneAtATime.cleanup();

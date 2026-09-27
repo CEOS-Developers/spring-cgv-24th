@@ -1,8 +1,8 @@
-package com.ceos.cgv.domain.reservation.service;
+package com.ceos.cgv.domain.reservation.service.seat;
 
 import com.ceos.cgv.domain.movie.entity.ScreeningSeat;
 import com.ceos.cgv.domain.movie.repository.ScreeningSeatRepository;
-import com.ceos.cgv.domain.reservation.dto.SeatCoordinate;
+import com.ceos.cgv.domain.reservation.value.SeatCoordinate;
 import com.ceos.cgv.global.exception.BusinessException;
 import com.ceos.cgv.global.exception.ErrorCode;
 import jakarta.persistence.LockTimeoutException;

@@ -1,9 +1,10 @@
-package com.ceos.cgv.domain.reservation.service;
+package com.ceos.cgv.domain.reservation.service.hold;
 
 import com.ceos.cgv.domain.reservation.config.SeatHoldProperties;
-import com.ceos.cgv.domain.reservation.service.result.HoldCreationResult;
 import com.ceos.cgv.domain.reservation.dto.SeatHoldCreateRequest;
 import com.ceos.cgv.domain.reservation.dto.SeatHoldResponse;
+import com.ceos.cgv.domain.reservation.service.exception.ExpiredHoldEncountered;
+import com.ceos.cgv.domain.reservation.service.result.HoldCreationResult;
 import com.ceos.cgv.global.exception.BusinessException;
 import com.ceos.cgv.global.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
