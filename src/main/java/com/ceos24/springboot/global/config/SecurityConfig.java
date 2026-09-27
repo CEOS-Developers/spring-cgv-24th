@@ -71,6 +71,11 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/movies","/api/movies/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/theaters", "/api/theaters/**").permitAll()
 
+
+                        // 관리자 전용 API
+                        .requestMatchers("/api/admin/**").hasRole("ADMIN") // ROLE_ADMIN
+
+
                         // 그 외 요청은 인증 필요
                         .anyRequest().authenticated()
 
