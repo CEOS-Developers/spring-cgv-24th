@@ -15,6 +15,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import com.ceos24.springboot.user.domain.User;
+import com.ceos24.springboot.user.repository.UserRepository;
 
 import java.time.DayOfWeek;
 import java.time.LocalDate;
@@ -34,10 +36,21 @@ public class ReservationService {
     private final SeatRepository seatRepository;
     private final ReservationSeatRepository reservationSeatRepository;
 
+    private final UserRepository userRepository;
+
     // 예매 생성
     @Transactional
-    public ReservationResponse createReservation(ReservationCreateRequest request)
-    {
+    public ReservationResponse createReservation(
+            Long userId,
+            ReservationCreateRequest request
+    ){
+        // 로그인 사용자 조회
+        User user = userRepository.findById(userId)
+                .orElseThrow(() ->
+                        new IllegalArgumentException(
+                                "사용자를 찾을 수 없습니다. userId=" + userId
+                        )
+                );
 
         // 1. 상영회차 조회
         Screening screening = screeningRepository
@@ -123,7 +136,8 @@ public class ReservationService {
         ScreenType screenType =
                 screening.getScreen().getScreenType();
 
-        // 10. 총 가격 계산
+
+        // 9. 총 가격 계산
         int totalPrice = 0;
 
         totalPrice += calculatePrice(
@@ -158,9 +172,9 @@ public class ReservationService {
                 screenType
         );
 
-        // 11. Reservation 생성
+        // 10. Reservation 생성
         Reservation reservation = Reservation.builder()
-                // User는 다음 주 로그인 구현 후 연결
+                .user(user)
                 .screening(screening)
                 .childCount(request.childCount())
                 .youthCount(request.youthCount())
@@ -283,7 +297,10 @@ public class ReservationService {
 
     // 예매 취소
     @Transactional
-    public ReservationResponse cancelReservation(Long reservationId) {
+    public ReservationResponse cancelReservation(
+            Long userId,
+            Long reservationId
+    ){
 
         // 예매 조회
         Reservation reservation = reservationRepository.findById(reservationId)
@@ -294,24 +311,31 @@ public class ReservationService {
                         )
                 );
 
-        //취소하기 전 예매 좌석 조회
+        // 예매 소유권 검사
+        if (!reservation.getUser().getId().equals(userId)) {
+            throw new IllegalArgumentException(
+                    "본인의 예매만 취소할 수 있습니다."
+            );
+        }
+
+        // 취소하기 전 예매 좌석 조회
         List<ReservationSeat> reservationSeats =
                 reservationSeatRepository.findAllByReservation_ReservationId(reservationId);
 
-        //ReservationSeat -> Seat 변환
+        // ReservationSeat -> Seat 변환
         List<Seat> seats =
                 reservationSeats.stream()
                         .map(ReservationSeat::getSeat)
                         .toList();
 
-        //예매 상태 변경
+        // 예매 상태 변경
         reservation.cancel();
 
-        //좌석 점유 해제
+        // 좌석 점유 해제
         reservationSeatRepository
                 .deleteAllByReservation_ReservationId(reservationId);
 
-        //취소된 예매 정보 + 기존 좌석 정보 반환
+        // 취소된 예매 정보 + 기존 좌석 정보 반환
         return ReservationResponse.from(
                 reservation,
                 seats

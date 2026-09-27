@@ -9,6 +9,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import com.ceos24.springboot.user.security.CustomUserDetails;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 
 @RestController
 @RequiredArgsConstructor
@@ -25,11 +27,15 @@ public class ReservationController {
     )
     @PostMapping
     public ResponseEntity<ReservationResponse> createReservation(
+            @AuthenticationPrincipal CustomUserDetails userDetails,
             @RequestBody ReservationCreateRequest request
     ) {
 
         ReservationResponse response =
-                reservationService.createReservation(request);
+                reservationService.createReservation(
+                        userDetails.getUserId(),
+                        request
+                );
 
         return ResponseEntity
                 .status(HttpStatus.CREATED)
@@ -59,11 +65,17 @@ public class ReservationController {
     )
     @PatchMapping("/{reservationId}/cancel")
     public ResponseEntity<ReservationResponse> cancelReservation(
+            @AuthenticationPrincipal CustomUserDetails userDetails,
             @PathVariable Long reservationId
     ) {
 
         return ResponseEntity.ok(
-                reservationService.cancelReservation(reservationId)
+                reservationService.cancelReservation(
+                        userDetails.getUserId(),
+                        reservationId
+                )
         );
     }
+
+
 }

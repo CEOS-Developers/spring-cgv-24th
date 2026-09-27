@@ -22,6 +22,10 @@ public class User {
     @Column(name = "name")
     private String name;
 
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private Role role;
+
 //  사용자 로그인 아이디로 email을 사용(중복 막음)
     @Column(name = "email", nullable = false, unique = true)
     private String email;
@@ -47,6 +51,7 @@ public class User {
         this.email = email;
         this.password = password;
         this.phone = phone;
+        this.role = Role.USER; // 자동으로 회원으로 지정
     }
 
     public static User create(
