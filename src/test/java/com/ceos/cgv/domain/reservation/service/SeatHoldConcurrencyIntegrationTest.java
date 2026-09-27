@@ -1,5 +1,7 @@
 package com.ceos.cgv.domain.reservation.service;
 
+import com.ceos.cgv.domain.reservation.service.result.HoldCreationResult;
+
 import com.ceos.cgv.domain.reservation.dto.ReservedSeatRequest;
 import com.ceos.cgv.domain.reservation.dto.SeatHoldCreateRequest;
 import com.ceos.cgv.global.exception.BusinessException;
@@ -172,7 +174,7 @@ class SeatHoldConcurrencyIntegrationTest {
                     }));
             assertThat(locked.await(2, TimeUnit.SECONDS)).isTrue();
 
-            Future<SeatHoldService.HoldCreationResult> otherSeat = executor.submit(() ->
+            Future<HoldCreationResult> otherSeat = executor.submit(() ->
                     holdService.create(8718L, SECOND_KEY, new SeatHoldCreateRequest(
                             8715L, List.of(new ReservedSeatRequest("A", 2)))));
             var result = otherSeat.get(2, TimeUnit.SECONDS);

@@ -5,6 +5,7 @@ import com.ceos.cgv.domain.movie.entity.ScreeningSeat;
 import com.ceos.cgv.domain.movie.enums.MovieVisibility;
 import com.ceos.cgv.domain.movie.repository.MovieRepository;
 import com.ceos.cgv.domain.reservation.dto.SeatCoordinate;
+import com.ceos.cgv.domain.reservation.service.result.HoldTransitionResult;
 import com.ceos.cgv.domain.reservation.dto.SeatHoldResponse;
 import com.ceos.cgv.domain.reservation.dto.ReservationSnapshot;
 import com.ceos.cgv.domain.reservation.entity.Reservation;
@@ -32,64 +33,64 @@ public class SeatHoldTransitionService {
     private final Clock seatHoldClock;
 
     @Transactional(isolation = Isolation.READ_COMMITTED)
-    public TransitionResult confirm(Long reservationId, Long userId) {
+    public HoldTransitionResult confirm(Long reservationId, Long userId) {
         ReservationSnapshot snapshot = snapshot(reservationId, userId);
         if (snapshot.status() == ReservationStatus.RESERVED) {
             Reservation current = owned(reservationId, userId);
             return current.getStatus() == ReservationStatus.RESERVED
-                    ? TransitionResult.success(SeatHoldResponse.from(current))
-                    : TransitionResult.failure(ErrorCode.HOLD_NOT_ACTIVE);
+                    ? HoldTransitionResult.success(SeatHoldResponse.from(current))
+                    : HoldTransitionResult.failure(ErrorCode.HOLD_NOT_ACTIVE);
         }
         if (snapshot.status() != ReservationStatus.HELD) {
-            return TransitionResult.failure(ErrorCode.HOLD_NOT_ACTIVE);
+            return HoldTransitionResult.failure(ErrorCode.HOLD_NOT_ACTIVE);
         }
         Movie movie = movieRepository.findByIdForShare(snapshot.movieId())
                 .orElseThrow(() -> new BusinessException(ErrorCode.MOVIE_NOT_FOUND));
         List<ScreeningSeat> seats = lockSeats(snapshot.screeningId(), reservationId);
         Reservation reservation = owned(reservationId, userId);
         if (reservation.getStatus() == ReservationStatus.RESERVED) {
-            return TransitionResult.success(SeatHoldResponse.from(reservation));
+            return HoldTransitionResult.success(SeatHoldResponse.from(reservation));
         }
         if (reservation.getStatus() != ReservationStatus.HELD) {
-            return TransitionResult.failure(ErrorCode.HOLD_NOT_ACTIVE);
+            return HoldTransitionResult.failure(ErrorCode.HOLD_NOT_ACTIVE);
         }
         verifyOccupancy(seats, reservation);
         Instant now = seatHoldClock.instant();
         if (reservation.isExpiredAt(now)) {
             reservation.expire(now);
             seats.forEach(seat -> seat.releaseIfOwnedBy(reservation));
-            return TransitionResult.failure(ErrorCode.HOLD_EXPIRED);
+            return HoldTransitionResult.failure(ErrorCode.HOLD_EXPIRED);
         }
         if (movie.getVisibility() != MovieVisibility.PUBLIC) {
             reservation.release();
             seats.forEach(seat -> seat.releaseIfOwnedBy(reservation));
-            return TransitionResult.failure(ErrorCode.MOVIE_NOT_AVAILABLE);
+            return HoldTransitionResult.failure(ErrorCode.MOVIE_NOT_AVAILABLE);
         }
         reservation.confirm(now);
-        return TransitionResult.success(SeatHoldResponse.from(reservation));
+        return HoldTransitionResult.success(SeatHoldResponse.from(reservation));
     }
 
     @Transactional(isolation = Isolation.READ_COMMITTED)
-    public ErrorCode release(Long reservationId, Long userId) {
+    public HoldTransitionResult release(Long reservationId, Long userId) {
         ReservationSnapshot snapshot = snapshot(reservationId, userId);
         if (snapshot.status() != ReservationStatus.HELD) {
-            return ErrorCode.HOLD_NOT_ACTIVE;
+            return HoldTransitionResult.failure(ErrorCode.HOLD_NOT_ACTIVE);
         }
         List<ScreeningSeat> seats = lockSeats(snapshot.screeningId(), reservationId);
         Reservation reservation = owned(reservationId, userId);
         if (reservation.getStatus() != ReservationStatus.HELD) {
-            return ErrorCode.HOLD_NOT_ACTIVE;
+            return HoldTransitionResult.failure(ErrorCode.HOLD_NOT_ACTIVE);
         }
         verifyOccupancy(seats, reservation);
         Instant now = seatHoldClock.instant();
         if (reservation.isExpiredAt(now)) {
             reservation.expire(now);
             seats.forEach(seat -> seat.releaseIfOwnedBy(reservation));
-            return ErrorCode.HOLD_EXPIRED;
+            return HoldTransitionResult.failure(ErrorCode.HOLD_EXPIRED);
         }
         reservation.release();
         seats.forEach(seat -> seat.releaseIfOwnedBy(reservation));
-        return null;
+        return HoldTransitionResult.success(SeatHoldResponse.from(reservation));
     }
 
     private Reservation owned(Long reservationId, Long userId) {
@@ -125,13 +126,4 @@ public class SeatHoldTransitionService {
         }
     }
 
-    public record TransitionResult(SeatHoldResponse response, ErrorCode error) {
-        static TransitionResult success(SeatHoldResponse response) {
-            return new TransitionResult(response, null);
-        }
-
-        static TransitionResult failure(ErrorCode error) {
-            return new TransitionResult(null, error);
-        }
-    }
 }

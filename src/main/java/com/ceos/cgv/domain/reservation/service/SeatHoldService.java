@@ -1,6 +1,7 @@
 package com.ceos.cgv.domain.reservation.service;
 
 import com.ceos.cgv.domain.reservation.config.SeatHoldProperties;
+import com.ceos.cgv.domain.reservation.service.result.HoldCreationResult;
 import com.ceos.cgv.domain.reservation.dto.SeatHoldCreateRequest;
 import com.ceos.cgv.domain.reservation.dto.SeatHoldResponse;
 import com.ceos.cgv.global.exception.BusinessException;
@@ -14,6 +15,7 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class SeatHoldService {
     private final SeatHoldCreationService creationService;
+    private final SeatHoldTransitionService transitionService;
     private final SeatHoldExpiryService expiryService;
     private final SeatHoldProperties properties;
 
@@ -31,6 +33,11 @@ public class SeatHoldService {
         throw new BusinessException(ErrorCode.SEAT_BUSY);
     }
 
-    public record HoldCreationResult(SeatHoldResponse response, boolean created) {
+    public SeatHoldResponse confirm(Long reservationId, Long userId) {
+        return transitionService.confirm(reservationId, userId).responseOrThrow();
+    }
+
+    public void release(Long reservationId, Long userId) {
+        transitionService.release(reservationId, userId).responseOrThrow();
     }
 }

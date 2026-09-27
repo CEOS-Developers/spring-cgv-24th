@@ -1,6 +1,7 @@
 package com.ceos.cgv.domain.reservation.service;
 
 import com.ceos.cgv.domain.reservation.dto.ReservationSnapshot;
+import com.ceos.cgv.domain.reservation.service.result.HoldTransitionResult;
 import com.ceos.cgv.domain.reservation.entity.Reservation;
 import com.ceos.cgv.domain.reservation.enums.ReservationStatus;
 import com.ceos.cgv.domain.reservation.repository.ReservationRepository;
@@ -34,6 +35,6 @@ class SeatHoldTransitionServiceTest {
         when(canceled.getStatus()).thenReturn(ReservationStatus.CANCELED);
         when(reservations.findWithSeatsById(12L)).thenReturn(Optional.of(canceled));
 
-        assertThat(service.confirm(12L, 7L).error()).isEqualTo(ErrorCode.HOLD_NOT_ACTIVE);
+        assertThat(service.confirm(12L, 7L)).isEqualTo(new HoldTransitionResult.Failure(ErrorCode.HOLD_NOT_ACTIVE));
     }
 }

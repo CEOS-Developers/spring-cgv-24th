@@ -3,7 +3,7 @@ package com.ceos.cgv.domain.reservation.controller;
 import com.ceos.cgv.domain.reservation.dto.SeatHoldCreateRequest;
 import com.ceos.cgv.domain.reservation.dto.SeatHoldResponse;
 import com.ceos.cgv.domain.reservation.service.SeatHoldService;
-import com.ceos.cgv.domain.reservation.service.SeatHoldTransitionService;
+import com.ceos.cgv.domain.reservation.service.result.HoldCreationResult;
 import com.ceos.cgv.global.security.principal.AuthenticatedUser;
 import com.ceos.cgv.global.common.dto.ApiResponse;
 import com.ceos.cgv.global.exception.BusinessException;
@@ -31,7 +31,6 @@ import java.util.UUID;
 @SecurityRequirement(name = "bearerAuth")
 public class SeatHoldController {
     private final SeatHoldService seatHoldService;
-    private final SeatHoldTransitionService transitionService;
 
     @PostMapping
     public ResponseEntity<ApiResponse<SeatHoldResponse>> create(
@@ -44,7 +43,7 @@ public class SeatHoldController {
         } catch (IllegalArgumentException exception) {
             throw new BusinessException(ErrorCode.INVALID_REQUEST);
         }
-        SeatHoldService.HoldCreationResult result = seatHoldService.create(user.userId(), key, request);
+        HoldCreationResult result = seatHoldService.create(user.userId(), key, request);
         if (!result.created()) {
             return ResponseEntity.ok(ApiResponse.success(result.response()));
         }
@@ -57,22 +56,14 @@ public class SeatHoldController {
     @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "본인 선점만 처리할 수 있습니다.")
     public ResponseEntity<ApiResponse<SeatHoldResponse>> confirm(
             @PathVariable Long reservationId, @AuthenticationPrincipal AuthenticatedUser user) {
-        SeatHoldTransitionService.TransitionResult result =
-                transitionService.confirm(reservationId, user.userId());
-        if (result.error() != null) {
-            throw new BusinessException(result.error());
-        }
-        return ResponseEntity.ok(ApiResponse.success(result.response()));
+        return ResponseEntity.ok(ApiResponse.success(seatHoldService.confirm(reservationId, user.userId())));
     }
 
     @DeleteMapping("/{reservationId}")
     @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "본인 선점만 처리할 수 있습니다.")
     public ResponseEntity<Void> release(@PathVariable Long reservationId,
                                         @AuthenticationPrincipal AuthenticatedUser user) {
-        ErrorCode error = transitionService.release(reservationId, user.userId());
-        if (error != null) {
-            throw new BusinessException(error);
-        }
+        seatHoldService.release(reservationId, user.userId());
         return ResponseEntity.noContent().build();
     }
 }

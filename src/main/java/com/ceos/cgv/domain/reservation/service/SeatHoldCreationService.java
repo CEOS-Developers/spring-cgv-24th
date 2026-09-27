@@ -8,6 +8,7 @@ import com.ceos.cgv.domain.movie.repository.MovieRepository;
 import com.ceos.cgv.domain.movie.repository.ScreeningRepository;
 import com.ceos.cgv.domain.movie.repository.ScreeningSeatRepository;
 import com.ceos.cgv.domain.reservation.config.SeatHoldProperties;
+import com.ceos.cgv.domain.reservation.service.result.HoldCreationResult;
 import com.ceos.cgv.domain.reservation.dto.ReservedSeatRequest;
 import com.ceos.cgv.domain.reservation.dto.SeatCoordinate;
 import com.ceos.cgv.domain.reservation.dto.SeatHoldCreateRequest;
@@ -50,7 +51,7 @@ public class SeatHoldCreationService {
     private final Clock seatHoldClock;
 
     @Transactional(isolation = Isolation.READ_COMMITTED)
-    public SeatHoldService.HoldCreationResult create(
+    public HoldCreationResult create(
             Long userId, UUID requestKey, SeatHoldCreateRequest request) {
         if (request.seats() == null || request.seats().isEmpty()
                 || request.seats().size() > properties.maxSeats()) {
@@ -83,7 +84,7 @@ public class SeatHoldCreationService {
                     && reservation.getStatus() != ReservationStatus.RESERVED) {
                 throw new BusinessException(ErrorCode.HOLD_NOT_ACTIVE);
             }
-            return new SeatHoldService.HoldCreationResult(SeatHoldResponse.from(reservation), false);
+            return new HoldCreationResult(SeatHoldResponse.from(reservation), false);
         }
 
         if (reservationRepository.countActiveHolds(userId, ReservationStatus.HELD, now)
@@ -143,7 +144,7 @@ public class SeatHoldCreationService {
         }
         reservationRepository.saveAndFlush(hold);
         seats.forEach(seat -> seat.occupy(hold));
-        return new SeatHoldService.HoldCreationResult(SeatHoldResponse.from(hold), true);
+        return new HoldCreationResult(SeatHoldResponse.from(hold), true);
     }
 
     static final class ExpiredHoldEncountered extends RuntimeException {
