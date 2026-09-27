@@ -1,6 +1,8 @@
 spring:
   application:
     name: spring-cgv-24th
+  jpa:
+    open-in-view: false
 
 springdoc:
   paths-to-match: /api/**

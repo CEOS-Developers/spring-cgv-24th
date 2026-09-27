@@ -3,6 +3,7 @@ package com.ceos.cgv.domain.movie.service;
 import com.ceos.cgv.domain.cinema.entity.Screen;
 import com.ceos.cgv.domain.cinema.repository.ScreenRepository;
 import com.ceos.cgv.domain.movie.dto.ScreeningCreateRequest;
+import com.ceos.cgv.domain.movie.dto.ScreeningResponse;
 import com.ceos.cgv.domain.movie.entity.Movie;
 import com.ceos.cgv.domain.movie.entity.Screening;
 import com.ceos.cgv.domain.movie.entity.ScreeningSeat;
@@ -28,7 +29,7 @@ public class ScreeningService {
     private final ScreeningSeatRepository screeningSeatRepository;
 
     @Transactional
-    public Screening create(ScreeningCreateRequest request) {
+    public ScreeningResponse create(ScreeningCreateRequest request) {
         Movie movie = movieRepository.findByIdForShare(request.movieId())
                 .orElseThrow(() -> new BusinessException(ErrorCode.MOVIE_NOT_FOUND));
         movie.ensurePublic();
@@ -51,14 +52,15 @@ public class ScreeningService {
             }
         }
         screeningSeatRepository.saveAll(seats);
-        return screening;
+        return ScreeningResponse.from(screening);
     }
 
     @Transactional(readOnly = true)
-    public List<Screening> findAllByMovieId(Long movieId) {
+    public List<ScreeningResponse> findAllByMovieId(Long movieId) {
         if (!movieRepository.existsByIdAndVisibility(movieId, MovieVisibility.PUBLIC)) {
             throw new BusinessException(ErrorCode.MOVIE_NOT_FOUND);
         }
-        return screeningRepository.findAllByMovie_IdOrderByStartAt(movieId);
+        return screeningRepository.findAllByMovie_IdOrderByStartAt(movieId).stream()
+                .map(ScreeningResponse::from).toList();
     }
 }

@@ -8,6 +8,7 @@ import com.ceos.cgv.domain.movie.repository.MovieRepository;
 import com.ceos.cgv.domain.movie.repository.ScreeningRepository;
 import com.ceos.cgv.domain.movie.repository.ScreeningSeatRepository;
 import com.ceos.cgv.domain.reservation.dto.ReservationCreateRequest;
+import com.ceos.cgv.domain.reservation.dto.ReservationResponse;
 import com.ceos.cgv.domain.reservation.dto.ReservedSeatRequest;
 import com.ceos.cgv.domain.reservation.dto.SeatCoordinate;
 import com.ceos.cgv.domain.reservation.entity.Reservation;
@@ -42,7 +43,7 @@ public class ReservationCreationService {
 
     // 예매 생성 전체를 하나의 트랜잭션으로 처리하고 커밋된 데이터만 읽음
     @Transactional(isolation = Isolation.READ_COMMITTED)
-    public Reservation create(ReservationCreateRequest request) {
+    public ReservationResponse create(ReservationCreateRequest request) {
         // 예매를 요청한 사용자가 실제로 존재하는지 확인
         User user = userRepository.findById(request.userId())
                 .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
@@ -99,7 +100,7 @@ public class ReservationCreationService {
         for (ScreeningSeat seat : lockedSeats) {
             seat.occupy(saved);
         }
-        return saved;
+        return ReservationResponse.from(saved);
     }
 
 }

@@ -35,8 +35,7 @@ public class FoodOrderController {
     public ResponseEntity<ApiResponse<FoodOrderResponse>> create(
             @AuthenticationPrincipal AuthenticatedUser user,
             @Valid @RequestBody FoodOrderPurchaseRequest request) {
-        FoodOrderResponse response = FoodOrderResponse.from(
-                foodOrderService.create(request.forUser(user.userId())));
+        FoodOrderResponse response = foodOrderService.create(request.forUser(user.userId()));
         return ResponseEntity.created(URI.create("/api/v1/food-orders/" + response.orderId()))
                 .body(ApiResponse.created(response));
     }
@@ -47,7 +46,6 @@ public class FoodOrderController {
     @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "본인 주문만 조회할 수 있습니다.")
     public ResponseEntity<ApiResponse<FoodOrderResponse>> findById(
             @PathVariable Long orderId, @AuthenticationPrincipal AuthenticatedUser user) {
-        return ResponseEntity.ok(ApiResponse.success(FoodOrderResponse.from(
-                foodOrderService.findById(orderId, user.userId()))));
+        return ResponseEntity.ok(ApiResponse.success(foodOrderService.findById(orderId, user.userId())));
     }
 }

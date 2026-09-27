@@ -55,7 +55,7 @@ class DirectReservationPoolIntegrationTest {
         assertThat(jdbc.queryForObject("SELECT status FROM reservations WHERE reservation_id=996", String.class))
                 .isEqualTo("EXPIRED");
         assertThat(jdbc.queryForObject("SELECT current_reservation_id FROM screening_seats WHERE screening_seat_id=997", Long.class))
-                .isEqualTo(created.getId());
+                .isEqualTo(created.reservationId());
     }
 
     @Test

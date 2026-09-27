@@ -28,7 +28,7 @@ public class ReservationService {
     private final SeatHoldExpiryService seatHoldExpiryService;
     private final Clock seatHoldClock;
 
-    public Reservation create(ReservationCreateRequest request) {
+    public ReservationResponse create(ReservationCreateRequest request) {
         int maxCleanups = request.seats() == null ? 0 : request.seats().size();
         for (int attempt = 0; attempt <= maxCleanups; attempt++) {
             try {

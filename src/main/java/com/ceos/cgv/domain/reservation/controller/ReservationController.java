@@ -37,8 +37,7 @@ public class ReservationController {
             @AuthenticationPrincipal AuthenticatedUser user,
             @Valid @RequestBody ReservationBookingRequest request
     ) {
-        ReservationResponse response = ReservationResponse.from(
-                reservationService.create(request.forUser(user.userId())));
+        ReservationResponse response = reservationService.create(request.forUser(user.userId()));
         return ResponseEntity.created(URI.create("/api/v1/reservations/" + response.reservationId()))
                 .body(ApiResponse.created(response));
     }

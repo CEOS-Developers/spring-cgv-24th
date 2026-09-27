@@ -33,7 +33,7 @@ public class ScreeningController {
     @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "201", description = "상영 일정 생성 성공")
     @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "관리자 권한이 필요합니다.")
     public ResponseEntity<ApiResponse<ScreeningResponse>> create(@Valid @RequestBody ScreeningCreateRequest request) {
-        ScreeningResponse response = ScreeningResponse.from(screeningService.create(request));
+        ScreeningResponse response = screeningService.create(request);
         return ResponseEntity.created(URI.create("/api/v1/screenings/" + response.screeningId()))
                 .body(ApiResponse.created(response));
     }
@@ -43,6 +43,6 @@ public class ScreeningController {
     @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "상영 일정 목록 조회 성공")
     public ResponseEntity<ApiResponse<List<ScreeningResponse>>> findAllByMovieId(@PathVariable Long movieId) {
         return ResponseEntity.ok(ApiResponse.success(
-                screeningService.findAllByMovieId(movieId), ScreeningResponse::from));
+                screeningService.findAllByMovieId(movieId)));
     }
 }

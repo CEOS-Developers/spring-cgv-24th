@@ -9,7 +9,6 @@ import com.ceos.cgv.domain.movie.repository.MovieRepository;
 import com.ceos.cgv.domain.movie.repository.ScreeningRepository;
 import com.ceos.cgv.domain.movie.repository.ScreeningSeatRepository;
 import com.ceos.cgv.domain.reservation.dto.*;
-import com.ceos.cgv.domain.reservation.entity.Reservation;
 import com.ceos.cgv.domain.reservation.repository.*;
 import com.ceos.cgv.domain.user.entity.User;
 import com.ceos.cgv.domain.user.repository.UserRepository;
@@ -56,9 +55,9 @@ class ReservationBatchValidationTest {
         when(seats.existsReservedByScreeningIdAndCoordinates(8L, requested)).thenReturn(false);
         when(screenings.findByIdWithLock(8L)).thenReturn(Optional.of(screening));
         when(reservations.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
-        Reservation result = service.create(new ReservationCreateRequest(1L,8L,
+        var result = service.create(new ReservationCreateRequest(1L,8L,
                 List.of(new ReservedSeatRequest("A",1),new ReservedSeatRequest("B",2))));
-        assertThat(result.getReservedSeats()).hasSize(2);
+        assertThat(result.seats()).hasSize(2);
         verify(seats).existsReservedByScreeningIdAndCoordinates(8L, requested);
         verifyNoMoreInteractions(seats);
     }

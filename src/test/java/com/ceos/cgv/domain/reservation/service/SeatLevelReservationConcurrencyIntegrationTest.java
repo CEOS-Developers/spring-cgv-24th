@@ -2,7 +2,7 @@ package com.ceos.cgv.domain.reservation.service;
 
 import com.ceos.cgv.domain.reservation.dto.ReservationCreateRequest;
 import com.ceos.cgv.domain.reservation.dto.ReservedSeatRequest;
-import com.ceos.cgv.domain.reservation.entity.Reservation;
+import com.ceos.cgv.domain.reservation.dto.ReservationResponse;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -71,14 +71,14 @@ class SeatLevelReservationConcurrencyIntegrationTest {
                     }));
             assertThat(firstSeatLocked.await(2, TimeUnit.SECONDS)).isTrue();
 
-            Future<Reservation> otherSeat = executor.submit(() -> reservationService.create(
+            Future<ReservationResponse> otherSeat = executor.submit(() -> reservationService.create(
                     new ReservationCreateRequest(8952L, 8956L,
                             List.of(new ReservedSeatRequest("A", 2)))));
-            Reservation booked = otherSeat.get(2, TimeUnit.SECONDS);
-            assertThat(booked.getId()).isNotNull();
+            ReservationResponse booked = otherSeat.get(2, TimeUnit.SECONDS);
+            assertThat(booked.reservationId()).isNotNull();
             assertThat(jdbc.queryForObject("""
                     SELECT current_reservation_id FROM screening_seats WHERE screening_seat_id=8958
-                    """, Long.class)).isEqualTo(booked.getId());
+                    """, Long.class)).isEqualTo(booked.reservationId());
             releaseFirst.countDown();
             first.get(3, TimeUnit.SECONDS);
         } finally {

@@ -66,12 +66,12 @@ class FoodOrderServiceTest {
         given(inventoryRepository.findByCinema_IdAndProduct_IdForUpdate(2L, 3L)).willReturn(Optional.of(inventory));
         given(foodOrderRepository.save(any(FoodOrder.class))).willAnswer(invocation -> invocation.getArgument(0));
 
-        FoodOrder result = foodOrderService.create(new FoodOrderCreateRequest(
+        var result = foodOrderService.create(new FoodOrderCreateRequest(
                 1L, 2L, List.of(new FoodOrderItemRequest(3L, 2))
         ));
 
-        assertThat(result.getTotalPrice()).isEqualTo(2400L);
-        assertThat(result.getItems()).hasSize(1);
+        assertThat(result.totalPrice()).isEqualTo(2400L);
+        assertThat(result.items()).hasSize(1);
         assertThat(inventory.getStockQuantity()).isEqualTo(3);
         then(productRepository).should().findAllById(Set.of(3L));
     }
@@ -122,7 +122,7 @@ class FoodOrderServiceTest {
         given(foodOrderRepository.save(any(FoodOrder.class)))
                 .willAnswer(invocation -> invocation.getArgument(0));
 
-        FoodOrder result = foodOrderService.create(new FoodOrderCreateRequest(
+        var result = foodOrderService.create(new FoodOrderCreateRequest(
                 1L, 2L, List.of(
                         new FoodOrderItemRequest(3L, 1),
                         new FoodOrderItemRequest(1L, 2),
@@ -133,9 +133,9 @@ class FoodOrderServiceTest {
         lockOrder.verify(inventoryRepository).findByCinema_IdAndProduct_IdForUpdate(2L, 3L);
         then(inventoryRepository).shouldHaveNoMoreInteractions();
 
-        assertThat(result.getTotalPrice()).isEqualTo(5600L);
-        assertThat(result.getItems())
-                .extracting(item -> item.getProduct().getId(), item -> item.getQuantity())
+        assertThat(result.totalPrice()).isEqualTo(5600L);
+        assertThat(result.items())
+                .extracting(item -> item.productId(), item -> item.quantity())
                 .containsExactly(
                         org.assertj.core.groups.Tuple.tuple(3L, 3),
                         org.assertj.core.groups.Tuple.tuple(1L, 2));

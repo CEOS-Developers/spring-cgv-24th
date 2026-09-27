@@ -3,6 +3,7 @@ package com.ceos.cgv.domain.concession.service;
 import com.ceos.cgv.domain.cinema.entity.Cinema;
 import com.ceos.cgv.domain.cinema.repository.CinemaRepository;
 import com.ceos.cgv.domain.concession.dto.FoodOrderCreateRequest;
+import com.ceos.cgv.domain.concession.dto.FoodOrderResponse;
 import com.ceos.cgv.domain.concession.dto.FoodOrderItemRequest;
 import com.ceos.cgv.domain.concession.entity.FoodOrder;
 import com.ceos.cgv.domain.concession.entity.Inventory;
@@ -35,7 +36,7 @@ public class FoodOrderService {
     private final FoodOrderRepository foodOrderRepository;
 
     @Transactional
-    public FoodOrder create(FoodOrderCreateRequest request) {
+    public FoodOrderResponse create(FoodOrderCreateRequest request) {
         // 주문을 요청한 사용자가 실제로 존재하는지 확인
         User user = userRepository.findById(request.userId())
                 .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
@@ -87,17 +88,17 @@ public class FoodOrderService {
             line.inventory().decrease(line.quantity());
         }
         // cascade 설정으로 주문과 주문 항목을 함께 저장
-        return foodOrderRepository.save(order);
+        return FoodOrderResponse.from(foodOrderRepository.save(order));
     }
 
     @Transactional(readOnly = true)
-    public FoodOrder findById(Long orderId, Long userId) {
+    public FoodOrderResponse findById(Long orderId, Long userId) {
         FoodOrder order = foodOrderRepository.findWithItemsById(orderId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.FOOD_ORDER_NOT_FOUND));
         if (!order.getUser().getId().equals(userId)) {
             throw new BusinessException(ErrorCode.ACCESS_DENIED);
         }
-        return order;
+        return FoodOrderResponse.from(order);
     }
 
     private record OrderLine(Product product, Inventory inventory, Integer quantity) {

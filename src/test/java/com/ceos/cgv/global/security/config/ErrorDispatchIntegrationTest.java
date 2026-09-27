@@ -58,6 +58,11 @@ class ErrorDispatchIntegrationTest {
         assertThat(response.body()).doesNotContain("TOKEN_NOT_EXIST");
     }
 
+    @Test
+    void error_경로에_직접_들어온_요청까지_공개하지는_않는다() throws Exception {
+        assertThat(send("/error", null, null, null).statusCode()).isEqualTo(401);
+    }
+
     private HttpResponse<String> send(String path, String type, String body, String token) throws Exception {
         var request = HttpRequest.newBuilder(URI.create("http://localhost:"
                 + environment.getProperty("local.server.port") + path));
