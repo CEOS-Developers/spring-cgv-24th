@@ -3,13 +3,19 @@ package com.ceos24.springboot.global.config;
 import com.ceos24.springboot.user.security.CustomUserDetailsService;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.ProviderManager;
 import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
+import com.ceos24.springboot.auth.jwt.JwtAuthenticationFilter;
+import com.ceos24.springboot.auth.jwt.JwtProvider;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 
 @Configuration
 public class SecurityConfig {
@@ -42,17 +48,66 @@ public class SecurityConfig {
     }
 
     @Bean
-    public SecurityFilterChain securityFilterChain(HttpSecurity http)
-            throws Exception {
+    public SecurityFilterChain securityFilterChain(
+            HttpSecurity http,
+            JwtAuthenticationFilter jwtAuthenticationFilter
+    ) throws Exception {
 
         http
                 .csrf(csrf -> csrf.disable())
 
+                .sessionManagement(session ->
+                        session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)
+                )
+
+                .formLogin(form -> form.disable())
+                .httpBasic(basic -> basic.disable())
+
                 .authorizeHttpRequests(auth -> auth
+                        // 로그인
                         .requestMatchers("/api/auth/login").permitAll()
-                        .anyRequest().permitAll()
-                );
+
+                        // 공개 조회 API
+                        .requestMatchers(HttpMethod.GET, "/api/movies","/api/movies/**").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/theaters", "/api/theaters/**").permitAll()
+
+                        // 그 외 요청은 인증 필요
+                        .anyRequest().authenticated()
+
+                )
+
+                // JWT Filter를 Security Filter Chain에 배치
+                .addFilterBefore(
+                jwtAuthenticationFilter,
+                UsernamePasswordAuthenticationFilter.class
+        );
 
         return http.build();
+    }
+
+    // JWT Filter 객체를 Bean으로 생성
+    @Bean
+    public JwtAuthenticationFilter jwtAuthenticationFilter(
+            JwtProvider jwtProvider,
+            CustomUserDetailsService customUserDetailsService
+    ) {
+        return new JwtAuthenticationFilter(
+                jwtProvider,
+                customUserDetailsService
+        );
+    }
+
+
+    @Bean
+    public FilterRegistrationBean<JwtAuthenticationFilter> jwtFilterRegistration(
+            JwtAuthenticationFilter jwtAuthenticationFilter
+    ) {
+        FilterRegistrationBean<JwtAuthenticationFilter> registration =
+                new FilterRegistrationBean<>(jwtAuthenticationFilter);
+
+        // Servlet Container의 자동 Filter 등록 방지
+        registration.setEnabled(false);
+
+        return registration;
     }
 }
