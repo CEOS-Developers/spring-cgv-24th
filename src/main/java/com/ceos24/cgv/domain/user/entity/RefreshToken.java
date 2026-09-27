@@ -79,11 +79,4 @@ public class RefreshToken extends BaseTimeEntity {
     public boolean isExpiredAt(LocalDateTime now) {
         return !now.isBefore(this.expiresAt);
     }
-
-    // 같은 토큰으로 로그아웃이 여러 번 와도 처음 폐기한 시각을 유지한다.
-    public void revoke(LocalDateTime now) {
-        if (this.revokedAt == null) {
-            this.revokedAt = now;
-        }
-    }
 }

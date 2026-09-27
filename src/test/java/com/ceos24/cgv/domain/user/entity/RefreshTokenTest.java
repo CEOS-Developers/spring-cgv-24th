@@ -33,25 +33,6 @@ class RefreshTokenTest {
     }
 
     @Test
-    @DisplayName("폐기하면 만료 전이어도 쓸 수 없다")
-    void 폐기하면_만료_전이어도_쓸_수_없다() {
-        token.revoke(EXPIRES_AT.minusDays(1));
-
-        assertThat(token.isRevoked()).isTrue();
-        assertThat(token.isUsableAt(EXPIRES_AT.minusDays(1))).isFalse();
-    }
-
-    @Test
-    @DisplayName("다시 폐기해도 처음 폐기한 시각이 유지된다")
-    void 다시_폐기해도_처음_시각이_유지된다() {
-        LocalDateTime first = EXPIRES_AT.minusDays(2);
-        token.revoke(first);
-        token.revoke(EXPIRES_AT.minusDays(1));
-
-        assertThat(token.getRevokedAt()).isEqualTo(first);
-    }
-
-    @Test
     @DisplayName("순환하면 기존 토큰은 사용 완료되어 만료 전이어도 쓸 수 없다")
     void 순환하면_기존_토큰은_사용_완료된다() {
         LocalDateTime now = EXPIRES_AT.minusDays(1);
