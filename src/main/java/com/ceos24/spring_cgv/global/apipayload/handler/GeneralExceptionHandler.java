@@ -92,12 +92,12 @@ public class GeneralExceptionHandler {
 
     // 그 외 지정되지 않은 예외
     @ExceptionHandler(RuntimeException.class)
-    public ResponseEntity<ApiResponse<String>> handleGlobalException(RuntimeException e){
+    public ResponseEntity<ApiResponse<Void>> handleGlobalException(RuntimeException e){
 
         BaseErrorCode errorCode = GeneralErrorCode.INTERNAL_SERVER_ERROR;
         log.error("[미지정 예외] code={}", errorCode.getCode(), e);
 
         return ResponseEntity.status(errorCode.getStatus())
-                .body(ApiResponse.onFailure(errorCode, null));
+                .body(ApiResponse.onFailure(errorCode));
     }
 }
