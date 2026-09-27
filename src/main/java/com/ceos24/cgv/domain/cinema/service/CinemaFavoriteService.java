@@ -29,7 +29,7 @@ public class CinemaFavoriteService {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
 
-        Cinema cinema = cinemaRepository.findById(cinemaId)
+        Cinema cinema = cinemaRepository.findByIdAndActiveTrue(cinemaId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.CINEMA_NOT_FOUND));
 
         if (cinemaFavoriteRepository.existsByUser_IdAndCinema_Id(userId, cinemaId)) {

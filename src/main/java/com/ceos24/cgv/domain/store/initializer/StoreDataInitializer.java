@@ -38,7 +38,7 @@ public class StoreDataInitializer implements ApplicationRunner {
                 .map(this::saveProductIfAbsent)
                 .toList();
 
-        List<Cinema> cinemas = cinemaRepository.findAll();
+        List<Cinema> cinemas = cinemaRepository.findAllByActiveTrueOrderByIdAsc();
 
         for (Cinema cinema : cinemas) {
             for (Product product : products) {

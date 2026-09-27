@@ -38,7 +38,7 @@ public class PurchaseService {
 
     // 상품·재고 조회
     public List<ProductStockResponse> getProductsByCinema(Long cinemaId) {
-        if (!cinemaRepository.existsById(cinemaId)) {
+        if (!cinemaRepository.existsByIdAndActiveTrue(cinemaId)) {
             throw new BusinessException(ErrorCode.CINEMA_NOT_FOUND);
         }
 
@@ -59,7 +59,7 @@ public class PurchaseService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
 
         // 영화관 조회
-        Cinema cinema = cinemaRepository.findById(request.cinemaId()).
+        Cinema cinema = cinemaRepository.findByIdAndActiveTrue(request.cinemaId()).
                 orElseThrow(() -> new BusinessException(ErrorCode.CINEMA_NOT_FOUND));
 
         // 요청에서 상품 ID 목록 추출

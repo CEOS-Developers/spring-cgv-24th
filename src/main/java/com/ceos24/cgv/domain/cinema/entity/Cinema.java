@@ -1,10 +1,15 @@
 package com.ceos24.cgv.domain.cinema.entity;
 
 import jakarta.persistence.*;
+import lombok.AccessLevel;
 import lombok.Getter;
+import lombok.NoArgsConstructor;
+
+import java.time.LocalDateTime;
 
 @Entity
 @Getter
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Cinema {
 
     @Id
@@ -20,11 +25,25 @@ public class Cinema {
     @Column(length = 30, nullable = false)
     private String region;
 
+    // soft-delete
+    @Column(nullable = false)
+    private boolean active;
+
+    private LocalDateTime deletedAt;
+
     public static Cinema create(String name, String address, String region) {
+
         Cinema cinema = new Cinema();
         cinema.name = name;
         cinema.address = address;
         cinema.region = region;
+        cinema.active=true;
+        cinema.deletedAt = null;
         return cinema;
+    }
+
+    public void deactivate() {
+        this.active = false;
+        this.deletedAt = LocalDateTime.now();
     }
 }

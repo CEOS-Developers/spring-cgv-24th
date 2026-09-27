@@ -72,8 +72,8 @@ public class CinemaController {
     }
 
     @Operation(
-            summary = "영화관 삭제",
-            description = "영화관 ID에 해당하는 영화관을 삭제합니다."
+            summary = "영화관 비활성화",
+            description = "영화관을 물리적으로 삭제하지 않고 비활성화합니다. 기존 상영·예매·구매 이력은 유지됩니다."
     )
     @DeleteMapping("/{cinemaId}")
     public ResponseEntity<ApiResponse<Void>> deleteCinema(

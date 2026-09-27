@@ -36,7 +36,7 @@ public class AuditoriumService {
             AuditoriumCreateRequest request
     ) {
         // 시네마 존재여부 확인
-        Cinema cinema = cinemaRepository.findById(cinemaId)
+        Cinema cinema = cinemaRepository.findByIdAndActiveTrue(cinemaId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.CINEMA_NOT_FOUND));
 
         // 상영관 종류 존재여부 확인
@@ -62,7 +62,7 @@ public class AuditoriumService {
     // 상영관 목록 조회
     public List<AuditoriumResponse> getAuditoriums(Long cinemaId) {
 
-        if (!cinemaRepository.existsById(cinemaId)) {
+        if (!cinemaRepository.existsByIdAndActiveTrue(cinemaId)) {
             throw new BusinessException(ErrorCode.CINEMA_NOT_FOUND);
         }
 

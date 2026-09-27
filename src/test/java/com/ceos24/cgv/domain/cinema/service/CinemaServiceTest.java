@@ -12,7 +12,6 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.data.domain.Sort;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
@@ -52,7 +51,7 @@ class CinemaServiceTest {
 
     @Test
     void ID오름차순_목록을_DTO로_반환한다() {
-        when(cinemaRepository.findAll(Sort.by(Sort.Direction.ASC, "id")))
+        when(cinemaRepository.findAllByActiveTrueOrderByIdAsc())
                 .thenReturn(List.of(cinema(1L, "강남"), cinema(2L, "홍대")));
 
         assertEquals(List.of(
@@ -63,35 +62,40 @@ class CinemaServiceTest {
 
     @Test
     void 영화관이_없으면_빈_목록을_반환한다() {
-        when(cinemaRepository.findAll(Sort.by(Sort.Direction.ASC, "id")))
+        when(cinemaRepository.findAllByActiveTrueOrderByIdAsc())
                 .thenReturn(List.of());
         assertTrue(cinemaService.getCinemas().isEmpty());
     }
 
     @Test
     void 영화관_상세정보를_반환한다() {
-        when(cinemaRepository.findById(1L)).thenReturn(Optional.of(cinema(1L, "강남")));
+        when(cinemaRepository.findByIdAndActiveTrue(1L))
+                .thenReturn(Optional.of(cinema(1L, "강남")));
         assertEquals(new CinemaResponse(1L, "강남", "주소", "서울"), cinemaService.getCinema(1L));
     }
 
     @Test
     void 없는_영화관_조회는_예외를_반환한다() {
-        when(cinemaRepository.findById(99L)).thenReturn(Optional.empty());
+        when(cinemaRepository.findByIdAndActiveTrue(99L)).thenReturn(Optional.empty());
         BusinessException ex = assertThrows(BusinessException.class, () -> cinemaService.getCinema(99L));
         assertEquals(ErrorCode.CINEMA_NOT_FOUND, ex.getErrorCode());
     }
 
     @Test
-    void 존재하는_영화관을_삭제한다() {
+    void 존재하는_영화관을_비활성화한다() {
         Cinema cinema = cinema(1L, "강남");
-        when(cinemaRepository.findById(1L)).thenReturn(Optional.of(cinema));
+        when(cinemaRepository.findByIdAndActiveTrue(1L)).thenReturn(Optional.of(cinema));
+
         cinemaService.deleteCinema(1L);
-        verify(cinemaRepository).delete(cinema);
+
+        assertFalse(cinema.isActive());
+        assertNotNull(cinema.getDeletedAt());
+        verify(cinemaRepository, never()).delete(any(Cinema.class));
     }
 
     @Test
-    void 없는_영화관은_삭제하지_않는다() {
-        when(cinemaRepository.findById(99L)).thenReturn(Optional.empty());
+    void 없는_영화관은_비활성화하지_않는다() {
+        when(cinemaRepository.findByIdAndActiveTrue(99L)).thenReturn(Optional.empty());
         BusinessException ex = assertThrows(BusinessException.class, () -> cinemaService.deleteCinema(99L));
         assertEquals(ErrorCode.CINEMA_NOT_FOUND, ex.getErrorCode());
         verify(cinemaRepository, never()).delete(any(Cinema.class));

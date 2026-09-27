@@ -59,7 +59,7 @@ class PurchaseServiceTest {
         Product product = product(10L, "고소팝콘(M)", 5_000);
         CinemaStock stock = CinemaStock.create(cinema, product, 100);
 
-        when(cinemaRepository.existsById(1L)).thenReturn(true);
+        when(cinemaRepository.existsByIdAndActiveTrue(1L)).thenReturn(true);
         when(cinemaStockRepository.findAllByCinemaIdOrderByProductIdAsc(1L))
                 .thenReturn(List.of(stock));
 
@@ -83,7 +83,7 @@ class PurchaseServiceTest {
         );
 
         when(userRepository.findById(1L)).thenReturn(Optional.of(user));
-        when(cinemaRepository.findById(2L)).thenReturn(Optional.of(cinema));
+        when(cinemaRepository.findByIdAndActiveTrue(2L)).thenReturn(Optional.of(cinema));
         when(cinemaStockRepository.findAllByCinemaIdAndProductIdsForUpdate(
                 2L,
                 List.of(10L)
@@ -114,7 +114,7 @@ class PurchaseServiceTest {
         );
 
         when(userRepository.findById(1L)).thenReturn(Optional.of(user));
-        when(cinemaRepository.findById(2L)).thenReturn(Optional.of(cinema));
+        when(cinemaRepository.findByIdAndActiveTrue(2L)).thenReturn(Optional.of(cinema));
         when(cinemaStockRepository.findAllByCinemaIdAndProductIdsForUpdate(
                 2L,
                 List.of(10L)

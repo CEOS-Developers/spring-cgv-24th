@@ -47,7 +47,7 @@ public class ScreeningService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.MOVIE_NOT_FOUND));
 
         // 상영관 조회
-        Auditorium auditorium = auditoriumRepository.findById(request.auditoriumId())
+        Auditorium auditorium = auditoriumRepository.findByIdAndCinema_ActiveTrue(request.auditoriumId())
                 .orElseThrow(() -> new BusinessException(ErrorCode.AUDITORIUM_NOT_FOUND));
 
         // 종료 시간이 시작 시간보다 뒤인지 검증
@@ -75,7 +75,7 @@ public class ScreeningService {
 
     // 상영정보 조회
     public List<ScreeningResponse> getScreeningsByCinema(Long cinemaId) {
-        if (!cinemaRepository.existsById(cinemaId)) {
+        if (!cinemaRepository.existsByIdAndActiveTrue(cinemaId)) {
             throw new BusinessException(
                     ErrorCode.CINEMA_NOT_FOUND
             );

@@ -27,22 +27,23 @@ public class CinemaService {
     }
 
     public List<CinemaResponse> getCinemas() {
-        return cinemaRepository.findAll(Sort.by(Sort.Direction.ASC, "id"))
+        return cinemaRepository.findAllByActiveTrueOrderByIdAsc()
                 .stream()
                 .map(CinemaResponse::from)
                 .toList();
     }
 
     public CinemaResponse getCinema(Long cinemaId) {
-        Cinema cinema = cinemaRepository.findById(cinemaId)
+        Cinema cinema = cinemaRepository.findByIdAndActiveTrue(cinemaId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.CINEMA_NOT_FOUND));
         return CinemaResponse.from(cinema);
     }
 
     @Transactional
     public void deleteCinema(Long cinemaId) {
-        Cinema cinema = cinemaRepository.findById(cinemaId)
+        Cinema cinema = cinemaRepository.findByIdAndActiveTrue(cinemaId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.CINEMA_NOT_FOUND));
-        cinemaRepository.delete(cinema);
+        // soft-delete
+        cinema.deactivate();
     }
 }
