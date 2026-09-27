@@ -78,6 +78,8 @@ public enum ErrorCode {
 
     USER_NOT_FOUND(404, "U001", "존재하지 않는 사용자입니다."),
 
+    USER_ALREADY_EXISTS(409, "U002", "이미 가입된 사용자입니다."),
+
     MOVIE_ALREADY_FAVORITED(409, "MF001", "이미 찜한 영화입니다."),
 
     MOVIE_FAVORITE_NOT_FOUND(404, "MF002", "영화 찜 기록이 존재하지 않습니다."),

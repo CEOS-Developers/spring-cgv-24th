@@ -23,7 +23,7 @@ public record CinemaFavoriteResponse(
         return new CinemaFavoriteResponse(
                 cinemaFavorite.getId(),
                 user.getId(),
-                user.getName(),
+                user.getUsername(),
                 cinema.getId(),
                 cinema.getName(),
                 cinema.getAddress(),

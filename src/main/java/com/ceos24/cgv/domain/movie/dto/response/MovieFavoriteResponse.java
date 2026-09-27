@@ -25,7 +25,7 @@ public record MovieFavoriteResponse(
         return new MovieFavoriteResponse(
                 movieFavorite.getId(),
                 user.getId(),
-                user.getName(),
+                user.getUsername(),
                 movie.getId(),
                 movie.getName(),
                 movie.getReleaseDate(),
