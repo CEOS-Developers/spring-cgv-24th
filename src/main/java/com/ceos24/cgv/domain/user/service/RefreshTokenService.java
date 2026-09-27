@@ -73,6 +73,20 @@ public class RefreshTokenService {
                 nextRawToken, Duration.between(now, next.getExpiresAt()).toSeconds());
     }
 
+    // 로그아웃은 토큰 한 개가 아니라 이 로그인 전체를 끝낸다. 공격자가 먼저 순환해 두었다면 정상 사용자가 가진 것은
+    // 사용 완료 토큰이라, 그 행만 폐기하면 공격자의 최신 토큰이 만료까지 산다. 다른 로그인의 묶음은 건드리지 않는다.
+    // 사용 완료 토큰이어도 401을 내지 않는다. 로그아웃이 토큰 상태를 확인하는 창구가 되지 않게 탐지는 로그로만 남긴다.
+    @Transactional
+    public void revokeFamilyOf(String rawRefreshToken) {
+        refreshTokenRepository.findByTokenHash(refreshTokenProvider.hash(rawRefreshToken)).ifPresent(token -> {
+            int revoked = refreshTokenRepository.revokeFamily(token.getFamilyId(), LocalDateTime.now(clock));
+            if (token.isUsed()) {
+                log.warn("[RefreshToken] 사용 완료 토큰으로 로그아웃 userId={} familyId={} tokenId={} usedAt={} revoked={}",
+                        token.getUser().getId(), token.getFamilyId(), token.getId(), token.getUsedAt(), revoked);
+            }
+        });
+    }
+
     // 같은 토큰을 두 곳에서 쓰고 있다는 것만 알 뿐 어느 쪽이 공격자인지는 모른다. 들어온 토큰만 막으면 먼저 순환한
     // 공격자가 남을 수 있어 묶음 전체를 끊는다. 다시 들어올 수 있는 쪽은 비밀번호를 아는 정상 사용자뿐이다.
     private CustomException reuseDetected(RefreshToken token, LocalDateTime now) {

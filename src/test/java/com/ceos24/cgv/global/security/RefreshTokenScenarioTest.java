@@ -423,6 +423,54 @@ class RefreshTokenScenarioTest extends AuthScenarioTest {
     }
 
     @Test
+    @DisplayName("최신 리프레시 토큰으로 로그아웃하면 같은 로그인에서 이어진 토큰이 모두 폐기된다")
+    void 로그아웃하면_같은_로그인의_토큰_묶음이_모두_폐기된다() throws Exception {
+        signup("refresh01");
+        String first = loginForRefreshToken("refresh01");
+        String latest = reissuedRefreshToken(reissuedRefreshToken(first));
+
+        logoutRequest(latest).andExpect(status().isOk());
+        flushAndClear();
+
+        assertThat(familyOf(first)).hasSize(3).allMatch(RefreshToken::isRevoked);
+    }
+
+    // 공격자가 훔친 토큰으로 먼저 재발급하면 정상 사용자에게 남는 것은 사용 완료 토큰이다.
+    // 그 행만 폐기하면 공격자가 받은 최신 토큰 A가 만료까지 산다.
+    @Test
+    @DisplayName("사용 완료된 이전 토큰으로 로그아웃해도 200이고, 그 뒤 최신 토큰으로 재발급하면 401 REFRESH_TOKEN_INVALID")
+    void 사용_완료된_이전_토큰으로_로그아웃해도_최신_토큰까지_폐기된다() throws Exception {
+        signup("refresh01");
+        String oldToken = loginForRefreshToken("refresh01");
+        String tokenA = reissuedRefreshToken(oldToken);
+        flushAndClear();
+
+        logoutRequest(oldToken)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+        flushAndClear();
+
+        reissueRequest(tokenA)
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("REFRESH_TOKEN_INVALID"));
+        assertThat(familyOf(oldToken)).hasSize(2).allMatch(RefreshToken::isRevoked);
+    }
+
+    @Test
+    @DisplayName("로그아웃은 다른 로그인의 토큰 묶음을 폐기하지 않는다")
+    void 로그아웃은_다른_로그인의_묶음을_폐기하지_않는다() throws Exception {
+        signup("refresh01");
+        String phone = loginForRefreshToken("refresh01");
+        String laptop = reissuedRefreshToken(loginForRefreshToken("refresh01"));
+
+        logoutRequest(reissuedRefreshToken(phone)).andExpect(status().isOk());
+        flushAndClear();
+
+        assertThat(familyOf(laptop)).noneMatch(RefreshToken::isRevoked);
+        reissueRequest(laptop).andExpect(status().isOk());
+    }
+
+    @Test
     @DisplayName("리프레시 토큰이 비어 있으면 로그아웃은 400 INVALID_INPUT_VALUE")
     void 로그아웃_리프레시_토큰이_비어_있으면_400() throws Exception {
         logoutRequest("")

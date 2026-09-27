@@ -101,6 +101,23 @@ class RefreshTokenConcurrencyTest extends AuthScenarioTest {
                 .andExpect(jsonPath("$.code").value("REFRESH_TOKEN_INVALID"));
     }
 
+    // 세션 5에서 확인한 함정: 쓰기 메서드가 읽기 전용 트랜잭션에서 돌면 테스트 트랜잭션 안에서는 통과하지만 폐기가 반영되지 않는다.
+    @Test
+    @DisplayName("사용 완료된 이전 토큰으로 로그아웃한 묶음 폐기는 커밋된다")
+    void 로그아웃의_묶음_폐기는_커밋된다() throws Exception {
+        signup(LOGIN_ID_PREFIX + "01");
+        String oldToken = loginForRefreshToken(LOGIN_ID_PREFIX + "01");
+        String tokenA = reissuedRefreshToken(oldToken);
+
+        mockMvc.perform(post("/api/auth/logout")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"refreshToken\":\"%s\"}".formatted(oldToken)))
+                .andExpect(status().isOk());
+
+        assertThat(familyOf(tokenOf(oldToken))).hasSize(2).allMatch(RefreshToken::isRevoked);
+        reissueRequest(tokenA).andExpect(status().isUnauthorized());
+    }
+
     // 앞 요청이 잠금을 쥔 채 끝나지 않는 상황을 만든다. 잡아 두는 쪽이 트랜잭션을 열어 같은 행을 잠그고,
     // 재발급 요청이 DB의 잠금 대기 한도에 걸려 실패할 때까지 놓지 않는다.
     @Test

@@ -8,7 +8,6 @@ import com.ceos24.cgv.domain.user.dto.SignupResponse;
 import com.ceos24.cgv.domain.user.dto.TokenReissueRequest;
 import com.ceos24.cgv.domain.user.dto.TokenReissueResponse;
 import com.ceos24.cgv.domain.user.entity.User;
-import com.ceos24.cgv.domain.user.repository.RefreshTokenRepository;
 import com.ceos24.cgv.domain.user.repository.UserRepository;
 import com.ceos24.cgv.global.exception.CustomException;
 import com.ceos24.cgv.global.exception.ErrorCode;
@@ -28,9 +27,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.Clock;
-import java.time.LocalDateTime;
-
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -41,10 +37,8 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final AuthenticationManager authenticationManager;
     private final JwtProvider jwtProvider;
-    private final RefreshTokenRepository refreshTokenRepository;
     private final RefreshTokenProvider refreshTokenProvider;
     private final RefreshTokenService refreshTokenService;
-    private final Clock clock;
 
     @Transactional
     public SignupResponse signup(SignupRequest req) {
@@ -108,7 +102,6 @@ public class AuthService {
     // 이 토큰으로 발급된 액세스 토큰은 만료 전까지 계속 유효하다. 막으려면 액세스 토큰 차단 목록이 필요하다.
     @Transactional
     public void logout(LogoutRequest req) {
-        refreshTokenRepository.findByTokenHash(refreshTokenProvider.hash(req.refreshToken()))
-                .ifPresent(token -> token.revoke(LocalDateTime.now(clock)));
+        refreshTokenService.revokeFamilyOf(req.refreshToken());
     }
 }

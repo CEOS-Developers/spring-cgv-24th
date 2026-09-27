@@ -47,7 +47,7 @@ public class AuthController {
         return ApiResponse.success(authService.reissue(req));
     }
 
-    @Operation(summary = "로그아웃 — 본문의 리프레시 토큰 폐기. 없거나 이미 폐기된 토큰이어도 성공")
+    @Operation(summary = "로그아웃 — 본문 리프레시 토큰이 속한 로그인의 토큰 전체 폐기. 없거나 이미 폐기·사용된 토큰이어도 성공")
     @PostMapping("/logout")
     public ApiResponse<Void> logout(@Valid @RequestBody LogoutRequest req) {
         authService.logout(req);
