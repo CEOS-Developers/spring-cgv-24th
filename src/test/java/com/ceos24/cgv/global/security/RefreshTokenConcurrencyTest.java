@@ -54,8 +54,10 @@ class RefreshTokenConcurrencyTest extends AuthScenarioTest {
         });
     }
 
+    // 동시에 들어온 같은 토큰은 재시도인지 탈취인지 구분할 수 없어 재사용으로 본다(유예 시간 없음).
+    // 승자가 받은 새 토큰까지 폐기되므로, 동시에 두 번 보낸 정상 클라이언트도 다시 로그인하게 된다.
     @Test
-    @DisplayName("같은 리프레시 토큰으로 동시에 재발급하면 정확히 1건만 성공하고 나머지는 401이다")
+    @DisplayName("같은 리프레시 토큰으로 동시에 재발급하면 1건만 성공하고, 나머지는 재사용 탐지이며 승자의 새 토큰도 폐기된다")
     void 같은_리프레시_토큰으로_동시_재발급하면_1건만_성공한다() throws Exception {
         signup(LOGIN_ID_PREFIX + "01");
         String token = loginForRefreshToken(LOGIN_ID_PREFIX + "01");
@@ -69,19 +71,34 @@ class RefreshTokenConcurrencyTest extends AuthScenarioTest {
         assertThat(results).filteredOn(r -> r.getResponse().getStatus() != 200).hasSize(requests - 1)
                 .allSatisfy(r -> {
                     assertThat(r.getResponse().getStatus()).isEqualTo(401);
-                    assertThat(codeOf(r)).isEqualTo("REFRESH_TOKEN_INVALID");
+                    assertThat(codeOf(r)).isEqualTo("REFRESH_TOKEN_REUSE_DETECTED");
                 });
 
-        // 커밋된 결과를 새 트랜잭션에서 다시 읽는다. 묶음이 갈라지지 않고 새 토큰은 승자가 받은 것 하나뿐이다.
+        // 커밋된 결과를 새 트랜잭션에서 다시 읽는다. 묶음이 갈라지지 않았고(2행) 승자의 새 토큰까지 모두 폐기됐다.
         String winnerToken = JsonPath.read(succeeded.getFirst().getResponse().getContentAsString(), "$.data.refreshToken");
         RefreshToken original = tokenOf(token);
-        List<RefreshToken> family = familyOf(original);
         assertThat(original.isUsed()).isTrue();
-        assertThat(family).hasSize(2);
-        assertThat(family).filteredOn(t -> !t.isUsed())
-                .singleElement()
-                .extracting(RefreshToken::getTokenHash)
-                .isEqualTo(refreshTokenProvider.hash(winnerToken));
+        assertThat(familyOf(original)).hasSize(2).allMatch(RefreshToken::isRevoked);
+        assertThat(tokenOf(winnerToken).isRevoked()).isTrue();
+    }
+
+    // 폐기와 401이 한 트랜잭션이라, 예외로 롤백되면 폐기도 사라진다. 테스트 트랜잭션 안에서는 롤백될 변경도
+    // 같은 트랜잭션에서 보여 이 버그가 드러나지 않으므로 여기서 커밋된 상태를 다시 읽는다.
+    @Test
+    @DisplayName("재사용 탐지의 묶음 폐기는 401 응답과 함께 커밋된다")
+    void 재사용_탐지의_묶음_폐기는_커밋된다() throws Exception {
+        signup(LOGIN_ID_PREFIX + "01");
+        String first = loginForRefreshToken(LOGIN_ID_PREFIX + "01");
+        String latest = reissuedRefreshToken(first);
+
+        reissueRequest(first)
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("REFRESH_TOKEN_REUSE_DETECTED"));
+
+        assertThat(familyOf(tokenOf(first))).hasSize(2).allMatch(RefreshToken::isRevoked);
+        reissueRequest(latest)
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("REFRESH_TOKEN_INVALID"));
     }
 
     // 앞 요청이 잠금을 쥔 채 끝나지 않는 상황을 만든다. 잡아 두는 쪽이 트랜잭션을 열어 같은 행을 잠그고,
@@ -154,6 +171,13 @@ class RefreshTokenConcurrencyTest extends AuthScenarioTest {
         return mockMvc.perform(post(REISSUE_API)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"refreshToken\":\"%s\"}".formatted(refreshToken)));
+    }
+
+    private String reissuedRefreshToken(String refreshToken) throws Exception {
+        String body = reissueRequest(refreshToken)
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        return JsonPath.read(body, "$.data.refreshToken");
     }
 
     private String codeOf(MvcResult result) throws Exception {

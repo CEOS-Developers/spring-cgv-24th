@@ -30,6 +30,9 @@ public enum ErrorCode {
     ACCESS_DENIED(HttpStatus.FORBIDDEN, "접근 권한이 없습니다."),
     // 없음·만료·폐기를 나누지 않는다. 어느 경우든 클라이언트가 할 일은 다시 로그인하는 것 하나뿐이다.
     REFRESH_TOKEN_INVALID(HttpStatus.UNAUTHORIZED, "유효하지 않은 리프레시 토큰입니다. 다시 로그인해 주세요."),
+    // 재로그인에 더해 탈취 가능성을 사용자에게 알려야 하는 경우라 일반 거부와 나눈다.
+    REFRESH_TOKEN_REUSE_DETECTED(HttpStatus.UNAUTHORIZED,
+            "이미 사용된 리프레시 토큰입니다. 보안을 위해 이 로그인의 모든 토큰을 폐기했습니다. 다시 로그인해 주세요."),
 
     // 예매
     SEAT_OUT_OF_RANGE(HttpStatus.BAD_REQUEST, "좌석이 상영관 범위를 벗어났습니다."),

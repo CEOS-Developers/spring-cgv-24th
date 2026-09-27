@@ -4,9 +4,11 @@ import com.ceos24.cgv.domain.user.entity.RefreshToken;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.time.LocalDateTime;
 import java.util.Optional;
 
 public interface RefreshTokenRepository extends JpaRepository<RefreshToken, Long> {
@@ -19,4 +21,13 @@ public interface RefreshTokenRepository extends JpaRepository<RefreshToken, Long
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT rt FROM RefreshToken rt WHERE rt.tokenHash = :tokenHash")
     Optional<RefreshToken> findByTokenHashForUpdate(@Param("tokenHash") String tokenHash);
+
+    // 이미 폐기된 행은 건드리지 않아 처음 폐기 시각이 남는다. 벌크 UPDATE는 감사 리스너를 거치지 않아 updatedAt을 직접 쓴다.
+    // 영속성 컨텍스트를 우회하므로, 같은 트랜잭션에서 읽어 둔 엔티티가 폐기 전 상태로 남지 않게 비운다.
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("""
+            UPDATE RefreshToken rt SET rt.revokedAt = :now, rt.updatedAt = :now
+            WHERE rt.familyId = :familyId AND rt.revokedAt IS NULL
+            """)
+    int revokeFamily(@Param("familyId") String familyId, @Param("now") LocalDateTime now);
 }

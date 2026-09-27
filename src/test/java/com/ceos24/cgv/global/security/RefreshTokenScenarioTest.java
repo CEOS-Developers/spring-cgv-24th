@@ -189,17 +189,81 @@ class RefreshTokenScenarioTest extends AuthScenarioTest {
                 .andExpect(status().isOk());
     }
 
+    // ─── 재사용 탐지 ──────────────────────────────────────────────────────────
+
     @Test
-    @DisplayName("사용 완료된 리프레시 토큰으로 다시 재발급하면 401 REFRESH_TOKEN_INVALID")
-    void 사용_완료된_리프레시_토큰으로_재발급하면_401() throws Exception {
+    @DisplayName("사용 완료된 리프레시 토큰으로 다시 재발급하면 401 REFRESH_TOKEN_REUSE_DETECTED이고 묶음 전체가 폐기된다")
+    void 사용_완료된_리프레시_토큰으로_재발급하면_재사용_탐지() throws Exception {
+        signup("refresh01");
+        String oldToken = loginForRefreshToken("refresh01");
+        String latest = reissuedRefreshToken(oldToken);
+        flushAndClear();
+
+        reissueRequest(oldToken)
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.code").value("REFRESH_TOKEN_REUSE_DETECTED"))
+                .andExpect(jsonPath("$.data").doesNotExist());
+        flushAndClear();
+
+        assertThat(familyOf(oldToken)).hasSize(2).allMatch(RefreshToken::isRevoked);
+        assertThat(tokenOf(latest).isUsed()).isFalse();
+    }
+
+    @Test
+    @DisplayName("재사용이 탐지되면 같은 묶음의 최신 리프레시 토큰으로도 재발급할 수 없다")
+    void 재사용_탐지_후_같은_묶음의_최신_토큰은_401() throws Exception {
+        signup("refresh01");
+        String first = loginForRefreshToken("refresh01");
+        String second = reissuedRefreshToken(first);
+        String latest = reissuedRefreshToken(second);
+        flushAndClear();
+
+        reissueRequest(first).andExpect(jsonPath("$.code").value("REFRESH_TOKEN_REUSE_DETECTED"));
+        flushAndClear();
+
+        // 최신 토큰은 사용된 적 없이 폐기된 것이라 재사용이 아니라 일반 거부다
+        reissueRequest(latest)
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("REFRESH_TOKEN_INVALID"));
+        assertThat(familyOf(first)).hasSize(3).allMatch(RefreshToken::isRevoked);
+    }
+
+    @Test
+    @DisplayName("재사용이 탐지돼도 다른 로그인에서 받은 리프레시 토큰은 영향 없이 재발급된다")
+    void 재사용_탐지는_다른_로그인의_묶음에_영향이_없다() throws Exception {
+        signup("refresh01");
+        String phone = loginForRefreshToken("refresh01");
+        String laptop = loginForRefreshToken("refresh01");
+        reissuedRefreshToken(phone);
+        flushAndClear();
+
+        reissueRequest(phone).andExpect(jsonPath("$.code").value("REFRESH_TOKEN_REUSE_DETECTED"));
+        flushAndClear();
+
+        assertThat(familyOf(laptop)).hasSize(1).noneMatch(RefreshToken::isRevoked);
+        reissueRequest(laptop).andExpect(status().isOk());
+    }
+
+    // 동시 재발급에서 두 번째 요청이 묶음을 폐기하면 원래 토큰도 폐기 상태가 된다.
+    // 세 번째부터가 폐기 확인에 먼저 걸려 일반 거부로 바뀌면 안 된다.
+    @Test
+    @DisplayName("묶음이 이미 폐기된 뒤에도 사용 완료 토큰이 다시 오면 재사용으로 탐지하고 처음 폐기 시각은 유지된다")
+    void 묶음이_폐기된_뒤에도_사용_완료_토큰은_재사용으로_탐지한다() throws Exception {
         signup("refresh01");
         String oldToken = loginForRefreshToken("refresh01");
         reissuedRefreshToken(oldToken);
         flushAndClear();
 
+        reissueRequest(oldToken).andExpect(jsonPath("$.code").value("REFRESH_TOKEN_REUSE_DETECTED"));
+        flushAndClear();
+        LocalDateTime firstRevokedAt = tokenOf(oldToken).getRevokedAt();
+
         reissueRequest(oldToken)
                 .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.code").value("REFRESH_TOKEN_INVALID"));
+                .andExpect(jsonPath("$.code").value("REFRESH_TOKEN_REUSE_DETECTED"));
+        flushAndClear();
+        assertThat(tokenOf(oldToken).getRevokedAt()).isEqualTo(firstRevokedAt);
     }
 
     // 실제 재발급 상황은 액세스 토큰이 만료된 뒤다. 클라이언트가 만료된 토큰을 헤더에 남겨 둔 채 불러도 막히면 안 된다.
@@ -416,6 +480,13 @@ class RefreshTokenScenarioTest extends AuthScenarioTest {
 
     private RefreshToken tokenOf(String rawToken) {
         return refreshTokenRepository.findByTokenHash(refreshTokenProvider.hash(rawToken)).orElseThrow();
+    }
+
+    private List<RefreshToken> familyOf(String rawToken) {
+        String familyId = tokenOf(rawToken).getFamilyId();
+        return refreshTokenRepository.findAll().stream()
+                .filter(token -> token.getFamilyId().equals(familyId))
+                .toList();
     }
 
     private String rejectedBody(String refreshToken) throws Exception {
