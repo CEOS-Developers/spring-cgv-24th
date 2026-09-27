@@ -9,6 +9,7 @@ erDiagram
     users ||--o{ purchase : "구매한다"
     users ||--o{ movie_like : "찜한다"
     users ||--o{ branch_like : "찜한다"
+    users ||--o{ refresh_token : "발급받는다"
     branch ||--o{ theater : "보유한다"
     branch ||--o{ stock : "보유한다"
     branch ||--o{ purchase : "발생한다"
@@ -119,6 +120,13 @@ erDiagram
         bigint user_id FK
         bigint branch_id FK
     }
+    refresh_token {
+        bigint refresh_token_id PK
+        bigint user_id FK
+        char token_hash UK "SHA-256"
+        datetime expires_at
+        datetime revoked_at "로그아웃 시각"
+    }
 ```
 
 모든 테이블은 `BaseTimeEntity`를 상속해 `created_at` / `updated_at`을 가집니다. 그림에서는 생략했습니다.
@@ -148,6 +156,7 @@ erDiagram
 - `purchase` 1:N — 회원 한 명이 구매를 여러 건 합니다
 - `movie_like` 1:N — 회원 한 명이 영화를 여러 개 찜합니다
 - `branch_like` 1:N — 회원 한 명이 지점을 여러 개 찜합니다
+- `refresh_token` 1:N — 회원 한 명이 기기마다 리프레시 토큰을 하나씩 가집니다
 
 </details>
 
@@ -478,6 +487,25 @@ erDiagram
 **관계**
 - `user` N:1 — 여러 찜 항목이 회원 한 명에 속합니다
 - `branch` N:1 — 여러 찜 항목이 지점 하나를 가리킵니다
+
+</details>
+
+<details>
+<summary><strong>refresh_token (리프레시 토큰)</strong></summary>
+
+| 컬럼 | 타입 | 설명 |
+|---|---|---|
+| refresh_token_id | bigint (PK) | 식별자 |
+| user_id | bigint (FK) | 회원 |
+| token_hash | char(64) | 토큰 원문의 SHA-256 해시. 원문은 저장하지 않습니다 |
+| expires_at | datetime | 만료 시각 (발급 시각 + `REFRESH_TOKEN_VALIDITY`) |
+| revoked_at | datetime | 로그아웃한 시각. null이면 유효합니다 |
+| created_at | datetime | 발급 시각 |
+
+**제약**: token_hash 유니크 — 받은 토큰을 해시해 한 행으로 바로 찾습니다
+
+**관계**
+- `user` N:1 — 여러 토큰이 회원 한 명에 속합니다. 로그인마다 행이 하나씩 생겨 기기별로 따로 유지됩니다
 
 </details>
 
@@ -1238,10 +1266,12 @@ RFC 6749 기준으로 두 토큰 모두 JWT일 필요는 없습니다. 특히 �
 
 **우리 프로젝트에서는**
 
-- 액세스 토큰만 구현했습니다. 리프레시 토큰은 도전 과제로 별도 진행합니다.
-- 유효기간은 `jwt.access-token-validity`(환경변수 `JWT_ACCESS_TOKEN_VALIDITY`, 예: `30m`)로 정하고, 로그인 응답의 `expiresIn`(초)으로 클라이언트에 알립니다.
-- 만료되면 다시 로그인해야 합니다. 이미 발급한 토큰을 만료 전에 무효화할 수단이 없어서, 권한 회수나 탈퇴도 만료 전까지 반영되지 않습니다. 짧은 유효기간이 유일한 완화 수단입니다.
-- 코드: `global/security/jwt/JwtProperties.java`, `domain/user/dto/LoginResponse.java`, `src/main/resources/application.yaml`
+- 두 토큰을 모두 구현했습니다. 액세스 토큰은 JWT, 리프레시 토큰은 JWT가 아닌 256비트 무작위 문자열이고 DB에 해시로 저장합니다. 자세한 내용은 아래 「리프레시 토큰」에 있습니다.
+- 유효기간은 각각 `JWT_ACCESS_TOKEN_VALIDITY`(예: `30m`)와 `REFRESH_TOKEN_VALIDITY`(예: `14d`)로 정하고, 로그인 응답의 `expiresIn`, `refreshTokenExpiresIn`(초)으로 알립니다.
+- 액세스 토큰이 만료되면 `POST /api/auth/reissue`로 재발급받습니다. 권한은 재발급 시점의 DB 값으로 다시 정해집니다.
+- 이미 발급한 액세스 토큰은 여전히 만료 전에 무효화할 수 없습니다. 로그아웃해도 마찬가지이며, 짧은 유효기간이 완화 수단입니다.
+- 순환 발급과 재사용 탐지는 아직 없습니다. 다음 단계에서 붙입니다.
+- 코드: `global/security/jwt/JwtProperties.java`, `global/security/RefreshTokenProvider.java`, `domain/user/dto/LoginResponse.java`
 
 **참고** [RFC 6749 1.4절](https://www.rfc-editor.org/rfc/rfc6749#section-1.4) · [RFC 6749 1.5절](https://www.rfc-editor.org/rfc/rfc6749#section-1.5)
 
@@ -1350,6 +1380,7 @@ flowchart TD
 | 상황 | HTTP 상태 | 처리하는 컴포넌트 | 우리 오류 코드 |
 |---|---|---|---|
 | 로그인 실패 (없는 계정, 틀린 비밀번호) | 401 | `AuthService.login()` → `GlobalExceptionHandler` | `LOGIN_FAILED` |
+| 재발급 실패 (없음·만료·폐기된 리프레시 토큰) | 401 | `AuthService.reissue()` → `GlobalExceptionHandler` | `REFRESH_TOKEN_INVALID` |
 | 토큰 없이 보호 API 호출 | 401 | `JwtAuthenticationEntryPoint` | `TOKEN_NOT_EXIST` |
 | 만료된 토큰 | 401 | `JwtAuthenticationEntryPoint` | `TOKEN_EXPIRED` |
 | 변조되거나 다른 키로 서명한 토큰 | 401 | `JwtAuthenticationEntryPoint` | `TOKEN_INVALID` |
@@ -1442,7 +1473,7 @@ JWT 필터는 익명 필터보다 앞에 있어야 토큰 인증이 먼저 자�
 |---|---|---|
 | * | `/api/admin/**` | `ADMIN`만 |
 | GET | `/api/branches/likes`, `/api/movies/likes` | 인증 필요 |
-| POST | `/api/auth/signup`, `/api/auth/login` | 공개 |
+| POST | `/api/auth/signup`, `/api/auth/login`, `/api/auth/reissue`, `/api/auth/logout` | 공개 |
 | GET | `/api/movies`, `/api/movies/{id}` | 공개 |
 | GET | `/api/branches`, `/api/branches/regions`, `/api/branches/{id}`, `/api/branches/{branchId}/products` | 공개 |
 | GET | `/api/screenings`, `/api/screenings/{id}/seats` | 공개 |
@@ -1454,6 +1485,7 @@ JWT 필터는 익명 필터보다 앞에 있어야 토큰 인증이 먼저 자�
 - `hasRole("ADMIN")` 대신 `hasAuthority(Role.ADMIN.getAuthority())`를 썼습니다. `hasRole`은 내부에서 `ROLE_`을 다시 붙이므로 접두사를 만드는 곳이 두 군데가 됩니다.
 - 기본값은 인증 필요입니다. 규칙 없이 새 API가 추가되면 열리지 않고 잠깁니다.
 - `/error`를 여는 이유는 컨테이너 오류 포워드도 인가를 다시 거치기 때문입니다. 막으면 원래 오류가 익명 401로 덮입니다.
+- 재발급과 로그아웃은 액세스 토큰이 만료된 뒤에도 불러야 하므로 공개합니다. 자격 증명은 본문의 리프레시 토큰입니다.
 - 소유권은 경로 규칙이 아니라 쿼리 조건(`WHERE r.id = :id AND r.user.id = :userId`)으로 검사합니다. 남의 예매는 로딩되지 않으므로 취소·결제 메서드를 부를 엔티티 자체가 없습니다.
 
 ### CSRF 비활성화
@@ -1493,10 +1525,11 @@ JWT 필터는 익명 필터보다 앞에 있어야 토큰 인증이 먼저 자�
 | 만료된 토큰 | 401 | `TOKEN_EXPIRED` |
 | 변조된 토큰, 다른 키로 서명한 토큰, 형식 오류, 허용하지 않은 알고리즘, 다른 발급자 | 401 | `TOKEN_INVALID` |
 | 인증은 됐지만 권한 부족 (일반 사용자의 관리자 API 호출) | 403 | `ACCESS_DENIED` |
+| 리프레시 토큰이 없음·만료·폐기됨, 또는 액세스 토큰을 재발급 본문에 넣음 | 401 | `REFRESH_TOKEN_INVALID` |
 | 남의 예매에 접근 (없는 예매와 응답이 같음) | 404 | `RESERVATION_NOT_FOUND` |
 | 유효한 토큰이지만 탈퇴 등으로 사용자가 없음 | 404 | `USER_NOT_FOUND` |
 | 이미 사용 중인 아이디로 가입 | 409 | `DUPLICATE_LOGIN_ID` |
-| 가입·로그인 요청 형식 오류 | 400 | `INVALID_INPUT_VALUE` |
+| 가입·로그인·재발급·로그아웃 요청 형식 오류 | 400 | `INVALID_INPUT_VALUE` |
 
 - 로그인 실패는 계정 유무와 관계없이 본문까지 같습니다. 응답이 다르면 아이디 목록을 대입해 가입된 계정만 추려낼 수 있습니다. 계정이 없을 때도 더미 해시로 비교를 돌려 응답 시간 차이를 줄입니다.
 - 남의 예매를 403이 아니라 404로 숨기는 이유는 예매 id가 순차 증가라서입니다. 403이면 id를 차례로 넣어 어떤 예매가 존재하는지, 예매량이 얼마인지 알아낼 수 있습니다.
@@ -1535,7 +1568,7 @@ JWT 필터는 익명 필터보다 앞에 있어야 토큰 인증이 먼저 자�
 | 사용자 A의 토큰으로 B의 예매 취소 | 거부 + B의 예매 불변 | 404 `RESERVATION_NOT_FOUND`, DB 재조회 시 `RESERVED`·좌석 점유 유지, 이후 B 본인은 취소 성공 | `다른_사용자의_예매를_취소하면_거부되고_DB의_예매_상태는_그대로다` |
 | 회원가입 본문에 `"role": "ADMIN"` | USER로 생성 | 201, DB role `USER`, 토큰 role `USER`, 관리자 API 403 | `회원가입_본문에_role_ADMIN을_넣어도_USER로_생성된다` |
 
-`./gradlew test` 전체 230개가 통과했습니다.
+세션 4 시점에 `./gradlew test` 전체 230개가 통과했습니다.
 
 ### 서명키·관리자 비밀번호 로컬 설정
 
@@ -1544,7 +1577,8 @@ JWT 필터는 익명 필터보다 앞에 있어야 토큰 인증이 먼저 자�
 | 변수 | 형식 | 비고 |
 |---|---|---|
 | `JWT_SECRET` | Base64 문자열, 디코딩 후 256비트 이상 | `openssl rand -base64 32`로 생성합니다. 짧으면 `WeakKeyException`으로 기동이 실패합니다 |
-| `JWT_ACCESS_TOKEN_VALIDITY` | Duration (예: `30m`) | Refresh Token이 없으므로 짧게 둡니다 |
+| `JWT_ACCESS_TOKEN_VALIDITY` | Duration (예: `30m`) | 로그아웃해도 만료 전까지 유효하므로 짧게 둡니다 |
+| `REFRESH_TOKEN_VALIDITY` | Duration (예: `14d`) | 액세스 토큰보다 길게 둡니다. 없으면 기동이 실패합니다 |
 | `SPRING_PROFILES_ACTIVE` | `local` | 관리자 계정 초기화는 local 프로필에서만 동작합니다 |
 | `ADMIN_LOGIN_ID` | 가입 규칙과 같은 영문 소문자·숫자 4~20자 권장 | local에서 비어 있으면 기동이 실패합니다 |
 | `ADMIN_PASSWORD` | 평문 | 기동 시 BCrypt로 해시해 저장합니다 |
@@ -1552,3 +1586,117 @@ JWT 필터는 익명 필터보다 앞에 있어야 토큰 인증이 먼저 자�
 - 관리자 계정은 data.sql이 아니라 `ApplicationRunner`가 만듭니다. data.sql에는 해시를 박아야 하는데, 해시도 오프라인 대입 공격의 대상입니다. 이미 있으면 건너뜁니다.
 - 운영에서 부팅 부수효과로 관리자가 생기면 안 되므로 `@Profile("local")`로 제한했습니다.
 - 테스트는 `src/test/resources/application.yaml`의 테스트 전용 더미 키를 쓰므로 별도 설정 없이 실행됩니다.
+
+---
+
+## 리프레시 토큰
+
+3주차 도전 과제입니다. 액세스 토큰이 만료될 때마다 다시 로그인하지 않도록, 로그인 시 리프레시 토큰을 함께 발급하고 그것으로 액세스 토큰을 재발급합니다. 저장소는 기존 DB를 씁니다. 순환 발급과 재사용 탐지는 다음 단계에서 붙입니다.
+
+### 발급·재발급·폐기 흐름
+
+```
+로그인    POST /api/auth/login     {loginId, password}
+          → 200 {accessToken, tokenType, expiresIn, refreshToken, refreshTokenExpiresIn}
+          → refresh_token에 해시와 만료 시각 저장 (원문은 응답으로 한 번만)
+
+보호 API  Authorization: Bearer {accessToken}
+          → 만료되면 401 TOKEN_EXPIRED
+
+재발급    POST /api/auth/reissue   {refreshToken}
+          → 해시로 조회 → 만료·폐기 확인 → DB 사용자의 id·role로 새 accessToken
+          → 200 {accessToken, tokenType, expiresIn}   (리프레시 토큰은 그대로 사용)
+
+로그아웃  POST /api/auth/logout    {refreshToken}
+          → 해당 행의 revoked_at 기록 → 200 (없는 토큰이어도 200)
+```
+
+| 메서드 | 경로 | 인증 | 요청 | 응답 | 오류 |
+|---|---|---|---|---|---|
+| POST | `/api/auth/login` | 공개 | `{loginId, password}` | 200 `{accessToken, tokenType, expiresIn, refreshToken, refreshTokenExpiresIn}` | 400 `INVALID_INPUT_VALUE` · 401 `LOGIN_FAILED` |
+| POST | `/api/auth/reissue` | 공개 | `{refreshToken}` | 200 `{accessToken, tokenType, expiresIn}` | 400 `INVALID_INPUT_VALUE` · 401 `REFRESH_TOKEN_INVALID` |
+| POST | `/api/auth/logout` | 공개 | `{refreshToken}` | 200 | 400 `INVALID_INPUT_VALUE` |
+
+- 리프레시 토큰은 쿠키가 아니라 응답·요청 본문으로 주고받습니다. 인증 정보를 헤더와 본문으로만 다룬다는 전제(CSRF 비활성화의 근거)를 유지하기 위해서입니다.
+- 재발급과 로그아웃은 액세스 토큰이 만료된 뒤에도 불러야 하므로 공개 경로입니다. 만료된 액세스 토큰을 헤더에 남겨 둔 채 불러도, 필터가 실패 원인만 기록하고 통과시키므로 막히지 않습니다.
+- 한 사용자가 여러 기기에서 로그인하면 기기마다 토큰이 따로 생깁니다. 로그아웃은 요청한 기기의 토큰 하나만 폐기합니다.
+
+### 저장 방식
+
+**원문은 JWT가 아니라 256비트 무작위 문자열입니다.** `SecureRandom`으로 32바이트를 만들고 패딩 없는 `Base64URL`로 인코딩해 43자가 됩니다. 폐기 여부를 어차피 DB에서 확인해야 하므로 토큰 안에 정보를 담을 이유가 없습니다. 오히려 JWT로 만들면, 같은 키로 서명된 이상 액세스 토큰 필터를 통과할 위험이 생깁니다.
+
+**DB에는 원문이 아니라 SHA-256 해시만 저장합니다.** DB가 유출돼도 해시로는 재발급을 요청할 수 없습니다. 비밀번호처럼 솔트를 쓰는 느린 해시(BCrypt)를 쓰지 않은 이유는 두 가지입니다.
+
+| 관점 | 비밀번호 (BCrypt) | 리프레시 토큰 (SHA-256) |
+|---|---|---|
+| 조회 | 솔트 때문에 같은 입력도 해시가 매번 달라 해시로 행을 찾을 수 없습니다. 로그인 아이디로 먼저 찾습니다 | 같은 입력은 항상 같은 해시라 `token_hash` 유니크 인덱스로 바로 찾습니다 |
+| 사전 공격 | 사람이 고른 값이라 흔한 후보가 있어, 해시가 유출되면 후보를 대입해 볼 수 있습니다. 느리게 만들어 막습니다 | 256비트 난수라 대입할 후보 목록 자체가 없습니다. 해시가 빠르든 느리든 역산할 수 없습니다 |
+
+이 판단은 토큰이 충분히 길다는 전제에서만 성립합니다. 토큰을 짧게 줄이면 빠른 해시를 모든 후보에 대입해 볼 수 있게 되므로, 길이와 해시 방식은 함께 정해야 합니다.
+
+- 코드: `global/security/RefreshTokenProvider.java`, `domain/user/entity/RefreshToken.java`, `domain/user/service/AuthService.java`
+
+### 액세스 토큰과의 구분
+
+두 토큰은 받는 곳과 검증 수단이 달라 서로의 자리에서 쓰일 수 없습니다. 이를 위한 별도의 "토큰 종류 검사" 코드는 없습니다.
+
+| 경로 | 받는 곳 | 검증 수단 | 다른 토큰을 넣으면 |
+|---|---|---|---|
+| 보호 API | `Authorization` 헤더 | 서명 (`JwtProvider.parse()`) | 리프레시 토큰은 점이 없어 JWT 세 조각으로 나뉘지 않습니다. 형식 오류 → 401 `TOKEN_INVALID` |
+| 재발급 | 요청 본문 | DB 조회 (`findWithUserByTokenHash()`) | 액세스 토큰은 `refresh_token` 테이블에 저장된 적이 없습니다. 조회 실패 → 401 `REFRESH_TOKEN_INVALID` |
+
+그래서 액세스 토큰만 탈취된 경우, 공격자는 재발급으로 수명을 늘릴 수 없고 그 토큰의 `exp`까지만 쓸 수 있습니다.
+
+### 거부 정책
+
+- 없음, 만료, 폐기, 액세스 토큰을 넣은 경우를 모두 `REFRESH_TOKEN_INVALID` 하나로 응답합니다. 어느 경우든 클라이언트가 할 일은 다시 로그인하는 것 하나뿐입니다. 응답으로 원인을 구분하면 "이 토큰이 한때 유효했는지", "사용자가 로그아웃했는지"를 알 수 있게 됩니다.
+- 원인은 서버 로그에만 남깁니다(`reason=not_found / expired / revoked`, 원문 대신 행 번호).
+- 로그아웃은 없는 토큰이나 이미 폐기된 토큰에도 200입니다. 클라이언트는 결과와 관계없이 토큰을 버리므로 실패를 알려도 할 일이 없고, 로그아웃 API가 토큰 유효성을 확인하는 창구가 되지도 않습니다. 이미 폐기된 토큰의 폐기 시각은 덮어쓰지 않습니다.
+- 재발급 실패는 컨트롤러에서 전역 예외 처리로 응답합니다. 필터 단계가 아니므로 `WWW-Authenticate` 헤더는 붙지 않으며, `LOGIN_FAILED`와 같은 동작입니다.
+
+### 한계 — 로그아웃해도 액세스 토큰은 만료까지 유효합니다
+
+액세스 토큰 검증은 서명과 만료만 보고 DB를 조회하지 않습니다. 로그아웃이 바꾸는 것은 `refresh_token` 테이블뿐이라 두 경로가 만나는 곳이 없습니다. 그래서 로그아웃 직전에 발급된 액세스 토큰은 `exp`까지 계속 보호 API를 호출할 수 있습니다. 이 동작은 테스트(`로그아웃_후에도_액세스_토큰은_만료_전까지_유효하다`)로 명시해 두었습니다.
+
+| 완화 방법 | 필요한 것 | 비용 | 적용 |
+|---|---|---|---|
+| 액세스 토큰 수명 단축 | `JWT_ACCESS_TOKEN_VALIDITY`를 짧게 | 재발급 요청이 늘어납니다. 즉시 무효화는 아닙니다 | 적용 |
+| 액세스 토큰 차단 목록 | 토큰마다 고유 id(`jti`)를 넣고, 로그아웃 시 그 id를 만료까지 저장해 필터가 매 요청 조회 | 요청마다 저장소 조회. 서명만으로 끝나는 검증의 장점을 일부 내줍니다 | 범위 밖 |
+| 사용자별 무효화 시각 | 사용자에 "이 시각 이전 발급분은 무효"를 기록하고 필터가 토큰의 `iat`와 비교 | 요청마다 사용자 조회. 기기별이 아니라 전체 기기에 적용됩니다 | 범위 밖 |
+
+또 순환 발급 전이라, 리프레시 토큰 자체가 탈취되면 사용자가 로그아웃하기 전까지 수명(`REFRESH_TOKEN_VALIDITY`) 동안 재발급에 쓰일 수 있습니다. 다음 단계의 순환 발급과 재사용 탐지로 완화합니다.
+
+### 테스트 결과
+
+`RefreshTokenScenarioTest`는 세션 4와 같이 `springSecurity()`를 적용한 MockMvc로 실제 필터 체인을 태우고, 토큰은 로그인 API로 받습니다. 만료된 리프레시 토큰은 시간을 기다리지 않고, 만료 시각을 과거로 둔 행을 해시와 함께 직접 저장해 만듭니다. 테스트 설정의 리프레시 토큰 수명은 14일(1,209,600초)입니다.
+
+**과제 시나리오**
+
+| 상황 | 기대 결과 | 실제 결과 | 테스트 메서드명 |
+|---|---|---|---|
+| 로그인 성공 | 액세스 토큰과 리프레시 토큰 둘 다 발급 | 200, 액세스 토큰의 sub가 가입한 사용자, 리프레시 토큰 43자, `refreshTokenExpiresIn` 1209600 | `로그인하면_액세스_토큰과_리프레시_토큰을_함께_발급한다` |
+| 유효한 리프레시 토큰으로 재발급 | 새 액세스 토큰 발급, 그 토큰으로 보호 API 정상 호출 | 200, 새 토큰의 사용자·권한 일치, 보호 API 200, 응답에 리프레시 토큰 없음 | `유효한_리프레시_토큰으로_재발급한_토큰으로_보호_API를_호출할_수_있다` |
+| 만료된 리프레시 토큰으로 재발급 | 401 + 오류 코드 | 401 `REFRESH_TOKEN_INVALID` | `만료된_리프레시_토큰이면_401_REFRESH_TOKEN_INVALID` |
+| 존재하지 않거나 임의로 만든 리프레시 토큰으로 재발급 | 401 + 오류 코드 | 발급된 적 없는 43자 토큰과 임의 문자열 모두 401 `REFRESH_TOKEN_INVALID` | `존재하지_않거나_임의로_만든_리프레시_토큰이면_401_REFRESH_TOKEN_INVALID` |
+| 로그아웃한 리프레시 토큰으로 재발급 | 401 + 오류 코드 | 401 `REFRESH_TOKEN_INVALID`, 미발급 토큰의 거부 응답과 본문 동일 | `로그아웃한_리프레시_토큰으로_재발급하면_401_REFRESH_TOKEN_INVALID` |
+| 리프레시 토큰을 Authorization 헤더에 넣어 보호 API 호출 | 401 | 401 `TOKEN_INVALID` | `리프레시_토큰을_Authorization_헤더에_넣으면_401_TOKEN_INVALID` |
+| 액세스 토큰을 재발급 API 본문에 넣어 호출 | 401 | 401 `REFRESH_TOKEN_INVALID` | `액세스_토큰을_재발급_본문에_넣으면_401_REFRESH_TOKEN_INVALID` |
+| 로그아웃 후 DB 확인 | 해당 리프레시 토큰이 폐기 상태 | 1차 캐시를 비운 뒤 재조회해 `revoked_at` 기록 확인 | `로그아웃하면_DB의_리프레시_토큰이_폐기_상태가_된다` |
+| DB에 저장된 값 확인 | 원문이 아니라 해시 | `token_hash`가 원문의 SHA-256과 같고 원문과 다름, 원문으로는 조회되지 않음 | `DB에는_리프레시_토큰_원문이_아니라_해시가_저장된다` |
+
+**추가 검증**
+
+| 상황 | 기대 결과 | 실제 결과 | 테스트 메서드명 |
+|---|---|---|---|
+| 로그인 실패 | 리프레시 토큰 미저장 | 401 `LOGIN_FAILED`, `data` 없음, DB 행 없음 | `로그인에_실패하면_리프레시_토큰을_저장하지_않는다` |
+| 같은 사용자가 두 번 로그인 | 기기별 토큰 | 서로 다른 토큰 2개, 둘 다 유효 | `로그인할_때마다_새_리프레시_토큰이_생긴다` |
+| 만료된 액세스 토큰을 헤더에 단 채 재발급 | 막히지 않음 | 200 | `만료된_액세스_토큰을_헤더에_단_채로도_재발급할_수_있다` |
+| 재발급 토큰의 권한 | DB의 사용자 기준 | 로그인 없이 저장한 관리자 토큰으로 재발급 → role `ADMIN`, 관리자 API 200 | `재발급한_액세스_토큰의_권한은_DB의_사용자에서_정해진다` |
+| 만료·미발급·액세스 토큰으로 재발급 | 같은 거부 응답 | 세 응답 본문 문자열이 모두 동일 | `재발급_거부_응답은_원인과_관계없이_같다` |
+| 재발급 요청의 리프레시 토큰이 비거나 빠짐 | 400 | 400 `INVALID_INPUT_VALUE` | `리프레시_토큰이_비어_있으면_400` |
+| 한 기기에서 로그아웃 | 다른 기기 유지 | 로그아웃한 토큰 401, 다른 기기 토큰 200 | `로그아웃해도_다른_기기의_리프레시_토큰은_유지된다` |
+| 없는 토큰·이미 로그아웃한 토큰으로 로그아웃 | 200, 폐기 시각 유지 | 200, 두 번째 로그아웃 뒤에도 처음 폐기 시각 그대로 | `로그아웃은_멱등이다` |
+| 로그아웃 요청의 리프레시 토큰이 비어 있음 | 400 | 400 `INVALID_INPUT_VALUE` | `로그아웃_리프레시_토큰이_비어_있으면_400` |
+| 로그아웃 후 기존 액세스 토큰으로 보호 API | 만료 전까지 유효 (한계) | 200 | `로그아웃_후에도_액세스_토큰은_만료_전까지_유효하다` |
+
+이 밖에 단위 테스트로 토큰 생성기(길이, 점 없음, 1만 개 중복 없음, SHA-256 고정값), 엔티티 상태(만료 경계, 폐기, 폐기 시각 유지), 저장소(해시 조회, 해시 유니크 제약)를 확인합니다. `./gradlew test` 전체 260개가 통과했습니다.
