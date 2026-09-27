@@ -45,11 +45,18 @@ public abstract class AuthScenarioTest extends ControllerIntegrationTest {
                 .content("{\"loginId\":\"%s\",\"password\":\"%s\"}".formatted(loginId, password)));
     }
 
-    protected String login(String loginId) throws Exception {
-        String response = loginRequest(loginId, PASSWORD)
+    protected String loginBody(String loginId) throws Exception {
+        return loginRequest(loginId, PASSWORD)
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
-        return JsonPath.read(response, "$.data.accessToken");
+    }
+
+    protected String login(String loginId) throws Exception {
+        return JsonPath.read(loginBody(loginId), "$.data.accessToken");
+    }
+
+    protected String loginForRefreshToken(String loginId) throws Exception {
+        return JsonPath.read(loginBody(loginId), "$.data.refreshToken");
     }
 
     // 회원가입 API로는 관리자를 만들 수 없어 저장소에 직접 넣는다. 로그인은 API로 한다.

@@ -2,6 +2,7 @@ package com.ceos24.cgv.domain.user.service;
 
 import com.ceos24.cgv.domain.user.entity.Role;
 import com.ceos24.cgv.domain.user.entity.User;
+import com.ceos24.cgv.domain.user.repository.RefreshTokenRepository;
 import com.ceos24.cgv.domain.user.repository.UserRepository;
 import com.jayway.jsonpath.JsonPath;
 import org.junit.jupiter.api.AfterAll;
@@ -42,13 +43,20 @@ class AdminAccountInitializerTest {
     static final String PASSWORD = "admin-test-only-pw1";
 
     @Autowired UserRepository userRepository;
+    @Autowired RefreshTokenRepository refreshTokenRepository;
     @Autowired PasswordEncoder passwordEncoder;
     @Autowired AdminAccountInitializer initializer;
     @Autowired WebApplicationContext wac;
 
+    // 로그인 테스트가 리프레시 토큰 행도 커밋한다. 그 행이 관리자를 참조하므로 먼저 지워야 관리자를 지울 수 있다.
     @AfterAll
     void cleanUp() {
-        userRepository.findByLoginId(LOGIN_ID).ifPresent(userRepository::delete);
+        userRepository.findByLoginId(LOGIN_ID).ifPresent(admin -> {
+            refreshTokenRepository.deleteAll(refreshTokenRepository.findAll().stream()
+                    .filter(token -> token.getUser().getId().equals(admin.getId()))
+                    .toList());
+            userRepository.delete(admin);
+        });
     }
 
     @Test

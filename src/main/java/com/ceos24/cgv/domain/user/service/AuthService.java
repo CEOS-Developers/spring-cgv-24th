@@ -4,11 +4,14 @@ import com.ceos24.cgv.domain.user.dto.LoginRequest;
 import com.ceos24.cgv.domain.user.dto.LoginResponse;
 import com.ceos24.cgv.domain.user.dto.SignupRequest;
 import com.ceos24.cgv.domain.user.dto.SignupResponse;
+import com.ceos24.cgv.domain.user.entity.RefreshToken;
 import com.ceos24.cgv.domain.user.entity.User;
+import com.ceos24.cgv.domain.user.repository.RefreshTokenRepository;
 import com.ceos24.cgv.domain.user.repository.UserRepository;
 import com.ceos24.cgv.global.exception.CustomException;
 import com.ceos24.cgv.global.exception.ErrorCode;
 import com.ceos24.cgv.global.security.LoginUserDetails;
+import com.ceos24.cgv.global.security.RefreshTokenProvider;
 import com.ceos24.cgv.global.security.jwt.JwtProvider;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -20,6 +23,9 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Clock;
+import java.time.LocalDateTime;
+
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
@@ -29,6 +35,9 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final AuthenticationManager authenticationManager;
     private final JwtProvider jwtProvider;
+    private final RefreshTokenRepository refreshTokenRepository;
+    private final RefreshTokenProvider refreshTokenProvider;
+    private final Clock clock;
 
     @Transactional
     public SignupResponse signup(SignupRequest req) {
@@ -55,6 +64,7 @@ public class AuthService {
         return SignupResponse.from(user);
     }
 
+    @Transactional
     public LoginResponse login(LoginRequest req) {
         Authentication authentication;
         try {
@@ -68,6 +78,19 @@ public class AuthService {
 
         LoginUserDetails principal = (LoginUserDetails) authentication.getPrincipal();
         String accessToken = jwtProvider.createAccessToken(principal.getUserId(), principal.getRole());
-        return LoginResponse.of(accessToken, jwtProvider.getAccessTokenValiditySeconds());
+        String refreshToken = issueRefreshToken(principal.getUserId());
+        return LoginResponse.of(accessToken, jwtProvider.getAccessTokenValiditySeconds(),
+                refreshToken, refreshTokenProvider.getValiditySeconds());
+    }
+
+    // 원문은 응답으로 한 번만 내보내고 DB에는 해시만 남긴다. 로그인마다 새 행이라 기기별 토큰이 따로 산다.
+    private String issueRefreshToken(Long userId) {
+        String rawToken = refreshTokenProvider.generate();
+        refreshTokenRepository.save(RefreshToken.builder()
+                .user(userRepository.getReferenceById(userId))
+                .tokenHash(refreshTokenProvider.hash(rawToken))
+                .expiresAt(refreshTokenProvider.expiresAt(LocalDateTime.now(clock)))
+                .build());
+        return rawToken;
     }
 }
