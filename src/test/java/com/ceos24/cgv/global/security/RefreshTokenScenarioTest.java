@@ -33,6 +33,7 @@ class RefreshTokenScenarioTest extends AuthScenarioTest {
 
     private static final String PROTECTED_API = "/api/reservations";
     private static final String REISSUE_API = "/api/auth/reissue";
+    private static final String LOGOUT_API = "/api/auth/logout";
 
     @Autowired RefreshTokenRepository refreshTokenRepository;
     @Autowired RefreshTokenProvider refreshTokenProvider;
@@ -230,7 +231,108 @@ class RefreshTokenScenarioTest extends AuthScenarioTest {
                 .andExpect(jsonPath("$.code").value("INVALID_INPUT_VALUE"));
     }
 
+    // ─── 로그아웃 ─────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("로그아웃하면 DB의 해당 리프레시 토큰이 폐기 상태가 된다")
+    void 로그아웃하면_DB의_리프레시_토큰이_폐기_상태가_된다() throws Exception {
+        signup("refresh01");
+        String refreshToken = loginForRefreshToken("refresh01");
+
+        logoutRequest(refreshToken)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+        // 1차 캐시가 아니라 DB에 반영됐는지 본다
+        flushAndClear();
+
+        RefreshToken saved = refreshTokenRepository.findByTokenHash(refreshTokenProvider.hash(refreshToken))
+                .orElseThrow();
+        assertThat(saved.isRevoked()).isTrue();
+        assertThat(saved.getRevokedAt()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("로그아웃한 리프레시 토큰으로 재발급하면 401 REFRESH_TOKEN_INVALID이고 다른 거부 응답과 본문이 같다")
+    void 로그아웃한_리프레시_토큰으로_재발급하면_401_REFRESH_TOKEN_INVALID() throws Exception {
+        signup("refresh01");
+        String refreshToken = loginForRefreshToken("refresh01");
+        logoutRequest(refreshToken).andExpect(status().isOk());
+        flushAndClear();
+
+        String revokedBody = reissueRequest(refreshToken)
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("REFRESH_TOKEN_INVALID"))
+                .andReturn().getResponse().getContentAsString();
+        // 폐기됐다는 사실이 응답에 드러나지 않는다
+        assertThat(revokedBody).isEqualTo(rejectedBody(refreshTokenProvider.generate()));
+    }
+
+    @Test
+    @DisplayName("한 기기에서 로그아웃해도 같은 사용자의 다른 기기 리프레시 토큰은 계속 재발급된다")
+    void 로그아웃해도_다른_기기의_리프레시_토큰은_유지된다() throws Exception {
+        signup("refresh01");
+        String phone = loginForRefreshToken("refresh01");
+        String laptop = loginForRefreshToken("refresh01");
+
+        logoutRequest(phone).andExpect(status().isOk());
+        flushAndClear();
+
+        reissueRequest(phone).andExpect(status().isUnauthorized());
+        reissueRequest(laptop).andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("없는 토큰이나 이미 로그아웃한 토큰으로 로그아웃해도 200이고 처음 폐기 시각은 바뀌지 않는다")
+    void 로그아웃은_멱등이다() throws Exception {
+        logoutRequest(refreshTokenProvider.generate()).andExpect(status().isOk());
+
+        signup("refresh01");
+        String refreshToken = loginForRefreshToken("refresh01");
+        logoutRequest(refreshToken).andExpect(status().isOk());
+        flushAndClear();
+        LocalDateTime firstRevokedAt = revokedAtOf(refreshToken);
+
+        logoutRequest(refreshToken).andExpect(status().isOk());
+        flushAndClear();
+        assertThat(revokedAtOf(refreshToken)).isEqualTo(firstRevokedAt);
+    }
+
+    @Test
+    @DisplayName("리프레시 토큰이 비어 있으면 로그아웃은 400 INVALID_INPUT_VALUE")
+    void 로그아웃_리프레시_토큰이_비어_있으면_400() throws Exception {
+        logoutRequest("")
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_INPUT_VALUE"));
+    }
+
+    // 한계를 드러내는 테스트. 액세스 토큰은 DB를 보지 않고 서명만으로 검증하므로 로그아웃과 무관하게 만료까지 산다.
+    @Test
+    @DisplayName("로그아웃 후에도 이미 발급된 액세스 토큰은 만료 전까지 보호 API를 호출할 수 있다")
+    void 로그아웃_후에도_액세스_토큰은_만료_전까지_유효하다() throws Exception {
+        signup("refresh01");
+        String body = loginBody("refresh01");
+        String accessToken = JsonPath.read(body, "$.data.accessToken");
+        String refreshToken = JsonPath.read(body, "$.data.refreshToken");
+
+        logoutRequest(refreshToken).andExpect(status().isOk());
+        flushAndClear();
+
+        mockMvc.perform(get(PROTECTED_API).with(bearer(accessToken)))
+                .andExpect(status().isOk());
+    }
+
     // ─── 헬퍼 ─────────────────────────────────────────────────────────────────
+
+    private ResultActions logoutRequest(String refreshToken) throws Exception {
+        return mockMvc.perform(post(LOGOUT_API)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"refreshToken\":\"%s\"}".formatted(refreshToken)));
+    }
+
+    private LocalDateTime revokedAtOf(String refreshToken) {
+        return refreshTokenRepository.findByTokenHash(refreshTokenProvider.hash(refreshToken))
+                .orElseThrow().getRevokedAt();
+    }
 
     private ResultActions reissueRequest(String refreshToken) throws Exception {
         return mockMvc.perform(post(REISSUE_API)

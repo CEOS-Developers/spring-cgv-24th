@@ -2,6 +2,7 @@ package com.ceos24.cgv.domain.user.service;
 
 import com.ceos24.cgv.domain.user.dto.LoginRequest;
 import com.ceos24.cgv.domain.user.dto.LoginResponse;
+import com.ceos24.cgv.domain.user.dto.LogoutRequest;
 import com.ceos24.cgv.domain.user.dto.SignupRequest;
 import com.ceos24.cgv.domain.user.dto.SignupResponse;
 import com.ceos24.cgv.domain.user.dto.TokenReissueRequest;
@@ -100,6 +101,14 @@ public class AuthService {
         User user = refreshToken.getUser();
         String accessToken = jwtProvider.createAccessToken(user.getId(), user.getRole());
         return TokenReissueResponse.of(accessToken, jwtProvider.getAccessTokenValiditySeconds());
+    }
+
+    // 없는 토큰이어도 실패로 알리지 않는다. 클라이언트는 어차피 가진 토큰을 버리므로 알려도 할 일이 없다.
+    // 이 토큰으로 발급된 액세스 토큰은 만료 전까지 계속 유효하다. 막으려면 액세스 토큰 차단 목록이 필요하다.
+    @Transactional
+    public void logout(LogoutRequest req) {
+        refreshTokenRepository.findByTokenHash(refreshTokenProvider.hash(req.refreshToken()))
+                .ifPresent(token -> token.revoke(LocalDateTime.now(clock)));
     }
 
     // 응답은 원인을 나누지 않지만 서버 로그에는 남긴다. 원문 토큰은 로그에 쓰지 않는다.

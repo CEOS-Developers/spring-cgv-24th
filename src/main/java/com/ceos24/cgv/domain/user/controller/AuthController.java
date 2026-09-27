@@ -2,6 +2,7 @@ package com.ceos24.cgv.domain.user.controller;
 
 import com.ceos24.cgv.domain.user.dto.LoginRequest;
 import com.ceos24.cgv.domain.user.dto.LoginResponse;
+import com.ceos24.cgv.domain.user.dto.LogoutRequest;
 import com.ceos24.cgv.domain.user.dto.SignupRequest;
 import com.ceos24.cgv.domain.user.dto.SignupResponse;
 import com.ceos24.cgv.domain.user.dto.TokenReissueRequest;
@@ -44,5 +45,12 @@ public class AuthController {
     @PostMapping("/reissue")
     public ApiResponse<TokenReissueResponse> reissue(@Valid @RequestBody TokenReissueRequest req) {
         return ApiResponse.success(authService.reissue(req));
+    }
+
+    @Operation(summary = "로그아웃 — 본문의 리프레시 토큰 폐기. 없거나 이미 폐기된 토큰이어도 성공")
+    @PostMapping("/logout")
+    public ApiResponse<Void> logout(@Valid @RequestBody LogoutRequest req) {
+        authService.logout(req);
+        return ApiResponse.success();
     }
 }

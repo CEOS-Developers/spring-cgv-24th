@@ -50,8 +50,9 @@ public class SecurityConfig {
                         .requestMatchers("/api/admin/**").hasAuthority(Role.ADMIN.getAuthority())
                         // 아래 공개 규칙의 /{id}가 "likes"도 받아들이므로 먼저 막는다.
                         .requestMatchers(HttpMethod.GET, "/api/branches/likes", "/api/movies/likes").authenticated()
-                        // 재발급은 액세스 토큰이 만료된 뒤에 부르므로 공개한다. 자격 증명은 본문의 리프레시 토큰이다.
-                        .requestMatchers(HttpMethod.POST, "/api/auth/signup", "/api/auth/login", "/api/auth/reissue").permitAll()
+                        // 재발급·로그아웃은 액세스 토큰이 만료된 뒤에도 불러야 하므로 공개한다. 자격 증명은 본문의 리프레시 토큰이다.
+                        .requestMatchers(HttpMethod.POST, "/api/auth/signup", "/api/auth/login", "/api/auth/reissue",
+                                "/api/auth/logout").permitAll()
                         .requestMatchers(HttpMethod.GET,
                                 "/api/movies", "/api/movies/{id}",
                                 "/api/branches", "/api/branches/regions", "/api/branches/{id}",
