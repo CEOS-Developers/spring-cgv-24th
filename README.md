@@ -29,6 +29,9 @@ erDiagram
         varchar password
         varchar name
         date birth_date
+        varchar email
+        varchar phone_number
+        enum role "USER / ADMIN"
     }
     branch {
         bigint branch_id PK
@@ -129,11 +132,16 @@ erDiagram
 | 컬럼 | 타입 | 설명 |
 |---|---|---|
 | user_id | bigint (PK) | 식별자 |
-| login_id | varchar(50) | 로그인 ID, 유니크 |
-| password | varchar(255) | 암호화 저장 |
+| login_id | varchar(50) | 로그인 ID, 유니크. 영문 소문자·숫자 4~20자 |
+| password | varchar(255) | BCrypt 해시 |
 | name | varchar(50) | 이름 |
-| birth_date | date | 생년월일 (관람 등급 판단용) |
+| birth_date | date | 생년월일 |
+| email | varchar(100) | 이메일. 로그인에 쓰지 않아 유니크가 아닙니다 |
+| phone_number | varchar(11) | 하이픈 없이 숫자만 저장합니다 |
+| role | varchar(20) | 권한 (ENUM `Role`: USER / ADMIN) |
 | created_at | datetime | 가입일시 |
+
+**`Role`** — 회원가입은 항상 `USER`로 생성합니다. 가입 요청에는 role 필드가 없고, 빌더도 `USER`로 고정합니다. `ADMIN`은 `User.createAdmin()`으로만 만들어지며, 로컬 환경에서 기동 시 환경변수로 받은 계정 하나를 생성합니다.
 
 **관계**
 - `reservation` 1:N — 회원 한 명이 예매를 여러 건 합니다
@@ -968,17 +976,23 @@ JPA를 쓰면 객체를 DB 행처럼 다루고 싶어지는 유혹이 생깁니�
 
 ```java
 // Reservation.java
-public void cancel() {
+public void cancel(LocalDateTime now) {
     if (this.status == ReservationStatus.CANCELLED) {
         throw new CustomException(ErrorCode.ALREADY_CANCELLED);
     }
+    if (this.status == ReservationStatus.EXPIRED) {
+        throw new CustomException(ErrorCode.RESERVATION_EXPIRED);
+    }
+    if (this.status == ReservationStatus.RESERVED && !isCancellableAt(now)) {
+        throw new CustomException(ErrorCode.CANCEL_DEADLINE_PASSED);
+    }
     this.status = ReservationStatus.CANCELLED;
-    this.cancelledAt = LocalDateTime.now();
-    this.seats.clear();
+    this.cancelledAt = now;
+    releaseSeats();
 }
 ```
 
-`seats.clear()` 한 줄로 자식 행이 DELETE됩니다. `cascade = ALL`, `orphanRemoval = true` 설정 덕분에 서비스에서 별도로 삭제 쿼리를 부를 필요가 없습니다. 수정한 엔티티를 따로 `save()`하지 않아도 트랜잭션 커밋 시 dirty checking이 변경을 감지해 UPDATE를 실행합니다.
+취소 가능 여부 판단부터 좌석 해제까지 엔티티 안에서 끝납니다. 서비스는 소유자 조건으로 예매를 찾아 `cancel()`을 부를 뿐입니다. 좌석 행은 지우지 않고 `release_key`만 바꿔 어느 좌석을 얼마에 잡았는지 남깁니다(「중복 예매 방지」 참고). 현재 시각은 `Clock` 빈에서 받아 인자로 넘기므로 "상영 20분 전" 같은 경계를 테스트에서 만들 수 있습니다. 수정한 엔티티를 따로 `save()`하지 않아도 트랜잭션 커밋 시 dirty checking이 부모와 자식 행의 변경을 감지해 UPDATE를 실행합니다.
 
 ### 로딩 전략과 N+1 문제 — fetch join으로 조회 형태에 맞춘다
 
@@ -995,12 +1009,12 @@ public void cancel() {
         JOIN FETCH s.theater t
         JOIN FETCH t.branch
         LEFT JOIN FETCH r.seats
-        WHERE r.id = :id
+        WHERE r.id = :id AND r.user.id = :userId
         """)
-Optional<Reservation> findByIdWithDetails(@Param("id") Long id);
+Optional<Reservation> findOwnedWithDetails(@Param("id") Long id, @Param("userId") Long userId);
 ```
 
-`user`를 조인하지 않은 것은 의도입니다. 응답이 사용자를 id로만 쓰는데, 프록시의 id getter는 초기화 없이 식별자를 돌려주므로 조인해도 쿼리가 줄지 않습니다(`ReservationQueryCountTest`로 실측했습니다). 이름 같은 다른 필드를 응답에 실으면 그때 fetch join을 더해야 합니다. 컬렉션 fetch join이 2개 이상이면 `MultipleBagFetchException`이 발생하므로, 그 경우에는 각각 별도 쿼리로 조회한 뒤 조립해야 합니다. 회차 목록의 잔여좌석 카운트는 IN 절 + GROUP BY로 한 번에 집계해(`countGroupedByScreeningIds`) N+1을 방지했습니다.
+`r.user.id` 조건은 소유권 검사입니다. 남의 예매는 아예 로딩되지 않습니다. `user`를 조인하지 않은 것은 의도입니다. 응답이 사용자를 id로만 쓰는데, 프록시의 id getter는 초기화 없이 식별자를 돌려주므로 조인해도 쿼리가 줄지 않습니다(`ReservationQueryCountTest`로 실측했습니다). 이름 같은 다른 필드를 응답에 실으면 그때 fetch join을 더해야 합니다. 컬렉션 fetch join이 2개 이상이면 `MultipleBagFetchException`이 발생하므로, 그 경우에는 각각 별도 쿼리로 조회한 뒤 조립해야 합니다. 회차 목록의 잔여좌석 카운트는 IN 절 + GROUP BY로 한 번에 집계해(`countGroupedByScreeningIds`) N+1을 방지했습니다.
 
 ### REST API — 자원 URL + HTTP 메서드 + 상태 코드
 
@@ -1010,18 +1024,20 @@ REST는 URL이 자원을 가리키고, 행위는 HTTP 메서드로 표현하는 
 // ReservationController.java
 @PostMapping
 @ResponseStatus(HttpStatus.CREATED)
-public ReservationResponse create(@Valid @RequestBody ReservationCreateRequest req) {
-    return reservationService.create(req);
+public ApiResponse<ReservationResponse> create(@AuthenticationPrincipal AuthUser authUser,
+                                               @Valid @RequestBody ReservationCreateRequest req) {
+    return ApiResponse.success(reservationService.create(authUser.userId(), req));
 }
 
 @DeleteMapping("/{id}")
-@ResponseStatus(HttpStatus.NO_CONTENT)
-public void cancel(@PathVariable Long id) {
-    reservationService.cancel(id);
+public ApiResponse<Void> cancel(@AuthenticationPrincipal AuthUser authUser,
+                                @PathVariable Long id) {
+    reservationService.cancel(id, authUser.userId());
+    return ApiResponse.success();
 }
 ```
 
-`ResponseEntity`로 감싸지 않고 record DTO를 직접 반환한 뒤, 상태 코드는 `@ResponseStatus`로 표현했습니다. 요청 검증은 `@Valid` + record 필드의 `@NotNull`/`@Min`으로 컨트롤러 진입 직후에 끝냅니다. 검증이 실패하면 `MethodArgumentNotValidException`이 발생하고 전역 핸들러가 400으로 처리합니다.
+`ResponseEntity`로 감싸지 않고 공통 응답 `ApiResponse`로 DTO를 감싸 반환하며, 상태 코드는 `@ResponseStatus`로 표현했습니다. 예매자는 요청 본문이 아니라 토큰에서 꺼낸 `AuthUser`로 정하고, 서비스에는 `userId`만 넘겨 서비스가 인증 방식을 모르게 했습니다. 요청 검증은 `@Valid` + record 필드의 `@NotNull`/`@Min`으로 컨트롤러 진입 직후에 끝냅니다. 검증이 실패하면 `MethodArgumentNotValidException`이 발생하고 전역 핸들러가 400으로 처리합니다.
 
 ### 예외 처리 — 도메인 예외를 하나로 모아 응답 형식을 통일
 
@@ -1030,21 +1046,21 @@ public void cancel(@PathVariable Long id) {
 ```java
 // GlobalExceptionHandler.java
 @ExceptionHandler(CustomException.class)
-public ResponseEntity<ErrorResponse> handleCustom(CustomException e) {
+public ResponseEntity<ApiResponse<Void>> handleCustom(CustomException e) {
     ErrorCode code = e.getErrorCode();
     log.warn("[CustomException] {}: {}", code.name(), e.getMessage());
     return ResponseEntity.status(code.getHttpStatus())
-                         .body(ErrorResponse.of(code));
+                         .body(ApiResponse.error(code));
 }
 ```
 
-`ErrorCode` enum이 `HttpStatus`와 메시지를 함께 들고 있습니다. 새 오류를 추가할 때 enum에 한 줄만 추가하면 핸들러 코드는 변경하지 않아도 됩니다. 핸들러는 도메인 오류 / 검증 오류 / 예상치 못한 오류 3단계로 나눠 로그 레벨(`warn` vs `error`)도 구분합니다.
+`ErrorCode` enum이 `HttpStatus`와 메시지를 함께 들고 있습니다. 새 오류를 추가할 때 enum에 한 줄만 추가하면 핸들러 코드는 변경하지 않아도 됩니다. 핸들러는 도메인 오류, 요청 검증·바인딩 오류(400), 예상치 못한 오류(500)로 나누고 로그 레벨(`warn` vs `error`)도 구분합니다. 단, 인증·인가 실패는 `DispatcherServlet`에 닿기 전 필터 단계에서 일어나 이 핸들러가 잡지 못합니다. 그래서 `SecurityErrorResponder`가 같은 `ApiResponse` 형식으로 응답을 직접 씁니다.
 
 ### Spring MVC 흐름 — DispatcherServlet → Controller → Service → Repository
 
 요청은 `DispatcherServlet`이 받아서 URL과 HTTP 메서드로 핸들러를 고르고, `@RequestMapping`이 달린 컨트롤러 메서드로 전달합니다. 컨트롤러는 HTTP 관심사(검증, DTO 매핑)만 담당하고 비즈니스 로직은 서비스로 위임합니다.
 
-필터와 인터셉터는 이번 주차 코드에 아직 없습니다. 다음 주 Spring Security 도입 시 인증 처리를 필터에, 로깅을 인터셉터에 넣을 예정입니다.
+3주차에 Spring Security를 도입하면서 `DispatcherServlet` 앞에 필터 체인이 생겼습니다. `JwtAuthenticationFilter`가 토큰을 검증해 `SecurityContext`에 사용자를 넣고, `AuthorizationFilter`가 경로 규칙으로 요청을 거부하거나 통과시킵니다. 컨트롤러는 `@AuthenticationPrincipal`로 인증된 사용자를 받습니다. 자세한 순서는 「인증·인가」에 정리했습니다. 인터셉터는 아직 쓰지 않습니다.
 
 ### 레이어드 아키텍처 — 의존 방향을 한쪽으로
 
@@ -1054,14 +1070,18 @@ Controller → Service → Repository 단방향 의존입니다. 상위 계층�
 
 ```java
 // ReservationService.java
-public ReservationResponse getById(Long id) {
-    Reservation r = reservationRepository.findByIdWithDetails(id)
-            .orElseThrow(() -> new CustomException(ErrorCode.RESERVATION_NOT_FOUND));
-    return ReservationResponse.from(r);
+public ReservationResponse getById(Long id, Long userId) {
+    List<ReservationDetailRow> rows = reservationRepository.findOwnedDetailRows(id, userId);
+    if (rows.isEmpty()) {
+        throw new CustomException(ErrorCode.RESERVATION_NOT_FOUND);
+    }
+    return ReservationResponse.of(rows, LocalDateTime.now(clock));
 }
 ```
 
-둘째, 엔티티→DTO 변환은 DTO의 정적 팩토리(`ReservationResponse.from`)가 소유합니다. 서비스는 조립 순서만 정하고 매핑 규칙은 DTO 파일 안에 있어, 응답 형태가 바뀌어도 서비스 코드는 변하지 않습니다.
+조회는 상태를 바꾸지 않으므로 엔티티 대신 응답에 필요한 컬럼만 담은 프로젝션(`ReservationDetailRow`)으로 읽습니다.
+
+둘째, 엔티티·프로젝션→DTO 변환은 DTO의 정적 팩토리(`ReservationResponse.from`, `of`)가 소유합니다. 서비스는 조립 순서만 정하고 매핑 규칙은 DTO 파일 안에 있어, 응답 형태가 바뀌어도 서비스 코드는 변하지 않습니다.
 
 셋째, 트랜잭션 경계는 서비스 계층이 책임집니다. 클래스 레벨에 `@Transactional(readOnly = true)`를 두고 쓰기 메서드에만 `@Transactional`을 추가해 기본값을 오버라이드합니다. 읽기와 쓰기의 트랜잭션을 명시적으로 분리함으로써 불필요한 flush와 dirty checking 비용을 막습니다.
 
@@ -1077,7 +1097,7 @@ public ReservationResponse getById(Long id) {
 void 없는_회차면_SCREENING_NOT_FOUND() {
     given(screeningRepository.findByIdWithDetails(1L)).willReturn(Optional.empty());
 
-    assertThatThrownBy(() -> service.create(reqOf(1L, 1L, new int[]{1, 1})))
+    assertThatThrownBy(() -> service.create(1L, reqOf(1L, new int[]{1, 1})))
             .isInstanceOf(CustomException.class)
             .extracting("errorCode").isEqualTo(ErrorCode.SCREENING_NOT_FOUND);
     verify(userRepository, never()).findById(any());
@@ -1104,10 +1124,11 @@ public abstract class ControllerIntegrationTest {
 
     @Autowired protected EntityManager em;
     @Autowired private WebApplicationContext wac;
+    @Autowired private JwtProvider jwtProvider;
 
     @BeforeEach
     void setUpMockMvc() {
-        mockMvc = MockMvcBuilders.webAppContextSetup(wac).build();
+        mockMvc = MockMvcBuilders.webAppContextSetup(wac).apply(springSecurity()).build();
     }
 
     protected <T> T persist(T entity) {
@@ -1119,8 +1140,18 @@ public abstract class ControllerIntegrationTest {
         em.flush();
         em.clear();
     }
+
+    protected RequestPostProcessor bearer(User user) {
+        return request -> {
+            request.addHeader(HttpHeaders.AUTHORIZATION,
+                    "Bearer " + jwtProvider.createAccessToken(user.getId(), user.getRole()));
+            return request;
+        };
+    }
 }
 ```
+
+`apply(springSecurity())`가 있어야 MockMvc 요청이 Security 필터 체인을 탑니다. 빠지면 토큰을 보내도 필터가 풀지 않아, 보호 API가 401이 아니라 principal이 null인 채 컨트롤러까지 가서 500이 됩니다. `bearer(user)`는 요청을 보내는 순간 실제 `JwtProvider`로 토큰을 발급해 헤더에 넣습니다.
 
 `@Transactional`을 베이스 클래스에 붙여두면 테스트가 끝난 뒤 자동으로 롤백됩니다. 각 테스트가 서로의 데이터를 오염시키지 않으므로 독립성을 보장합니다.
 
@@ -1131,17 +1162,393 @@ public abstract class ControllerIntegrationTest {
 ```java
 // ReservationControllerTest.java
 @Test
-void 예매_생성_성공() throws Exception {
-    mockMvc.perform(post("/api/reservations")
+void 좌석_선점_성공() throws Exception {
+    mockMvc.perform(post("/api/reservations").with(bearer(user))
                     .contentType(MediaType.APPLICATION_JSON)
                     .content("""
-                            {"screeningId":%d,"userId":%d,"seats":[{"rowNum":3,"colNum":3},{"rowNum":3,"colNum":4}]}
-                            """.formatted(screening.getId(), user.getId())))
+                            {"screeningId":%d,"seats":[
+                              {"rowNum":1,"colNum":1,"audienceType":"ADULT"},
+                              {"rowNum":1,"colNum":2,"audienceType":"YOUTH"}]}
+                            """.formatted(screening.getId())))
             .andExpect(status().isCreated())
-            .andExpect(jsonPath("$.status").value("RESERVED"))
-            .andExpect(jsonPath("$.seats.length()").value(2))
-            .andExpect(jsonPath("$.totalPrice").value(28000));
+            .andExpect(jsonPath("$.data.userId").value(user.getId()))
+            .andExpect(jsonPath("$.data.status").value("PENDING"))
+            .andExpect(jsonPath("$.data.seats.length()").value(2))
+            .andExpect(jsonPath("$.data.totalPrice").value(25200));
 }
 ```
 
-테스트 데이터 생성은 `TestFixtures` 클래스에 정적 팩토리 메서드로 모아두었습니다. 테스트마다 Builder를 반복 작성하지 않고 `TestFixtures.branch("강남점")` 한 줄로 의미 있는 이름의 픽스처를 만들 수 있어 가독성이 높아졌습니다. 
+테스트 데이터 생성은 `TestFixtures` 클래스에 정적 팩토리 메서드로 모아두었습니다. 테스트마다 Builder를 반복 작성하지 않고 `TestFixtures.branch("강남점")` 한 줄로 의미 있는 이름의 픽스처를 만들 수 있어 가독성이 높아졌습니다.
+
+---
+
+## JWT 인증 흐름 정리
+
+3주차 과제 1번 질문에 대한 정리입니다. 각 항목 끝에 이 프로젝트의 실제 코드 위치를 적었습니다. 경로는 `src/main/java/com/ceos24/cgv/` 아래 기준입니다.
+
+### 1. JWT의 헤더, 페이로드, 서명은 각각 어떤 역할을 하나요?
+
+**핵심** 헤더는 토큰을 어떻게 검증할지, 페이로드는 토큰이 무엇을 주장하는지 담고, 서명은 그 둘이 바뀌지 않았음을 증명합니다.
+
+**설명**
+
+| 구성요소 | 역할 | 들어가는 값 |
+|---|---|---|
+| 헤더 | 토큰을 어떻게 검증해야 하는지 알려주는 정보 | 서명 알고리즘(`alg`), 토큰 종류(`typ`), 키가 여러 개면 서명한 키(`kid`) |
+| 페이로드 | 토큰이 주장하는 내용, 즉 클레임 | 누구의 토큰인지(`sub`), 언제 만료되는지(`exp`), 누가 발급했는지(`iss`) 등 |
+| 서명 | 헤더와 페이로드가 바뀌지 않았다는 증명 | 인코딩된 헤더와 페이로드를 점으로 이은 문자열을 비밀키로 서명한 값 |
+
+서버는 받은 토큰의 앞 두 부분으로 서명을 다시 계산해 비교하고, 한 글자라도 바뀌었으면 불일치로 변조를 잡아냅니다.
+
+헤더와 페이로드는 암호화가 아니라 `Base64URL` 인코딩일 뿐이라 누구나 디코딩해서 읽을 수 있습니다. 서명은 "내용이 바뀌지 않았고 우리 서버가 발급했다"는 무결성만 보장하고 내용을 숨겨주지 않습니다. 그래서 비밀번호나 개인정보를 넣으면 안 됩니다. 내용까지 숨기려면 `JWE`라는 별도 규격을 써야 합니다.
+
+**우리 프로젝트에서는**
+
+`JwtProvider.createAccessToken()`이 발급한 토큰의 앞 두 부분을 디코딩한 예시입니다(테스트 설정으로 발급, 서명 부분 생략).
+
+```
+header   {"alg":"HS256"}
+payload  {"sub":"1","role":"USER","iss":"cgv-api","iat":1790480152,"exp":1790481952}
+```
+
+- `typ`는 선택값이라 JJWT가 넣지 않습니다. 헤더에는 `alg`만 있습니다.
+- 헤더의 `alg`는 토큰을 만든 쪽이 정하는 값이라, 파서가 허용할 알고리즘을 `sig().clear().add(Jwts.SIG.HS256)`로 HS256 하나로 못박았습니다. `alg: none`이나 HS512로 서명한 토큰은 `TOKEN_INVALID`입니다.
+- 서명이 맞지 않는 토큰(payload 변조, 다른 키로 서명)은 `TOKEN_INVALID`입니다. `AuthenticationScenarioTest`의 변조·다른 키 테스트가 확인합니다.
+- 코드: `global/security/jwt/JwtProvider.java`
+
+**참고** [JJWT 공식 문서](https://github.com/jwtk/jjwt) — "What is a JSON Web Token?" 절 · [RFC 8725 3절](https://www.rfc-editor.org/rfc/rfc8725#section-3)
+
+### 2. 액세스 토큰과 리프레시 토큰은 무엇이 다른가요?
+
+**핵심** 액세스 토큰은 API를 호출할 때마다 보내는 수명이 짧은 출입증이고, 리프레시 토큰은 액세스 토큰이 만료됐을 때 새로 받기 위한 수명이 긴 재발급권입니다.
+
+**설명**
+
+| | 액세스 토큰 | 리프레시 토큰 |
+|---|---|---|
+| 용도 | API 호출 시 인증 | 액세스 토큰 재발급 |
+| 수명 | 짧게 (수십 분 ~ 한 시간) | 길게 (수일 ~ 수주) |
+| 보내는 곳 | 모든 보호 API | 재발급 경로만 |
+| 탈취 시 피해 | 금방 만료되어 제한적 | 크다. 계속 새 액세스 토큰을 받을 수 있음 |
+| 저장 위치 (서버 쪽) | 저장하지 않고 서명으로 검증 | 서버에 저장해 두고 폐기할 수 있게 관리 |
+
+액세스 토큰은 매 요청마다 네트워크를 타서 노출 위험이 크므로 수명을 짧게 잡아 탈취되더라도 금방 만료되게 합니다. 리프레시 토큰은 노출 빈도는 낮지만 탈취되면 피해가 크므로 서버에서 폐기할 수 있게 관리하는 것이 보통입니다.
+
+RFC 6749 기준으로 두 토큰 모두 JWT일 필요는 없습니다. 특히 리프레시 토큰은 서버 저장소 조회로 검증하는 경우가 많아 의미 없는 무작위 문자열로 만드는 것도 흔합니다.
+
+**우리 프로젝트에서는**
+
+- 액세스 토큰만 구현했습니다. 리프레시 토큰은 도전 과제로 별도 진행합니다.
+- 유효기간은 `jwt.access-token-validity`(환경변수 `JWT_ACCESS_TOKEN_VALIDITY`, 예: `30m`)로 정하고, 로그인 응답의 `expiresIn`(초)으로 클라이언트에 알립니다.
+- 만료되면 다시 로그인해야 합니다. 이미 발급한 토큰을 만료 전에 무효화할 수단이 없어서, 권한 회수나 탈퇴도 만료 전까지 반영되지 않습니다. 짧은 유효기간이 유일한 완화 수단입니다.
+- 코드: `global/security/jwt/JwtProperties.java`, `domain/user/dto/LoginResponse.java`, `src/main/resources/application.yaml`
+
+**참고** [RFC 6749 1.4절](https://www.rfc-editor.org/rfc/rfc6749#section-1.4) · [RFC 6749 1.5절](https://www.rfc-editor.org/rfc/rfc6749#section-1.5)
+
+### 3. 쿠키와 세션, JWT는 각각 어떤 역할을 하나요?
+
+**핵심** 쿠키는 브라우저의 저장·전달 수단, 세션은 서버 쪽 상태 저장 방식, JWT는 토큰 형식입니다.
+
+**설명**
+
+| | 정체 | 상태를 누가 들고 있나 | 전달 방식 |
+|---|---|---|---|
+| 쿠키 | 브라우저의 저장·전달 수단 | 브라우저 | 서버가 `Set-Cookie`로 내려주면 브라우저가 저장하고, 같은 도메인으로 요청할 때마다 자동으로 붙여 보냄 |
+| 세션 | 서버 쪽 상태 저장 방식 | 서버 저장소 (클라이언트는 세션 ID만 가짐) | 세션 ID를 보통 쿠키로 전달 |
+| JWT | 토큰 형식 | 토큰 자체 | 쿠키에 담을 수도, 헤더에 담을 수도 있음 |
+
+셋은 같은 기준으로 비교할 대상이 아닙니다. 쿠키는 전달 수단이고, 세션은 상태를 두는 방식이며, JWT는 형식입니다. 그래서 "세션 방식과 JWT 방식"의 진짜 차이는 상태를 서버가 들고 있느냐, 토큰이 들고 있느냐입니다. 세션은 서버가 강제 로그아웃시키기 쉽지만 서버가 여러 대면 세션 공유가 필요합니다. JWT는 서버 확장이 쉽지만 이미 발급한 토큰을 만료 전에 무효화하기 어렵습니다.
+
+**우리 프로젝트에서는**
+
+- JWT를 `Authorization: Bearer` 헤더로만 받고 세션과 인증 쿠키는 쓰지 않습니다. `JwtAuthenticationFilter.resolveToken()`이 헤더에서만 토큰을 찾습니다.
+- `SessionCreationPolicy.STATELESS`로 Security가 세션을 만들지 않게 했고, `formLogin`, `httpBasic`, `logout`도 껐습니다. 응답에 `Set-Cookie`가 없고 세션이 생기지 않는 것을 `SecurityConfigTest`가 확인합니다.
+- 헤더 전달이라 CSRF 보호를 껐습니다. 이유는 아래 「인증·인가 — CSRF 비활성화」에 있습니다.
+- 코드: `global/config/SecurityConfig.java`, `global/security/jwt/JwtAuthenticationFilter.java`
+
+**참고** [Spring Security 공식 문서 — Persisting Authentication](https://docs.spring.io/spring-security/reference/servlet/authentication/persistence.html)
+
+### 4. CGV 프로젝트의 액세스 토큰에는 어떤 클레임이 필요한가요?
+
+**핵심** 누구인지(`sub`), 무엇을 할 수 있는지(`role`), 언제까지 유효한지(`iat`, `exp`), 누가 발급했는지(`iss`)만 넣고 개인정보는 넣지 않습니다.
+
+**설명**
+
+| 클레임 | 값 | 넣은 이유 |
+|---|---|---|
+| `sub` | 사용자 ID (문자열) | 누구의 토큰인지 식별. 이메일은 바뀔 수 있고 개인정보라 ID를 씁니다 |
+| `role` | `USER` 또는 `ADMIN` | 관리자 API 인가에 필요. 표준 클레임이 아닌 자체 클레임 |
+| `iat` | 발급 시각 | 발급 시점 추적 |
+| `exp` | 만료 시각 | 발급 시 항상 넣습니다. 없으면 영원히 유효한 토큰이 됩니다 |
+| `iss` | 고정 발급자 문자열 | 우리 서버가 발급한 토큰인지 추가로 확인 |
+
+| 넣지 않은 정보 | 넣지 않은 이유 |
+|---|---|
+| 비밀번호, 이메일, 전화번호, 이름, 생년월일 | 페이로드는 누구나 디코딩해서 읽을 수 있습니다 |
+| `aud` | 아래 문단 참고 |
+
+`aud`는 토큰을 받아야 할 대상을 적는 클레임입니다. 한 발급자가 여러 서비스용 토큰을 발급할 때, 어떤 서비스용으로 받은 토큰을 다른 서비스에 들고 가서 쓰는 것을 막기 위해 씁니다. 이 프로젝트는 발급하는 서버와 토큰을 받는 서버가 같고 받는 서비스가 하나뿐이라, 토큰을 다른 곳에 들고 갈 대상이 없으므로 `aud`를 생략합니다.
+
+단, 이 판단은 서명키가 이 서비스 전용이라는 전제에서만 성립합니다. 같은 키를 다른 서비스나 다른 환경과 함께 쓰면 그쪽에서 발급된 토큰이 여기서도 통과됩니다. 이를 막기 위해 서명키는 외부 설정으로 분리해 서비스와 환경마다 따로 둡니다.
+
+**우리 프로젝트에서는**
+
+- `iss`는 코드 상수 `cgv-api`이고, 파서가 `requireIssuer()`로 다른 발급자를 `TOKEN_INVALID`로 거부합니다.
+- `role`에는 접두사 없는 `Role.name()`을 싣습니다. Spring Security용 `ROLE_` 접두사는 `Role.getAuthority()` 한 곳에서만 붙입니다.
+- `exp`는 발급 시 항상 넣지만, 검증 단계에서 `exp`의 존재를 강제하지는 않습니다. JJWT는 `exp`가 있을 때만 만료를 검사합니다. 현재는 서명키를 가진 쪽이 이 서버뿐이라 `exp` 없는 토큰이 만들어질 경로가 없습니다.
+- `sub`나 `role`을 읽을 수 없으면 `JwtProvider.toAuthUser()`가 `TOKEN_INVALID`로 처리합니다.
+- 서명키는 환경변수 `JWT_SECRET`으로만 주입합니다.
+- 코드: `global/security/jwt/JwtProvider.java`, `domain/user/entity/Role.java`
+
+**참고** [RFC 7519 4.1절](https://www.rfc-editor.org/rfc/rfc7519#section-4.1) · [RFC 8725 3절](https://www.rfc-editor.org/rfc/rfc8725#section-3)
+
+### 5. JWT 검증 결과가 Authentication과 SecurityContext로 어떻게 연결되나요?
+
+**핵심** 필터가 검증한 토큰으로 인증 완료 상태의 `Authentication`을 만들어 `SecurityContext`에 담으면, 그 요청 동안 인가와 컨트롤러가 이를 꺼내 씁니다.
+
+**설명**
+
+```mermaid
+flowchart TD
+    A["요청 (Authorization: Bearer 토큰)"] --> B["JwtAuthenticationFilter.resolveToken()"]
+    B --> C["JwtProvider.parse() — 서명·만료·발급자 검증"]
+    C -->|성공| D["AuthUser(userId, role) 생성"]
+    C -->|실패| X["실패 원인을 request attribute에 기록, 익명으로 통과"]
+    D --> E["UsernamePasswordAuthenticationToken.authenticated()"]
+    E --> F["새 SecurityContext에 담아 SecurityContextHolder.setContext()"]
+    F --> G["AuthorizationFilter — 경로 규칙으로 인가"]
+    X --> G
+    G -->|허용| H["Controller — @AuthenticationPrincipal AuthUser"]
+    G -->|거부| I["ExceptionTranslationFilter → 401 / 403"]
+    H --> J["요청 종료 — SecurityContextHolderFilter.clearContext()"]
+```
+
+1. `JwtAuthenticationFilter`가 `resolveToken()`으로 요청 헤더에서 토큰을 꺼내고, `JwtProvider.parse()`가 서명, 만료, 발급자를 검증합니다.
+2. 검증에 성공한 토큰의 클레임에서 사용자 ID와 권한을 꺼내 사용자 정보 객체(`AuthUser`)를 만듭니다.
+3. 이 객체와 권한 목록으로 `UsernamePasswordAuthenticationToken.authenticated(authUser, null, authUser.getAuthorities())`를 만듭니다. 권한을 함께 넘기면 인증된 상태가 되고, 비밀번호는 필요 없으므로 비워둡니다.
+4. `SecurityContextHolder.createEmptyContext()`로 빈 `SecurityContext`를 새로 만들어 `Authentication`을 담고 `SecurityContextHolder.setContext()`로 설정합니다. `SecurityContextHolder`는 기본적으로 `ThreadLocal`을 쓰므로 이 요청을 처리하는 스레드 안에서만 보입니다.
+5. 이후 `AuthorizationFilter`가 `SecurityContext`의 권한을 보고 접근 허용 여부를 결정하고, 컨트롤러의 `@AuthenticationPrincipal AuthUser`는 여기서 사용자 정보 객체를 꺼내옵니다.
+6. 요청이 끝나면 `SecurityContextHolderFilter`가 `clearContext()`로 `SecurityContext`를 비웁니다. `STATELESS`라 세션도 만들지 않으므로, 다음 요청은 다시 토큰을 보내야 합니다.
+
+**우리 프로젝트에서는**
+
+- 검증에 실패해도 필터는 요청을 막지 않고 실패 원인만 기록합니다. 거부 여부는 경로 규칙이 정합니다(「인증·인가 — 토큰 검증 실패 처리 정책」).
+- 인증 객체는 토큰 클레임만으로 만들고 DB를 다시 조회하지 않습니다. 비밀번호가 필요 없어서 `AuthUser`에는 비밀번호 필드가 없습니다.
+- 6번은 `AuthenticationScenarioTest`의 `정상_인증_요청_직후_토큰_없는_요청은_401`이 확인합니다. 첫 요청 직후 스레드의 `SecurityContext`가 비어 있고, 두 번째 요청은 401입니다.
+- 코드: `global/security/jwt/JwtAuthenticationFilter.java`, `global/security/AuthUser.java`
+
+**참고** [Spring Security 공식 문서 — Persisting Authentication](https://docs.spring.io/spring-security/reference/servlet/authentication/persistence.html)
+
+### 6. 인증과 인가는 어떻게 다르며, 401과 403은 각각 언제 반환하나요?
+
+**핵심** 인증은 "누구인가"를, 인가는 "이 일을 해도 되는가"를 판단하며, 인증에 실패하면 401, 인증은 됐지만 권한이 없으면 403입니다.
+
+**설명**
+
+인증이 먼저이고, 인가는 인증된 사용자를 대상으로 합니다. 401은 인증 실패로, 토큰이 없거나 만료됐거나 변조됐을 때 반환합니다. 상태 이름이 `Unauthorized`라 헷갈리지만 의미는 "인증되지 않음"입니다. 규격상 401에는 `WWW-Authenticate` 헤더를 함께 보내는 것이 원칙입니다. 403은 인증은 됐지만 권한이 없을 때 반환하며, 일반 사용자가 관리자 API를 호출하는 경우입니다. Spring Security에서는 `AuthenticationEntryPoint`가 401을, `AccessDeniedHandler`가 403을 담당합니다.
+
+| 상황 | HTTP 상태 | 처리하는 컴포넌트 | 우리 오류 코드 |
+|---|---|---|---|
+| 로그인 실패 (없는 계정, 틀린 비밀번호) | 401 | `AuthService.login()` → `GlobalExceptionHandler` | `LOGIN_FAILED` |
+| 토큰 없이 보호 API 호출 | 401 | `JwtAuthenticationEntryPoint` | `TOKEN_NOT_EXIST` |
+| 만료된 토큰 | 401 | `JwtAuthenticationEntryPoint` | `TOKEN_EXPIRED` |
+| 변조되거나 다른 키로 서명한 토큰 | 401 | `JwtAuthenticationEntryPoint` | `TOKEN_INVALID` |
+| 일반 사용자가 관리자 API 호출 | 403 | `JwtAccessDeniedHandler` | `ACCESS_DENIED` |
+| 토큰 없이 관리자 API 호출 | 401 | `JwtAuthenticationEntryPoint` | `TOKEN_NOT_EXIST` |
+
+토큰 없이, 즉 익명 사용자로 관리자 API를 호출하면 403이 아니라 401이 나옵니다. Spring Security는 익명 사용자의 접근 거부를 권한 부족이 아니라 "인증이 필요함"으로 보고 `AuthenticationEntryPoint`로 넘기기 때문입니다. 이것이 올바른 동작입니다. 이 분기는 `ExceptionTranslationFilter`가 합니다. `AuthorizationFilter`는 두 경우 모두 같은 거부 예외를 던지고, 현재 인증이 익명인지에 따라 401과 403이 갈립니다.
+
+**우리 프로젝트에서는**
+
+- `JwtAuthenticationEntryPoint`는 필터가 기록한 실패 원인에 따라 `TOKEN_NOT_EXIST`, `TOKEN_EXPIRED`, `TOKEN_INVALID` 중 하나로 응답하고 `WWW-Authenticate: Bearer` 헤더를 붙입니다.
+- 두 핸들러 모두 `SecurityErrorResponder`로 컨트롤러 오류와 같은 `ApiResponse` JSON을 씁니다.
+- 남의 예매에 접근하면 403이 아니라 404 `RESERVATION_NOT_FOUND`입니다. 예매 id가 순차 증가라 403이면 존재 여부가 드러나기 때문입니다.
+- 코드: `global/security/JwtAuthenticationEntryPoint.java`, `global/security/JwtAccessDeniedHandler.java`, `global/security/SecurityErrorResponder.java`, `global/config/SecurityConfig.java`
+
+### 7. (선택) OAuth 2.0과 JWT의 역할 차이
+
+**핵심** OAuth 2.0은 권한 위임 절차이고, JWT는 토큰 형식이라 같은 기준의 비교 대상이 아닙니다.
+
+**설명**
+
+OAuth 2.0은 사용자가 비밀번호를 넘기지 않고 제3자 서비스에게 자기 자원에 대한 접근 권한을 위임하는 절차를 정합니다. "이 서비스가 내 이메일에 접근하도록 허용하시겠습니까?"라는 화면이 그 예입니다. 이 절차의 결과로 액세스 토큰이 발급되지만, 그 토큰의 형식은 OAuth 2.0이 정하지 않습니다. JWT일 수도, 무작위 문자열일 수도 있습니다. 참고로 OAuth 2.0 위에 "사용자가 누구인지"를 확인하는 기능을 얹은 OpenID Connect는 신원 토큰을 반드시 JWT로 발급합니다.
+
+**우리 프로젝트에서는**
+
+이 프로젝트는 OAuth 2.0이 아닙니다. 우리 서버가 직접 아이디와 비밀번호를 받아 검증하고(`AuthService.login()`), 직접 JWT를 발급합니다(`JwtProvider.createAccessToken()`). 소셜 로그인은 도전 과제로 별도 진행합니다. 코드: `domain/user/service/AuthService.java`
+
+**참고** [RFC 6749 1.4절](https://www.rfc-editor.org/rfc/rfc6749#section-1.4)
+
+---
+
+## 인증·인가
+
+3주차에 JWT 기반 인증을 적용했습니다. 인증 정보는 `Authorization: Bearer` 헤더로만 받고, 세션과 인증 쿠키는 쓰지 않습니다. 보호 API는 요청 본문이나 쿼리의 `userId`를 믿지 않고 토큰에서 꺼낸 사용자 id로만 처리합니다.
+
+### 인증 구조 요약
+
+**로그인 흐름**
+
+`AuthenticationManager`는 `DaoAuthenticationProvider`에 `UserDetailsService`와 `PasswordEncoder`를 직접 넣어 조립했습니다. Spring이 빈을 찾아 연결하는 방식도 결과는 같지만, 어떤 구현으로 비밀번호를 비교하는지가 코드에 드러나지 않기 때문입니다.
+
+```
+AuthService.login()                                     ← 우리 코드
+ └ authenticationManager.authenticate(unauthenticated token)
+    └ ProviderManager → DaoAuthenticationProvider       ← Spring
+       ├ LoginUserDetailsService.loadUserByUsername()   ← 우리 구현, Spring이 호출
+       ├ passwordEncoder.matches(raw, hash)             ← Spring이 호출
+       └ 성공 → authenticated token, eraseCredentials()
+ └ jwtProvider.createAccessToken()                      ← 우리 코드
+```
+
+`UserDetails`는 둘로 나눴습니다. 로그인 한 번에만 쓰는 `LoginUserDetails`는 비밀번호 해시를 들고 있다가 인증이 끝나면 지웁니다. 토큰 검증 뒤의 요청은 비밀번호 필드가 아예 없는 `AuthUser(userId, role)`를 principal로 씁니다.
+
+**토큰 Claim 구성**
+
+| Claim | 값 | 비고 |
+|---|---|---|
+| `sub` | userId 문자열 | loginId가 아니라 id를 실어 요청마다 DB를 조회하지 않습니다 |
+| `role` | `USER` \| `ADMIN` | 접두사 없는 도메인 값입니다. `ROLE_`은 `Role.getAuthority()` 한 곳에서만 붙습니다 |
+| `iss` | `cgv-api` | 코드 상수. 다른 발급자의 토큰은 거부합니다 |
+| `iat` / `exp` | 발급·만료 시각 | 유효기간은 `JWT_ACCESS_TOKEN_VALIDITY`로 정합니다 |
+
+서명은 HS256만 허용합니다. 헤더의 `alg`는 토큰을 만든 쪽이 정하는 값이므로, 서버가 허용할 알고리즘을 따로 못박아 두지 않으면 공격자가 고른 알고리즘(`none` 포함)으로 검증하게 됩니다. principal은 토큰 claim만으로 만들고 DB를 다시 보지 않습니다. 그래서 권한 변경이나 탈퇴는 토큰이 만료될 때까지 반영되지 않으며, 짧은 유효기간이 유일한 완화 수단입니다.
+
+**필터 동작 순서**
+
+`JwtAuthenticationFilter`는 빈으로 등록하지 않고 `SecurityConfig`에서 직접 생성해 Security 체인에만 넣었습니다. `@Component`로 두면 Boot가 서블릿 필터로도 자동 등록해 한 요청에서 두 번 실행됩니다. 실제 체인 순서는 다음과 같습니다.
+
+```
+ 1 DisableEncodeUrlFilter
+ 2 WebAsyncManagerIntegrationFilter
+ 3 SecurityContextHolderFilter          요청 끝에 clearContext()
+ 4 HeaderWriterFilter
+ 5 JwtAuthenticationFilter              ← 토큰 검증, 성공 시 SecurityContext에 AuthUser
+ 6 RequestCacheAwareFilter
+ 7 SecurityContextHolderAwareRequestFilter
+ 8 AnonymousAuthenticationFilter        인증이 비어 있으면 익명 토큰
+ 9 SessionManagementFilter
+10 ExceptionTranslationFilter           EntryPoint(401) / AccessDeniedHandler(403) 호출
+11 AuthorizationFilter                  경로 규칙 판정
+```
+
+JWT 필터는 익명 필터보다 앞에 있어야 토큰 인증이 먼저 자리를 잡습니다. 401과 403을 가르는 것은 `ExceptionTranslationFilter`입니다. `AuthorizationFilter`는 두 경우 모두 같은 `AccessDeniedException`을 던지고, 현재 인증이 익명이면 401, 인증된 사용자면 403으로 갈립니다. 신원을 모르면 권한 없음을 판정할 수 없으므로 익명은 401입니다.
+
+### 공개/보호 경로
+
+위에서부터 처음 맞는 규칙 하나만 적용됩니다.
+
+| 메서드 | 경로 | 규칙 |
+|---|---|---|
+| * | `/api/admin/**` | `ADMIN`만 |
+| GET | `/api/branches/likes`, `/api/movies/likes` | 인증 필요 |
+| POST | `/api/auth/signup`, `/api/auth/login` | 공개 |
+| GET | `/api/movies`, `/api/movies/{id}` | 공개 |
+| GET | `/api/branches`, `/api/branches/regions`, `/api/branches/{id}`, `/api/branches/{branchId}/products` | 공개 |
+| GET | `/api/screenings`, `/api/screenings/{id}/seats` | 공개 |
+| * | `/swagger-ui.html`, `/swagger-ui/**`, `/v3/api-docs/**` | 공개 |
+| * | `/error` | 공개 |
+| * | 그 외 (예매·결제·취소·내역, 찜 등록·해제, 매점 구매·내역) | 인증 필요 |
+
+- 찜 목록 규칙을 공개 GET보다 먼저 둔 이유는 `/api/branches/{id}`가 `likes`도 받아들이기 때문입니다. 순서가 바뀌면 찜 목록이 익명에게 열립니다.
+- `hasRole("ADMIN")` 대신 `hasAuthority(Role.ADMIN.getAuthority())`를 썼습니다. `hasRole`은 내부에서 `ROLE_`을 다시 붙이므로 접두사를 만드는 곳이 두 군데가 됩니다.
+- 기본값은 인증 필요입니다. 규칙 없이 새 API가 추가되면 열리지 않고 잠깁니다.
+- `/error`를 여는 이유는 컨테이너 오류 포워드도 인가를 다시 거치기 때문입니다. 막으면 원래 오류가 익명 401로 덮입니다.
+- 소유권은 경로 규칙이 아니라 쿼리 조건(`WHERE r.id = :id AND r.user.id = :userId`)으로 검사합니다. 남의 예매는 로딩되지 않으므로 취소·결제 메서드를 부를 엔티티 자체가 없습니다.
+
+### CSRF 비활성화
+
+이 API는 인증 정보를 `Authorization: Bearer` 헤더로만 받고 세션과 인증 쿠키를 쓰지 않습니다. CSRF는 브라우저가 쿠키 같은 자격 증명을 요청에 자동으로 실어 보내는 점을 악용하는 공격인데, Bearer 헤더는 클라이언트 코드가 명시적으로 넣어야만 전송되고 다른 출처의 페이지는 그 토큰을 읽을 수 없어 위조된 요청에 인증이 실리지 않습니다. 그래서 CSRF 보호를 비활성화했습니다. 인증 수단을 쿠키로 바꾸면 이 전제가 깨지므로 다시 켜야 합니다.
+
+### 토큰 검증 실패 처리 정책
+
+토큰 검증에 실패해도 필터는 요청을 바로 막지 않습니다. 실패 원인만 기록하고 익명 요청으로 넘기며, 거부 여부는 경로 규칙이 정합니다. 보호 API는 기록된 원인에 따라 `TOKEN_EXPIRED` 또는 `TOKEN_INVALID`로 401을 받고, 공개 조회 API는 토큰이 만료되거나 변조됐어도 익명 사용자로 정상 응답합니다. 공개 API는 사용자 정보를 쓰지 않으므로 잘못된 토큰이 권한을 얻는 경로는 없습니다. 대신 클라이언트는 공개 API 응답만으로는 토큰 만료를 알 수 없고, 보호 API를 호출했을 때 알게 됩니다.
+
+필터가 직접 거부 응답을 쓰는 방식은 택하지 않았습니다. 만료 토큰을 가진 클라이언트가 공개 조회 API까지 막히고, 거부 여부를 정하는 곳이 경로 규칙과 필터 두 군데로 갈립니다. 원인은 request attribute로 넘기고, 보호 경로에서 거부될 때 EntryPoint가 그 값을 읽어 응답 코드를 고릅니다.
+
+| 상황 | 흐름 | 응답 |
+|---|---|---|
+| 보호 API, 토큰 없음 | 익명 → `AuthorizationFilter` 거부 → EntryPoint (기록 없음) | 401 `TOKEN_NOT_EXIST` |
+| 보호 API, 만료 토큰 | 필터가 `TOKEN_EXPIRED` 기록 → 익명 → EntryPoint | 401 `TOKEN_EXPIRED` |
+| 보호 API, 변조·다른 키·형식 오류 | 필터가 `TOKEN_INVALID` 기록 → 익명 → EntryPoint | 401 `TOKEN_INVALID` |
+| 공개 API, 만료·변조 토큰 | 기록만 남고 공개 규칙 통과 | 200 |
+| 관리자 경로, USER 토큰 | 인증됨 → `AuthorizationFilter` 거부 → AccessDeniedHandler | 403 `ACCESS_DENIED` |
+
+- 만료만 따로 알립니다. 클라이언트가 재로그인으로 복구할 수 있는 유일한 경우입니다. 변조와 형식 오류를 나눠 알려주면 공격자에게 "파싱까지는 통과했다"는 단서가 됩니다.
+- JJWT는 서명을 먼저 검증하고 그다음 만료를 봅니다. 그래서 만료됐으면서 변조된 토큰은 `TOKEN_INVALID`입니다. "만료" 판정은 우리가 발급한 것이 확실한 토큰에만 붙습니다.
+- 필터 단계의 실패는 `DispatcherServlet`에 닿기 전이라 `@RestControllerAdvice`가 잡지 못합니다. `SecurityErrorResponder`가 컨트롤러 오류와 같은 `ApiResponse` 형식으로 응답을 직접 씁니다. 401에는 `WWW-Authenticate: Bearer` 헤더를 붙입니다.
+
+### 오류 코드
+
+모든 실패 응답은 같은 형식입니다.
+
+```json
+{ "success": false, "code": "TOKEN_EXPIRED", "message": "만료된 토큰입니다." }
+```
+
+| 상황 | HTTP 상태 | 코드 |
+|---|---|---|
+| 로그인 실패 (없는 계정, 틀린 비밀번호 모두) | 401 | `LOGIN_FAILED` |
+| 보호 API에 토큰 없음 | 401 | `TOKEN_NOT_EXIST` |
+| 만료된 토큰 | 401 | `TOKEN_EXPIRED` |
+| 변조된 토큰, 다른 키로 서명한 토큰, 형식 오류, 허용하지 않은 알고리즘, 다른 발급자 | 401 | `TOKEN_INVALID` |
+| 인증은 됐지만 권한 부족 (일반 사용자의 관리자 API 호출) | 403 | `ACCESS_DENIED` |
+| 남의 예매에 접근 (없는 예매와 응답이 같음) | 404 | `RESERVATION_NOT_FOUND` |
+| 유효한 토큰이지만 탈퇴 등으로 사용자가 없음 | 404 | `USER_NOT_FOUND` |
+| 이미 사용 중인 아이디로 가입 | 409 | `DUPLICATE_LOGIN_ID` |
+| 가입·로그인 요청 형식 오류 | 400 | `INVALID_INPUT_VALUE` |
+
+- 로그인 실패는 계정 유무와 관계없이 본문까지 같습니다. 응답이 다르면 아이디 목록을 대입해 가입된 계정만 추려낼 수 있습니다. 계정이 없을 때도 더미 해시로 비교를 돌려 응답 시간 차이를 줄입니다.
+- 남의 예매를 403이 아니라 404로 숨기는 이유는 예매 id가 순차 증가라서입니다. 403이면 id를 차례로 넣어 어떤 예매가 존재하는지, 예매량이 얼마인지 알아낼 수 있습니다.
+
+### 테스트 결과
+
+`@SpringBootTest` + `springSecurity()`를 적용한 MockMvc로 실제 필터 체인을 태웠습니다. `@WithMockUser` 같은 인증 우회는 쓰지 않았습니다. 정상 토큰은 로그인 API 응답에서 받고, 실패 토큰은 실제 `JwtProvider`에 설정만 바꿔 넣어 만듭니다.
+
+- 만료: 같은 키, 발급 시각을 유효기간보다 1분 더 과거로 둔 `Clock`
+- 변조: 로그인 토큰의 payload만 `role: USER → ADMIN`으로 바꾸고 서명은 그대로
+- 다른 키: claim은 같고 서명키만 다른 `JwtProvider`
+
+변조 토큰은 **내용이 바뀌었는지(무결성)** 를, 다른 키 토큰은 **우리가 서명했는지(발급 주체)** 를 검증합니다.
+
+**AuthenticationScenarioTest** — 로그인·토큰 검증
+
+| 상황 | 기대 결과 | 실제 결과 | 테스트 메서드명 |
+|---|---|---|---|
+| 올바른 로그인 정보 | Access Token 발급 | 200, `tokenType: Bearer`, 토큰의 sub·role이 가입한 사용자와 일치 | `올바른_로그인_정보면_Access_Token을_발급한다` |
+| 없는 계정 / 잘못된 비밀번호 | 동일한 로그인 실패 응답, 토큰 미발급 | 둘 다 401 `LOGIN_FAILED`, 본문 문자열까지 동일, `data` 없음 | `없는_계정과_틀린_비밀번호의_로그인_실패_응답이_완전히_같다` |
+| 토큰 없이 공개 API 호출 | 정상 처리 | 200 | `토큰_없이_공개_API를_호출하면_정상_처리된다` |
+| 정상 토큰으로 보호된 API 호출 | 정상 처리 | 200 | `로그인으로_받은_토큰으로_보호된_API를_호출하면_정상_처리된다` |
+| 토큰 없이 보호된 API 호출 | 401 + 공통 JSON | 401 `TOKEN_NOT_EXIST`, `WWW-Authenticate: Bearer`, `application/json;charset=UTF-8` | `토큰_없이_보호된_API를_호출하면_401_TOKEN_NOT_EXIST` |
+| 만료된 토큰으로 보호된 API 호출 | 401 + 만료 오류 코드 | 401 `TOKEN_EXPIRED` | `만료된_토큰이면_401_TOKEN_EXPIRED` |
+| 변조된 토큰으로 보호된 API 호출 | 401 + 유효하지 않은 토큰 오류 코드 | 관리자 API에 401 `TOKEN_INVALID` (200·403 아님) | `payload를_변조한_토큰이면_401_TOKEN_INVALID` |
+| 다른 키로 서명한 토큰 | 401 | 401 `TOKEN_INVALID` | `다른_키로_서명한_토큰이면_401_TOKEN_INVALID` |
+| 정상 인증 요청 직후, 토큰 없이 보호된 API 호출 | 401 (이전 요청의 인증이 유지되지 않음) | 첫 요청 200 → 스레드의 SecurityContext 비어 있음 → 쿠키·세션 없음 → 두 번째 요청 401 `TOKEN_NOT_EXIST` | `정상_인증_요청_직후_토큰_없는_요청은_401` |
+| 변조된 토큰으로 공개 API 호출 | 정상 처리 | 200 (익명) | `공개_API는_변조_토큰을_보내도_익명으로_정상_처리된다` |
+
+**AuthorizationScenarioTest** — 접근 제어
+
+| 상황 | 기대 결과 | 실제 결과 | 테스트 메서드명 |
+|---|---|---|---|
+| 일반 사용자로 관리자 API 호출 | 403 + 공통 JSON | 403 `ACCESS_DENIED` | `일반_사용자가_관리자_API를_호출하면_403_ACCESS_DENIED` |
+| 관리자로 관리자 API 호출 | 정상 처리 | 200, `role: ADMIN` | `관리자가_관리자_API를_호출하면_정상_처리된다` |
+| 사용자 A의 토큰으로 B의 예매 취소 | 거부 + B의 예매 불변 | 404 `RESERVATION_NOT_FOUND`, DB 재조회 시 `RESERVED`·좌석 점유 유지, 이후 B 본인은 취소 성공 | `다른_사용자의_예매를_취소하면_거부되고_DB의_예매_상태는_그대로다` |
+| 회원가입 본문에 `"role": "ADMIN"` | USER로 생성 | 201, DB role `USER`, 토큰 role `USER`, 관리자 API 403 | `회원가입_본문에_role_ADMIN을_넣어도_USER로_생성된다` |
+
+`./gradlew test` 전체 230개가 통과했습니다.
+
+### 서명키·관리자 비밀번호 로컬 설정
+
+비밀값은 Git에 올리지 않습니다. `application.yaml`에는 `${...}` 자리표시자만 있고 기본값이 없어서, 값을 넣지 않으면 기동이 실패합니다. 프로젝트 루트의 `.env`(`.gitignore`에 등록됨)에 아래 변수를 적고, 실행 환경(IDE 실행 구성 등)이 이 파일을 환경변수로 읽도록 설정합니다.
+
+| 변수 | 형식 | 비고 |
+|---|---|---|
+| `JWT_SECRET` | Base64 문자열, 디코딩 후 256비트 이상 | `openssl rand -base64 32`로 생성합니다. 짧으면 `WeakKeyException`으로 기동이 실패합니다 |
+| `JWT_ACCESS_TOKEN_VALIDITY` | Duration (예: `30m`) | Refresh Token이 없으므로 짧게 둡니다 |
+| `SPRING_PROFILES_ACTIVE` | `local` | 관리자 계정 초기화는 local 프로필에서만 동작합니다 |
+| `ADMIN_LOGIN_ID` | 가입 규칙과 같은 영문 소문자·숫자 4~20자 권장 | local에서 비어 있으면 기동이 실패합니다 |
+| `ADMIN_PASSWORD` | 평문 | 기동 시 BCrypt로 해시해 저장합니다 |
+
+- 관리자 계정은 data.sql이 아니라 `ApplicationRunner`가 만듭니다. data.sql에는 해시를 박아야 하는데, 해시도 오프라인 대입 공격의 대상입니다. 이미 있으면 건너뜁니다.
+- 운영에서 부팅 부수효과로 관리자가 생기면 안 되므로 `@Profile("local")`로 제한했습니다.
+- 테스트는 `src/test/resources/application.yaml`의 테스트 전용 더미 키를 쓰므로 별도 설정 없이 실행됩니다.

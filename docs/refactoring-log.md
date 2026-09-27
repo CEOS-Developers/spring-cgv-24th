@@ -1600,3 +1600,109 @@ springdoc은 `@AuthenticationPrincipal` 파라미터를 문서에서 뺀다. `/v
 ### 확인
 
 `./gradlew test` 216개 통과(기존 193 + 신규 23). 엔티티 변경은 `User.createAdmin()` 하나다.
+
+---
+
+## 3주차 세션 4: 인증·인가 시나리오 테스트 / README
+
+과제의 인증·인가 시나리오 표를 1:1로 옮긴 통합 테스트와 README 인증·인가 섹션을 만들었다. 운영 코드는 바꾸지 않았다.
+
+### 결정 1 — 정상 토큰은 로그인 API 응답에서 받는다
+
+기존 컨트롤러 테스트의 `bearer(User)`는 `JwtProvider`를 직접 부른다. 시나리오 테스트는 `AuthScenarioTest`(신규 추상 클래스)의
+`signup()` → `login()`으로 API를 거쳐 토큰을 받는다. 비밀번호 비교부터 토큰 생성까지 운영 경로를 한 번에 탄다.
+관리자만 회원가입으로 만들 수 없어 `User.createAdmin` + `PasswordEncoder`로 저장하고, 로그인은 API로 한다.
+
+`@WithMockUser`는 쓰지 않았다. SecurityContext를 미리 채워 헤더 파싱·서명·만료·claim 변환·EntryPoint를 전부 건너뛴다.
+이번 시나리오는 전부 그 구간에서 일어난다. principal도 `User`라 `@AuthenticationPrincipal AuthUser`가 null이 된다.
+
+### 결정 2 — 실패 토큰은 실제 `JwtProvider`에 설정만 바꿔 발급한다
+
+| 토큰 | 만드는 법 | 검증하는 것 |
+|---|---|---|
+| 만료 | 같은 `JwtProperties` + 발급 시각을 유효기간보다 1분 더 과거로 둔 `Clock` | 서명은 맞고 시간만 지난 토큰 → `TOKEN_EXPIRED` |
+| 변조 | 로그인 토큰 payload의 `role`을 USER→ADMIN으로 바꾸고 헤더·서명 유지 | 무결성. 내용이 바뀌면 서명이 맞지 않는다 |
+| 다른 키 | secret만 다른 `JwtProperties`로 만든 `JwtProvider` | 발급 주체. 내용과 서명이 서로 맞아도 우리 키가 아니면 거부 |
+
+- `Jwts.builder()`로 직접 조립하지 않았다. claim 이름·iss·알고리즘을 테스트가 따로 알아야 하고, 차이가 한 가지(시각 또는 키)로 좁혀지지 않는다
+- 변조 토큰은 `/api/admin/check`로 보낸다. 200(위조 권한 통과), 403(서명 무시하고 claim만 읽음), 401 `TOKEN_INVALID`(정답)가 갈린다
+- 서명 마지막 글자 바꾸기는 base64url 패딩 비트 때문에 같은 바이트로 디코딩될 수 있어 버렸다
+
+### 결정 3 — 인증 비유지는 ThreadLocal과 쿠키·세션 두 경로를 본다
+
+MockMvc는 모든 요청을 테스트 스레드 하나에서 처리하고, 브라우저와 달리 쿠키를 자동으로 보내지 않는다.
+
+1. 첫 요청(정상 토큰) 200 직후 `SecurityContextHolder`가 비어 있는지 본다
+2. 첫 응답의 쿠키·세션을 직접 실어 두 번째 요청을 보내 401 `TOKEN_NOT_EXIST`
+3. 그 뒤에 쿠키·세션이 없었음을 단언한다. 앞에 두면 실패 시 2의 행위 검증이 실행되지 않는다(계획에서 순서만 바꿨다)
+
+임시로 JWT 필터를 `SecurityContextHolderFilter` **앞에** 두고 돌려 봤다. 인증이 새는 게 아니라 `setDeferredContext()`가
+덮어써 **사라진다**. 첫 요청의 200 단언에서 실패했다. 1번 단언은 컨텍스트를 세팅하는 곳이 `clearContext()`의
+try/finally 밖에 있는 경우(스레드풀 재사용 시 다음 사용자에게 인증이 샘)를 겨냥한다.
+
+### 결정 4 — 소유권 테스트에 대조군을 둔다
+
+B가 자기 토큰으로 선점·결제한 예매를 A의 토큰으로 취소 → 404 `RESERVATION_NOT_FOUND` → `flushAndClear()` 후
+`findById`로 `RESERVED`, `cancelledAt` null, 좌석 2개 `isOccupied()`를 확인한다. 취소해도 좌석 행이 남는 구조라
+좌석 수가 아니라 점유 상태를 본다. 마지막에 B 본인이 취소해 200을 받는다. 이게 없으면 "모든 취소를 404로 거부하는"
+버그에서도 테스트가 통과한다. 회차는 실제 시각 기준 내일로 두고 `Clock`을 목으로 바꾸지 않았다(컨텍스트 캐시 유지).
+
+권한 상승 방지는 DB role USER → 로그인 토큰의 role claim USER → 관리자 API 403까지 이어서 본다.
+
+### MockMvc가 필터 체인을 타는지 확인
+
+`springSecurity()` 없는 MockMvc로 토큰 없이 `GET /api/reservations`를 보내면 401이 아니라 **500**이다
+(principal null → 컨트롤러 NPE). 임시 테스트로 확인하고 지웠다. `TOKEN_*` 코드, `WWW-Authenticate: Bearer`,
+`application/json;charset=UTF-8`은 우리 EntryPoint에서만 나오므로 그 단언 자체가 체인을 탔다는 증거다.
+
+### 테스트
+
+| 클래스 | 수 | 내용 |
+|---|---|---|
+| `AuthenticationScenarioTest` | 10 | 로그인 성공, 로그인 실패 응답 동일(필드별 + 본문 문자열), 공개 API 토큰 없음, 정상 토큰 보호 API, 토큰 없음 401, 만료, 변조, 다른 키, 인증 비유지, 공개 API + 변조 토큰 200 |
+| `AuthorizationScenarioTest` | 4 | USER → 관리자 API 403, ADMIN → 200, 남의 예매 취소 거부 + DB 불변 + 주인 취소 성공, 가입 본문 `role: ADMIN` 무시 |
+
+모든 테스트에 `@DisplayName`을 달았다. 메서드명도 기존 관례대로 한글이고 README 표에 그대로 옮겼다.
+기존 `SecurityConfigTest`·`AuthControllerTest`·`AdminControllerTest`와 겹치는 검증은 지우지 않았다. 시나리오 테스트는
+토큰 출처(로그인 API)와 변조 방식(payload만 변경)이 다르다.
+
+### README
+
+`## 인증·인가`를 README 맨 끝("배운점 및 느낀점" 뒤)에 추가했다. 인증 구조(로그인 흐름·Claim·필터 순서), 공개/보호 경로,
+CSRF, 토큰 검증 실패 정책, 오류 코드, 테스트 결과, 로컬 비밀값 설정 방법. 세션 2의 README용 문장을 가져오면서
+README 본문 문체(`~습니다`)로 바꿨다. 로컬 설정은 변수 이름과 형식만 쓰고 값은 쓰지 않았다.
+
+기존 README에서 현재 코드와 어긋난 부분도 같은 커밋에서 고쳤다.
+
+| 위치 | 전 | 후 |
+|---|---|---|
+| ERD `users`, user 테이블 정의 | email·phone_number·role 없음 | 세 컬럼 추가, `Role` 설명(가입은 USER 고정, ADMIN은 `createAdmin`만) |
+| 배운점 — ORM | `cancel()`이 `seats.clear()`로 좌석 행 삭제 | `cancel(now)` + `releaseSeats()`, 좌석 행 유지 |
+| 배운점 — N+1 | `findByIdWithDetails(id)` | `findOwnedWithDetails(id, userId)`, 소유권 조건 설명 |
+| 배운점 — REST | 본문 `userId`, DTO 직접 반환, 취소 204 | `@AuthenticationPrincipal`, `ApiResponse`, 취소 200 |
+| 배운점 — 예외 처리 | `ErrorResponse`, 3단계 | `ApiResponse.error`, 필터 단계 실패는 `SecurityErrorResponder` |
+| 배운점 — MVC 흐름 | "필터와 인터셉터는 아직 없다" | Security 필터 체인 요약 |
+| 배운점 — 레이어드 | 엔티티로 단건 조회 | 소유자 조건 프로젝션 조회 |
+| 배운점 — 테스트 예시 | `springSecurity()` 없는 기반 클래스, 본문 `userId` | 현재 기반 클래스(`springSecurity()`, `bearer`)와 `좌석_선점_성공` |
+
+### README — JWT 인증 흐름 정리 (과제 1번)
+
+`## JWT 인증 흐름 정리`를 `## 인증·인가` 바로 앞에 추가했다. 과제 질문 7개를 소제목으로 두고 핵심 → 설명 →
+우리 프로젝트에서는(클래스·경로·오류 코드) → 참고(RFC·공식 문서) 순서로 썼다. 개념 설명은 작성자 초안을 따랐고,
+초안과 달라진 곳은 다음과 같다.
+
+| 초안 | 반영 | 근거 |
+|---|---|---|
+| 5번 `CustomUserDetails` | `AuthUser` | 해당 클래스 없음(세션 2 결정 3) |
+| 4번 `exp` "필수" | "발급 시 항상 넣는다. 검증에서 존재를 강제하지는 않는다" | 같은 키로 서명한 `exp` 없는 토큰을 `parse()`가 통과시키는 것을 임시 테스트로 확인했다. JJWT는 `exp`가 있을 때만 만료를 검사한다. 키를 가진 쪽이 이 서버뿐이라 현재 위험은 없다 |
+| 5번 "`STATELESS`라 요청이 끝나면 비워진다" | "`SecurityContextHolderFilter`가 `clearContext()`로 비운다. `STATELESS`라 세션도 만들지 않는다" | 비우는 주체는 필터다. `STATELESS`는 세션 생성을 막는 설정이다 |
+| 1번 헤더에 `alg`, `typ` | 일반 설명은 유지, 우리 토큰 예시는 `{"alg":"HS256"}`만 | JJWT가 `typ`를 넣지 않는 것을 실측했다 |
+
+디코딩 예시는 테스트 설정의 더미 키로 발급한 토큰에서 헤더와 페이로드만 옮겼고, 서명과 키는 싣지 않았다.
+확인에 쓴 임시 테스트는 지웠다.
+
+README 테이블 정의의 "회원" 표기는 유지한다. 코드 식별자는 `User`로 통일하되, 문서의 한글 명칭은 "회원"을 써도 된다.
+
+### 확인
+
+`./gradlew test` 230개 통과(기존 216 + 신규 14).
