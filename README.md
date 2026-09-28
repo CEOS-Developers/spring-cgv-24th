@@ -29,6 +29,96 @@ CEOS 24기 백엔드 스터디 - CGV 클론 코딩 프로젝트
 - 예매, 주문, 상영 서비스에서 응답 DTO를 완성하고 OSIV를 껐습니다. 재시도할 때 이전 트랜잭션의 좌석 상태를 재사용하지 않도록 했습니다.
 - 보안 오류도 공통 `ErrorResponse`를 사용합니다. 일반 요청 오류가 401로 바뀌지 않도록 오류 디스패치를 보완하고, Swagger에 Bearer 인증과 오류 응답을 명시했습니다.
 
+## JWT 인증 흐름
+
+### JWT 구조와 토큰의 역할
+
+- Header에는 서명 알고리즘 같은 메타데이터가 들어갑니다. 현재는 `HS256`을 사용합니다.
+- Payload에는 회원 ID, 역할, 만료 시각 같은 Claim이 들어갑니다.
+- Signature는 Header와 Payload를 서명한 값입니다. 서버의 키로 서명을 검증해 내용이 바뀌었는지 확인합니다.
+
+현재 사용하는 서명된 JWT의 Header와 Payload는 Base64URL로 인코딩되어 있어 내용을 읽을 수 있습니다. 서명이 내용을 암호화하는 것은 아니므로 비밀번호 같은 민감한 정보는 넣지 않았습니다. [JWT 표준](https://www.rfc-editor.org/rfc/rfc7519.html)
+
+Access Token은 일반 API 요청의 인증에 사용하고, Refresh Token은 새 Access Token을 받는 데 사용합니다. 두 토큰의 구분은 용도에 따른 것이며, 반드시 JWT여야 하는 것은 아닙니다. 현재 프로젝트에서는 둘 다 JWT로 만들고 `token_type`으로 용도를 구분합니다.
+
+쿠키는 브라우저에 값을 저장하고 조건에 맞는 요청에 자동으로 첨부하는 수단입니다. 세션은 서버가 로그인 상태를 보관하는 방식이며, 보통 쿠키로 세션 ID를 전달합니다. JWT는 서명된 정보를 전달하는 토큰 형식이고, 이번 프로젝트는 `Authorization: Bearer <access-token>` 헤더로 전달합니다.
+
+### Access Token에 담은 Claim
+
+| Claim | 사용 목적 |
+| --- | --- |
+| `sub` | 내부 회원 ID로 요청한 사용자를 식별 |
+| `role` | `USER`, `ADMIN` 역할 구분 |
+| `token_type` | `ACCESS`인지 확인해 Refresh Token의 일반 API 사용 차단 |
+| `iss` | 발급자가 `spring-cgv-24th`인지 확인 |
+| `iat` | 토큰 발급 시각 |
+| `exp` | 토큰 만료 시각 |
+
+`JwtService`는 서명, 허용 알고리즘, 발급자, 만료 시각, 토큰 용도와 필수 Claim을 확인합니다. 검증이 끝난 뒤에만 회원 ID와 역할을 사용하며, 서명키는 `CGV_JWT_SECRET_BASE64` 환경변수로 전달합니다.
+
+### 로그인과 JWT 인증 처리
+
+```text
+로그인 요청
+→ AuthenticationManager
+→ DaoAuthenticationProvider
+→ CgvUserDetailsService에서 회원 조회
+→ PasswordEncoder로 저장된 해시와 비밀번호 비교
+→ 인증 성공 후 토큰 발급
+```
+
+회원가입 시 비밀번호는 `PasswordEncoder`로 해시해서 저장합니다. 없는 계정과 틀린 비밀번호는 모두 `401 LOGIN_FAILED`로 응답하고 토큰을 발급하지 않습니다. 로그인용 `CgvUserDetails`에는 비밀번호 해시가 있지만, JWT 인증에 사용하는 `AuthenticatedUser`에는 회원 ID와 역할만 담습니다.
+
+```text
+보호 API 요청
+→ JwtAuthenticationFilter에서 Bearer Token 추출
+→ JwtService에서 토큰 검증
+→ AuthenticatedUser와 Authentication 생성
+→ 새 SecurityContext에 인증 객체 설정
+→ 인가 처리 후 컨트롤러 호출
+```
+
+필터는 `OncePerRequestFilter`를 상속하고, 인가 처리보다 앞에서 실행됩니다. `SecurityConfig`에서 직접 생성해 Security 체인에만 등록하므로 서블릿 필터로 중복 등록하지 않았습니다.
+
+### 인증, 인가와 오류 처리
+
+인증은 요청한 사용자가 누구인지 확인하는 것이고, 인가는 그 사용자가 해당 작업을 할 수 있는지 확인하는 것입니다.
+
+- 토큰이 없으면 인증 객체를 만들지 않고 다음 필터로 넘깁니다. 보호 API라면 `401 TOKEN_NOT_EXIST`를 반환합니다.
+- 보호 API에 만료되거나 잘못된 토큰이 들어오면 필터에서 `AuthenticationEntryPoint`를 호출하고 요청을 종료합니다. 각각 `TOKEN_EXPIRED`, `TOKEN_INVALID`로 구분합니다.
+- 공개 조회는 JWT 검증을 생략합니다. 만료되거나 잘못된 토큰을 함께 보내도 공개 데이터는 조회할 수 있습니다.
+- `@AuthenticationPrincipal`로 받은 회원 ID를 사용하고, 예매 조회와 취소는 소유권도 확인합니다. 관리자도 다른 회원의 예매를 취소할 수 없습니다.
+- 역할을 Authentication에 넣을 때 `ROLE_`를 붙이고, 관리자 API에서는 `hasRole("ADMIN")`으로 검사합니다. 일반 회원가입은 `USER`로 고정합니다.
+
+Security 체인의 인증 실패는 `AuthenticationEntryPoint`, 권한 부족은 `AccessDeniedHandler`가 처리합니다. 필터 계층에서는 `@RestControllerAdvice`에 맡기지 않고 같은 `ErrorResponse`를 직렬화해 `status`, `code`, `message` 형식으로 반환합니다.
+
+### STATELESS와 CSRF 설정
+
+`SessionCreationPolicy.STATELESS`로 인증 정보를 세션에 저장하지 않고 매 요청의 JWT를 확인합니다. 사용하지 않는 `formLogin`, `httpBasic`도 비활성화했습니다.
+
+이번 API는 세션이나 인증 쿠키를 사용하지 않고, 클라이언트가 Bearer 헤더에 토큰을 직접 넣습니다. 브라우저가 인증 정보를 자동 첨부하는 쿠키 인증을 사용하지 않는 전제에서 CSRF 보호를 껐습니다. 이후 인증 쿠키를 도입한다면 CSRF 설정도 다시 검토해야 합니다. [Spring Security CSRF 문서](https://docs.spring.io/spring-security/reference/servlet/exploits/csrf.html)
+
+### 인증 요청별 처리 결과
+
+H2 기반 자동화 테스트로 아래 결과를 확인했습니다. Payload를 변경한 토큰은 임시 H2 서버에 실제 HTTP 요청을 보내서도 확인했습니다.
+
+| 요청 상황 | 확인한 결과 |
+| --- | --- |
+| 올바른 로그인 정보 | 200, Access Token 발급 |
+| 없는 계정, 잘못된 비밀번호 | 모두 401 `LOGIN_FAILED`, 토큰 미발급 |
+| 토큰 없이 공개 영화 조회 | 200 |
+| 정상 토큰으로 영화 찜 | 200 |
+| 토큰 없이 보호 API 호출 | 401 `TOKEN_NOT_EXIST`, 공통 JSON |
+| 만료된 토큰으로 보호 API 호출 | 401 `TOKEN_EXPIRED` |
+| 변조되거나 형식이 잘못된 토큰 | 401 `TOKEN_INVALID` |
+| 다른 키로 서명한 토큰 | 401 `TOKEN_INVALID` |
+| 일반 사용자로 관리자 API 호출 | 403 `ACCESS_DENIED`, 공통 JSON |
+| 관리자로 영화 등록, 비공개 전환 | 각각 201, 204 |
+| 정상 인증 요청 직후 토큰 없이 보호 API 호출 | 401, 이전 요청의 인증 정보가 남지 않음 |
+| 다른 회원의 예매 조회, 취소 | 403 `ACCESS_DENIED`, 예매 상태 유지 |
+
+관련 테스트: [로그인](src/test/java/com/ceos/cgv/domain/auth/controller/AuthLoginIntegrationTest.java), [JWT 인증 흐름](src/test/java/com/ceos/cgv/global/security/jwt/SecurityFlowIntegrationTest.java), [관리자 권한](src/test/java/com/ceos/cgv/domain/movie/controller/MovieAdminAccessIntegrationTest.java), [예매 소유권](src/test/java/com/ceos/cgv/domain/reservation/controller/ReservationControllerIntegrationTest.java)
+
 ## ERD
 
 ![3주차 CGV ERD](docs/cgv-erd-week3.png)
