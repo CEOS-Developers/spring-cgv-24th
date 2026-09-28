@@ -76,6 +76,8 @@ public enum ErrorCode {
 
     SCREENING_TIME_CONFLICT(409, "S002", "해당 상영관에 시간이 겹치는 상영 일정이 존재합니다."),
 
+    LOGIN_FAILED(401, "AUTH001", "아이디 또는 비밀번호가 올바르지 않습니다."),
+
     USER_NOT_FOUND(404, "U001", "존재하지 않는 사용자입니다."),
 
     USER_ALREADY_EXISTS(409, "U002", "이미 가입된 사용자입니다."),

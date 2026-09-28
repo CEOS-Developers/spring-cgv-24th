@@ -73,8 +73,10 @@ class JwtTokenProviderTest {
                 "test-user",
                 "ROLE_USER"
         );
-        char replacement = token.charAt(token.length() - 1) == 'a' ? 'b' : 'a';
-        String tamperedToken = token.substring(0, token.length() - 1) + replacement;
+        String[] tokenParts = token.split("\\.");
+        char replacement = tokenParts[2].charAt(0) == 'a' ? 'b' : 'a';
+        tokenParts[2] = replacement + tokenParts[2].substring(1);
+        String tamperedToken = String.join(".", tokenParts);
 
         assertThrows(
                 JwtTokenInvalidException.class,
