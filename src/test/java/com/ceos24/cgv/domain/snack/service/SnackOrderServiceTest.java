@@ -80,7 +80,7 @@ class SnackOrderServiceTest {
                 .willReturn(Optional.of(user));
         given(theaterRepository.findById(10L))
                 .willReturn(Optional.of(theater));
-        given(snackStockRepository.findAllForPurchase(
+        given(snackStockRepository.findAllByTheaterIdAndSnackItemIdsForUpdate(
                 10L,
                 List.of(100L)
         )).willReturn(List.of(stock));
@@ -139,7 +139,7 @@ class SnackOrderServiceTest {
                 .willReturn(Optional.of(user));
         given(theaterRepository.findById(10L))
                 .willReturn(Optional.of(theater));
-        given(snackStockRepository.findAllForPurchase(
+        given(snackStockRepository.findAllByTheaterIdAndSnackItemIdsForUpdate(
                 10L,
                 List.of(100L)
         )).willReturn(List.of(stock));
