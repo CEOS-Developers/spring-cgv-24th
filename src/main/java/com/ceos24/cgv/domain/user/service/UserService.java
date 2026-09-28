@@ -26,7 +26,7 @@ public class UserService implements UserDetailsService {
     private final PasswordEncoder passwordEncoder;
 
     // 자체 로그인 회원 가입(존재 여부)
-    private Boolean existUser(UserRequest request) {
+    public Boolean existUser(UserRequest request) {
         return userRepository.existsByUsername(request.username());
     }
 
@@ -39,7 +39,9 @@ public class UserService implements UserDetailsService {
 
         UserEntity userEntity = UserEntity.createLocalUser(
                 request.username(),
-                passwordEncoder.encode(request.password())
+                passwordEncoder.encode(request.password()),
+                request.nickname()
+
         );
 
         return userRepository.save(userEntity).getId();

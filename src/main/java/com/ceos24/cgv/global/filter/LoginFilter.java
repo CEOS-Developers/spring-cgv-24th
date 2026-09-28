@@ -63,7 +63,9 @@ public class LoginFilter extends AbstractAuthenticationProcessingFilter {
             });
 
         } catch (IOException e) {
-            throw new RuntimeException(e);
+            throw new AuthenticationServiceException(
+                    "로그인 요청 형식이 올바르지 않습니다.",
+                    e);
         }
 
         String username = loginMap.get(usernameParameter);

@@ -38,11 +38,13 @@ public class UserEntity {
 
     public static UserEntity createLocalUser(
             String username,
-            String encodedPassword
+            String encodedPassword,
+            String nickname
     ) {
         UserEntity userEntity = new UserEntity();
         userEntity.username = username;
         userEntity.password = encodedPassword;
+        userEntity.nickname = nickname;
         userEntity.isLock = false;
         userEntity.isSocial = false;
         userEntity.socialProviderType = null;
