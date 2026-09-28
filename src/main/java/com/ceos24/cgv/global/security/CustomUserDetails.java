@@ -1,6 +1,7 @@
 package com.ceos24.cgv.global.security;
 
 import com.ceos24.cgv.domain.user.entity.User;
+import com.ceos24.cgv.domain.user.enums.UserRole;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -13,12 +14,14 @@ public class CustomUserDetails implements UserDetails {
     private final Long userId;
     private final String loginId;
     private final String password;
+    private final UserRole userRole;
     private final Collection<? extends GrantedAuthority> authorities;
 
     public CustomUserDetails(User user) {
         this.userId = user.getId();
         this.loginId = user.getLoginId();
         this.password = user.getPassword();
+        this.userRole = user.getRole();
         this.authorities = List.of(
                 new SimpleGrantedAuthority(
                         "ROLE_" + user.getRole().name()
@@ -40,6 +43,9 @@ public class CustomUserDetails implements UserDetails {
         return password;
     }
 
+    public UserRole getUserRole() {
+        return userRole;
+    }
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {
         return authorities;
