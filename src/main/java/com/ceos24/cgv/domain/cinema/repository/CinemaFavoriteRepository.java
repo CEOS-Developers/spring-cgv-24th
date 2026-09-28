@@ -8,9 +8,9 @@ import java.util.Optional;
 
 public interface CinemaFavoriteRepository extends JpaRepository<CinemaFavorite, Long> {
 
-    boolean existsByUser_IdAndCinema_Id(Long userId, Long cinemaId);
+    boolean existsByUserEntity_IdAndCinema_Id(Long userId, Long cinemaId);
 
-    Optional<CinemaFavorite> findByUser_IdAndCinema_Id(Long userId, Long cinemaId);
+    Optional<CinemaFavorite> findByUserEntity_IdAndCinema_Id(Long userId, Long cinemaId);
 
-    List<CinemaFavorite> findAllByUser_IdOrderByCreatedAtDesc(Long userId);
+    List<CinemaFavorite> findAllByUserEntity_IdOrderByCreatedAtDesc(Long userId);
 }

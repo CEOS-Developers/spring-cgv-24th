@@ -32,7 +32,7 @@ public class CinemaFavoriteService {
         Cinema cinema = cinemaRepository.findByIdAndActiveTrue(cinemaId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.CINEMA_NOT_FOUND));
 
-        if (cinemaFavoriteRepository.existsByUser_IdAndCinema_Id(userId, cinemaId)) {
+        if (cinemaFavoriteRepository.existsByUserEntity_IdAndCinema_Id(userId, cinemaId)) {
             throw new BusinessException(ErrorCode.CINEMA_ALREADY_FAVORITED);
         }
 
@@ -51,7 +51,7 @@ public class CinemaFavoriteService {
         }
 
         CinemaFavorite favorite = cinemaFavoriteRepository
-                .findByUser_IdAndCinema_Id(userId, cinemaId)
+                .findByUserEntity_IdAndCinema_Id(userId, cinemaId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.CINEMA_FAVORITE_NOT_FOUND));
 
         cinemaFavoriteRepository.delete(favorite);
@@ -62,7 +62,7 @@ public class CinemaFavoriteService {
             throw new BusinessException(ErrorCode.USER_NOT_FOUND);
         }
 
-        return cinemaFavoriteRepository.findAllByUser_IdOrderByCreatedAtDesc(userId)
+        return cinemaFavoriteRepository.findAllByUserEntity_IdOrderByCreatedAtDesc(userId)
                 .stream()
                 .map(CinemaFavoriteResponse::from)
                 .toList();

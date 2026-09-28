@@ -143,7 +143,7 @@ public class PurchaseService {
             throw new BusinessException(ErrorCode.USER_NOT_FOUND);
         }
 
-        return purchaseRepository.findAllByUserIdOrderByPurchasedAtDesc(userId)
+        return purchaseRepository.findAllByUserEntity_IdOrderByPurchasedAtDesc(userId)
                 .stream()
                 .map(this::toResponse)
                 .toList();

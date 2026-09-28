@@ -190,7 +190,11 @@ class ReservationServiceTest {
     }
 
     private UserEntity user(Long id) {
-        UserEntity userEntity = UserEntity.create("테스트 사용자");
+        UserEntity userEntity = UserEntity.createLocalUser(
+                "test-user-" + id,
+                "encoded-password",
+                "테스트 사용자"
+        );
         ReflectionTestUtils.setField(userEntity, "id", id);
         return userEntity;
     }

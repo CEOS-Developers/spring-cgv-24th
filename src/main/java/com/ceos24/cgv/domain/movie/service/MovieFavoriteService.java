@@ -37,8 +37,8 @@ public class MovieFavoriteService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.MOVIE_NOT_FOUND));
 
 
-        boolean existsByUserIdAndMovieId = movieFavoriteRepository.existsByUser_IdAndMovie_Id(userId, movieId);
-        if (existsByUserIdAndMovieId) {
+        boolean existsByUserEntityIdAndMovieId = movieFavoriteRepository.existsByUserEntity_IdAndMovie_Id(userId, movieId);
+        if (existsByUserEntityIdAndMovieId) {
             throw new BusinessException(ErrorCode.MOVIE_ALREADY_FAVORITED);
         }
 
@@ -60,7 +60,7 @@ public class MovieFavoriteService {
             throw new BusinessException(ErrorCode.MOVIE_NOT_FOUND);
         }
 
-        MovieFavorite movieFavorite = movieFavoriteRepository.findByUser_IdAndMovie_Id(userId, movieId)
+        MovieFavorite movieFavorite = movieFavoriteRepository.findByUserEntity_IdAndMovie_Id(userId, movieId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.MOVIE_FAVORITE_NOT_FOUND));
 
         movieFavoriteRepository.delete(movieFavorite);
@@ -72,7 +72,7 @@ public class MovieFavoriteService {
             throw new BusinessException(ErrorCode.USER_NOT_FOUND);
         }
 
-        return movieFavoriteRepository.findAllByUser_IdOrderByCreatedAtDesc(userId)
+        return movieFavoriteRepository.findAllByUserEntity_IdOrderByCreatedAtDesc(userId)
                 .stream()
                 .map(MovieFavoriteResponse::from)
                 .toList();

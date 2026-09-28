@@ -111,7 +111,7 @@ public class ReservationService {
             throw new BusinessException(ErrorCode.USER_NOT_FOUND);
         }
 
-        return reservationRepository.findAllByUserIdOrderByReservedAtDesc(userId)
+        return reservationRepository.findAllByUserEntity_IdOrderByReservedAtDesc(userId)
                 .stream()
                 .map(this::toResponse)
                 .toList();
