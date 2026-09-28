@@ -21,9 +21,17 @@ public class RefreshToken {
     @Column(nullable = false)
     private Long memberId;
 
+    private boolean isUsed = false;
+
     @Builder
     public RefreshToken(String token, Long memberId) {
         this.token = token;
         this.memberId = memberId;
+    }
+
+    public void useToken() {
+        if (!isUsed) {
+            isUsed = true;
+        }
     }
 }

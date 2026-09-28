@@ -22,6 +22,7 @@ public enum ErrorCode {
     AUTH_EXPIRED_TOKEN(401, "만료된 토큰입니다."),
     AUTH_INVALID_TOKEN(401, "유효하지 않은 토큰입니다."),
     AUTH_TOKEN_NOT_EXIST(401, "토큰이 존재하지 않습니다."),
+    AUTH_HIJACK_DETECTED(401, "토큰 탈취가 의심됩니다."),
 
     // Store / Order
     STORE_NOT_FOUND(404, "존재하지 않는 매장입니다."),

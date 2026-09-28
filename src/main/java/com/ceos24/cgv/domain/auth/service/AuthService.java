@@ -12,6 +12,7 @@ import com.ceos24.cgv.global.exception.BusinessException;
 import com.ceos24.cgv.global.exception.ErrorCode;
 import com.ceos24.cgv.global.security.CustomUserDetails;
 import com.ceos24.cgv.global.security.jwt.JwtProvider;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -21,6 +22,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+@Slf4j
 @Service
 public class AuthService {
 
@@ -108,10 +110,21 @@ public class AuthService {
                     .findByToken(refreshToken)
                     .orElseThrow(() -> new BusinessException(ErrorCode.AUTH_INVALID_TOKEN));
 
-            String newAccessToken = jwtProvider.createAccessToken(memberIdStr);
+            if (storedToken.isUsed()) {
+                refreshTokenRepository.deleteAllByMemberId(Long.parseLong(memberIdStr));
+                log.error("[재사용 탐지] memberId: {} 의 토큰 탈취 의심", memberIdStr);
+                throw new BusinessException(ErrorCode.AUTH_HIJACK_DETECTED);
+            } else {
+                storedToken.useToken();
+            }
 
-            // Refresh Token Rotation을 도입하지 않고 기존 것을 그대로 리턴합니다
-            return new TokenResponse(newAccessToken, storedToken.getToken());
+            String newAccessToken = jwtProvider.createAccessToken(memberIdStr);
+            String newRefreshToken = jwtProvider.createRefreshToken(memberIdStr);
+            refreshTokenRepository.save(new RefreshToken(newRefreshToken, Long.parseLong(memberIdStr)));
+
+            return new TokenResponse(newAccessToken, newRefreshToken);
+        } catch (BusinessException e) {
+            throw e;
         } catch (Exception e) {
             throw new BusinessException(ErrorCode.AUTH_INVALID_TOKEN);
         }
