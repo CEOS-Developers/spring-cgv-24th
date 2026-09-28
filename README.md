@@ -656,6 +656,10 @@ Favorites와 Likes의 분리
 
 ---
 # 📝2주차 코드 피드백 및 개선사항
+ERD 수정
+```md
+![CGV ERD](cgv-erd2.png)
+```
 
 ### 1. 예외 처리 방식 통일
 
