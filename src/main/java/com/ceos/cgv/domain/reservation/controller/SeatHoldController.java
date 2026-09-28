@@ -7,7 +7,7 @@ import com.ceos.cgv.domain.reservation.service.result.HoldCreationResult;
 import com.ceos.cgv.global.common.dto.ApiResponse;
 import com.ceos.cgv.global.exception.BusinessException;
 import com.ceos.cgv.global.exception.ErrorCode;
-import com.ceos.cgv.global.security.principal.AuthenticatedUser;
+import com.ceos.cgv.global.security.principal.CgvUserDetails;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -34,7 +34,7 @@ public class SeatHoldController {
 
     @PostMapping
     public ResponseEntity<ApiResponse<SeatHoldResponse>> create(
-            @AuthenticationPrincipal AuthenticatedUser user,
+            @AuthenticationPrincipal CgvUserDetails user,
             @RequestHeader("Idempotency-Key") String requestKey,
             @Valid @RequestBody SeatHoldCreateRequest request) {
         UUID key;
@@ -55,14 +55,14 @@ public class SeatHoldController {
     @PostMapping("/{reservationId}/confirm")
     @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "본인 선점만 처리할 수 있습니다.")
     public ResponseEntity<ApiResponse<SeatHoldResponse>> confirm(
-            @PathVariable Long reservationId, @AuthenticationPrincipal AuthenticatedUser user) {
+            @PathVariable Long reservationId, @AuthenticationPrincipal CgvUserDetails user) {
         return ResponseEntity.ok(ApiResponse.success(seatHoldService.confirm(reservationId, user.userId())));
     }
 
     @DeleteMapping("/{reservationId}")
     @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "본인 선점만 처리할 수 있습니다.")
     public ResponseEntity<Void> release(@PathVariable Long reservationId,
-                                        @AuthenticationPrincipal AuthenticatedUser user) {
+                                        @AuthenticationPrincipal CgvUserDetails user) {
         seatHoldService.release(reservationId, user.userId());
         return ResponseEntity.noContent().build();
     }

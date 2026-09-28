@@ -1,7 +1,7 @@
 package com.ceos.cgv.domain.movie.controller;
 
 import com.ceos.cgv.domain.movie.service.MovieLikeService;
-import com.ceos.cgv.global.security.principal.AuthenticatedUser;
+import com.ceos.cgv.global.security.principal.CgvUserDetails;
 import com.ceos.cgv.global.common.dto.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
@@ -27,7 +27,7 @@ public class MovieLikeController {
     @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "영화 찜 상태 변경 성공")
     public ResponseEntity<ApiResponse<Boolean>> toggle(
             @PathVariable Long movieId,
-            @AuthenticationPrincipal AuthenticatedUser user
+            @AuthenticationPrincipal CgvUserDetails user
     ) {
         boolean liked = movieLikeService.toggle(user.userId(), movieId);
         return ResponseEntity.ok(ApiResponse.success(liked));

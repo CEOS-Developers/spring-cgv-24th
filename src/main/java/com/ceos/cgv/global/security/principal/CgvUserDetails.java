@@ -17,6 +17,10 @@ public record CgvUserDetails(Long userId, String username, String password, User
                 user.getPasswordHash(), user.getRole());
     }
 
+    public static CgvUserDetails fromToken(Long userId, UserRole role) {
+        return new CgvUserDetails(userId, userId.toString(), null, role);
+    }
+
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {
         return List.of(new SimpleGrantedAuthority("ROLE_" + role.name()));

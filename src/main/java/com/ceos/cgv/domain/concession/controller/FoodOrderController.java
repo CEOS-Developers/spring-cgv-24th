@@ -3,7 +3,7 @@ package com.ceos.cgv.domain.concession.controller;
 import com.ceos.cgv.domain.concession.dto.FoodOrderPurchaseRequest;
 import com.ceos.cgv.domain.concession.dto.FoodOrderResponse;
 import com.ceos.cgv.domain.concession.service.FoodOrderService;
-import com.ceos.cgv.global.security.principal.AuthenticatedUser;
+import com.ceos.cgv.global.security.principal.CgvUserDetails;
 import com.ceos.cgv.global.common.dto.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
@@ -33,7 +33,7 @@ public class FoodOrderController {
     @Operation(summary = "매점 주문 생성")
     @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "201", description = "매점 주문 생성 성공")
     public ResponseEntity<ApiResponse<FoodOrderResponse>> create(
-            @AuthenticationPrincipal AuthenticatedUser user,
+            @AuthenticationPrincipal CgvUserDetails user,
             @Valid @RequestBody FoodOrderPurchaseRequest request) {
         FoodOrderResponse response = foodOrderService.create(request.forUser(user.userId()));
         return ResponseEntity.created(URI.create("/api/v1/food-orders/" + response.orderId()))
@@ -45,7 +45,7 @@ public class FoodOrderController {
     @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "매점 주문 조회 성공")
     @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "본인 주문만 조회할 수 있습니다.")
     public ResponseEntity<ApiResponse<FoodOrderResponse>> findById(
-            @PathVariable Long orderId, @AuthenticationPrincipal AuthenticatedUser user) {
+            @PathVariable Long orderId, @AuthenticationPrincipal CgvUserDetails user) {
         return ResponseEntity.ok(ApiResponse.success(foodOrderService.findById(orderId, user.userId())));
     }
 }

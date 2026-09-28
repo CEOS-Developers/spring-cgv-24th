@@ -2,7 +2,7 @@ package com.ceos.cgv.global.security.jwt;
 
 import com.ceos.cgv.global.security.exception.SecurityErrorCode;
 import com.ceos.cgv.global.security.handler.RestAuthenticationEntryPoint;
-import com.ceos.cgv.global.security.principal.AuthenticatedUser;
+import com.ceos.cgv.global.security.principal.CgvUserDetails;
 import io.jsonwebtoken.ExpiredJwtException;
 import io.jsonwebtoken.JwtException;
 import jakarta.servlet.FilterChain;
@@ -12,14 +12,12 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.http.HttpHeaders;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
-import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.web.util.matcher.RequestMatcher;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
-import java.util.List;
 
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private final JwtService jwtService;
@@ -53,10 +51,9 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         }
         try {
             JwtService.VerifiedToken token = jwtService.verify(header.substring("Bearer ".length()));
-            AuthenticatedUser principal = new AuthenticatedUser(token.userId(), token.role());
+            CgvUserDetails principal = CgvUserDetails.fromToken(token.userId(), token.role());
             var authentication = UsernamePasswordAuthenticationToken.authenticated(
-                    principal, null,
-                    List.of(new SimpleGrantedAuthority("ROLE_" + token.role().name())));
+                    principal, null, principal.getAuthorities());
             SecurityContext context = SecurityContextHolder.createEmptyContext();
             context.setAuthentication(authentication);
             SecurityContextHolder.setContext(context);

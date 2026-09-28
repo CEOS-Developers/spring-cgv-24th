@@ -67,13 +67,13 @@ Access Token은 일반 API 요청의 인증에 사용하고, Refresh Token은 �
 → 인증 성공 후 토큰 발급
 ```
 
-회원가입 시 비밀번호는 `PasswordEncoder`로 해시해서 저장합니다. 없는 계정과 틀린 비밀번호는 모두 `401 LOGIN_FAILED`로 응답하고 토큰을 발급하지 않습니다. 로그인용 `CgvUserDetails`에는 비밀번호 해시가 있지만, JWT 인증에 사용하는 `AuthenticatedUser`에는 회원 ID와 역할만 담습니다.
+회원가입 시 비밀번호는 `PasswordEncoder`로 해시해서 저장합니다. 없는 계정과 틀린 비밀번호는 모두 `401 LOGIN_FAILED`로 응답하고 토큰을 발급하지 않습니다. 로그인과 JWT 인증에는 `UserDetails`를 구현한 `CgvUserDetails`를 사용합니다. 로그인용 객체에는 저장된 비밀번호 해시가 필요하고, JWT용 객체는 검증된 회원 ID와 역할로 만들며 비밀번호를 담지 않습니다.
 
 ```text
 보호 API 요청
 → JwtAuthenticationFilter에서 Bearer Token 추출
 → JwtService에서 토큰 검증
-→ AuthenticatedUser와 Authentication 생성
+→ CgvUserDetails와 Authentication 생성
 → 새 SecurityContext에 인증 객체 설정
 → 인가 처리 후 컨트롤러 호출
 ```

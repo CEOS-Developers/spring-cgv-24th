@@ -3,7 +3,7 @@ package com.ceos.cgv.domain.reservation.controller;
 import com.ceos.cgv.domain.reservation.dto.ReservationBookingRequest;
 import com.ceos.cgv.domain.reservation.dto.ReservationResponse;
 import com.ceos.cgv.domain.reservation.service.ReservationService;
-import com.ceos.cgv.global.security.principal.AuthenticatedUser;
+import com.ceos.cgv.global.security.principal.CgvUserDetails;
 import com.ceos.cgv.global.common.dto.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
@@ -34,7 +34,7 @@ public class ReservationController {
     @Operation(summary = "영화 예매")
     @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "201", description = "영화 예매 성공")
     public ResponseEntity<ApiResponse<ReservationResponse>> create(
-            @AuthenticationPrincipal AuthenticatedUser user,
+            @AuthenticationPrincipal CgvUserDetails user,
             @Valid @RequestBody ReservationBookingRequest request
     ) {
         ReservationResponse response = reservationService.create(request.forUser(user.userId()));
@@ -47,7 +47,7 @@ public class ReservationController {
     @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "예매 상세 조회 성공")
     @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "본인 예매만 조회할 수 있습니다.")
     public ResponseEntity<ApiResponse<ReservationResponse>> findById(
-            @PathVariable Long reservationId, @AuthenticationPrincipal AuthenticatedUser user) {
+            @PathVariable Long reservationId, @AuthenticationPrincipal CgvUserDetails user) {
         return ResponseEntity.ok(ApiResponse.success(
                 reservationService.findById(reservationId, user.userId())));
     }
@@ -57,7 +57,7 @@ public class ReservationController {
     @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "204", description = "예매 취소 성공")
     @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "본인 예매만 취소할 수 있습니다.")
     public ResponseEntity<Void> cancel(@PathVariable Long reservationId,
-                                       @AuthenticationPrincipal AuthenticatedUser user) {
+                                       @AuthenticationPrincipal CgvUserDetails user) {
         reservationService.cancel(reservationId, user.userId());
         return ResponseEntity.noContent().build();
     }
