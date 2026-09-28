@@ -42,6 +42,7 @@ CEOS 24기 백엔드 스터디 - CGV 클론 코딩 프로젝트
 
 ## JWT를 활용한 인증 흐름 정리하기
 ### ① JWT는 무엇이고, Header·Payload·Signature는 무엇을 할까?
+![jwt-structure-DDRcj43x.png](jwt-structure-DDRcj43x.png)
 - **Header**
   - JWT에 사용한 서명 알고리즘과 토큰 타입 정보를 담음.
   - `alg`, `typ` 등의 값을 사용함.
