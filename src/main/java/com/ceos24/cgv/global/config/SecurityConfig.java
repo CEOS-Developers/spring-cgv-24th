@@ -1,6 +1,9 @@
 package com.ceos24.cgv.global.config;
 
 import com.ceos24.cgv.global.security.CustomUserDetailsService;
+import com.ceos24.cgv.global.security.handler.CustomAuthenticationEntryPoint;
+import com.ceos24.cgv.global.security.jwt.JwtAuthenticationFilter;
+import com.ceos24.cgv.global.security.jwt.JwtTokenProvider;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -12,12 +15,15 @@ import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
 @Configuration
 @RequiredArgsConstructor
 public class SecurityConfig {
 
     private final CustomUserDetailsService customUserDetailsService;
+    private final JwtTokenProvider jwtTokenProvider;
+    private final CustomAuthenticationEntryPoint authenticationEntryPoint;
 
     @Bean
     public PasswordEncoder passwordEncoder() {
@@ -28,10 +34,15 @@ public class SecurityConfig {
     public DaoAuthenticationProvider daoAuthenticationProvider(
             PasswordEncoder passwordEncoder
     ) {
-        DaoAuthenticationProvider authenticationProvider =
-                new DaoAuthenticationProvider(customUserDetailsService);
 
-        authenticationProvider.setPasswordEncoder(passwordEncoder);
+        DaoAuthenticationProvider authenticationProvider =
+                new DaoAuthenticationProvider(
+                        customUserDetailsService
+                );
+
+        authenticationProvider.setPasswordEncoder(
+                passwordEncoder
+        );
 
         return authenticationProvider;
     }
@@ -40,7 +51,10 @@ public class SecurityConfig {
     public AuthenticationManager authenticationManager(
             DaoAuthenticationProvider daoAuthenticationProvider
     ) {
-        return new ProviderManager(daoAuthenticationProvider);
+
+        return new ProviderManager(
+                daoAuthenticationProvider
+        );
     }
 
     @Bean
@@ -58,14 +72,34 @@ public class SecurityConfig {
                         )
                 )
 
-                .formLogin(formLogin -> formLogin.disable())
+                .formLogin(formLogin ->
+                        formLogin.disable()
+                )
 
-                .httpBasic(httpBasic -> httpBasic.disable())
+                .httpBasic(httpBasic ->
+                        httpBasic.disable()
+                )
 
-                .authenticationProvider(daoAuthenticationProvider)
+                .authenticationProvider(
+                        daoAuthenticationProvider
+                )
+
+                .exceptionHandling(exception ->
+                        exception.authenticationEntryPoint(
+                                authenticationEntryPoint
+                        )
+                )
 
                 .authorizeHttpRequests(auth ->
                         auth.anyRequest().permitAll()
+                )
+
+                .addFilterBefore(
+                        new JwtAuthenticationFilter(
+                                jwtTokenProvider,
+                                authenticationEntryPoint
+                        ),
+                        UsernamePasswordAuthenticationFilter.class
                 );
 
         return http.build();
