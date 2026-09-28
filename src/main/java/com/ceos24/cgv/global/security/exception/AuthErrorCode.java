@@ -26,7 +26,7 @@ public enum AuthErrorCode implements BaseErrorCode {
             "유효하지 않은 토큰입니다."
     ),
     ACCESS_DENIED(
-            HttpStatus.BAD_REQUEST,
+            HttpStatus.FORBIDDEN,
             "ACCESS_DENIED",
             "액세스가 제한되었습니다."
     ),
