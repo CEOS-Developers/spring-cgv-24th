@@ -2,10 +2,13 @@ package com.ceos24.cgv.domain.movie.controller;
 
 import com.ceos24.cgv.domain.movie.service.UserMovieService;
 import com.ceos24.cgv.global.apiPayload.ApiResponse;
+import com.ceos24.cgv.global.security.CustomUserDetails;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -23,19 +26,18 @@ public class UserMovieController {
     @PostMapping("/{movieId}/like")
     @Operation(
             summary = "영화 찜 등록",
-            description = "사용자가 특정 영화를 찜합니다."
+            description = "로그인한 사용자가 특정 영화를 찜합니다."
     )
     public ApiResponse<Void> likeMovie(
             @Parameter(description = "영화 ID")
             @PathVariable(name = "movieId")
             Long movieId,
 
-            @Parameter(description = "사용자 ID")
-            @RequestParam(name = "userId")
-            Long userId
+            @Parameter(hidden = true)
+            @AuthenticationPrincipal CustomUserDetails principal
     ) {
         userMovieService.likeMovie(
-                userId,
+                principal.getUserId(),
                 movieId
         );
 
@@ -49,19 +51,19 @@ public class UserMovieController {
     @DeleteMapping("/{movieId}/like")
     @Operation(
             summary = "영화 찜 취소",
-            description = "사용자가 찜한 특정 영화를 찜 목록에서 삭제합니다."
+            description = "로그인한 사용자가 찜한 특정 영화를 찜 목록에서 삭제합니다."
     )
     public ApiResponse<Void> unlikeMovie(
             @Parameter(description = "영화 ID")
             @PathVariable(name = "movieId")
             Long movieId,
 
-            @Parameter(description = "사용자 ID")
-            @RequestParam(name = "userId")
-            Long userId
-    ) {
+            @Parameter(hidden = true)
+            @AuthenticationPrincipal CustomUserDetails principal
+    )
+    {
         userMovieService.unlikeMovie(
-                userId,
+                principal.getUserId(),
                 movieId
         );
 
