@@ -1,5 +1,6 @@
 package com.ceos24.cgv.domain.user.entity;
 
+import com.ceos24.cgv.domain.user.enums.UserRole;
 import com.ceos24.cgv.global.common.BaseTimeEntity;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
@@ -30,6 +31,11 @@ public class User extends BaseTimeEntity {
 
     @Column(name = "nickname", nullable = false, length = 30)
     private String nickname;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "role", nullable = false, length = 20)
+
+    private UserRole role = UserRole.USER;
 
     @Column(name = "birthday", nullable = false)
     private LocalDate birthday;
