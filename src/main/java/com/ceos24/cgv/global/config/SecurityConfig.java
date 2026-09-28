@@ -91,7 +91,14 @@ public class SecurityConfig {
                 )
 
                 .authorizeHttpRequests(auth ->
-                        auth.anyRequest().permitAll()
+                        auth
+                                .requestMatchers(
+                                        "/api/theaters/*/likes"
+                                )
+                                .authenticated()
+
+                                .anyRequest()
+                                .permitAll()
                 )
 
                 .addFilterBefore(
