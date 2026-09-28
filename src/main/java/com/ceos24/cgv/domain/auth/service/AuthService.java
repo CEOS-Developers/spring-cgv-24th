@@ -30,52 +30,28 @@ public class AuthService {
 
     @Transactional
     public Long signup(SignupRequest request) {
-
         if (userRepository.existsByLoginId(request.loginId())) {
-            throw new GeneralException(
-                    UserErrorStatus.DUPLICATE_LOGIN_ID
-            );
+            throw new GeneralException(UserErrorStatus.DUPLICATE_LOGIN_ID);
         }
 
-        String encodedPassword =
-                passwordEncoder.encode(request.password());
-
-        User user = User.create(
-                request.loginId(),
-                encodedPassword,
-                request.nickname(),
-                null
-        );
+        String encodedPassword = passwordEncoder.encode(request.password());
+        User user = User.create(request.loginId(), encodedPassword, request.nickname(), null);
 
         User savedUser = userRepository.save(user);
-
         return savedUser.getId();
     }
 
     public LoginResponse login(LoginRequest request) {
-
         try {
-            Authentication authentication =
-                    authenticationManager.authenticate(
-                            UsernamePasswordAuthenticationToken
-                                    .unauthenticated(
-                                            request.loginId(),
-                                            request.password()
-                                    )
-                    );
+            Authentication authentication = authenticationManager.authenticate(
+                    UsernamePasswordAuthenticationToken.unauthenticated(request.loginId(), request.password()));
 
-            CustomUserDetails userDetails =
-                    (CustomUserDetails) authentication.getPrincipal();
-
-            String accessToken =
-                    jwtTokenProvider.createAccessToken(userDetails);
+            CustomUserDetails userDetails = (CustomUserDetails) authentication.getPrincipal();
+            String accessToken = jwtTokenProvider.createAccessToken(userDetails);
 
             return new LoginResponse(accessToken);
-
         } catch (AuthenticationException e) {
-            throw new GeneralException(
-                    UserErrorStatus.LOGIN_FAILED
-            );
+            throw new GeneralException(UserErrorStatus.LOGIN_FAILED);
         }
     }
 }

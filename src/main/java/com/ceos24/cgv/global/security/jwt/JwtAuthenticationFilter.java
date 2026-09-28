@@ -24,26 +24,17 @@ import java.io.IOException;
 import static com.ceos24.cgv.global.security.handler.SecurityResponseWriter.AUTH_ERROR;
 
 @RequiredArgsConstructor
-public class JwtAuthenticationFilter
-        extends OncePerRequestFilter {
+public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
-    private static final String BEARER_PREFIX =
-            "Bearer ";
+    private static final String BEARER_PREFIX = "Bearer ";
 
     private final JwtTokenProvider jwtTokenProvider;
     private final CustomAuthenticationEntryPoint authenticationEntryPoint;
 
     @Override
-    protected void doFilterInternal(
-            HttpServletRequest request,
-            HttpServletResponse response,
-            FilterChain filterChain
-    ) throws ServletException, IOException {
-
-        String authorizationHeader =
-                request.getHeader(
-                        HttpHeaders.AUTHORIZATION
-                );
+    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
+                                    FilterChain filterChain) throws ServletException, IOException {
+        String authorizationHeader = request.getHeader(HttpHeaders.AUTHORIZATION);
 
         if (!StringUtils.hasText(authorizationHeader)) {
             filterChain.doFilter(request, response);
@@ -51,54 +42,21 @@ public class JwtAuthenticationFilter
         }
 
         try {
-            String token =
-                    resolveToken(authorizationHeader);
+            String token = resolveToken(authorizationHeader);
+            Authentication authentication = getAuthentication(token);
 
-            Authentication authentication =
-                    getAuthentication(token);
-
-            SecurityContext context =
-                    SecurityContextHolder
-                            .createEmptyContext();
-
+            SecurityContext context = SecurityContextHolder.createEmptyContext();
             context.setAuthentication(authentication);
-
             SecurityContextHolder.setContext(context);
-
         } catch (ExpiredJwtException e) {
-
-            request.setAttribute(
-                    AUTH_ERROR,
-                    SecurityErrorCode.TOKEN_EXPIRED
-            );
-
+            request.setAttribute(AUTH_ERROR, SecurityErrorCode.TOKEN_EXPIRED);
             authenticationEntryPoint.commence(
-                    request,
-                    response,
-                    new BadCredentialsException(
-                            "Expired access token",
-                            e
-                    )
-            );
-
+                    request, response, new BadCredentialsException("Expired access token", e));
             return;
-
         } catch (JwtException | IllegalArgumentException e) {
-
-            request.setAttribute(
-                    AUTH_ERROR,
-                    SecurityErrorCode.TOKEN_INVALID
-            );
-
+            request.setAttribute(AUTH_ERROR, SecurityErrorCode.TOKEN_INVALID);
             authenticationEntryPoint.commence(
-                    request,
-                    response,
-                    new BadCredentialsException(
-                            "Invalid access token",
-                            e
-                    )
-            );
-
+                    request, response, new BadCredentialsException("Invalid access token", e));
             return;
         }
 
@@ -106,10 +64,7 @@ public class JwtAuthenticationFilter
     }
 
     @Override
-    protected boolean shouldNotFilter(
-            HttpServletRequest request
-    ) {
-
+    protected boolean shouldNotFilter(HttpServletRequest request) {
         String path = request.getRequestURI();
 
         return path.equals("/api/auth/login")
@@ -119,49 +74,25 @@ public class JwtAuthenticationFilter
                 || path.equals("/error");
     }
 
-    private String resolveToken(
-            String authorizationHeader
-    ) {
-
-        if (!authorizationHeader.startsWith(
-                BEARER_PREFIX
-        )) {
-            throw new IllegalArgumentException(
-                    "Authorization header must use Bearer scheme."
-            );
+    private String resolveToken(String authorizationHeader) {
+        if (!authorizationHeader.startsWith(BEARER_PREFIX)) {
+            throw new IllegalArgumentException("Authorization header must use Bearer scheme.");
         }
 
-        String token = authorizationHeader.substring(
-                BEARER_PREFIX.length()
-        );
+        String token = authorizationHeader.substring(BEARER_PREFIX.length());
 
         if (!StringUtils.hasText(token)) {
-            throw new IllegalArgumentException(
-                    "Bearer token is empty."
-            );
+            throw new IllegalArgumentException("Bearer token is empty.");
         }
 
         return token;
     }
 
-    private Authentication getAuthentication(
-            String token
-    ) {
+    private Authentication getAuthentication(String token) {
+        AccessTokenInfo accessTokenInfo = jwtTokenProvider.parseAccessToken(token);
+        CustomUserDetails userDetails = new CustomUserDetails(accessTokenInfo.userId(), accessTokenInfo.role());
 
-        AccessTokenInfo accessTokenInfo =
-                jwtTokenProvider.parseAccessToken(token);
-
-        CustomUserDetails userDetails =
-                new CustomUserDetails(
-                        accessTokenInfo.userId(),
-                        accessTokenInfo.role()
-                );
-
-        return UsernamePasswordAuthenticationToken
-                .authenticated(
-                        userDetails,
-                        null,
-                        userDetails.getAuthorities()
-                );
+        return UsernamePasswordAuthenticationToken.authenticated(
+                userDetails, null, userDetails.getAuthorities());
     }
 }

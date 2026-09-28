@@ -56,17 +56,14 @@ public class SecurityConfig {
                 .authenticationProvider(daoAuthenticationProvider)
                 .exceptionHandling(exception -> exception
                         .authenticationEntryPoint(authenticationEntryPoint)
-                        .accessDeniedHandler(accessDeniedHandler)
-                )
+                        .accessDeniedHandler(accessDeniedHandler))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(HttpMethod.POST, "/api/theaters").hasRole("ADMIN")
                         .requestMatchers("/api/theaters/*/likes").authenticated()
-                        .anyRequest().permitAll()
-                )
+                        .anyRequest().permitAll())
                 .addFilterBefore(
                         new JwtAuthenticationFilter(jwtTokenProvider, authenticationEntryPoint),
-                        UsernamePasswordAuthenticationFilter.class
-                );
+                        UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
     }

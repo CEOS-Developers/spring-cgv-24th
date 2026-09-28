@@ -18,22 +18,15 @@ public class JwtTokenProvider {
     private final SecretKey secretKey;
     private final long accessTokenExpiration;
 
-    public JwtTokenProvider(
-            @Value("${jwt.secret}") String secret,
-            @Value("${jwt.access-token-expiration}") long accessTokenExpiration
-    ) {
-        this.secretKey = Keys.hmacShaKeyFor(
-                secret.getBytes(StandardCharsets.UTF_8)
-        );
+    public JwtTokenProvider(@Value("${jwt.secret}") String secret,
+                            @Value("${jwt.access-token-expiration}") long accessTokenExpiration) {
+        this.secretKey = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
         this.accessTokenExpiration = accessTokenExpiration;
     }
 
     public String createAccessToken(CustomUserDetails userDetails) {
-
         Date now = new Date();
-        Date expiration = new Date(
-                now.getTime() + accessTokenExpiration
-        );
+        Date expiration = new Date(now.getTime() + accessTokenExpiration);
 
         return Jwts.builder()
                 .subject(String.valueOf(userDetails.getUserId()))
@@ -45,7 +38,6 @@ public class JwtTokenProvider {
     }
 
     public AccessTokenInfo parseAccessToken(String token) {
-
         Claims claims = Jwts.parser()
                 .verifyWith(secretKey)
                 .build()
@@ -53,14 +45,8 @@ public class JwtTokenProvider {
                 .getPayload();
 
         Long userId = Long.valueOf(claims.getSubject());
+        UserRole role = UserRole.valueOf(claims.get("role", String.class));
 
-        UserRole role = UserRole.valueOf(
-                claims.get("role", String.class)
-        );
-
-        return new AccessTokenInfo(
-                userId,
-                role
-        );
+        return new AccessTokenInfo(userId, role);
     }
 }

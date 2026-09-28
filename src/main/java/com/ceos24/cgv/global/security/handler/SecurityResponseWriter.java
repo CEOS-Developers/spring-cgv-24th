@@ -11,44 +11,23 @@ import java.nio.charset.StandardCharsets;
 
 public final class SecurityResponseWriter {
 
-    public static final String AUTH_ERROR =
-            "AUTH_ERROR_CODE";
+    public static final String AUTH_ERROR = "AUTH_ERROR_CODE";
 
     private SecurityResponseWriter() {
     }
 
-    public static void write(
-            HttpServletResponse response,
-            ObjectMapper objectMapper,
-            SecurityErrorCode errorCode
-    ) throws IOException {
-
+    public static void write(HttpServletResponse response, ObjectMapper objectMapper,
+                             SecurityErrorCode errorCode) throws IOException {
         if (response.isCommitted()) {
             return;
         }
 
-        response.setStatus(
-                errorCode.getHttpStatus().value()
-        );
+        response.setStatus(errorCode.getHttpStatus().value());
+        response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+        response.setCharacterEncoding(StandardCharsets.UTF_8.name());
 
-        response.setContentType(
-                MediaType.APPLICATION_JSON_VALUE
-        );
+        ApiResponse<Object> errorResponse = ApiResponse.onFailure(errorCode.getCode(), errorCode.getMessage(), null);
 
-        response.setCharacterEncoding(
-                StandardCharsets.UTF_8.name()
-        );
-
-        ApiResponse<Object> errorResponse =
-                ApiResponse.onFailure(
-                        errorCode.getCode(),
-                        errorCode.getMessage(),
-                        null
-                );
-
-        objectMapper.writeValue(
-                response.getWriter(),
-                errorResponse
-        );
+        objectMapper.writeValue(response.getWriter(), errorResponse);
     }
 }

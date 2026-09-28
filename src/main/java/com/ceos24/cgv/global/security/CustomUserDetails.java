@@ -27,10 +27,7 @@ public class CustomUserDetails implements UserDetails {
         this.role = user.getRole();
     }
 
-    public CustomUserDetails(
-            Long userId,
-            UserRole role
-    ) {
+    public CustomUserDetails(Long userId, UserRole role) {
         this.userId = userId;
         this.loginId = String.valueOf(userId);
         this.password = null;
@@ -40,11 +37,7 @@ public class CustomUserDetails implements UserDetails {
 
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {
-        return List.of(
-                new SimpleGrantedAuthority(
-                        "ROLE_" + role.name()
-                )
-        );
+        return List.of(new SimpleGrantedAuthority("ROLE_" + role.name()));
     }
 
     @Override

@@ -32,13 +32,7 @@ public class User extends BaseTimeEntity {
     @Column(nullable = false)
     private UserRole role;
 
-    private User(
-            String loginId,
-            String password,
-            String nickname,
-            String userProfileImageUrl,
-            UserRole role
-    ) {
+    private User(String loginId, String password, String nickname, String userProfileImageUrl, UserRole role) {
         this.loginId = loginId;
         this.password = password;
         this.nickname = nickname;
@@ -46,33 +40,11 @@ public class User extends BaseTimeEntity {
         this.role = role;
     }
 
-    public static User create(
-            String loginId,
-            String password,
-            String nickname,
-            String userProfileImageUrl
-    ) {
-        return new User(
-                loginId,
-                password,
-                nickname,
-                userProfileImageUrl,
-                UserRole.USER
-        );
+    public static User create(String loginId, String password, String nickname, String userProfileImageUrl) {
+        return new User(loginId, password, nickname, userProfileImageUrl, UserRole.USER);
     }
 
-    public static User createAdmin(
-            String loginId,
-            String password,
-            String nickname,
-            String userProfileImageUrl
-    ) {
-        return new User(
-                loginId,
-                password,
-                nickname,
-                userProfileImageUrl,
-                UserRole.ADMIN
-        );
+    public static User createAdmin(String loginId, String password, String nickname, String userProfileImageUrl) {
+        return new User(loginId, password, nickname, userProfileImageUrl, UserRole.ADMIN);
     }
 }

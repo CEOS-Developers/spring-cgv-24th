@@ -25,38 +25,19 @@ public class AuthController {
 
     private final AuthService authService;
 
-    @Operation(
-            summary = "회원가입 API",
-            description = "로그인 아이디, 닉네임, 비밀번호를 입력받아 일반 회원으로 가입합니다."
-    )
+    @Operation(summary = "회원가입 API", description = "로그인 아이디, 닉네임, 비밀번호를 입력받아 일반 회원으로 가입합니다.")
     @PostMapping("/signup")
-    public ResponseEntity<ApiResponse<Long>> signup(
-            @Valid @RequestBody SignupRequest request
-    ) {
+    public ResponseEntity<ApiResponse<Long>> signup(@Valid @RequestBody SignupRequest request) {
         Long userId = authService.signup(request);
-
         return ResponseEntity
                 .status(HttpStatus.CREATED)
-                .body(
-                        ApiResponse.onSuccess(
-                                SuccessStatus.CREATED,
-                                userId
-                        )
-                );
+                .body(ApiResponse.onSuccess(SuccessStatus.CREATED, userId));
     }
 
-    @Operation(
-            summary = "로그인 API",
-            description = "로그인 아이디와 비밀번호를 검증하고 Access Token을 발급합니다."
-    )
+    @Operation(summary = "로그인 API", description = "로그인 아이디와 비밀번호를 검증하고 Access Token을 발급합니다.")
     @PostMapping("/login")
-    public ResponseEntity<ApiResponse<LoginResponse>> login(
-            @Valid @RequestBody LoginRequest request
-    ) {
+    public ResponseEntity<ApiResponse<LoginResponse>> login(@Valid @RequestBody LoginRequest request) {
         LoginResponse response = authService.login(request);
-
-        return ResponseEntity.ok(
-                ApiResponse.onSuccess(response)
-        );
+        return ResponseEntity.ok(ApiResponse.onSuccess(response));
     }
 }
