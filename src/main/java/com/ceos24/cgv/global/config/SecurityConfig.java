@@ -1,12 +1,14 @@
 package com.ceos24.cgv.global.config;
 
 import com.ceos24.cgv.global.security.CustomUserDetailsService;
+import com.ceos24.cgv.global.security.handler.CustomAccessDeniedHandler;
 import com.ceos24.cgv.global.security.handler.CustomAuthenticationEntryPoint;
 import com.ceos24.cgv.global.security.jwt.JwtAuthenticationFilter;
 import com.ceos24.cgv.global.security.jwt.JwtTokenProvider;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.ProviderManager;
 import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
@@ -24,6 +26,7 @@ public class SecurityConfig {
     private final CustomUserDetailsService customUserDetailsService;
     private final JwtTokenProvider jwtTokenProvider;
     private final CustomAuthenticationEntryPoint authenticationEntryPoint;
+    private final CustomAccessDeniedHandler accessDeniedHandler;
 
     @Bean
     public PasswordEncoder passwordEncoder() {
@@ -31,81 +34,37 @@ public class SecurityConfig {
     }
 
     @Bean
-    public DaoAuthenticationProvider daoAuthenticationProvider(
-            PasswordEncoder passwordEncoder
-    ) {
-
-        DaoAuthenticationProvider authenticationProvider =
-                new DaoAuthenticationProvider(
-                        customUserDetailsService
-                );
-
-        authenticationProvider.setPasswordEncoder(
-                passwordEncoder
-        );
-
+    public DaoAuthenticationProvider daoAuthenticationProvider(PasswordEncoder passwordEncoder) {
+        DaoAuthenticationProvider authenticationProvider = new DaoAuthenticationProvider(customUserDetailsService);
+        authenticationProvider.setPasswordEncoder(passwordEncoder);
         return authenticationProvider;
     }
 
     @Bean
-    public AuthenticationManager authenticationManager(
-            DaoAuthenticationProvider daoAuthenticationProvider
-    ) {
-
-        return new ProviderManager(
-                daoAuthenticationProvider
-        );
+    public AuthenticationManager authenticationManager(DaoAuthenticationProvider daoAuthenticationProvider) {
+        return new ProviderManager(daoAuthenticationProvider);
     }
 
     @Bean
-    public SecurityFilterChain securityFilterChain(
-            HttpSecurity http,
-            DaoAuthenticationProvider daoAuthenticationProvider
-    ) throws Exception {
-
+    public SecurityFilterChain securityFilterChain(HttpSecurity http,
+                                                   DaoAuthenticationProvider daoAuthenticationProvider) throws Exception {
         http
                 .csrf(csrf -> csrf.disable())
-
-                .sessionManagement(session ->
-                        session.sessionCreationPolicy(
-                                SessionCreationPolicy.STATELESS
-                        )
+                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .formLogin(formLogin -> formLogin.disable())
+                .httpBasic(httpBasic -> httpBasic.disable())
+                .authenticationProvider(daoAuthenticationProvider)
+                .exceptionHandling(exception -> exception
+                        .authenticationEntryPoint(authenticationEntryPoint)
+                        .accessDeniedHandler(accessDeniedHandler)
                 )
-
-                .formLogin(formLogin ->
-                        formLogin.disable()
+                .authorizeHttpRequests(auth -> auth
+                        .requestMatchers(HttpMethod.POST, "/api/theaters").hasRole("ADMIN")
+                        .requestMatchers("/api/theaters/*/likes").authenticated()
+                        .anyRequest().permitAll()
                 )
-
-                .httpBasic(httpBasic ->
-                        httpBasic.disable()
-                )
-
-                .authenticationProvider(
-                        daoAuthenticationProvider
-                )
-
-                .exceptionHandling(exception ->
-                        exception.authenticationEntryPoint(
-                                authenticationEntryPoint
-                        )
-                )
-
-                .authorizeHttpRequests(auth ->
-                        auth
-                                .requestMatchers(
-                                        "/api/theaters/*/likes"
-                                )
-                                .authenticated()
-
-                                .anyRequest()
-                                .permitAll()
-                )
-
                 .addFilterBefore(
-                        new JwtAuthenticationFilter(
-                                jwtTokenProvider,
-                                authenticationEntryPoint
-                        ),
+                        new JwtAuthenticationFilter(jwtTokenProvider, authenticationEntryPoint),
                         UsernamePasswordAuthenticationFilter.class
                 );
 
