@@ -7,6 +7,8 @@ import static org.springframework.http.HttpStatus.OK;
 import com.cgvclone.cgv.domain.cinema.dto.CinemaDetailResponse;
 import com.cgvclone.cgv.domain.cinema.dto.CinemaListResponse;
 import com.cgvclone.cgv.domain.cinema_keeping.CinemaKeepingService;
+import com.cgvclone.cgv.domain.auth.CustomUserDetails;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -42,16 +44,18 @@ public class CinemaController {
     }
 
     @PostMapping("/{cinemaId}/keep")
-    public ResponseEntity<Void> keepCinema(@PathVariable Long cinemaId) {
-        cinemaKeepingService.keepCinema(cinemaId);
+    public ResponseEntity<Void> keepCinema(@PathVariable Long cinemaId,
+            @AuthenticationPrincipal CustomUserDetails user) {
+        cinemaKeepingService.keepCinema(user.getUserId(), cinemaId);
         return ResponseEntity
                 .status(CREATED)
                 .build();
     }
 
     @DeleteMapping("/{cinemaId}/keep")
-    public ResponseEntity<Void> cancelCinemaKeeping(@PathVariable Long cinemaId) {
-        cinemaKeepingService.cancelCinemaKeeping(cinemaId);
+    public ResponseEntity<Void> cancelCinemaKeeping(@PathVariable Long cinemaId,
+            @AuthenticationPrincipal CustomUserDetails user) {
+        cinemaKeepingService.cancelCinemaKeeping(user.getUserId(), cinemaId);
         return ResponseEntity
                 .status(NO_CONTENT)
                 .build();

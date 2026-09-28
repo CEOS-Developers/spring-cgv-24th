@@ -7,6 +7,8 @@ import static org.springframework.http.HttpStatus.OK;
 import com.cgvclone.cgv.domain.movie.dto.MovieDetailResponse;
 import com.cgvclone.cgv.domain.movie.dto.MovieListResponse;
 import com.cgvclone.cgv.domain.movie_keeping.MovieKeepingService;
+import com.cgvclone.cgv.domain.auth.CustomUserDetails;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -41,16 +43,18 @@ public class MovieController {
     }
 
     @PostMapping("/{movieId}/keep")
-    public ResponseEntity<Void> keepMovie(@PathVariable Long movieId) {
-        movieKeepingService.keepMovie(movieId);
+    public ResponseEntity<Void> keepMovie(@PathVariable Long movieId,
+            @AuthenticationPrincipal CustomUserDetails user) {
+        movieKeepingService.keepMovie(user.getUserId(), movieId);
         return ResponseEntity
                 .status(CREATED)
                 .build();
     }
 
     @DeleteMapping("/{movieId}/keep")
-    public ResponseEntity<Void> cancelMovieKeeping(@PathVariable Long movieId) {
-        movieKeepingService.cancelMovieKeeping(movieId);
+    public ResponseEntity<Void> cancelMovieKeeping(@PathVariable Long movieId,
+            @AuthenticationPrincipal CustomUserDetails user) {
+        movieKeepingService.cancelMovieKeeping(user.getUserId(), movieId);
         return ResponseEntity
                 .status(NO_CONTENT)
                 .build();

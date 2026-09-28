@@ -29,9 +29,7 @@ public class BookingService {
                 .orElseThrow(() -> new GlobalException(ErrorCode.BOOKING_NOT_FOUND));
     }
 
-    public void createBooking(BookingCreateRequest request) {
-        // TODO: 인증인가 스터디 후 User 지정 필요
-        Long currentUserId = 1L;
+    public void createBooking(Long currentUserId, BookingCreateRequest request) {
         User user = userService.getUser(currentUserId);
 
         Showtime showtime = showtimeService.getShowtime(request.showtimeId());
@@ -51,8 +49,11 @@ public class BookingService {
         }
     }
 
-    public void cancelBooking(Long bookingId) {
+    public void cancelBooking(Long currentUserId, Long bookingId) {
         Booking booking = getBooking(bookingId);
+        if (!booking.getUser().getUserId().equals(currentUserId)) {
+            throw new GlobalException(ErrorCode.ACCESS_DENIED);
+        }
         booking.cancel(LocalDateTime.now());
     }
 }

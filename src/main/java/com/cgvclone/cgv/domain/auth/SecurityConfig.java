@@ -35,6 +35,10 @@ public class SecurityConfig {
                                 "/cinemas", "/cinemas/{cinemaId}").permitAll()
                         .requestMatchers(HttpMethod.GET, "/swagger-ui.html", "/swagger-ui/**", "/v3/api-docs",
                                 "/v3/api-docs/**").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/bookings", "/bookings/{bookingId}/cancel",
+                                "/movies/{movieId}/keep", "/cinemas/{cinemaId}/keep").hasAnyRole("USER", "ADMIN")
+                        .requestMatchers(HttpMethod.DELETE, "/movies/{movieId}/keep",
+                                "/cinemas/{cinemaId}/keep").hasAnyRole("USER", "ADMIN")
                         .anyRequest().authenticated())
                 .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)
                 .build();
