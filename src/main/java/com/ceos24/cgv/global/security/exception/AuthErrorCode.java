@@ -29,6 +29,11 @@ public enum AuthErrorCode implements BaseErrorCode {
             HttpStatus.BAD_REQUEST,
             "ACCESS_DENIED",
             "액세스가 제한되었습니다."
+    ),
+    LOGIN_FAILED(
+            HttpStatus.UNAUTHORIZED,
+            "LOGIN_FAILED",
+            "아이디 또는 비밀번호가 올바르지 않습니다."
     );
 
     private final HttpStatus httpStatus;
