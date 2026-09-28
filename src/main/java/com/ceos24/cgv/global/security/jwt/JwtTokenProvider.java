@@ -7,6 +7,7 @@ import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
 
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
@@ -44,8 +45,15 @@ public class JwtTokenProvider {
                 .parseSignedClaims(token)
                 .getPayload();
 
-        Long userId = Long.valueOf(claims.getSubject());
-        UserRole role = UserRole.valueOf(claims.get("role", String.class));
+        String subject = claims.getSubject();
+        String roleClaim = claims.get("role", String.class);
+
+        if (!StringUtils.hasText(subject) || !StringUtils.hasText(roleClaim)) {
+            throw new IllegalArgumentException("Required JWT claim is missing.");
+        }
+
+        Long userId = Long.valueOf(subject);
+        UserRole role = UserRole.valueOf(roleClaim);
 
         return new AccessTokenInfo(userId, role);
     }
