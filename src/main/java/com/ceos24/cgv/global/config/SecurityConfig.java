@@ -1,8 +1,10 @@
 package com.ceos24.cgv.global.config;
 
-import com.ceos24.cgv.domain.user.entity.UserRoleType;
+import com.ceos24.cgv.global.filter.JwtAuthenticationFilter;
 import com.ceos24.cgv.global.filter.LoginFilter;
-import jakarta.servlet.http.HttpServletResponse;
+import com.ceos24.cgv.global.handler.JwtAccessDeniedHandler;
+import com.ceos24.cgv.global.handler.JwtAuthenticationEntryPoint;
+import com.ceos24.cgv.global.jwt.JwtTokenProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -19,7 +21,7 @@ import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.AuthenticationFailureHandler;
 import org.springframework.security.web.authentication.AuthenticationSuccessHandler;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
-import org.springframework.security.web.authentication.logout.LogoutFilter;
+import tools.jackson.databind.ObjectMapper;
 
 @Configuration
 @EnableWebSecurity
@@ -28,15 +30,27 @@ public class SecurityConfig {
     private final AuthenticationConfiguration authenticationConfiguration;
     private final AuthenticationSuccessHandler loginSuccessHandler;
     private final AuthenticationFailureHandler loginFailureHandler;
+    private final JwtTokenProvider jwtTokenProvider;
+    private final ObjectMapper objectMapper;
+    private final JwtAuthenticationEntryPoint jwtAuthenticationEntryPoint;
+    private final JwtAccessDeniedHandler jwtAccessDeniedHandler;
 
     public SecurityConfig(
             AuthenticationConfiguration authenticationConfiguration,
             @Qualifier("LoginSuccessHandler") AuthenticationSuccessHandler loginSuccessHandler,
-            @Qualifier("LoginFailureHandler") AuthenticationFailureHandler loginFailureHandler
+            @Qualifier("LoginFailureHandler") AuthenticationFailureHandler loginFailureHandler,
+            JwtTokenProvider jwtTokenProvider,
+            ObjectMapper objectMapper,
+            JwtAuthenticationEntryPoint jwtAuthenticationEntryPoint,
+            JwtAccessDeniedHandler jwtAccessDeniedHandler
     ) {
         this.authenticationConfiguration = authenticationConfiguration;
         this.loginSuccessHandler = loginSuccessHandler;
         this.loginFailureHandler = loginFailureHandler;
+        this.jwtTokenProvider = jwtTokenProvider;
+        this.objectMapper = objectMapper;
+        this.jwtAuthenticationEntryPoint = jwtAuthenticationEntryPoint;
+        this.jwtAccessDeniedHandler = jwtAccessDeniedHandler;
     }
 
     // 비밀번호 단방향(BCrypt) 암호화용 Bean
@@ -72,23 +86,59 @@ public class SecurityConfig {
         // 인가
         http
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/jwt/exchange", "/jwt/refresh","/swagger-ui.html", "/swagger-ui/**", "/v3/api-docs/**").permitAll()
-                        .requestMatchers(HttpMethod.POST, "/api/user/exist", "/api/user","/login").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/user").hasRole(UserRoleType.USER.name())
-                        .requestMatchers(HttpMethod.PUT, "/user").hasRole(UserRoleType.USER.name())
-                        .requestMatchers(HttpMethod.DELETE, "/user").hasRole(UserRoleType.USER.name())
+                        // Swagger와 로그인
+                        .requestMatchers(
+                                "/swagger-ui.html",
+                                "/swagger-ui/**",
+                                "/v3/api-docs/**"
+                        ).permitAll()
+
+                        .requestMatchers(
+                                HttpMethod.POST,
+                                "/api/user/exist",
+                                "/api/user",
+                                "/login"
+                        ).permitAll()
+
+                        // 관리자 전용: 영화 등록 및 삭제
+                        .requestMatchers(HttpMethod.POST, "/api/movies")
+                        .hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.DELETE, "/api/movies/*")
+                        .hasRole("ADMIN")
+
+                        // 관리자 전용: 영화관 등록 및 비활성화
+                        .requestMatchers(HttpMethod.POST, "/api/cinemas")
+                        .hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.DELETE, "/api/cinemas/*")
+                        .hasRole("ADMIN")
+
+                        // 관리자 전용: 상영관 및 상영정보 등록
+                        .requestMatchers(
+                                HttpMethod.POST,
+                                "/api/cinemas/*/auditoriums",
+                                "/api/screenings"
+                        ).hasRole("ADMIN")
+
+                        // 공개 조회 API
+                        .requestMatchers(
+                                HttpMethod.GET,
+                                "/api/movies/**",
+                                "/api/cinemas/**",
+                                "/api/screenings/**"
+                        ).permitAll()
+
+                        // 현재 로그인 사용자 전용 API
+                        .requestMatchers("/api/me/**").authenticated()
+
+                        // 그 외 API
                         .anyRequest().authenticated()
                 );
 
         //예외처리
         http
                 .exceptionHandling(e -> e
-                        .authenticationEntryPoint((request, response, authException) -> {
-                            response.sendError(HttpServletResponse.SC_UNAUTHORIZED); // 401 응답
-                        })
-                        .accessDeniedHandler((request, response, authException) -> {
-                            response.sendError(HttpServletResponse.SC_FORBIDDEN); // 403 응답
-                        })
+                        .authenticationEntryPoint(jwtAuthenticationEntryPoint)
+                        .accessDeniedHandler(jwtAccessDeniedHandler)
                 );
 
         // 세션 필터 설정(STATELESS)
@@ -96,9 +146,12 @@ public class SecurityConfig {
                 .sessionManagement(session -> session
                         .sessionCreationPolicy(SessionCreationPolicy.STATELESS));
 
-        //커스텀 필터 추가
-        /*http
-                .addFilterBefore(new JWTFilter(), LogoutFilter.class);*/
+        // Access Token 검증 및 SecurityContext 인증 정보 설정
+        http
+                .addFilterBefore(
+                        new JwtAuthenticationFilter(jwtTokenProvider, objectMapper),
+                        UsernamePasswordAuthenticationFilter.class
+                );
 
         http
                 .addFilterBefore(

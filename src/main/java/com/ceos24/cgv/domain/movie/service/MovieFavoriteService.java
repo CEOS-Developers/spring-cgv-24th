@@ -27,17 +27,18 @@ public class MovieFavoriteService {
     // 영화 찜 등록
     @Transactional
     public Long createMovieFavorite(
-            Long userId,
+            String username,
             Long movieId
     ) {
-        UserEntity userEntity = userRepository.findById(userId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
+        UserEntity userEntity = findActiveLocalUser(username);
 
         Movie movie = movieRepository.findById(movieId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.MOVIE_NOT_FOUND));
 
 
-        boolean existsByUserEntityIdAndMovieId = movieFavoriteRepository.existsByUserEntity_IdAndMovie_Id(userId, movieId);
+        boolean existsByUserEntityIdAndMovieId =
+                movieFavoriteRepository.existsByUserEntity_IdAndMovie_Id(userEntity.getId(), movieId);
+
         if (existsByUserEntityIdAndMovieId) {
             throw new BusinessException(ErrorCode.MOVIE_ALREADY_FAVORITED);
         }
@@ -50,31 +51,39 @@ public class MovieFavoriteService {
     // 영화 찜 해제
     @Transactional
     public void removeMovieFavorite(
-            Long userId,
+            String username,
             Long movieId
     ) {
-        if (!userRepository.existsById(userId)) {
-            throw new BusinessException(ErrorCode.USER_NOT_FOUND);
-        }
+        UserEntity userEntity = findActiveLocalUser(username);
+
         if (!movieRepository.existsById(movieId)) {
             throw new BusinessException(ErrorCode.MOVIE_NOT_FOUND);
         }
 
-        MovieFavorite movieFavorite = movieFavoriteRepository.findByUserEntity_IdAndMovie_Id(userId, movieId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.MOVIE_FAVORITE_NOT_FOUND));
+        MovieFavorite movieFavorite =
+                movieFavoriteRepository.findByUserEntity_IdAndMovie_Id(userEntity.getId(), movieId)
+                        .orElseThrow(() -> new BusinessException(ErrorCode.MOVIE_FAVORITE_NOT_FOUND));
 
         movieFavoriteRepository.delete(movieFavorite);
     }
 
     // 사용자가 찜한 영화 목록 조회
-    public List<MovieFavoriteResponse> getMovieFavorites(Long userId) {
-        if (!userRepository.existsById(userId)) {
-            throw new BusinessException(ErrorCode.USER_NOT_FOUND);
-        }
+    public List<MovieFavoriteResponse> getMovieFavorites(String username) {
 
-        return movieFavoriteRepository.findAllByUserEntity_IdOrderByCreatedAtDesc(userId)
+        UserEntity userEntity = findActiveLocalUser(username);
+
+        return movieFavoriteRepository
+                .findAllByUserEntity_IdOrderByCreatedAtDesc(
+                        userEntity.getId()
+                )
                 .stream()
                 .map(MovieFavoriteResponse::from)
                 .toList();
+    }
+
+    private UserEntity findActiveLocalUser(String username) {
+        return userRepository
+                .findByUsernameAndIsLockAndIsSocial(username, false, false)
+                .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
     }
 }

@@ -5,9 +5,12 @@ import com.ceos24.cgv.domain.cinema.service.CinemaFavoriteService;
 import com.ceos24.cgv.global.apiPayload.code.SuccessCode;
 import com.ceos24.cgv.global.apiPayload.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -16,9 +19,10 @@ import java.util.List;
         name = "영화관 찜",
         description = "사용자의 영화관 찜 등록, 목록 조회 및 삭제 API"
 )
+@SecurityRequirement(name = "bearerAuth")
 @RestController
 @RequiredArgsConstructor
-@RequestMapping("/api/users/{userId}/favorite-cinemas")
+@RequestMapping("/api/me/favorite-cinemas")
 public class CinemaFavoriteController {
 
     private final CinemaFavoriteService cinemaFavoriteService;
@@ -29,10 +33,13 @@ public class CinemaFavoriteController {
     )
     @PostMapping("/{cinemaId}")
     public ResponseEntity<ApiResponse<Long>> addFavorite(
-            @PathVariable("userId") Long userId,
+            @AuthenticationPrincipal UserDetails userDetails,
             @PathVariable("cinemaId") Long cinemaId
     ) {
-        Long favoriteId = cinemaFavoriteService.createCinemaFavorite(userId, cinemaId);
+        Long favoriteId = cinemaFavoriteService.createCinemaFavorite(
+                userDetails.getUsername(),
+                cinemaId
+        );
         SuccessCode code = SuccessCode.INSERT_SUCCESS;
         ApiResponse<Long> body = new ApiResponse<>(
                 favoriteId,
@@ -49,10 +56,13 @@ public class CinemaFavoriteController {
     )
     @DeleteMapping("/{cinemaId}")
     public ResponseEntity<ApiResponse<Void>> deleteFavorite(
-            @PathVariable("userId") Long userId,
+            @AuthenticationPrincipal UserDetails userDetails,
             @PathVariable("cinemaId") Long cinemaId
     ) {
-        cinemaFavoriteService.removeCinemaFavorite(userId, cinemaId);
+        cinemaFavoriteService.removeCinemaFavorite(
+                userDetails.getUsername(),
+                cinemaId
+        );
         SuccessCode code = SuccessCode.DELETE_SUCCESS;
         ApiResponse<Void> body = new ApiResponse<>(
                 null,
@@ -69,10 +79,10 @@ public class CinemaFavoriteController {
     )
     @GetMapping
     public ResponseEntity<ApiResponse<List<CinemaFavoriteResponse>>> getFavorites(
-            @PathVariable("userId") Long userId
+            @AuthenticationPrincipal UserDetails userDetails
     ) {
         List<CinemaFavoriteResponse> favorites =
-                cinemaFavoriteService.getCinemaFavorites(userId);
+                cinemaFavoriteService.getCinemaFavorites(userDetails.getUsername());
         SuccessCode code = SuccessCode.SELECT_SUCCESS;
         ApiResponse<List<CinemaFavoriteResponse>> body = new ApiResponse<>(
                 favorites,

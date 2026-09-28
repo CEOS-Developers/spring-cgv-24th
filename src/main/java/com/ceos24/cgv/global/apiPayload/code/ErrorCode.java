@@ -78,6 +78,14 @@ public enum ErrorCode {
 
     LOGIN_FAILED(401, "AUTH001", "아이디 또는 비밀번호가 올바르지 않습니다."),
 
+    TOKEN_EXPIRED(401, "AUTH002", "토큰이 만료되었습니다."),
+
+    TOKEN_INVALID(401, "AUTH003", "유효하지 않은 토큰입니다."),
+
+    TOKEN_NOT_EXIST(401, "AUTH004", "인증 토큰이 필요합니다."),
+
+    ACCESS_DENIED(403, "AUTH005", "해당 요청에 접근할 권한이 없습니다."),
+
     USER_NOT_FOUND(404, "U001", "존재하지 않는 사용자입니다."),
 
     USER_ALREADY_EXISTS(409, "U002", "이미 가입된 사용자입니다."),
