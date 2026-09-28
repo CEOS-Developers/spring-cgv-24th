@@ -70,4 +70,15 @@ public class CustomUserDetails implements UserDetails {
     public boolean isEnabled() {
         return true;
     }
+
+    // JWT 검증 후 사용하는 생성자
+    public CustomUserDetails(Long userId, UserRole userRole) {
+        this.userId = userId;
+        this.loginId = userId.toString();
+        this.password = null;
+        this.userRole = userRole;
+        this.authorities = List.of(
+                new SimpleGrantedAuthority("ROLE_" + userRole.name())
+        );
+    }
 }
