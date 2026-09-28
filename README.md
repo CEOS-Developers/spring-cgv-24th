@@ -747,6 +747,7 @@ null
 
 </details>
 
+# 3주차
 
 <details>
 <summary><strong>JWT</strong></summary>
@@ -764,10 +765,7 @@ null
 Header.Payload.Signature 
 
 ```
-
-출처 : [https://ivory-room.tistory.com/88](https://ivory-room.tistory.com/88)
-
-출처 : [https://ivory-room.tistory.com/88](https://ivory-room.tistory.com/88)
+![jwt 구조](docs/images/jwt.png)
 
 - header : 토큰 종류와 서명 알고리즘 명시
 
@@ -1105,21 +1103,23 @@ OAuth 2.0에서 발급하는 토큰은 JWT일 수도 있고, 내부 정보를 �
 
 - 회원가입
 
-image.png
+![회원가입 테스트](docs/images/test1.png)
+
 
 → 회원가입 완료 : 올바른 회원 정보를 입력한 사용자가 회원가입에 성공하는 것을 확인함.
 
 - 올바른 로그인 정보 ( Access Token 발급 )
 
-login.png
+![로그인 테스트](docs/images/login.png)
 
 회원가입을 완료한 사용자 :  올바른 아이디와 비밀번호를 입력하면 인증에 성공하고, Access Token이 발급되는 것을 확인함.
 
 - 없는 계정/ 잘못된 비밀번호로 로그인
 
-loginerror.png
+![로그인 에러 테스트](docs/images/loginerror.png)
 
-loginerror.png
+
+![로그인 에러 테스트](docs/images/loginerror.png)
 
 → **없는 계정으로 로그인**: 가입되지 않은 아이디로 로그인을 시도하면 `LOGIN_FAILED`와 401 상태 코드를 반환하고, Access Token을 발급하지 않음.
 
@@ -1127,7 +1127,8 @@ loginerror.png
 
 - 토큰 없이 공개 API 호출
 
-notoken.png
+
+![공개 api 관련](docs/images/notoken.png)
 
 Access Token을 포함하지 않고 영화 조회 API를 호출해도 영화 정보가 정상적으로 반환되는 것을 확인.
 
@@ -1135,7 +1136,9 @@ Access Token을 포함하지 않고 영화 조회 API를 호출해도 영화 정
 
 - 정상 토큰으로 보호된 API 호출 ( 영화 찜 처리 )
 
-movieliketoken.png
+
+![영화 찜 처리](docs/images/movieliketoken.png)
+
 
 → 유효한 Access Token을 포함해 영화 찜 취소 API를 호출했을 때 정상 처리되는 것을 확인 !
 
@@ -1143,7 +1146,9 @@ movieliketoken.png
 
 - 토큰 없이 보호된 API 호출 (401 + 공통 JSON )
 
-movielikenotoken.png
+
+![영화 찜 처리 관련](docs/images/movielikenotoken.png)
+
 
 → 로그인하지 않은 상태:  영화 찜 API를 호출하면 인증 토큰이 없어 요청이 거부,
 
@@ -1153,7 +1158,7 @@ movielikenotoken.png
 
 - 만료된 토큰
 
-tokenexpire.png
+![토큰 관련](docs/images/tokenexpire.png)
 
 → 짧은 토큰 만료 시간을 적용해서 AccessToken 만료 이후, 보호 API 호출 :
 
@@ -1161,7 +1166,8 @@ tokenexpire.png
 
 - 변조된 토큰
 
-movielikedtoken.png
+![토큰 관련](docs/images/movielikedtoken.png)
+
 
 → 정상 Access Token의 서명 부분을 임의로 변경한 뒤 영화 찜 API를 호출함.
 
@@ -1169,7 +1175,8 @@ movielikedtoken.png
 
 - 다른 키로 서명한 토큰
 
-movielikedtoken.png
+![토큰 관련](docs/images/movielikedtoken.png)
+
 
 → 서버가 사용하는 키와 다른 키로 서명한 토큰으로 보호된 API를 호출.
 
@@ -1177,7 +1184,8 @@ movielikedtoken.png
 
 - 일반 사용자로 관리자 API 호출
 
-useradmindeny.png
+![admin 관련](docs/images/useradmindeny.png)
+
 
 → 유효한 Access Token을 가진 일반 사용자가 관리자 전용 API를 호출.
 
@@ -1185,7 +1193,9 @@ useradmindeny.png
 
 - 관리자로 관리자 API 호출
 
-adminok.png
+
+![admin 관련](docs/images/adminok.png)
+
 
 → 관리자 권한이 포함된 유효한 Access Token으로 관리자 전용 API를 호출.
 
@@ -1193,7 +1203,9 @@ adminok.png
 
 - 정상 인증 요청 직후 , 토큰 없이 보호된 API 호출
 
-stateless.png
+
+![admin 관련](docs/images/stateless.png)
+
 
 → Access Token을 포함한 요청이 정상 처리된 직후, 토큰 없이 보호된 API를 호출.
 
