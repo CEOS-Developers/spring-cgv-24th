@@ -1,5 +1,6 @@
 package com.ceos24.cgv.domain.user.entity;
 
+import com.ceos24.cgv.domain.user.enums.UserRole;
 import com.ceos24.cgv.global.entity.BaseTimeEntity;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
@@ -27,14 +28,51 @@ public class User extends BaseTimeEntity {
 
     private String userProfileImageUrl;
 
-    private User(String loginId, String password, String nickname, String userProfileImageUrl) {
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private UserRole role;
+
+    private User(
+            String loginId,
+            String password,
+            String nickname,
+            String userProfileImageUrl,
+            UserRole role
+    ) {
         this.loginId = loginId;
         this.password = password;
         this.nickname = nickname;
         this.userProfileImageUrl = userProfileImageUrl;
+        this.role = role;
     }
 
-    public static User create(String loginId, String password, String nickname, String userProfileImageUrl) {
-        return new User(loginId, password, nickname, userProfileImageUrl);
+    public static User create(
+            String loginId,
+            String password,
+            String nickname,
+            String userProfileImageUrl
+    ) {
+        return new User(
+                loginId,
+                password,
+                nickname,
+                userProfileImageUrl,
+                UserRole.USER
+        );
+    }
+
+    public static User createAdmin(
+            String loginId,
+            String password,
+            String nickname,
+            String userProfileImageUrl
+    ) {
+        return new User(
+                loginId,
+                password,
+                nickname,
+                userProfileImageUrl,
+                UserRole.ADMIN
+        );
     }
 }
