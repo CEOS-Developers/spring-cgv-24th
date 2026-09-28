@@ -234,23 +234,33 @@ public class ShopService {
 
 
     // 매점 주문 내역 조회
-    public StoreOrderResponse getOrder(Long orderId) {
+    public StoreOrderResponse getOrder(Long userId, Long orderId) {
 
-        StoreOrder order =
-                storeOrderRepository.findById(orderId)
-                        .orElseThrow(() ->
-                                new IllegalArgumentException(
+        User user = userRepository.findById(userId)
+                .orElseThrow(() ->
+                        new IllegalArgumentException(
+                                "해당 사용자를 찾을 수 없습니다."
+                        )
+                );
+
+        StoreOrder order = storeOrderRepository.findById(orderId)
+                            .orElseThrow(() ->
+                                    new IllegalArgumentException(
                                         "해당 주문을 찾을 수 없습니다."
-                                )
-                        );
+                                    )
+                            );
+
+        // 로그인한 사용자의 주문인지 확인
+        if (!order.getUser().getId().equals(user.getId())) {
+            throw new IllegalArgumentException(
+                    "본인의 주문만 조회할 수 있습니다."
+            );
+        }
 
         List<OrderItem> items =
                 orderItemRepository.findAllByOrder(order);
 
-        return StoreOrderResponse.from(
-                order,
-                items
-        );
+        return StoreOrderResponse.from(order, items);
     }
 
 

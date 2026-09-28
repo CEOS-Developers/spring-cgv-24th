@@ -11,6 +11,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import com.ceos24.springboot.user.security.CustomUserDetails;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 
 import java.util.List;
 
@@ -87,13 +89,13 @@ public class ShopController {
     )
     @PostMapping("/orders")
     public ResponseEntity<StoreOrderResponse> createOrder(
-            @RequestParam Long userId,
+            @AuthenticationPrincipal CustomUserDetails userDetails,
             @RequestBody StoreOrderCreateRequest request
     ) {
 
         StoreOrderResponse response =
                 shopService.createOrder(
-                        userId,
+                        userDetails.getUserId(),
                         request
                 );
 
@@ -110,11 +112,15 @@ public class ShopController {
     )
     @GetMapping("/orders/{orderId}")
     public ResponseEntity<StoreOrderResponse> getOrder(
-            @PathVariable Long orderId
+            @PathVariable Long orderId,
+            @AuthenticationPrincipal CustomUserDetails userDetails
     ) {
 
         return ResponseEntity.ok(
-                shopService.getOrder(orderId)
+                shopService.getOrder(
+                        userDetails.getUserId(),
+                        orderId
+                )
         );
     }
 }
