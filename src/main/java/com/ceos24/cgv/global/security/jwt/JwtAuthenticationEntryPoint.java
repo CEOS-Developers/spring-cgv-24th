@@ -1,41 +1,34 @@
 package com.ceos24.cgv.global.security.jwt;
 
-import com.ceos24.cgv.global.common.ApiResponse;
+import com.ceos24.cgv.global.exception.BusinessException;
 import com.ceos24.cgv.global.exception.ErrorCode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import java.io.IOException;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.stereotype.Component;
+import org.springframework.web.servlet.HandlerExceptionResolver;
 
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class JwtAuthenticationEntryPoint implements AuthenticationEntryPoint {
 
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final HandlerExceptionResolver resolver;
+
+    public JwtAuthenticationEntryPoint(@Qualifier("handlerExceptionResolver") HandlerExceptionResolver resolver) {
+        this.resolver = resolver;
+    }
 
     @Override
     public void commence(
-            HttpServletRequest request, HttpServletResponse response, AuthenticationException authException)
-            throws IOException {
+            HttpServletRequest request, HttpServletResponse response, AuthenticationException authException) {
         log.warn("인증되지 않은 요청입니다. URI : {}", request.getRequestURI());
-
-        response.setContentType("application/json");
-        response.setCharacterEncoding("UTF-8");
-        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-
         ErrorCode errorCode = (ErrorCode) request.getAttribute("exception");
         if (errorCode == null) {
             errorCode = ErrorCode.AUTH_TOKEN_NOT_EXIST;
         }
-
-        ApiResponse<?> apiResponse = ApiResponse.error(errorCode.getStatus(), errorCode.getMessage());
-
-        response.getWriter().write(objectMapper.writeValueAsString(apiResponse));
+        resolver.resolveException(request, response, null, new BusinessException(errorCode));
     }
 }
