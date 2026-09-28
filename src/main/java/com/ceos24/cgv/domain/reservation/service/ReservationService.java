@@ -37,11 +37,10 @@ public class ReservationService {
 
     // 예매 등록
     @Transactional
-    public Long createReservation(Long userId, ReservationCreateRequest request) {
+    public Long createReservation(String username, ReservationCreateRequest request) {
 
         // 사용자 조회
-        UserEntity userEntity = userRepository.findById(userId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
+        UserEntity userEntity = findActiveLocalUser(username);
 
         // 상영 정보 조회
         Screening screening = screeningRepository.findById(request.screeningId())
@@ -106,27 +105,50 @@ public class ReservationService {
         return reservation.getId();
     }
 
-    public List<ReservationResponse> getReservations(Long userId) {
-        if (!userRepository.existsById(userId)) {
-            throw new BusinessException(ErrorCode.USER_NOT_FOUND);
-        }
+    public List<ReservationResponse> getReservations(String username) {
+        UserEntity userEntity = findActiveLocalUser(username);
 
-        return reservationRepository.findAllByUserEntity_IdOrderByReservedAtDesc(userId)
+        return reservationRepository
+                .findAllByUserEntity_IdOrderByReservedAtDesc(
+                        userEntity.getId()
+                )
                 .stream()
                 .map(this::toResponse)
                 .toList();
     }
 
-    public ReservationResponse getReservation(Long userId, Long reservationId) {
-        return toResponse(getOwnedReservation(userId, reservationId));
+    public ReservationResponse getReservation(
+            String username,
+            Long reservationId
+    ) {
+        UserEntity userEntity = findActiveLocalUser(username);
+
+        return toResponse(
+                getOwnedReservation(
+                        userEntity.getId(),
+                        reservationId
+                )
+        );
     }
 
     @Transactional
-    public void cancelReservation(Long userId, Long reservationId) {
-        Reservation reservation = getOwnedReservation(userId, reservationId);
+    public void cancelReservation(
+            String username,
+            Long reservationId
+    ) {
+        UserEntity userEntity = findActiveLocalUser(username);
 
-        if (reservation.getStatus() == ReservationStatus.CANCELLED) {
-            throw new BusinessException(ErrorCode.RESERVATION_ALREADY_CANCELLED);
+        Reservation reservation =
+                getOwnedReservation(
+                        userEntity.getId(),
+                        reservationId
+                );
+
+        if (reservation.getStatus()
+                == ReservationStatus.CANCELLED) {
+            throw new BusinessException(
+                    ErrorCode.RESERVATION_ALREADY_CANCELLED
+            );
         }
 
         reservation.cancel();
@@ -149,5 +171,19 @@ public class ReservationService {
                 .findAllByReservationIdOrderBySeatRowNumberAscSeatColumnNumberAsc(reservation.getId());
 
         return ReservationResponse.from(reservation, reservationSeats);
+    }
+
+    private UserEntity findActiveLocalUser(String username) {
+        return userRepository
+                .findByUsernameAndIsLockAndIsSocial(
+                        username,
+                        false,
+                        false
+                )
+                .orElseThrow(() ->
+                        new BusinessException(
+                                ErrorCode.USER_NOT_FOUND
+                        )
+                );
     }
 }

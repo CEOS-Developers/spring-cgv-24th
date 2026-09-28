@@ -6,10 +6,13 @@ import com.ceos24.cgv.domain.store.service.PurchaseService;
 import com.ceos24.cgv.global.apiPayload.code.SuccessCode;
 import com.ceos24.cgv.global.apiPayload.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -24,9 +27,10 @@ import java.util.List;
         name = "매점 구매",
         description = "매점 상품 구매 등록과 사용자 구매 내역 조회 API"
 )
+@SecurityRequirement(name = "bearerAuth")
 @RestController
 @RequiredArgsConstructor
-@RequestMapping("/api/users/{userId}/purchases")
+@RequestMapping("/api/me/purchases")
 public class PurchaseController {
 
     private final PurchaseService purchaseService;
@@ -38,10 +42,13 @@ public class PurchaseController {
     )
     @PostMapping
     public ResponseEntity<ApiResponse<Long>> createPurchase(
-            @PathVariable("userId") Long userId,
+            @AuthenticationPrincipal UserDetails userDetails,
             @Valid @RequestBody PurchaseCreateRequest request
     ) {
-        Long purchaseId = purchaseService.createPurchase(userId, request);
+        Long purchaseId = purchaseService.createPurchase(
+                userDetails.getUsername(),
+                request
+        );
         SuccessCode code = SuccessCode.INSERT_SUCCESS;
 
         ApiResponse<Long> body = new ApiResponse<>(
@@ -51,7 +58,7 @@ public class PurchaseController {
         );
 
         URI location = URI.create(
-                "/api/users/" + userId + "/purchases/" + purchaseId
+                "/api/me/purchases/" + purchaseId
         );
 
         return ResponseEntity.created(location).body(body);
@@ -64,9 +71,11 @@ public class PurchaseController {
     )
     @GetMapping
     public ResponseEntity<ApiResponse<List<PurchaseResponse>>> getPurchases(
-            @PathVariable("userId") Long userId
+            @AuthenticationPrincipal UserDetails userDetails
     ) {
-        List<PurchaseResponse> purchases = purchaseService.getPurchases(userId);
+        List<PurchaseResponse> purchases = purchaseService.getPurchases(
+                userDetails.getUsername()
+        );
         SuccessCode code = SuccessCode.SELECT_SUCCESS;
 
         ApiResponse<List<PurchaseResponse>> body = new ApiResponse<>(
@@ -85,10 +94,13 @@ public class PurchaseController {
     )
     @GetMapping("/{purchaseId}")
     public ResponseEntity<ApiResponse<PurchaseResponse>> getPurchase(
-            @PathVariable("userId") Long userId,
+            @AuthenticationPrincipal UserDetails userDetails,
             @PathVariable("purchaseId") Long purchaseId
     ) {
-        PurchaseResponse purchase = purchaseService.getPurchase(userId, purchaseId);
+        PurchaseResponse purchase = purchaseService.getPurchase(
+                userDetails.getUsername(),
+                purchaseId
+        );
         SuccessCode code = SuccessCode.SELECT_SUCCESS;
 
         ApiResponse<PurchaseResponse> body = new ApiResponse<>(

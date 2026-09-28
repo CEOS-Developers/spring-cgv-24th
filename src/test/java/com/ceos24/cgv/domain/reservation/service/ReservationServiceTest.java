@@ -73,7 +73,7 @@ class ReservationServiceTest {
                 List.of(101L, 100L)
         );
 
-        when(userRepository.findById(1L)).thenReturn(Optional.of(userEntity));
+        mockAuthenticatedUser(userEntity);
         when(screeningRepository.findById(20L)).thenReturn(Optional.of(screening));
         when(seatRepository.findAllByIdInForUpdate(List.of(100L, 101L)))
                 .thenReturn(List.of(firstSeat, secondSeat));
@@ -87,7 +87,7 @@ class ReservationServiceTest {
             return reservation;
         });
 
-        Long result = reservationService.createReservation(1L, request);
+        Long result = reservationService.createReservation(userEntity.getUsername(), request);
 
         assertEquals(30L, result);
 
@@ -112,12 +112,12 @@ class ReservationServiceTest {
                 20L,
                 List.of(100L, 100L)
         );
-        when(userRepository.findById(1L)).thenReturn(Optional.of(userEntity));
+        mockAuthenticatedUser(userEntity);
         when(screeningRepository.findById(20L)).thenReturn(Optional.of(screening));
 
         BusinessException exception = assertThrows(
                 BusinessException.class,
-                () -> reservationService.createReservation(1L, request)
+                () -> reservationService.createReservation(userEntity.getUsername(), request)
         );
 
         assertEquals(ErrorCode.DUPLICATE_SEAT_REQUEST, exception.getErrorCode());
@@ -134,14 +134,14 @@ class ReservationServiceTest {
         Seat otherSeat = seat(100L, otherAuditorium, 1, 1);
         ReservationCreateRequest request = new ReservationCreateRequest(20L, List.of(100L));
 
-        when(userRepository.findById(1L)).thenReturn(Optional.of(userEntity));
+        mockAuthenticatedUser(userEntity);
         when(screeningRepository.findById(20L)).thenReturn(Optional.of(screening));
         when(seatRepository.findAllByIdInForUpdate(List.of(100L)))
                 .thenReturn(List.of(otherSeat));
 
         BusinessException exception = assertThrows(
                 BusinessException.class,
-                () -> reservationService.createReservation(1L, request)
+                () -> reservationService.createReservation(userEntity.getUsername(), request)
         );
 
         assertEquals(ErrorCode.SEAT_NOT_IN_SCREENING_AUDITORIUM, exception.getErrorCode());
@@ -156,7 +156,7 @@ class ReservationServiceTest {
         Seat seat = seat(100L, auditorium, 1, 1);
         ReservationCreateRequest request = new ReservationCreateRequest(20L, List.of(100L));
 
-        when(userRepository.findById(1L)).thenReturn(Optional.of(userEntity));
+        mockAuthenticatedUser(userEntity);
         when(screeningRepository.findById(20L)).thenReturn(Optional.of(screening));
         when(seatRepository.findAllByIdInForUpdate(List.of(100L))).thenReturn(List.of(seat));
         when(reservationSeatRepository.findSeatIdsByScreeningIdAndStatus(
@@ -166,7 +166,7 @@ class ReservationServiceTest {
 
         BusinessException exception = assertThrows(
                 BusinessException.class,
-                () -> reservationService.createReservation(1L, request)
+                () -> reservationService.createReservation(userEntity.getUsername(), request)
         );
 
         assertEquals(ErrorCode.SEAT_ALREADY_RESERVED, exception.getErrorCode());
@@ -181,12 +181,21 @@ class ReservationServiceTest {
                 userEntity
         );
         ReflectionTestUtils.setField(reservation, "id", 30L);
+        mockAuthenticatedUser(userEntity);
         when(reservationRepository.findById(30L)).thenReturn(Optional.of(reservation));
 
-        reservationService.cancelReservation(1L, 30L);
+        reservationService.cancelReservation(userEntity.getUsername(), 30L);
 
         assertEquals(ReservationStatus.CANCELLED, reservation.getStatus());
         assertNotNull(reservation.getCancelledAt());
+    }
+
+    private void mockAuthenticatedUser(UserEntity userEntity) {
+        when(userRepository.findByUsernameAndIsLockAndIsSocial(
+                userEntity.getUsername(),
+                false,
+                false
+        )).thenReturn(Optional.of(userEntity));
     }
 
     private UserEntity user(Long id) {

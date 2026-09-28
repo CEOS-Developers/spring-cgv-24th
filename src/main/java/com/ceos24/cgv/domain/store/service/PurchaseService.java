@@ -51,12 +51,11 @@ public class PurchaseService {
     // 구매 등록
     @Transactional
     public Long createPurchase(
-            Long userId,
+            String username,
             PurchaseCreateRequest request
     ) {
         // 사용자 조회
-        UserEntity userEntity = userRepository.findById(userId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
+        UserEntity userEntity = findActiveLocalUser(username);
 
         // 영화관 조회
         Cinema cinema = cinemaRepository.findByIdAndActiveTrue(request.cinemaId()).
@@ -138,27 +137,28 @@ public class PurchaseService {
     }
 
     // 사용자의 구매 목록 조회
-    public List<PurchaseResponse> getPurchases(Long userId) {
-        if (!userRepository.existsById(userId)) {
-            throw new BusinessException(ErrorCode.USER_NOT_FOUND);
-        }
+    public List<PurchaseResponse> getPurchases(String username) {
+        UserEntity userEntity = findActiveLocalUser(username);
 
-        return purchaseRepository.findAllByUserEntity_IdOrderByPurchasedAtDesc(userId)
+        return purchaseRepository
+                .findAllByUserEntity_IdOrderByPurchasedAtDesc(userEntity.getId())
                 .stream()
                 .map(this::toResponse)
                 .toList();
     }
 
     // 사용자의 구매 단건 조회
-    public PurchaseResponse getPurchase(Long userId, Long purchaseId) {
-        return toResponse(getOwnedPurchase(userId, purchaseId));
+    public PurchaseResponse getPurchase(String username, Long purchaseId) {
+        UserEntity userEntity = findActiveLocalUser(username);
+
+        return toResponse(getOwnedPurchase(userEntity.getId(), purchaseId));
     }
 
-    private Purchase getOwnedPurchase(Long userId, Long purchaseId) {
+    private Purchase getOwnedPurchase(Long authenticatedUserId, Long purchaseId) {
         Purchase purchase = purchaseRepository.findById(purchaseId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.PURCHASE_NOT_FOUND));
 
-        if (!purchase.getUserEntity().getId().equals(userId)) {
+        if (!purchase.getUserEntity().getId().equals(authenticatedUserId)) {
             throw new BusinessException(ErrorCode.PURCHASE_ACCESS_DENIED);
         }
 
@@ -170,5 +170,17 @@ public class PurchaseService {
                 .findAllByPurchaseIdOrderByIdAsc(purchase.getId());
 
         return PurchaseResponse.from(purchase, purchaseItems);
+    }
+
+    private UserEntity findActiveLocalUser(String username) {
+        return userRepository
+                .findByUsernameAndIsLockAndIsSocial(
+                        username,
+                        false,
+                        false
+                )
+                .orElseThrow(() ->
+                        new BusinessException(ErrorCode.USER_NOT_FOUND)
+                );
     }
 }

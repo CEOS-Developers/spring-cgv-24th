@@ -6,10 +6,13 @@ import com.ceos24.cgv.domain.reservation.service.ReservationService;
 import com.ceos24.cgv.global.apiPayload.code.SuccessCode;
 import com.ceos24.cgv.global.apiPayload.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -25,9 +28,10 @@ import java.util.List;
         name = "예매",
         description = "영화 좌석 예매 등록, 예매 내역 조회 및 예매 취소 API"
 )
+@SecurityRequirement(name = "bearerAuth")
 @RestController
 @RequiredArgsConstructor
-@RequestMapping("/api/users/{userId}/reservations")
+@RequestMapping("/api/me/reservations")
 public class ReservationController {
 
     private final ReservationService reservationService;
@@ -39,10 +43,10 @@ public class ReservationController {
     )
     @PostMapping
     public ResponseEntity<ApiResponse<Long>> createReservation(
-            @PathVariable("userId") Long userId,
+            @AuthenticationPrincipal UserDetails userDetails,
             @Valid @RequestBody ReservationCreateRequest request
     ) {
-        Long reservationId = reservationService.createReservation(userId, request);
+        Long reservationId = reservationService.createReservation(userDetails.getUsername(), request);
         SuccessCode code = SuccessCode.INSERT_SUCCESS;
 
         ApiResponse<Long> body = new ApiResponse<>(
@@ -51,7 +55,7 @@ public class ReservationController {
                 code.getMessage()
         );
 
-        URI location = URI.create("/api/users/" + userId + "/reservations/" + reservationId);
+        URI location = URI.create("/api/me/reservations/" + reservationId);
 
         return ResponseEntity.created(location).body(body);
     }
@@ -63,9 +67,9 @@ public class ReservationController {
     )
     @GetMapping
     public ResponseEntity<ApiResponse<List<ReservationResponse>>> getReservations(
-            @PathVariable("userId") Long userId
+            @AuthenticationPrincipal UserDetails userDetails
     ) {
-        List<ReservationResponse> reservations = reservationService.getReservations(userId);
+        List<ReservationResponse> reservations = reservationService.getReservations(userDetails.getUsername());
         SuccessCode code = SuccessCode.SELECT_SUCCESS;
 
         ApiResponse<List<ReservationResponse>> body = new ApiResponse<>(
@@ -84,10 +88,10 @@ public class ReservationController {
     )
     @GetMapping("/{reservationId}")
     public ResponseEntity<ApiResponse<ReservationResponse>> getReservation(
-            @PathVariable("userId") Long userId,
+            @AuthenticationPrincipal UserDetails userDetails,
             @PathVariable("reservationId") Long reservationId
     ) {
-        ReservationResponse reservation = reservationService.getReservation(userId, reservationId);
+        ReservationResponse reservation = reservationService.getReservation(userDetails.getUsername(), reservationId);
         SuccessCode code = SuccessCode.SELECT_SUCCESS;
 
         ApiResponse<ReservationResponse> body = new ApiResponse<>(
@@ -106,10 +110,10 @@ public class ReservationController {
     )
     @DeleteMapping("/{reservationId}")
     public ResponseEntity<ApiResponse<Void>> cancelReservation(
-            @PathVariable("userId") Long userId,
+            @AuthenticationPrincipal UserDetails userDetails,
             @PathVariable("reservationId") Long reservationId
     ) {
-        reservationService.cancelReservation(userId, reservationId);
+        reservationService.cancelReservation(userDetails.getUsername(), reservationId);
         SuccessCode code = SuccessCode.DELETE_SUCCESS;
 
         ApiResponse<Void> body = new ApiResponse<>(

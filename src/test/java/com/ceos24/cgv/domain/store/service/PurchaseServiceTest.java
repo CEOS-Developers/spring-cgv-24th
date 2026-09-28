@@ -82,7 +82,7 @@ class PurchaseServiceTest {
                 List.of(new PurchaseItemRequest(10L, 2))
         );
 
-        when(userRepository.findById(1L)).thenReturn(Optional.of(userEntity));
+        mockAuthenticatedUser(userEntity);
         when(cinemaRepository.findByIdAndActiveTrue(2L)).thenReturn(Optional.of(cinema));
         when(cinemaStockRepository.findAllByCinemaIdAndProductIdsForUpdate(
                 2L,
@@ -94,7 +94,7 @@ class PurchaseServiceTest {
             return purchase;
         });
 
-        Long result = purchaseService.createPurchase(1L, request);
+        Long result = purchaseService.createPurchase(userEntity.getUsername(), request);
 
         assertEquals(20L, result);
         assertEquals(8, stock.getQuantity());
@@ -113,7 +113,7 @@ class PurchaseServiceTest {
                 List.of(new PurchaseItemRequest(10L, 2))
         );
 
-        when(userRepository.findById(1L)).thenReturn(Optional.of(userEntity));
+        mockAuthenticatedUser(userEntity);
         when(cinemaRepository.findByIdAndActiveTrue(2L)).thenReturn(Optional.of(cinema));
         when(cinemaStockRepository.findAllByCinemaIdAndProductIdsForUpdate(
                 2L,
@@ -122,7 +122,7 @@ class PurchaseServiceTest {
 
         BusinessException exception = assertThrows(
                 BusinessException.class,
-                () -> purchaseService.createPurchase(1L, request)
+                () -> purchaseService.createPurchase(userEntity.getUsername(), request)
         );
 
         assertEquals(ErrorCode.INSUFFICIENT_STOCK, exception.getErrorCode());
@@ -133,18 +133,28 @@ class PurchaseServiceTest {
 
     @Test
     void 다른_사용자의_구매내역은_조회할_수_없다() {
+        UserEntity authenticatedUser = user(1L);
         Purchase purchase = Purchase.create(user(2L), cinema(1L));
         ReflectionTestUtils.setField(purchase, "id", 20L);
+        mockAuthenticatedUser(authenticatedUser);
         when(purchaseRepository.findById(20L)).thenReturn(Optional.of(purchase));
 
         BusinessException exception = assertThrows(
                 BusinessException.class,
-                () -> purchaseService.getPurchase(1L, 20L)
+                () -> purchaseService.getPurchase(authenticatedUser.getUsername(), 20L)
         );
 
         assertEquals(ErrorCode.PURCHASE_ACCESS_DENIED, exception.getErrorCode());
         verify(purchaseItemRepository, never())
                 .findAllByPurchaseIdOrderByIdAsc(any());
+    }
+
+    private void mockAuthenticatedUser(UserEntity userEntity) {
+        when(userRepository.findByUsernameAndIsLockAndIsSocial(
+                userEntity.getUsername(),
+                false,
+                false
+        )).thenReturn(Optional.of(userEntity));
     }
 
     private UserEntity user(Long id) {
