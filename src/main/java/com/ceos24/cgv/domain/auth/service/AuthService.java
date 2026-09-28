@@ -2,6 +2,9 @@ package com.ceos24.cgv.domain.auth.service;
 
 import com.ceos24.cgv.domain.auth.dto.request.LoginRequest;
 import com.ceos24.cgv.domain.auth.dto.request.SignUpRequest;
+import com.ceos24.cgv.domain.auth.dto.response.TokenResponse;
+import com.ceos24.cgv.domain.auth.entity.RefreshToken;
+import com.ceos24.cgv.domain.auth.repository.RefreshTokenRepository;
 import com.ceos24.cgv.domain.member.Role;
 import com.ceos24.cgv.domain.member.entity.Member;
 import com.ceos24.cgv.domain.member.repository.MemberRepository;
@@ -26,18 +29,21 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final JwtProvider jwtProvider;
     private final AuthenticationManager authenticationManager;
+    private final RefreshTokenRepository refreshTokenRepository;
 
     public AuthService(
             @Value("${admin.token}") String adminToken,
             MemberRepository memberRepository,
             PasswordEncoder passwordEncoder,
             JwtProvider jwtProvider,
-            AuthenticationManager authenticationManager) {
+            AuthenticationManager authenticationManager,
+            RefreshTokenRepository refreshTokenRepository) {
         this.adminToken = adminToken;
         this.memberRepository = memberRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtProvider = jwtProvider;
         this.authenticationManager = authenticationManager;
+        this.refreshTokenRepository = refreshTokenRepository;
     }
 
     @Transactional
@@ -69,7 +75,8 @@ public class AuthService {
         memberRepository.save(member);
     }
 
-    public String login(LoginRequest request) {
+    @Transactional
+    public TokenResponse login(LoginRequest request) {
         try {
             UsernamePasswordAuthenticationToken authenticationToken =
                     new UsernamePasswordAuthenticationToken(request.loginId(), request.password());
@@ -77,9 +84,41 @@ public class AuthService {
             Authentication authentication = authenticationManager.authenticate(authenticationToken);
 
             CustomUserDetails userDetails = (CustomUserDetails) authentication.getPrincipal();
-            return jwtProvider.createAccessToken(userDetails.getMemberId().toString());
+
+            String memberId = userDetails.getMemberId().toString();
+
+            String accessToken = jwtProvider.createAccessToken(memberId);
+            String refreshToken = jwtProvider.createRefreshToken(memberId);
+
+            refreshTokenRepository.deleteByMemberId(Long.parseLong(memberId));
+            refreshTokenRepository.save(new RefreshToken(refreshToken, Long.parseLong(memberId)));
+
+            return new TokenResponse(accessToken, refreshToken);
         } catch (AuthenticationException e) {
             throw new BusinessException(ErrorCode.AUTH_INVALID_CREDENTIALS);
         }
+    }
+
+    @Transactional
+    public TokenResponse reissue(String refreshToken) {
+        try {
+            String memberIdStr = jwtProvider.validateRefreshToken(refreshToken);
+
+            RefreshToken storedToken = refreshTokenRepository
+                    .findByToken(refreshToken)
+                    .orElseThrow(() -> new BusinessException(ErrorCode.AUTH_INVALID_TOKEN));
+
+            String newAccessToken = jwtProvider.createAccessToken(memberIdStr);
+
+            // Refresh Token Rotation을 도입하지 않고 기존 것을 그대로 리턴합니다
+            return new TokenResponse(newAccessToken, storedToken.getToken());
+        } catch (Exception e) {
+            throw new BusinessException(ErrorCode.AUTH_INVALID_TOKEN);
+        }
+    }
+
+    @Transactional
+    public void logout(String refreshToken) {
+        refreshTokenRepository.deleteByToken(refreshToken);
     }
 }

@@ -1,4 +1,4 @@
-package com.ceos24.cgv.domain.auth.controller.entity;
+package com.ceos24.cgv.domain.auth.entity;
 
 import jakarta.persistence.*;
 import lombok.AccessLevel;
