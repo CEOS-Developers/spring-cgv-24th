@@ -8,12 +8,14 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 @Tag(name = "상영관 어드민", description = "상영관 어드민 관련 API")
 @RequestMapping("/api/admin")
 @RequiredArgsConstructor
 @RestController
+@PreAuthorize("hasRole('ADMIN')")
 public class ScreenAdminController {
 
     private final ScreenAdminService screenAdminService;
