@@ -16,9 +16,11 @@ import org.springframework.stereotype.Service;
 public class AuthService {
 
     private final AuthenticationManager authenticationManager;
+    private final JwtTokenProvider jwtTokenProvider;
 
     public LoginResponse login(LoginRequest request) {
-        if (request.email() == null || request.email().isBlank() || request.password() == null || request.password().isBlank()) {
+        if (request.email() == null || request.email().isBlank() || request.password() == null || request.password()
+                .isBlank()) {
             throw new GlobalException(ErrorCode.LOGIN_FAILED);
         }
 
@@ -32,7 +34,12 @@ public class AuthService {
         }
 
         CustomUserDetails userDetails = (CustomUserDetails) authentication.getPrincipal();
-        // TODO 3번 미션에서 인증된 사용자 정보를 이용한 Access Token 발급을 연결
-        return new LoginResponse(userDetails.getUserId(), userDetails.getUsername());
+        return new LoginResponse(
+                userDetails.getUserId(),
+                userDetails.getUsername(),
+                jwtTokenProvider.createAccessToken(userDetails),
+                "Bearer",
+                jwtTokenProvider.getExpirationSeconds()
+        );
     }
 }
