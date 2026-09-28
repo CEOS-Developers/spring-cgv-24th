@@ -628,3 +628,462 @@ Flush는 SQL을 DB에 전달하는 것이며 트랜잭션을 Commit하는 것은
 - 확장 영속성 컨텍스트는 여러 트랜잭션에 걸쳐 유지될 수 있다.
 - 조회 작업에서는 EntityManager가 트랜잭션 없이 존재할 수도 있다.
 - JTA 환경에서는 하나의 트랜잭션에 여러 Persistence Unit의 EntityManager가 참여할 수 있다.
+
+
+
+# 3주차 미션: Spring Security와 JWT 인증·인가
+
+---
+
+## 1. JWT 개념 정리
+
+### 1.1 JWT의 구조
+
+JWT(JSON Web Token)는 다음 세 부분으로 구성된다.
+
+```
+Header.Payload.Signature
+```
+
+#### Header
+
+토큰의 종류와 서명 알고리즘 정보를 담는다.
+
+```json
+{
+  "alg": "HS256",
+  "typ": "JWT"
+}
+```
+
+서버에서 허용한 `HS256` 알고리즘과 비밀키를 사용해 토큰을 생성하고 검증한다.
+
+#### Payload
+
+사용자와 토큰에 관한 Claim을 담는다.
+
+| Claim | 의미 | 사용 값 |
+| --- | --- | --- |
+| `iss` | 토큰 발급자 | `cgv-api` |
+| `sub` | 토큰의 주체 | 사용자 `username` |
+| `iat` | 토큰 발급 시각 | 토큰 생성 시각 |
+| `exp` | 토큰 만료 시각 | 설정된 만료 시간 |
+| `role` | 사용자 권한 | `ROLE_USER`, `ROLE_ADMIN` |
+| `type` | 토큰 종류 | `access`, `refresh` |
+
+Payload는 Base64 URL Encoding된 값이지 암호화된 값이 아니다. 따라서 비밀번호, 개인정보와 같은 민감한 정보를 넣으면 안 된다.
+
+#### Signature
+
+Header와 Payload가 서버에서 발급된 이후 변조되지 않았음을 확인하는 서명이다.
+
+클라이언트가 Payload의 `username`이나 `role`을 임의로 변경하면 기존 Signature와 일치하지 않으므로 서버가 해당 토큰을 거부한다.
+
+JWT 서명은 내용을 숨기는 암호화가 아니라 무결성을 검증하기 위한 장치다.
+
+### 1.2 Access Token과 Refresh Token
+
+| 구분 | Access Token | Refresh Token |
+| --- | --- | --- |
+| 목적 | 일반 API 접근 | Access Token 재발급 |
+| 만료 시간 | 비교적 짧음 | 비교적 김 |
+| 전달 위치 | `Authorization` 헤더 | 재발급 요청 시 전달 |
+| 서버 저장 | 필수 아님 | 현재 프로젝트에서는 DB 저장 |
+| 일반 API 접근 | 가능 | 불가능 |
+
+현재 토큰에는 `type` Claim이 들어 있다. `JwtTokenProvider.parseAccessToken()`은 `type=access`인 토큰만 허용하므로 Refresh Token을 일반 API 접근에 사용할 수 없다.
+
+현재 구현은 로그인 시 두 토큰을 발급하고 Refresh Token을 DB에 저장하는 단계까지 완료했다. (Refresh Token 재발급과 로그아웃 시 폐기는 아직 미구현)
+
+### 1.3 쿠키, 세션, JWT의 차이
+
+- 쿠키는 브라우저가 데이터를 보관하고 요청에 실어 보내는 전달·저장 방식이다.
+- 세션은 서버가 사용자 인증 상태를 저장하는 방식이다.
+- JWT는 정보를 Claim으로 담고 서명하는 토큰 형식이다.
+
+세션 기반 인증에서는 서버가 세션 저장소에 로그인 상태를 유지한다. JWT 기반 인증에서는 클라이언트가 매 요청마다 토큰을 보내고 서버는 토큰을 검증해 인증 정보를 다시 만든다.
+
+이번 프로젝트는 세션과 인증 쿠키를 사용하지 않고 헤더로만 인증 정보를 전달한다.
+
+```
+Authorization: Bearer <access-token>
+```
+
+### 1.4 인증과 인가
+
+- 인증(Authentication)은 사용자가 누구인지 확인하는 과정이다.
+- 인가(Authorization)는 인증된 사용자가 해당 기능을 사용할 권한이 있는지 확인하는 과정이다.
+
+예를 들어 로그인과 JWT 검증은 인증이고, 일반 사용자가 영화 등록 API를 호출하지 못하게 막는 것은 인가다.
+
+| 상태 코드 | 의미 | 예시 |
+| --- | --- | --- |
+| `401 Unauthorized` | 사용자를 인증할 수 없음 | 토큰 없음, 만료 또는 변조된 토큰 |
+| `403 Forbidden` | 인증됐지만 필요한 권한이 없음 | `ROLE_USER`로 관리자 API 호출 |
+
+쉽게 표현하면 `401`은 “누구인지 확인할 수 없음”, `403`은 “누구인지는 알지만 권한이 없음”이다.
+
+### 1.5 OAuth 2.0과 JWT의 차이
+
+OAuth 2.0은 제3자 애플리케이션에 제한된 접근 권한을 위임하기 위한 인가 프레임워크다. JWT는 정보를 서명해 전달하는 토큰 형식이다.
+
+OAuth 2.0에서 Access Token의 형식으로 JWT를 사용할 수 있지만, OAuth 2.0의 모든 토큰이 반드시 JWT인 것은 아니다. 반대로 JWT를 사용한다고 해서 OAuth 2.0을 구현한 것도 아니다.
+
+---
+
+## 2. 프로젝트 인증 구조
+
+### 2.1 주요 패키지 구조
+
+```
+global
+├── config
+│   ├── JwtConfig
+│   ├── OpenApiConfig
+│   └── SecurityConfig
+├── filter
+│   ├── LoginFilter
+│   └── JwtAuthenticationFilter
+├── handler
+│   ├── LoginSuccessHandler
+│   ├── LoginFailureHandler
+│   ├── JwtAuthenticationEntryPoint
+│   └── JwtAccessDeniedHandler
+├── jwt
+│   ├── JwtProperties
+│   ├── JwtTokenClaims
+│   ├── JwtTokenProvider
+│   └── TokenType
+└── exception
+    ├── JwtTokenExpiredException
+    └── JwtTokenInvalidException
+```
+
+### 2.2 JWT 의존성
+
+```groovy
+implementation 'io.jsonwebtoken:jjwt-api:0.13.0'
+runtimeOnly 'io.jsonwebtoken:jjwt-impl:0.13.0'
+runtimeOnly 'io.jsonwebtoken:jjwt-jackson:0.13.0'
+```
+
+### 2.3 외부 설정
+
+```yaml
+jwt:
+secret: ${JWT_SECRET}
+access-token-expiration: ${JWT_ACCESS_EXPIRATION}
+refresh-token-expiration: ${JWT_REFRESH_EXPIRATION}
+issuer: cgv-api
+```
+
+로컬 `.env` 예시
+
+```
+JWT_SECRET=<Base64로 인코딩된 충분히 긴 비밀키>
+JWT_ACCESS_EXPIRATION=30m
+JWT_REFRESH_EXPIRATION=14d
+```
+
+---
+
+## 3. 회원가입과 로그인
+
+### 3.1 회원가입
+
+일반 회원가입 요청에서는 클라이언트가 권한을 선택할 수 없고 서버가 항상 `USER` 권한을 부여한다.
+
+비밀번호는 평문으로 저장하지 않고 `BCryptPasswordEncoder`로 해시한 뒤 저장한다.
+
+```java
+UserEntity userEntity = UserEntity.createLocalUser(
+        request.username(),
+        passwordEncoder.encode(request.password()),
+        request.nickname()
+);
+```
+
+### 3.2 로그인 흐름
+
+```
+POST /login
+→ LoginFilter가 username과 password 추출
+→ AuthenticationManager에 인증 요청
+→ DaoAuthenticationProvider
+→ UserDetailsService로 사용자 조회
+→ PasswordEncoder로 비밀번호 비교
+→ 인증 성공
+→ LoginSuccessHandler
+→ Access Token과 Refresh Token 발급
+```
+
+로그인 요청 예시는 다음과 같다.
+
+```
+POST /login
+Content-Type: application/json
+```
+
+```json
+{
+  "username": "test-user",
+  "password": "password1234"
+}
+```
+
+로그인 성공 응답은 다음과 같다.
+
+```json
+{
+  "accessToken": "eyJ...",
+  "refreshToken": "eyJ..."
+}
+```
+
+존재하지 않는 계정과 잘못된 비밀번호는 계정 존재 여부가 노출되지 않도록 동일한 응답으로 처리한다.
+
+```json
+{
+  "status": 401,
+  "divisionCode": "AUTH001",
+  "resultMsg": "아이디 또는 비밀번호가 올바르지 않습니다.",
+  "errors": [],
+  "reason": null
+}
+```
+
+---
+
+## 4. Access Token 발급과 검증
+
+`JwtTokenProvider`는 토큰 생성과 검증을 담당한다.
+
+토큰을 생성할 때 다음 정보를 포함한다.
+
+```java
+Jwts.builder()
+        .issuer(properties.issuer())
+        .subject(username)
+        .claim("role", role)
+        .claim("type", tokenType.value())
+        .issuedAt(Date.from(issuedAt))
+        .expiration(Date.from(expiresAt))
+        .signWith(secretKey, Jwts.SIG.HS256)
+        .compact();
+```
+
+검증할 때는 다음 항목을 확인한다.
+
+- 서버가 가진 키와 서명이 일치하는가?
+- 토큰이 만료되지 않았는가?
+- `iss`가 서버에서 기대하는 `cgv-api`인가?
+- Access Token과 Refresh Token의 종류가 일치하는가?
+- `username`과 `role` Claim이 존재하는가?
+
+검증에 성공한 토큰에서만 `username`과 `role`을 사용한다.
+
+---
+
+## 5. JWT 인증 필터와 SecurityContext
+
+`JwtAuthenticationFilter`는 `OncePerRequestFilter`를 상속하며 요청마다 한 번 실행된다.
+
+```
+HTTP 요청
+→ Authorization 헤더 확인
+→ Bearer Access Token 추출
+→ JwtTokenProvider.parseAccessToken()
+→ username과 role 추출
+→ UserDetails 생성
+→ Authentication 생성
+→ 새 SecurityContext에 Authentication 저장
+→ 다음 필터로 전달
+```
+
+인증 객체를 만드는 핵심 코드는 다음과 같다.
+
+```java
+UserDetails principal = User.withUsername(claims.username())
+        .password("")
+        .authorities(claims.role())
+        .build();
+
+Authentication authentication =
+        UsernamePasswordAuthenticationToken.authenticated(
+                principal,
+                null,
+                principal.getAuthorities()
+        );
+```
+
+JWT 검증 이후에는 비밀번호를 다시 사용할 필요가 없으므로 인증 객체에 비밀번호를 보관하지 않는다.
+
+```java
+SecurityContext context = SecurityContextHolder.createEmptyContext();
+context.setAuthentication(authentication);
+SecurityContextHolder.setContext(context);
+```
+
+토큰이 없는 요청은 인증 객체를 만들지 않고 다음 필터로 전달한다. 공개 API는 정상 처리되고, 보호 API는 이후 인가 단계에서 `401`로 처리된다.
+
+---
+
+## 6. Security 설정과 접근 제어
+
+### 6.1 Stateless 설정
+
+```java
+.sessionManagement(session -> session
+        .sessionCreationPolicy(SessionCreationPolicy.STATELESS)
+)
+```
+
+서버 세션에 인증 상태를 저장하지 않는다. 따라서 정상 인증 요청 직후라도 다음 요청에 Access Token이 없으면 다시 `401`이 발생한다.
+
+이번 인증 방식에서 사용하지 않는 기본 폼 로그인과 HTTP Basic 인증도 비활성화했다.
+
+```java
+.formLogin(AbstractHttpConfigurer::disable)
+.httpBasic(AbstractHttpConfigurer::disable)
+```
+
+### 6.2 공개 API
+
+다음 API는 토큰 없이 접근할 수 있다.
+
+- Swagger와 OpenAPI 문서
+- 회원 존재 확인
+- 회원가입
+- 로그인
+- 영화 조회
+- 영화관, 상영관, 매점 상품 조회
+- 상영정보와 좌석 조회
+
+### 6.3 로그인 사용자 API
+
+`/api/me/**` 경로는 정상 Access Token이 필요하다.
+
+```
+POST   /api/me/favorite-movies/{movieId}
+GET    /api/me/favorite-movies
+DELETE /api/me/favorite-movies/{movieId}
+
+POST   /api/me/favorite-cinemas/{cinemaId}
+GET    /api/me/favorite-cinemas
+DELETE /api/me/favorite-cinemas/{cinemaId}
+
+POST   /api/me/reservations
+GET    /api/me/reservations
+GET    /api/me/reservations/{reservationId}
+DELETE /api/me/reservations/{reservationId}
+
+POST   /api/me/purchases
+GET    /api/me/purchases
+GET    /api/me/purchases/{purchaseId}
+```
+
+Controller는 클라이언트가 보낸 `userId`를 신뢰하지 않고 다음과 같이 인증 사용자를 받는다.
+
+```java
+@AuthenticationPrincipal UserDetails userDetails
+```
+
+Controller가 `userDetails.getUsername()`을 Service에 전달하면 Service가 실제 `UserEntity`를 조회한다. Repository에서 사용하는 사용자 ID는 클라이언트 입력값이 아니라 서버가 인증된 username으로 조회한 ID다.
+
+상세 예매와 구매 내역은 인증 사용자의 ID와 데이터 소유자의 ID를 비교한다. 일치하지 않으면 실제 변경 전에 접근을 거부한다.
+
+### 6.4 관리자 API
+
+다음 운영 데이터 변경 API는 `hasRole("ADMIN")` 규칙을 적용했다.
+
+(일반 회원가입은 항상 `ROLE_USER`를 부여. 관리자 계정은 DB 또는 테스트 데이터로 별도 준비해야 함)
+
+```
+POST   /api/movies
+DELETE /api/movies/{movieId}
+
+POST   /api/cinemas
+DELETE /api/cinemas/{cinemaId}
+
+POST   /api/cinemas/{cinemaId}/auditoriums
+POST   /api/screenings
+```
+
+`hasRole("ADMIN")`은 내부적으로 `ROLE_ADMIN` 권한을 검사한다.
+
+```
+토큰 없음      → 401
+ROLE_USER     → 403
+ROLE_ADMIN    → 정상 처리
+```
+
+---
+
+## 7. CSRF 설정
+
+```java
+.csrf(AbstractHttpConfigurer::disable)
+```
+
+이번 프로젝트는 세션이나 인증 쿠키를 사용하지 않고, 클라이언트가 직접 `Authorization` 헤더에 Bearer Token을 넣는 Stateless API다.
+
+브라우저는 다른 사이트의 요청에 임의의 `Authorization` 헤더를 자동으로 붙이지 않으므로, CSRF 보호를 비활성화했다.
+
+---
+
+## 8. 인증·인가 실패 처리
+
+필터 계층에서 발생한 예외는 `@RestControllerAdvice`가 자동으로 처리한다고 가정할 수 없다. 따라서 Spring Security 전용 처리기와 JWT 필터에서 공통 JSON 응답을 작성한다.
+
+| 상황 | 처리 클래스 | HTTP 상태 | 코드 |
+| --- | --- | --- | --- |
+| 로그인 계정 또는 비밀번호 불일치 | `LoginFailureHandler` | 401 | `AUTH001` |
+| 만료된 Access Token | `JwtAuthenticationFilter` | 401 | `AUTH002` |
+| 변조되거나 유효하지 않은 토큰 | `JwtAuthenticationFilter` | 401 | `AUTH003` |
+| 토큰 없이 보호 API 접근 | `JwtAuthenticationEntryPoint` | 401 | `AUTH004` |
+| 인증됐지만 권한 부족 | `JwtAccessDeniedHandler` | 403 | `AUTH005` |
+
+예를 들어 토큰 없이 보호 API에 접근하면 다음 응답을 반환한다.
+
+```json
+{
+  "status": 401,
+  "divisionCode": "AUTH004",
+  "resultMsg": "인증 토큰이 필요합니다.",
+  "errors": [],
+  "reason": null
+}
+```
+
+일반 사용자가 관리자 API에 접근하면 다음 응답을 반환한다.
+
+```json
+{
+  "status": 403,
+  "divisionCode": "AUTH005",
+  "resultMsg": "해당 요청에 접근할 권한이 없습니다.",
+  "errors": [],
+  "reason": null
+}
+```
+
+---
+
+## 8. 구현하며 알게 된 점
+
+JWT를 발급하는 것만으로 인증 구현이 끝나는 것이 아니었다. 발급된 토큰을 매 요청에서 검증하고, 검증된 정보로 `Authentication`을 만든 뒤 `SecurityContext`에 저장해야 Spring Security의 인가 기능과 `@AuthenticationPrincipal`을 사용할 수 있었다.
+
+또한 URL의 `userId`를 제거하는 이유를 이해했다. API가 인증을 요구하더라도 클라이언트가 전달한 사용자 ID를 그대로 신뢰하면 다른 사용자의 데이터에 접근할 수 있다. JWT에서 확인한 username으로 서버가 사용자를 조회하고, 그 사용자의 ID로 찜·예매·구매를 처리해야 사용자별 접근 제어가 완성된다.
+
+마지막으로 `401`과 `403`은 단순히 상태 코드만 다른 것이 아니라 실패 지점도 다르다는 것을 알게 되었다. 인증 정보가 없으면 `AuthenticationEntryPoint`, 인증은 됐지만 권한이 부족하면 `AccessDeniedHandler`가 동작한다. 필터에서 발생한 JWT 예외는 Controller 예외 처리와 별도로 다뤄야 한다는 점도 확인했다.
+
+---
+
+## 9. 남은 선택 과제
+
+- Refresh Token을 이용한 Access Token 재발급 API
+- 로그아웃 시 저장된 Refresh Token 폐기
+- Refresh Token Rotation과 재사용 탐지
+- `@EnableMethodSecurity`와 `@PreAuthorize` 적용
+- CORS 및 preflight 요청 테스트
+- JWT 오류 응답 작성 로직 공통화
