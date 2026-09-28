@@ -1,6 +1,8 @@
 package com.ceos24.cgv.domain.auth.controller;
 
+import com.ceos24.cgv.domain.auth.dto.request.LoginRequest;
 import com.ceos24.cgv.domain.auth.dto.request.SignupRequest;
+import com.ceos24.cgv.domain.auth.dto.response.LoginResponse;
 import com.ceos24.cgv.domain.auth.service.AuthService;
 import com.ceos24.cgv.global.apiPayload.ApiResponse;
 import com.ceos24.cgv.global.apiPayload.code.status.SuccessStatus;
@@ -35,9 +37,26 @@ public class AuthController {
 
         return ResponseEntity
                 .status(HttpStatus.CREATED)
-                .body(ApiResponse.onSuccess(
-                        SuccessStatus.CREATED,
-                        userId
-                ));
+                .body(
+                        ApiResponse.onSuccess(
+                                SuccessStatus.CREATED,
+                                userId
+                        )
+                );
+    }
+
+    @Operation(
+            summary = "로그인 API",
+            description = "로그인 아이디와 비밀번호를 검증하고 Access Token을 발급합니다."
+    )
+    @PostMapping("/login")
+    public ResponseEntity<ApiResponse<LoginResponse>> login(
+            @Valid @RequestBody LoginRequest request
+    ) {
+        LoginResponse response = authService.login(request);
+
+        return ResponseEntity.ok(
+                ApiResponse.onSuccess(response)
+        );
     }
 }
