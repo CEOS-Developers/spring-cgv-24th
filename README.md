@@ -1,3 +1,8 @@
+# 2주차
+
+<details>
+<summary><strong>ERD 및 DB 모델링</strong></summary>
+
 # spring-cgv-24th
 CEOS 24기 백엔드 스터디 - CGV 클론 코딩 프로젝트
 
@@ -26,7 +31,7 @@ CGV 서비스를 기반으로 백엔드 핵심 기능을 구현한 프로젝트�
 4. 영화 예매 / 취소
 5. 영화 찜
 6. 매점 상품 구매
-    - 환불 기능 제외
+   - 환불 기능 제외
 
 ---
 
@@ -102,7 +107,7 @@ SnackItem
 
 ## 1. ERD
 
-https://www.erdcloud.com/d/2LXYJEwkeevufXZwr
+[https://www.erdcloud.com/d/2LXYJEwkeevufXZwr](https://www.erdcloud.com/d/2LXYJEwkeevufXZwr)
 
 ---
 
@@ -316,9 +321,12 @@ SnackOrder 1 : N SnackOrderItem
 - 한 주문에 여러 상품 포함 가능
 - 상품별 주문 수량 관리
 
+</details>
+
 ---
 
-# 💡 미션 후 새롭게 알게 된 점
+<details>
+<summary><strong>💡 미션 후 새롭게 알게 된 점</strong></summary>
 
 ## 1. 비관적 락의 중요성
 
@@ -422,9 +430,12 @@ Repository를 Mocking해 Service만 테스트하면서 DB나 Controller와 분�
 
 테스트 코드는 단순 확인용 코드라기보다 서비스의 규칙을 다시 정리하는 과정이라고 느꼈습니다.
 
+</details>
+
 ---
 
-# 세션 관련 정리 
+<details>
+<summary><strong>세션 관련 정리</strong></summary>
 
 ## 1. ORM과 JPA
 
@@ -505,9 +516,9 @@ flush ≠ commit
 
 ```
 EntityManager
-      ↓
+     ↓
 Persistence Context
-      ↓
+     ↓
 Managed Entity
 ```
 
@@ -577,10 +588,10 @@ Spring에서는 대부분 `@Transactional`을 통해 트랜잭션을 관리합�
 
 ```
 User
- → Reservation
-   → User
-     → Reservation
-       → ...
+→ Reservation
+  → User
+    → Reservation
+      → ...
 ```
 
 결론
@@ -713,9 +724,12 @@ null
 
 따라서 `LAZY`를 설정했다고 무조건 지연 로딩된다고 생각하기보다 실제 발생하는 SQL을 확인하는 것이 중요합니다.
 
+</details>
+
 ---
 
-# 마무리
+<details>
+<summary><strong>마무리</strong></summary>
 
 이번 미션에서 가장 많이 배운 부분은 단순 API 구현보다 데이터 관계를 어떻게 설계할지 고민하는 과정이었습니다.
 
@@ -730,3 +744,5 @@ null
 - 서비스 단위 테스트
 
 등을 직접 적용해보면서 기능 구현 외에 데이터 정합성과 코드 구조까지 같이 고민할 수 있었습니다.
+
+</details>
