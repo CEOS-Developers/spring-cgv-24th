@@ -1,5 +1,6 @@
 package com.ceos24.cgv.global.security.jwt;
 
+import com.ceos24.cgv.domain.user.enums.UserRole;
 import com.ceos24.cgv.global.security.CustomUserDetails;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
@@ -39,15 +40,27 @@ public class JwtTokenProvider {
                 .claim("role", userDetails.getRole().name())
                 .issuedAt(now)
                 .expiration(expiration)
-                .signWith(secretKey)
+                .signWith(secretKey, Jwts.SIG.HS256)
                 .compact();
     }
 
-    public Claims parseAccessToken(String token) {
-        return Jwts.parser()
+    public AccessTokenInfo parseAccessToken(String token) {
+
+        Claims claims = Jwts.parser()
                 .verifyWith(secretKey)
                 .build()
                 .parseSignedClaims(token)
                 .getPayload();
+
+        Long userId = Long.valueOf(claims.getSubject());
+
+        UserRole role = UserRole.valueOf(
+                claims.get("role", String.class)
+        );
+
+        return new AccessTokenInfo(
+                userId,
+                role
+        );
     }
 }
