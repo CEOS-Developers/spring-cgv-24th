@@ -23,6 +23,7 @@ logging:
 jwt:
   secret: ${jwt-secret}
   expiration-ms: 3600000
+  refresh-expiration-ms: 1209600000
 
 admin:
   token: ${admin-token}
