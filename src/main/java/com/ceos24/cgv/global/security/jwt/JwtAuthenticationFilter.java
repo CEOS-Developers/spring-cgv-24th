@@ -1,9 +1,7 @@
 package com.ceos24.cgv.global.security.jwt;
 
-import com.ceos24.cgv.domain.member.entity.Member;
-import com.ceos24.cgv.domain.member.repository.MemberRepository;
 import com.ceos24.cgv.global.exception.ErrorCode;
-import com.ceos24.cgv.global.security.CustomUserDetails;
+import com.ceos24.cgv.global.security.ApiUserDetails;
 import io.jsonwebtoken.ExpiredJwtException;
 import io.jsonwebtoken.JwtException;
 import jakarta.servlet.FilterChain;
@@ -23,7 +21,6 @@ import org.springframework.web.filter.OncePerRequestFilter;
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtProvider jwtProvider;
-    private final MemberRepository memberRepository;
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
@@ -31,18 +28,13 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         String token = resolveToken(request);
         try {
             if (token != null) {
-                String subjectStr = jwtProvider.getMemberIdFromTokenAfterValidate(token);
-                Long memberId = Long.parseLong(subjectStr);
-                Member member = memberRepository.findById(memberId).orElse(null);
-                if (member != null) {
-                    CustomUserDetails userDetails = new CustomUserDetails(member);
-                    UsernamePasswordAuthenticationToken authentication =
-                            new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
+                ApiUserDetails userDetails = jwtProvider.getAuthenticationInfo(token);
 
-                    SecurityContext context = SecurityContextHolder.createEmptyContext();
-                    context.setAuthentication(authentication);
-                    SecurityContextHolder.setContext(context);
-                }
+                UsernamePasswordAuthenticationToken authentication =
+                        new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
+                SecurityContext context = SecurityContextHolder.createEmptyContext();
+                context.setAuthentication(authentication);
+                SecurityContextHolder.setContext(context);
             }
         } catch (ExpiredJwtException e) {
             log.warn("만료된 토큰입니다: {}", e.getMessage());

@@ -3,13 +3,11 @@ package com.ceos24.cgv.global.security;
 import com.ceos24.cgv.domain.member.entity.Member;
 import java.util.Collection;
 import java.util.Collections;
-import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
 
-@Getter
 @RequiredArgsConstructor
 public class CustomUserDetails implements UserDetails {
 
@@ -37,5 +35,9 @@ public class CustomUserDetails implements UserDetails {
 
     public String getName() {
         return member.getName();
+    }
+
+    public String getMemberRole() {
+        return member.getRole().getKey();
     }
 }

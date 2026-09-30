@@ -1,5 +1,7 @@
 package com.ceos24.cgv.global.security.jwt;
 
+import com.ceos24.cgv.domain.member.Role;
+import com.ceos24.cgv.global.security.ApiUserDetails;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.io.Decoders;
@@ -27,11 +29,12 @@ public class JwtProvider {
         this.refreshExpirationMs = refreshExpirationMs;
     }
 
-    public String createAccessToken(String memberId) {
+    public String createAccessToken(String memberId, String role) {
         Date now = new Date();
         return Jwts.builder()
                 .issuer("http://localhost:8080")
                 .subject(memberId)
+                .claim("role", role)
                 .claim("type", "access")
                 .issuedAt(now)
                 .expiration(new Date(now.getTime() + expirationMs))
@@ -51,23 +54,28 @@ public class JwtProvider {
                 .compact();
     }
 
-    public String getMemberIdFromTokenAfterValidate(String token) {
-        Claims payload = getPayload(token);
+    public ApiUserDetails getAuthenticationInfo(String token) {
+        Claims payload = validate(token);
         if (!"access".equals(payload.get("type", String.class))) {
             throw new io.jsonwebtoken.JwtException("Invalid token type");
         }
-        return payload.getSubject();
+
+        Long memberId = Long.parseLong(payload.getSubject());
+        String roleStr = payload.get("role", String.class);
+        Role role = Role.valueOf(roleStr.replace("ROLE_", ""));
+
+        return new ApiUserDetails(memberId, role);
     }
 
     public String validateRefreshToken(String token) {
-        Claims payload = getPayload(token);
+        Claims payload = validate(token);
         if (!"refresh".equals(payload.get("type", String.class))) {
             throw new io.jsonwebtoken.JwtException("Invalid token type");
         }
         return payload.getSubject();
     }
 
-    private Claims getPayload(String token) {
+    private Claims validate(String token) {
         return Jwts.parser()
                 .verifyWith(secretKey)
                 .requireIssuer("http://localhost:8080")

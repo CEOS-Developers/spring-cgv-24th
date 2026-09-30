@@ -87,13 +87,13 @@ public class AuthService {
 
             CustomUserDetails userDetails = (CustomUserDetails) authentication.getPrincipal();
 
-            String memberId = userDetails.getMemberId().toString();
+            String accessToken =
+                    jwtProvider.createAccessToken(userDetails.getMemberId().toString(), userDetails.getRole());
+            String refreshToken =
+                    jwtProvider.createRefreshToken(userDetails.getMemberId().toString());
 
-            String accessToken = jwtProvider.createAccessToken(memberId);
-            String refreshToken = jwtProvider.createRefreshToken(memberId);
-
-            refreshTokenRepository.deleteByMemberId(Long.parseLong(memberId));
-            refreshTokenRepository.save(new RefreshToken(refreshToken, Long.parseLong(memberId)));
+            refreshTokenRepository.deleteByMemberId(userDetails.getMemberId());
+            refreshTokenRepository.save(new RefreshToken(refreshToken, userDetails.getMemberId()));
 
             return new TokenResponse(accessToken, refreshToken);
         } catch (AuthenticationException e) {
@@ -118,7 +118,12 @@ public class AuthService {
                 storedToken.useToken();
             }
 
-            String newAccessToken = jwtProvider.createAccessToken(memberIdStr);
+            Member member = memberRepository
+                    .findById(Long.parseLong(memberIdStr))
+                    .orElseThrow(() -> new BusinessException(ErrorCode.MEMBER_NOT_FOUND));
+
+            String newAccessToken =
+                    jwtProvider.createAccessToken(memberIdStr, member.getRole().getKey());
             String newRefreshToken = jwtProvider.createRefreshToken(memberIdStr);
             refreshTokenRepository.save(new RefreshToken(newRefreshToken, Long.parseLong(memberIdStr)));
 
