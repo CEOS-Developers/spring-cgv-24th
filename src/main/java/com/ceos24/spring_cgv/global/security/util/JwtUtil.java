@@ -1,5 +1,6 @@
 package com.ceos24.spring_cgv.global.security.util;
 
+import com.ceos24.spring_cgv.domain.auth.enums.TokenType;
 import com.ceos24.spring_cgv.domain.auth.exception.AuthException;
 import com.ceos24.spring_cgv.domain.auth.exception.code.AuthErrorCode;
 import com.ceos24.spring_cgv.domain.member.enums.Role;
@@ -15,6 +16,7 @@ import org.springframework.stereotype.Component;
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
 import java.util.Date;
+import java.util.UUID;
 
 @Component
 @Slf4j
@@ -34,6 +36,7 @@ public class JwtUtil {
         this.rtValidity = rtValidity;
     }
 
+    // ms(밀리초) -> s(초) 단위로 변경
     public long getAtValiditySeconds() {return atValidity/1000;}
     public long getRtValiditySeconds() {return rtValidity/1000;}
 
@@ -43,8 +46,9 @@ public class JwtUtil {
         Date exp = new Date(now.getTime() + atValidity);
 
         return Jwts.builder()
+                .id(UUID.randomUUID().toString())
                 .subject(String.valueOf(memberId))
-                .claim("typ", "AT")
+                .claim("typ", TokenType.AT.name())
                 .claim("role", role)
                 .issuedAt(now)
                 .expiration(exp)
@@ -58,8 +62,9 @@ public class JwtUtil {
         Date exp = new Date(now.getTime() + rtValidity);
 
         return Jwts.builder()
+                .id(UUID.randomUUID().toString())
                 .subject(String.valueOf(memberId))
-                .claim("typ", "RT")
+                .claim("typ", TokenType.RT.name())
                 .issuedAt(now)
                 .expiration(exp)
                 .signWith(secretKey)
@@ -67,6 +72,26 @@ public class JwtUtil {
     }
 
     public Claims parseAT(String token) {
+        return parseClaims(token, TokenType.AT);
+    }
+
+    public Claims parseRT(String token){
+        return parseClaims(token, TokenType.RT);
+    }
+
+    /***
+     * 함수 기능: 토큰의 잔여 수명을 계산한다.
+     * @param claims 토큰의 클레임
+     * @return 잔여시간
+     */
+    public long getRemainingMillis(Claims claims){
+        long remainTime = claims.getExpiration().getTime() - System.currentTimeMillis();
+
+        return Math.max(remainTime, 0);
+    }
+
+    private Claims parseClaims(String token, TokenType expected) {
+        
         try {
             Claims claims = Jwts.parser()
                     .verifyWith(secretKey)
@@ -74,8 +99,9 @@ public class JwtUtil {
                     .parseSignedClaims(token)
                     .getPayload();
 
-            if(!"AT".equals(claims.get("typ", String.class))){
-                log.warn("타입이 올바르지 않는 토큰입니다.");
+            String typ = claims.get("typ", String.class);
+            if (!expected.name().equals(typ)){
+                log.warn("토큰 타입이 일치하지 않습니다. 기대={}, 실제={}", expected, typ);
                 throw new AuthException(AuthErrorCode.TOKEN_TYPE_MISMATCH);
             }
 
