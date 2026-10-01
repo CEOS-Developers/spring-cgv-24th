@@ -1,5 +1,6 @@
 package com.ceos24.spring_cgv.global.config;
 
+import com.ceos24.spring_cgv.domain.auth.repository.TokenBlacklistRepository;
 import com.ceos24.spring_cgv.global.security.exception.CustomAccessDenied;
 import com.ceos24.spring_cgv.global.security.exception.CustomEntryPoint;
 import com.ceos24.spring_cgv.global.security.filter.JwtAuthenticationFilter;
@@ -28,12 +29,14 @@ public class SecurityConfig {
     private final JwtUtil jwtUtil;
     private final CustomEntryPoint customEntryPoint;
     private final CustomAccessDenied customAccessDenied;
+    private final TokenBlacklistRepository tokenBlacklistRepository;
 
     private final String[] allowUris = {
             "/swagger-ui/**", // 스웨거 UI
             "/v3/api-docs/**", // 스웨거 문서
             "/api/auth/signup", // 회원가입
             "/api/auth/login", // 로그인
+            "/api/auth/reissue" // 토큰 재발급
     };
 
     @Bean
@@ -47,7 +50,7 @@ public class SecurityConfig {
 
                 .httpBasic(AbstractHttpConfigurer::disable)
 
-                .addFilterBefore(new JwtAuthenticationFilter(jwtUtil), UsernamePasswordAuthenticationFilter.class)
+                .addFilterBefore(new JwtAuthenticationFilter(jwtUtil, tokenBlacklistRepository), UsernamePasswordAuthenticationFilter.class)
 
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(allowUris).permitAll()
