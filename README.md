@@ -643,3 +643,452 @@ public class GlobalExceptionHandler {
 - `@Qualifier("handlerExceptionResolver")`가 필수이다. 없으면 다른 리졸버 빈이 주입되어 아무 일도 하지 않는다.
 </div>
 </details>
+
+<details>
+<summary>Redis를 활용하여 AT 블랙리스트, RT 관리하기</summary>
+<div markdown="1">
+
+### 1. Redis를 사용하는 이유
+
+1. 조회 빈도
+
+   블랙리스트 조회는 모든 API 요청마다 필요하다. Redis는 인메모리이기 때문에 조회 latency가 RDMS보다 현저히 작아진다.
+
+2. 수명
+
+   만료된 블랙리스트들은 자동 삭제되어야 한다. Redis에는 TTL이 내장되어있어 자동으로 만료된 블랙리스트들이 삭제된다.
+
+
+### 2. 의존성 추가
+
+**build.gradle**
+
+```bash
+implementation 'org.springframework.boot:spring-boot-starter-data-redis'
+```
+
+`StringRedisTemplate` 빈이 자동 등록된다. (RedisConfig 설정 클래스를 따로 추가하지 않아도 된다.) → key:value를 전부 String으로 다룰거라 가능.
+
+만약 추후, <String, Object> 형태로 Redis에 담는다면 RedisConfig 설정 클래스를 추가해야한다.
+
+**application.yaml**
+
+```yaml
+spring:
+	data:
+		redis: localhost
+		port: 6379
+```
+
+### 3. 프롬프트
+
+```
+이제 Redis를 활용해서 로그아웃, 회원탈퇴로 인해 만료된 AT와 계정 탈취 감지를 방지하기 위한 RT를 관리하는 기능을 개발할거야. 아래는 내가 생각하는 조건인데, 표준 실무에 맞추어 잘못된 부분은 피드백해줘.
+
+Redis를 이용해서 블랙리스트 AT와 RT를 관리할거야. 먼저 기존 사용자가 로그아웃 혹은 회원탈퇴를 진행했을 경우 해당 회원의 AT를 만료시켜야하기 때문에, Redis에 해당 AT와 RT를 추가할거야. 그러기 위해서는 AT의 형태는 키=bl:{jti}, 값=”logout”이 될거야. 또한, TTL (AT의 남은 수명) 필드도 추가할거야. 그래서 만료된 AT를 헤더에 포함해서 요청을 보낼 경우, Redis에서 해당 토큰의 jti가 있는지 를 확인(JwtAuthenticationFiler안, parseAT 직후에)하고 만약 Redis에 해당 jti가 존재한다면, 다시 로그인하라는 에러 응답을 보내고, Redis에 해당 jti가 존재하지않는다면 다음 필터로 넘길거야.
+RT는 먼저 한 회원당 하나의 RT만을 갖는다고 전제해. 그리고 RTR 방식을 사용하지. 그래서 AT가 새로 발급되면 RT도 새롭게 응답이 갈거야. 그리고 새로 발급된 RT는 Redis에 저장할거야. RT의 형태는 키=rt:{memberId}, 값={해시된 RT값}가 될거야. RT를 복원할 일은 없기 때문에 SHA-256으로 해싱 값을 저장할거야. 결국, /auth/reissue 요청이 올 때면, Redis에서 쿠키에 담긴 RT와 대조하고 일치하면 AT와 RT를 재발급하도록 할거야. 그리고 만료되지 않은 구세대 RT의 재사용 탐지도 진행할 거야. 만약 Redis에 만료되지 않은 구세대 RT(즉, Redis에 현재 저장된 RT와 다른 토큰)의 요청이 왔다면, 계정 탈취를 의심 -> 해당 회원의 RT를 삭제 및 로그인 경로로 이동하게끔 할거야.
+```
+- AT와 RT 모두 jti 클레임을 넣어야 한다.
+
+  JWT는 {header}와 {payload}를 비밀키를 섞어 해싱한 값이다. 해시는 같은 입력에 항상 같은 출력을 낸다.
+  이때, payload에 들어가는 ‘시간 클레임’이 초 단위이다. JWT의 `iat`, `exp`는 초 단위 정수이다. 같은 회원이 같은 초 안에 두 번 발급받으면 토큰이 완전히 같아진다.
+  그래서 UUID를 이용해 Jti 클레임을 넣는다. → 그래서 AT는 레디스에서 Jti로 식별할 수 있게 된다. RT는 마찬가지로 재발급될 때, 같은 토큰이 나오지 않게 하기 위함이다.
+
+
+**흐름 정리**
+
+```java
+로그인
+	-> AT, RT 발급 (RT는 redis에 저장)
+	
+로그아웃
+  → bl:{AT의 jti} 저장 (TTL = AT 잔여 수명)
+  → rt:{memberId} 삭제
+  → RT 쿠키 만료 지시 (maxAge=0)
+
+회원탈퇴
+  → 위와 동일 + 회원 soft delete
+
+API 요청
+  → parseAT (서명·만료)
+  → bl:{jti} 존재? → 401
+  → SecurityContext 설정
+
+재발급
+  → parseRT
+  → rt:{memberId} 조회
+      없음 → 401 (로그아웃 상태)
+      불일치 → 삭제 + 401 (탈취 의심)
+      일치 → 새 AT + 새 RT, 레디스·쿠키 갱신
+```
+
+### 4. AT와 RT 자료구조 정하기
+
+```java
+// **AT 블랙리스트**
+키: bl:{jti}
+타입: String
+값: "logout"
+TTL: 해당 AT의 남은 수명 (만료 시각 - 현재 시각)
+
+// RT
+키: rt:{memberId}
+타입: String
+값: sha256Hex (RT 원문 해시값)
+TTL: RT 유효기간 (14일) - 재발급마다 갱신
+```
+
+### 5. 로그인 성공 후 발급된 RT를 Redis에 저장하기
+
+**RefreshTokenRepository**
+
+```java
+// AuthService
+// 발급된 RT는 Redis에 저장
+refreshTokenRepository.save(principal.getMemberId(), RT, Duration.ofSeconds(jwtUtil.getRtValiditySeconds()));
+
+private final StringRedisTemplate redisTemplate;
+
+    /***
+     * 함수 기능: 발급한 RT를 Redis에 저장한다.
+     * @param memberId 회원 식별자
+     * @param refreshToken 저장할 RT 원문
+     * @param ttl 키 만료 시간
+     */
+    public void save(Long memberId, String refreshToken, Duration ttl){
+        redisTemplate.opsForValue().set(
+                "rt:" + memberId, hash(refreshToken), ttl
+        );
+    }
+
+    /***
+     * 함수 기능: RT 원문을 SHA-256으로 해싱한다.
+     * @param token 해싱할 RT 원문
+     * @return 64자 소문자 hex 문자열
+     */
+    private String hash(String token){
+        try {
+            // SHA-256 구현체를 얻는다.
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+
+            // 토큰을 UTF-8 바이트로 바꿔 해싱한다. 결과는 항상 256비트이다.
+            byte[] hashed = digest.digest(token.getBytes(StandardCharsets.UTF_8));
+
+            // 256비트를 64자 소문자 hex로 변환한다.
+            return HexFormat.of().formatHex(hashed);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 알고리즘을 사용할 수 없습니다." + e);
+        }
+    }
+```
+
+#### 5-1. AT는 응답 본문, RT는 쿠키에 담아 응답하기
+
+```java
+// TokenIssueResult
+public record TokenIssueResult<T>(
+        T body,
+        String refreshToken
+) {}
+
+// LoginResponse
+@Builder
+public record LoginResponse(
+
+        AtInfo atInfo,
+        MemberInfo memberInfo
+){
+
+    public static LoginResponse of(AtInfo atInfo, MemberInfo memberInfo){
+        return LoginResponse.builder()
+                .atInfo(atInfo)
+                .memberInfo(memberInfo).build();
+    }
+
+    @Builder
+    public record AtInfo(
+            String accessToken,
+            String tokenType,
+            Long expiresIn
+    ){
+        public static AtInfo of(String accessToken, String tokenType, Long expiresIn){
+            return AtInfo.builder()
+                    .accessToken(accessToken)
+                    .tokenType(tokenType)
+                    .expiresIn(expiresIn).build();
+        }
+    }
+
+    @Builder
+    public record MemberInfo(
+            Long memberId,
+            String name,
+            String email
+    ){
+        public static MemberInfo from(Member member){
+            return MemberInfo.builder()
+                    .memberId(member.getId())
+                    .name(member.getName())
+                    .email(member.getEmail())
+                    .build();
+        }
+    }
+}
+
+// AuthService
+/***
+ * 함수 기능: 로그인을 수행한다. 성공 시, AT(Response Body)와 RT(Cookie)가 반환된다.
+ * @param request 로그인 요청 (이메일, pw)
+ * @return TokenIssueResult AtInfo, MemberInfo, RT
+ */
+public TokenIssueResult<LoginResponse> login(LoginRequest request) {
+
+    try {
+        UsernamePasswordAuthenticationToken unauthenticatedToken = UsernamePasswordAuthenticationToken.unauthenticated(request.email(), request.password());
+
+        Authentication authentication = authenticationManager.authenticate(unauthenticatedToken);
+        CustomUserDetails principal = (CustomUserDetails) authentication.getPrincipal();
+
+        // 인증 후, JwtUtil을 통해 AT, RT 발급
+        String AT = jwtUtil.createAT(principal.getMemberId(), principal.getRole());
+        String RT = jwtUtil.createRT(principal.getMemberId());
+
+        // 발급된 RT는 Redis에 저장
+        refreshTokenRepository.save(principal.getMemberId(), RT, Duration.ofSeconds(jwtUtil.getRtValiditySeconds()));
+
+        // AT는 응답 형식에 맞춰 반환, RT는 컨트롤러에서 쿠키에 담아 응답함.
+        LoginResponse.AtInfo atInfo = LoginResponse.AtInfo.of(AT, "AT", jwtUtil.getAtValiditySeconds());
+
+        // 인증객체를 통해 회원 조회
+        Member member = memberRepository.findById(principal.getMemberId())
+                .orElseThrow(() -> new MemberException(MemberErrorCode.MEMBER_NOT_FOUND));
+        LoginResponse.MemberInfo memberInfo = LoginResponse.MemberInfo.from(member);
+
+        return new TokenIssueResult<>(LoginResponse.of(atInfo, memberInfo), RT);
+    } catch (BadCredentialsException e){
+        throw new AuthException(AuthErrorCode.INVALID_CREDENTIALS);
+    } catch (AuthenticationException e){
+        log.warn("[로그인 실패] {}", e.getMessage());
+        throw new AuthException(AuthErrorCode.AUTHENTICATION_FAILED);
+    }
+}
+
+// CookieUtil
+@Component
+public class CookieUtil {
+
+    @Value("${jwt.rt-validity}") private long rtValidityMillis;
+
+    /***
+     * 함수 기능: RT를 담은 쿠키를 응답 헤더에 추가한다.
+     * @param response 쿠키를 실을 응답 객체
+     * @param refreshToken 쿠키에 담을 RT 원문
+     */
+    public void setRtCookie(HttpServletResponse response, String refreshToken){
+
+        ResponseCookie cookie = ResponseCookie.from("refreshToken", refreshToken)
+                .httpOnly(true)
+                .secure(false)
+                .sameSite("Lax")
+                .path("/api/auth/reissue")
+                .maxAge(Duration.ofMillis(rtValidityMillis))
+                .build();
+
+        response.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());
+    }
+}
+
+// AuthController
+@SecurityRequirements
+@Operation(summary = "로그인", description = "로그인을 진행합니다.")
+@PostMapping("/login")
+public ApiResponse<LoginResponse> login(
+        @Valid @RequestBody LoginRequest request,
+        HttpServletResponse response
+        ){
+
+    TokenIssueResult<LoginResponse> result = authService.login(request);
+    cookieUtil.setRtCookie(response, result.refreshToken());
+
+    return ApiResponse.onSuccess(AuthSuccessCode.LOGIN_OK, result.body());
+}
+```
+
+### 6. /api/auth/reissue를 통해 AT, RT 재발급받기
+
+```java
+/*** RefreshTokenRepo
+ * 함수 기능: 제시된 RT가 저장된 값과 일치하는지 대조한다.
+ * @param memberId 회원 식별자
+ * @param refreshToken 대조할 RT 원문
+ * @return 일치 여부를 구분한 상태값 (NOT_FOUND, VALID, MISMATCH)
+ */
+public RefreshTokenStatus verify(Long memberId, String refreshToken){
+
+    String hashedRt = redisTemplate.opsForValue().get("rt:" + memberId);
+
+    if (hashedRt == null){
+        return RefreshTokenStatus.NOT_FOUND;
+    }
+
+    return hashedRt.equals(hash(refreshToken)) ? RefreshTokenStatus.VALID : RefreshTokenStatus.MISMATCH;
+}
+
+/***
+ * 함수 기능: 해당 회원의 RT를 삭제한다. 재사용 감지와 로그아웃에서 사용.
+ * @param memberId 회원 식별자
+ */
+public void delete(Long memberId){
+    redisTemplate.delete("rt:" + memberId);
+}
+
+/*** AuthService
+ * 함수 기능: RT를 검증하고 AT와 RT를 재발급한다. 사용된 RT는 폐기된다. (RTR)
+ * @param refreshToken 쿠키로 전달된 RT 원문
+ * @return 새 AT를 담은 응답 바디와 쿠키로 내려보낼 새 RT
+ */
+public TokenIssueResult<ReissueResponse> reissue(String refreshToken) {
+
+    // refreshToken 쿠키가 오지 않은 경우
+    if (!StringUtils.hasText(refreshToken)){
+        throw new AuthException(AuthErrorCode.RT_COOKIE_MISSING);
+    }
+
+    // 제시된 RT 검증
+    Claims claims = jwtUtil.parseRT(refreshToken);
+    Long memberId = Long.parseLong(claims.getSubject());
+
+    // Redis에 담긴 RT와 제시된 RT를 비교 후 분기
+    // NOT_FOUND = 로그아웃 혹은 무효화된 세션 -> 재로그인 유도
+    // MISMATCH = 재사용 감지 -> RT 폐기 후 재로그인 유도
+    // VALID = 정상 로직
+    RefreshTokenStatus status = refreshTokenRepository.verify(memberId, refreshToken);
+
+    if (status == RefreshTokenStatus.NOT_FOUND){
+        throw new AuthException(AuthErrorCode.RT_NOT_FOUND);
+    } else if (status == RefreshTokenStatus.MISMATCH){
+        log.warn("[RT 재사용 감지] memberId={}", memberId);
+        refreshTokenRepository.delete(memberId);
+        throw new AuthException(AuthErrorCode.RT_REUSE_DETECTED);
+    }
+
+    // 새 토큰 발급 후, RT는 Redis에 저장
+    Member member = memberRepository.findById(memberId)
+            .orElseThrow(() -> new MemberException(MemberErrorCode.MEMBER_NOT_FOUND));
+
+    String newAt = jwtUtil.createAT(memberId, member.getRole());
+    String newRt = jwtUtil.createRT(memberId);
+
+    refreshTokenRepository.save(memberId, newRt, Duration.ofSeconds(jwtUtil.getRtValiditySeconds()));
+
+    // 응답 생성
+    LoginResponse.AtInfo atInfo = LoginResponse.AtInfo.of(newAt, TokenType.AT, jwtUtil.getAtValiditySeconds());
+    return new TokenIssueResult<>(new ReissueResponse(atInfo), newRt);
+}
+```
+
+- `JwtAuthenticationFilter`에서 `parseRT()`를 수행하면 안되고, `AuthService`에서 수행한다.
+
+  `/reissue`는 인증을 요구하지 않는다. 만약, 잘못된 RT(서명 오류, 타입 불일치 등)를 제시하여도 `attribute`에는 기록되지만 `doFilter`에 의해 체인이 계속되고 결국 컨트롤러까지 도달하게 된다.
+  또한 전역 필터에 단일 엔드포인트 전용 로직이 들어가면 안된다. `JwtFilter`는 `OncePerRequestFilter`라 모든 요청에 실행된다. RT 검증이 필요한 곳은 `/reissue`하나뿐이다. 그리고 재발급은 “인증”이 아니라 “토큰 교환”이다.
+
+
+### 7. 로그아웃 시, AT를 블랙리스트에 추가하고 RT를 폐기하기
+
+```java
+/*** TokenBlacklistRepo
+ * 함수 기능: AT의 jti를 블랙리스트에 등록한다.
+ * @param jti 차단할 AT의 jti 클레임
+ * @param ttl AT의 잔여 수명
+ * @param reason 차단 사유
+ */
+public void blacklist(String jti, Duration ttl, String reason){
+
+    // 이미 만료된 AT는 저장 x
+    if (ttl.isZero() || ttl.isNegative()){
+        return;
+    }
+    redisTemplate.opsForValue().set(
+            "bl:" + jti, reason, ttl
+    );
+}
+
+/***
+ * 함수 기능: 해당 jti가 블랙리스트에 등록되어있는지 확인한다.
+ * @param jti 확인할 AT의 jti 클레임
+ * @return 등록되어 있으면 true
+ */
+public boolean isBlacklisted(String jti){
+
+    try {
+        return Boolean.TRUE.equals(redisTemplate.hasKey("bl:" + jti));
+    } catch (DataAccessException e){
+        log.error("[블랙리스트 조회 실패] Redis 장애로 검사를 생략합니다.", e);
+        return false;
+    }
+}
+
+/*** AuthService
+ * 함수 기능: 로그아웃을 수행한다. RT를 폐기해 재발급을 막고, 현재 AT를 bl에 등록해 무효화한다.
+ * @param memberId 회원 식별자
+ * @param bearerToken Authorization 헤더 원문 ("Bearer {AT}")
+ */
+public void logout(Long memberId, String bearerToken){
+
+    // RT를 제거하여 재발급 경로를 먼저 끊는다.
+    refreshTokenRepository.delete(memberId);
+
+    // AT를 파싱한다.
+    Claims claims = jwtUtil.parseAT(bearerToken.substring(7));
+
+    // AT를 블랙리스트에 추가한다.
+    tokenBlacklistRepository.blacklist(
+            claims.getId(),
+            Duration.ofMillis(jwtUtil.getRemainingMillis(claims)),
+            "logout");
+
+    log.info("[로그아웃] memberId={}", memberId);
+}
+
+// AuthController
+@Operation(summary = "로그아웃", description = "로그아웃을 진행합니다.")
+@PostMapping("/logout")
+public ApiResponse<Void> logout(
+        @AuthenticationPrincipal CustomUserDetails userDetails,
+        @RequestHeader(HttpHeaders.AUTHORIZATION) String bearerToken,
+        HttpServletResponse response
+        ){
+    authService.logout(userDetails.getMemberId(), bearerToken);
+    cookieUtil.expireRtCookie(response);
+
+    return ApiResponse.onSuccess(AuthSuccessCode.LOGOUT_OK);
+}
+```
+
+### 8. API 요청 시, AT가 블랙리스트 목록인가 확인하는 과정 추가하기
+
+```java
+// JwtAuth..Filter
+// 파싱한 토큰을 검증하고 payload를 추출하여 인증객체를 생성한다.
+private Authentication getAuthentication(String token) {
+
+    Claims claims = jwtUtil.parseAT(token);
+
+    // 블랙리스트에 등록된 AT의 경우, 서명이 유효해도 거부한다.
+    if (tokenBlacklistRepository.isBlacklisted(claims.getId())){
+        log.warn("[블랙리스트 토큰 사용] jti={}", claims.getId());
+        throw new AuthException(AuthErrorCode.BLACKLISTED_TOKEN);
+    }
+
+    CustomUserDetails userDetails = new CustomUserDetails(
+            Long.valueOf(claims.getSubject()),
+            Role.valueOf(claims.get("role", String.class)),
+            null);
+
+    return UsernamePasswordAuthenticationToken.authenticated(
+            userDetails, null, userDetails.getAuthorities());
+}
+```
+</div>
+</details>
+
