@@ -49,7 +49,7 @@ tasks.named('test') {
 }
 
 tasks.register('mysqlTest', Test) {
-	description = 'Runs reservation locking tests against disposable MySQL (requires Docker).'
+	description = 'Runs reservation and payment integrity tests against disposable MySQL (requires Docker).'
 	group = 'verification'
 	testClassesDirs = sourceSets.test.output.classesDirs
 	classpath = sourceSets.test.runtimeClasspath
@@ -58,6 +58,11 @@ tasks.register('mysqlTest', Test) {
 	filter {
 		includeTestsMatching 'com.ceos.cgv.domain.reservation.service.ScreeningSeatNowaitIntegrationTest'
 		includeTestsMatching 'com.ceos.cgv.domain.reservation.service.hold.SeatHoldConcurrencyIntegrationTest'
+		includeTestsMatching 'com.ceos.cgv.domain.reservation.service.payment.ReservationPaymentIntegrationTest'
+		includeTestsMatching 'com.ceos.cgv.domain.payment.service.PaymentWorkflowIntegrationTest'
+		includeTestsMatching 'com.ceos.cgv.domain.payment.service.PaymentConcurrencyIntegrationTest'
+		includeTestsMatching 'com.ceos.cgv.domain.payment.service.PaymentConcurrencyComparisonTest'
+		includeTestsMatching 'com.ceos.cgv.domain.payment.schema.PaymentSchemaUpgradeIntegrationTest'
 	}
 	// Every invocation verifies a fresh database rather than reuse an earlier result.
 	outputs.upToDateWhen { false }
