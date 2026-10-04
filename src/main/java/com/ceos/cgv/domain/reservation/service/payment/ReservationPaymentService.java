@@ -87,9 +87,12 @@ public class ReservationPaymentService {
             throw new BusinessException(ErrorCode.HOLD_NOT_ACTIVE);
         }
         List<ScreeningSeat> seats = lockSeats(reservation, reservation.getReservedSeats());
-        ReservationSeatLifecycle.verifyOccupancy(seats, reservation);
         reservation.releaseFailedPayment();
-        seats.forEach(seat -> seat.releaseIfOwnedBy(reservation));
+        // PG 보상 취소가 확인된 뒤에는 남아 있는 본인 점유만 해제한다.
+        // 이미 해제되었거나 타인에게 바뀐 좌석은 복구 대상으로 삼지 않는다.
+        seats.stream().filter(seat -> seat.getCurrentReservation() != null
+                        && reservation.getId().equals(seat.getCurrentReservation().getId()))
+                .forEach(seat -> seat.releaseIfOwnedBy(reservation));
     }
 
     public void cancelPaidSeats(Long reservationId, Long userId, List<Long> reservedSeatIds) {

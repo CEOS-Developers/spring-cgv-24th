@@ -142,6 +142,18 @@ class ReservationPaymentIntegrationTest extends ReservationDatabaseIntegrationTe
     }
 
     @Test
+    void 보상_취소가_확인된_실패는_타인_점유를_보존하고_남은_본인_점유만_해제한다() {
+        start();
+        long otherReservationId = reservationId + 11;
+        jdbc.update("INSERT INTO reservations(reservation_id,user_id,screening_id,status,created_at,updated_at) VALUES(?,?,?,'RESERVED',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)", otherReservationId, userId, screeningId);
+        jdbc.update("UPDATE screening_seats SET current_reservation_id=? WHERE screening_id=? AND seat_number=1", otherReservationId, screeningId);
+        tx.executeWithoutResult(ignored -> payments.releaseFailedPayment(reservationId, userId));
+        assertThat(status()).isEqualTo("RELEASED");
+        assertThat(occupant(1)).isEqualTo(otherReservationId);
+        assertThat(occupant(2)).isNull();
+    }
+
+    @Test
     void 확정된_예약은_실패_해제로_풀지_않는다() {
         confirm();
         assertError(() -> tx.executeWithoutResult(ignored -> payments.releaseFailedPayment(reservationId, userId)), ErrorCode.HOLD_NOT_ACTIVE);
