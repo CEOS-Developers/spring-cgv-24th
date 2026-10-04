@@ -90,19 +90,6 @@ public class Reservation extends BaseTimeEntity {
         return status == ReservationStatus.HELD && !now.isBefore(expiresAt);
     }
 
-    public void confirm(Instant now) {
-        if (status == ReservationStatus.RESERVED) {
-            return;
-        }
-        if (status != ReservationStatus.HELD) {
-            throw new BusinessException(ErrorCode.HOLD_NOT_ACTIVE);
-        }
-        if (isExpiredAt(now)) {
-            throw new BusinessException(ErrorCode.HOLD_EXPIRED);
-        }
-        status = ReservationStatus.RESERVED;
-    }
-
     public void startPayment(Instant now) {
         if (status != ReservationStatus.HELD) {
             throw new BusinessException(ErrorCode.HOLD_NOT_ACTIVE);
