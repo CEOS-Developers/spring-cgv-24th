@@ -15,6 +15,7 @@ public record PaymentResponse(
         Long reservationId,
         String paymentKey,
         PaymentStatus status,
+        Long activeOperationId,
         long totalAmount,
         long balanceAmount,
         String method,

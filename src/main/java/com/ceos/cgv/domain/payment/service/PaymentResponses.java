@@ -23,52 +23,57 @@ public class PaymentResponses {
         return order.getSeats().stream()
                 .map(
                         seat ->
-                                new PaymentSeatResponse(
-                                        seat.getReservedSeatId(),
-                                        seat.getSeatRow(),
-                                        seat.getSeatNumber(),
-                                        seat.getCanceledAt()))
+                                PaymentSeatResponse.builder()
+                                        .reservedSeatId(seat.getReservedSeatId())
+                                        .seatRow(seat.getSeatRow())
+                                        .seatNumber(seat.getSeatNumber())
+                                        .canceledAt(seat.getCanceledAt())
+                                        .build())
                 .toList();
     }
 
     public PaymentOrderResponse order(Payment payment) {
         PaymentOrder order = payment.getOrder();
-        return new PaymentOrderResponse(
-                order.getOrderId(),
-                payment.getId(),
-                order.getReservationId(),
-                order.getOrderName(),
-                order.getTotalAmount(),
-                order.getSeatPrice(),
-                order.getExpiresAt(),
-                seats(order));
+        return PaymentOrderResponse.builder()
+                .orderId(order.getOrderId())
+                .paymentId(payment.getId())
+                .reservationId(order.getReservationId())
+                .orderName(order.getOrderName())
+                .totalAmount(order.getTotalAmount())
+                .seatPrice(order.getSeatPrice())
+                .expiresAt(order.getExpiresAt())
+                .seats(seats(order))
+                .build();
     }
 
     public PaymentResponse payment(Payment payment) {
         PaymentOrder order = payment.getOrder();
-        return new PaymentResponse(
-                payment.getId(),
-                order.getOrderId(),
-                order.getReservationId(),
-                payment.getPaymentKey(),
-                payment.getStatus(),
-                order.getTotalAmount(),
-                payment.getBalanceAmount(),
-                payment.getMethod(),
-                payment.getApprovedAt(),
-                payment.getReceiptUrl(),
-                paymentJson.cancellations(payment.getCancellationsJson()),
-                seats(order));
+        return PaymentResponse.builder()
+                .paymentId(payment.getId())
+                .orderId(order.getOrderId())
+                .reservationId(order.getReservationId())
+                .paymentKey(payment.getPaymentKey())
+                .status(payment.getStatus())
+                .activeOperationId(payment.getActiveOperationId())
+                .totalAmount(order.getTotalAmount())
+                .balanceAmount(payment.getBalanceAmount())
+                .method(payment.getMethod())
+                .approvedAt(payment.getApprovedAt())
+                .receiptUrl(payment.getReceiptUrl())
+                .cancellations(paymentJson.cancellations(payment.getCancellationsJson()))
+                .seats(seats(order))
+                .build();
     }
 
     public PaymentOperationResponse operation(PaymentOperation operation) {
-        return new PaymentOperationResponse(
-                operation.getId(),
-                operation.getType(),
-                operation.getStatus(),
-                operation.getPayment().getId(),
-                paymentJson.result(operation.getResultJson()),
-                operation.getFailureCode(),
-                "/api/v1/payment-operations/" + operation.getId());
+        return PaymentOperationResponse.builder()
+                .operationId(operation.getId())
+                .type(operation.getType())
+                .status(operation.getStatus())
+                .paymentId(operation.getPayment().getId())
+                .result(paymentJson.result(operation.getResultJson()))
+                .failureCode(operation.getFailureCode())
+                .operationUrl("/api/v1/payment-operations/" + operation.getId())
+                .build();
     }
 }
