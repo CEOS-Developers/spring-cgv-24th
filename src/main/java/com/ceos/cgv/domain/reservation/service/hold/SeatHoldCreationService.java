@@ -82,6 +82,7 @@ public class SeatHoldCreationService {
                 throw new ExpiredHoldEncountered(reservation.getId(), true);
             }
             if (reservation.getStatus() != ReservationStatus.HELD
+                    && reservation.getStatus() != ReservationStatus.PAYMENT_PENDING
                     && reservation.getStatus() != ReservationStatus.RESERVED) {
                 throw new BusinessException(ErrorCode.HOLD_NOT_ACTIVE);
             }

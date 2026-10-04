@@ -93,7 +93,7 @@ public class ScreeningSeatBackfillService {
             }
             Reservation reservation = history.getReservation();
             boolean active = switch (reservation.getStatus()) {
-                case RESERVED -> true;
+                case RESERVED, PAYMENT_PENDING -> !history.isCanceled();
                 case HELD -> {
                     if (reservation.getExpiresAt() == null) {
                         throw conflict();

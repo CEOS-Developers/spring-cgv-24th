@@ -48,7 +48,8 @@ public class SeatAvailabilityService {
         if (occupant == null) {
             return SeatAvailabilityResponse.Status.AVAILABLE;
         }
-        if (occupant.getStatus() == ReservationStatus.HELD) {
+        if (occupant.getStatus() == ReservationStatus.HELD
+                || occupant.getStatus() == ReservationStatus.PAYMENT_PENDING) {
             return occupant.isExpiredAt(now)
                     ? SeatAvailabilityResponse.Status.AVAILABLE
                     : SeatAvailabilityResponse.Status.HELD;

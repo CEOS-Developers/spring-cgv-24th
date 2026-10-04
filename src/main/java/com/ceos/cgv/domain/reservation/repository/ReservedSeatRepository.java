@@ -33,7 +33,8 @@ public interface ReservedSeatRepository extends JpaRepository<ReservedSeat, Long
                     .toArray(Predicate[]::new);
             return criteriaBuilder.and(
                     criteriaBuilder.equal(reservation.get("screening").get("id"), screeningId),
-                    criteriaBuilder.equal(reservation.get("status"), ReservationStatus.RESERVED),
+                    reservation.get("status").in(ReservationStatus.RESERVED, ReservationStatus.PAYMENT_PENDING),
+                    criteriaBuilder.isNull(root.get("canceledAt")),
                     criteriaBuilder.or(requestedSeats));
         };
         return exists(specification);
