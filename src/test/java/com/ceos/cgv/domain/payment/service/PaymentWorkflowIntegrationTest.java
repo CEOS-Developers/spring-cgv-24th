@@ -19,7 +19,6 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.annotation.DirtiesContext;
-import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -30,9 +29,8 @@ import java.util.concurrent.*;
 
 @SpringBootTest
 @org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
-@ActiveProfiles("test")
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
-class PaymentWorkflowIntegrationTest {
+class PaymentWorkflowIntegrationTest extends com.ceos.cgv.support.DatabaseIntegrationTest {
     @Autowired PaymentWorkflowService service;
     @Autowired org.springframework.test.web.servlet.MockMvc mvc;
     @Autowired com.ceos.cgv.global.security.jwt.JwtService jwt;
@@ -62,6 +60,18 @@ class PaymentWorkflowIntegrationTest {
         jdbc.update(
                 "INSERT INTO screening_seats (screening_seat_id,screening_id,seat_row,seat_number)"
                         + " VALUES (8716,8715,'A',1),(8717,8715,'A',2),(8719,8715,'A',3)");
+    }
+
+    @Autowired jakarta.persistence.EntityManager entityManager;
+
+    void expireFixture(Long reservationId) {
+        new org.springframework.transaction.support.TransactionTemplate(transactionManager)
+                .executeWithoutResult(status -> {
+                    com.ceos.cgv.domain.reservation.entity.Reservation reservation = entityManager.find(
+                            com.ceos.cgv.domain.reservation.entity.Reservation.class, reservationId);
+                    org.springframework.test.util.ReflectionTestUtils.setField(
+                            reservation, "expiresAt", Instant.now().minusSeconds(60));
+                });
     }
 
     PaymentOrderResponse order(int count) {
@@ -263,10 +273,7 @@ class PaymentWorkflowIntegrationTest {
     @Test
     void 만료_주문은_PG_호출_없이_거절한다() {
         PaymentOrderResponse order = order(1);
-        jdbc.update(
-                "UPDATE reservations SET expires_at=? WHERE reservation_id=?",
-                java.sql.Timestamp.from(Instant.now().minusSeconds(60)),
-                order.reservationId());
+        expireFixture(order.reservationId());
         assertThatThrownBy(
                         () ->
                                 service.confirm(
@@ -565,10 +572,7 @@ class PaymentWorkflowIntegrationTest {
         when(gateway.confirm(any())).thenReturn(payment);
         PaymentOperationResponse approved = service.confirm(8711L, key, request);
         jdbc.update("UPDATE movies SET visibility='HIDDEN' WHERE movie_id=8714");
-        jdbc.update(
-                "UPDATE reservations SET expires_at=? WHERE reservation_id=?",
-                java.sql.Timestamp.from(Instant.now().minusSeconds(60)),
-                order.reservationId());
+        expireFixture(order.reservationId());
         assertThat(service.confirm(8711L, key, request)).isEqualTo(approved);
         verify(gateway, times(1)).confirm(any());
     }
