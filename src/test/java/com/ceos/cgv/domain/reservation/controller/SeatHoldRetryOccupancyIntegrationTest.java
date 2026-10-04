@@ -2,7 +2,7 @@ package com.ceos.cgv.domain.reservation.controller;
 
 import com.ceos.cgv.domain.reservation.dto.ReservedSeatRequest;
 import com.ceos.cgv.domain.reservation.dto.SeatHoldCreateRequest;
-import com.ceos.cgv.domain.reservation.service.ReservationCreationService;
+import com.ceos.cgv.domain.reservation.service.hold.SeatHoldCreationService;
 import com.ceos.cgv.domain.reservation.service.hold.SeatHoldService;
 import com.ceos.cgv.domain.user.enums.UserRole;
 import com.ceos.cgv.global.security.jwt.JwtService;
@@ -35,12 +35,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
 @DirtiesContext
-class ReservationRetryOccupancyIntegrationTest {
+class SeatHoldRetryOccupancyIntegrationTest {
     @Autowired JdbcTemplate jdbc;
     @Autowired MockMvc mvc;
     @Autowired JwtService jwt;
     @Autowired SeatHoldService holds;
-    @MockitoSpyBean ReservationCreationService creation;
+    @MockitoSpyBean SeatHoldCreationService creation;
 
     @Test
     void 만료_정리와_재시도_사이의_새_선점을_덮어쓰지_않는다() throws Exception {
@@ -59,7 +59,7 @@ class ReservationRetryOccupancyIntegrationTest {
         AtomicReference<Long> competitor = new AtomicReference<>();
         try (var executor = Executors.newSingleThreadExecutor()) {
             doAnswer(invocation -> {
-                if (attempts.incrementAndGet() == 2) {
+                if (Long.valueOf(7201L).equals(invocation.getArgument(0)) && attempts.incrementAndGet() == 2) {
                     // 첫 시도가 롤백되고 만료 정리가 커밋된 직후, 다른 요청이 먼저 선점한다.
                     var result = executor.submit(() -> holds.create(7202L, UUID.randomUUID(),
                             new SeatHoldCreateRequest(7206L, List.of(new ReservedSeatRequest("A", 1)))))
@@ -67,10 +67,11 @@ class ReservationRetryOccupancyIntegrationTest {
                     competitor.set(result.response().reservationId());
                 }
                 return invocation.callRealMethod();
-            }).when(creation).create(any());
+            }).when(creation).create(any(), any(), any());
 
-            mvc.perform(post("/api/v1/reservations")
+            mvc.perform(post("/api/v1/seat-holds")
                             .header("Authorization", "Bearer " + jwt.issue(7201L, UserRole.USER))
+                            .header("Idempotency-Key", UUID.randomUUID().toString())
                             .contentType(MediaType.APPLICATION_JSON)
                             .content("{\"screeningId\":7206,\"seats\":[{\"seatRow\":\"A\",\"seatNumber\":1}]}"))
                     .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("SEAT_HELD"));
