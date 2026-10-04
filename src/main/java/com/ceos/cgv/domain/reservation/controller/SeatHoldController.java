@@ -52,13 +52,6 @@ public class SeatHoldController {
                 .body(ApiResponse.created(result.response()));
     }
 
-    @PostMapping("/{reservationId}/confirm")
-    @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "본인 선점만 처리할 수 있습니다.")
-    public ResponseEntity<ApiResponse<SeatHoldResponse>> confirm(
-            @PathVariable Long reservationId, @AuthenticationPrincipal CgvUserDetails user) {
-        return ResponseEntity.ok(ApiResponse.success(seatHoldService.confirm(reservationId, user.userId())));
-    }
-
     @DeleteMapping("/{reservationId}")
     @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "본인 선점만 처리할 수 있습니다.")
     public ResponseEntity<Void> release(@PathVariable Long reservationId,
