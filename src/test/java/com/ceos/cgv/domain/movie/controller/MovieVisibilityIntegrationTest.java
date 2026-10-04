@@ -1,6 +1,10 @@
 package com.ceos.cgv.domain.movie.controller;
 
 import com.ceos.cgv.domain.user.enums.UserRole;
+import com.ceos.cgv.domain.reservation.dto.ReservedSeatRequest;
+import com.ceos.cgv.domain.reservation.support.LegacyReservationFixture;
+import java.util.List;
+import java.util.UUID;
 import com.ceos.cgv.global.security.jwt.JwtService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -84,23 +88,8 @@ class MovieVisibilityIntegrationTest {
     @Test
     void HIDDEN_전환은_연관_행을_보존하고_공개_조회와_신규_이용을_차단하며_기존_이력을_유지한다()
             throws Exception {
-        String reservationRequest = """
-                {
-                  "screeningId": %d,
-                  "seats": [{"seatRow": "A", "seatNumber": 1}]
-                }
-                """.formatted(SCREENING_ID);
-
-        String reservationLocation = mockMvc.perform(post("/api/v1/reservations")
-                        .header("Authorization", userToken())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(reservationRequest))
-                .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.data.status").value("RESERVED"))
-                .andReturn()
-                .getResponse()
-                .getHeader("Location");
-        long reservationId = extractId(reservationLocation);
+        long reservationId = LegacyReservationFixture.create(jdbcTemplate, USER_ID, SCREENING_ID,
+                List.of(new ReservedSeatRequest("A", 1)));
 
         mockMvc.perform(post("/api/v1/movies/{movieId}/likes", MOVIE_ID)
                         .header("Authorization", userToken()))
@@ -157,9 +146,10 @@ class MovieVisibilityIntegrationTest {
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("MOVIE_NOT_AVAILABLE"));
 
-        // A1은 기존 예매가 점유하므로 A2로 신규 예매의 visibility 거절만 확인함
-        mockMvc.perform(post("/api/v1/reservations")
+        // A1은 기존 예매가 점유하므로 A2로 신규 선점의 visibility 거절만 확인함
+        mockMvc.perform(post("/api/v1/seat-holds")
                         .header("Authorization", userToken())
+                        .header("Idempotency-Key", UUID.randomUUID().toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -233,10 +223,6 @@ class MovieVisibilityIntegrationTest {
         jdbcTemplate.update("DELETE FROM screens WHERE screen_id = ?", SCREEN_ID);
         jdbcTemplate.update("DELETE FROM cinemas WHERE cinema_id = ?", CINEMA_ID);
         jdbcTemplate.update("DELETE FROM users WHERE user_id = ?", USER_ID);
-    }
-
-    private static long extractId(String location) {
-        return Long.parseLong(location.substring(location.lastIndexOf('/') + 1));
     }
 
     private String userToken() {

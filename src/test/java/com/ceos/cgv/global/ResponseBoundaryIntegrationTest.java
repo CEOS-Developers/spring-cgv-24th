@@ -3,6 +3,7 @@ package com.ceos.cgv.global;
 import com.ceos.cgv.domain.user.enums.UserRole;
 import com.ceos.cgv.global.security.jwt.JwtService;
 import com.jayway.jsonpath.JsonPath;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -29,7 +30,7 @@ class ResponseBoundaryIntegrationTest {
 
     // 테스트 자체에도 트랜잭션을 두지 않아 서비스 반환 후의 DTO 직렬화를 검증한다.
     @Test
-    void OSIV_없이_상영_예매_주문_생성과_조회를_완료한다() throws Exception {
+    void OSIV_없이_상영_선점_주문_생성과_조회를_완료한다() throws Exception {
         jdbc.update("INSERT INTO users(user_id,name,email) VALUES(6101,'응답 회원','response@example.test')");
         jdbc.update("INSERT INTO cinemas(cinema_id,name,address) VALUES(6102,'응답 영화관','서울')");
         jdbc.update("INSERT INTO screens(screen_id,cinema_id,screen_type,row_count,seats_per_row) VALUES(6103,6102,'GENERAL',1,2)");
@@ -48,13 +49,16 @@ class ResponseBoundaryIntegrationTest {
         mvc.perform(get("/api/v1/movies/6104/screenings"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.data[0].screenId").value(6103));
 
-        String reservationLocation = mvc.perform(post("/api/v1/reservations").header("Authorization", user)
+        String reservationBody = mvc.perform(post("/api/v1/seat-holds").header("Authorization", user)
+                        .header("Idempotency-Key", UUID.randomUUID().toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"screeningId\":%d,\"seats\":[{\"seatRow\":\"A\",\"seatNumber\":1}]}".formatted(screeningId.longValue())))
                 .andExpect(status().isCreated()).andExpect(jsonPath("$.data.seats[0].seatRow").value("A"))
-                .andReturn().getResponse().getHeader("Location");
-        mvc.perform(get(reservationLocation).header("Authorization", user))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.data.status").value("RESERVED"));
+                .andReturn().getResponse().getContentAsString();
+        Number reservationId = JsonPath.read(reservationBody, "$.data.reservationId");
+        mvc.perform(get("/api/v1/reservations/{id}", reservationId.longValue()).header("Authorization", user))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.status").value("HELD"))
+                .andExpect(jsonPath("$.data.seats[0].seatRow").value("A"));
 
         String orderLocation = mvc.perform(post("/api/v1/food-orders").header("Authorization", user)
                         .contentType(MediaType.APPLICATION_JSON)

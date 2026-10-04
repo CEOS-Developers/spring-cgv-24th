@@ -1,8 +1,12 @@
 package com.ceos.cgv.domain.movie.controller;
 
 import com.ceos.cgv.domain.user.enums.UserRole;
+import com.ceos.cgv.domain.reservation.dto.ReservedSeatRequest;
+import com.ceos.cgv.domain.reservation.support.LegacyReservationFixture;
+import com.jayway.jsonpath.JsonPath;
+import org.springframework.test.annotation.DirtiesContext;
+import java.util.UUID;
 import com.ceos.cgv.global.security.jwt.JwtService;
-import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -12,12 +16,12 @@ import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -25,12 +29,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
-@Transactional
+@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
 class ScreeningSeatCreationIntegrationTest {
     @Autowired MockMvc mockMvc;
     @Autowired JdbcTemplate jdbcTemplate;
     @Autowired JwtService jwtService;
-    @Autowired EntityManager entityManager;
 
     @BeforeEach
     void setUp() {
@@ -96,7 +99,7 @@ class ScreeningSeatCreationIntegrationTest {
     }
 
     @Test
-    void 취소와_재예매_이력은_같은_회차_좌석을_가리키고_좌석_표시는_보존한다() throws Exception {
+    void 기존_예약의_취소와_새_선점_이력은_같은_회차_좌석을_가리키고_좌석_표시는_보존한다() throws Exception {
         long screeningId = createScreening("2026-09-26T20:30:00");
         jdbcTemplate.update("INSERT INTO users (user_id, name, email) VALUES (6606, '좌석 회원', 'seat-6606@example.com')");
         String request = """
@@ -104,13 +107,13 @@ class ScreeningSeatCreationIntegrationTest {
                 """.formatted(screeningId);
         String userToken = "Bearer " + jwtService.issue(6606L, UserRole.USER);
 
-        long firstReservationId = createReservation(request, userToken);
+        long firstReservationId = createLegacyReservation(request);
         assertThat(currentReservationId(screeningId, "A", 2)).isEqualTo(firstReservationId);
         mockMvc.perform(delete("/api/v1/reservations/{id}", firstReservationId)
                         .header("Authorization", userToken))
                 .andExpect(status().isNoContent());
         assertThat(currentReservationId(screeningId, "A", 2)).isNull();
-        long secondReservationId = createReservation(request, userToken);
+        long secondReservationId = createHold(request, userToken);
         assertThat(currentReservationId(screeningId, "A", 2)).isEqualTo(secondReservationId);
 
         List<String> histories = jdbcTemplate.query("""
@@ -124,7 +127,7 @@ class ScreeningSeatCreationIntegrationTest {
     }
 
     @Test
-    void 기존_회차의_예약_이력은_새_FK_없이도_유지된다() throws Exception {
+    void 기존_회차의_예약_이력은_새_FK_없이도_조회하고_취소한다() throws Exception {
         jdbcTemplate.update("""
                 INSERT INTO screenings (screening_id, movie_id, screen_id, start_at)
                 VALUES (6607, 6603, 6602, '2026-09-26 22:30:00')
@@ -133,8 +136,17 @@ class ScreeningSeatCreationIntegrationTest {
         String request = """
                 {"screeningId":6607,"seats":[{"seatRow":"B","seatNumber":1}]}
                 """;
-        long reservationId = createReservation(request,
-                "Bearer " + jwtService.issue(6606L, UserRole.USER));
+        long reservationId = createLegacyReservation(request);
+        String token = "Bearer " + jwtService.issue(6606L, UserRole.USER);
+        mockMvc.perform(get("/api/v1/reservations/{id}", reservationId).header("Authorization", token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("RESERVED"))
+                .andExpect(jsonPath("$.data.seats[0].seatRow").value("B"))
+                .andExpect(jsonPath("$.data.seats[0].seatNumber").value(1));
+        mockMvc.perform(delete("/api/v1/reservations/{id}", reservationId).header("Authorization", token))
+                .andExpect(status().isNoContent());
+        assertThat(jdbcTemplate.queryForObject("SELECT status FROM reservations WHERE reservation_id=?", String.class, reservationId))
+                .isEqualTo("CANCELED");
 
         assertThat(jdbcTemplate.queryForObject("""
                 SELECT screening_seat_id FROM reserved_seats WHERE reservation_id = ?
@@ -142,7 +154,7 @@ class ScreeningSeatCreationIntegrationTest {
     }
 
     @Test
-    void 좌석_행이_일부만_있는_회차는_새_예매를_거절한다() throws Exception {
+    void 좌석_행이_일부만_있는_회차는_새_선점을_거절한다() throws Exception {
         long screeningId = createScreening("2026-09-27T12:30:00");
         jdbcTemplate.update("""
                 DELETE FROM screening_seats
@@ -150,8 +162,9 @@ class ScreeningSeatCreationIntegrationTest {
                 """, screeningId);
         jdbcTemplate.update("INSERT INTO users (user_id, name, email) VALUES (6606, '좌석 회원', 'seat-6606@example.com')");
 
-        mockMvc.perform(post("/api/v1/reservations")
+        mockMvc.perform(post("/api/v1/seat-holds")
                         .header("Authorization", "Bearer " + jwtService.issue(6606L, UserRole.USER))
+                        .header("Idempotency-Key", UUID.randomUUID().toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"screeningId":%d,"seats":[{"seatRow":"A","seatNumber":1}]}
@@ -162,18 +175,26 @@ class ScreeningSeatCreationIntegrationTest {
                 "SELECT COUNT(*) FROM reservations WHERE screening_id = ?", Integer.class, screeningId)).isZero();
     }
 
-    private long createReservation(String request, String userToken) throws Exception {
-        String location = mockMvc.perform(post("/api/v1/reservations")
-                        .header("Authorization", userToken)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(request))
+    private long createLegacyReservation(String request) {
+        long screeningId = JsonPath.<Number>read(request, "$.screeningId").longValue();
+        String row = JsonPath.read(request, "$.seats[0].seatRow");
+        int number = JsonPath.<Number>read(request, "$.seats[0].seatNumber").intValue();
+        return LegacyReservationFixture.create(jdbcTemplate, 6606L, screeningId,
+                List.of(new ReservedSeatRequest(row, number)));
+    }
+
+    private long createHold(String request, String token) throws Exception {
+        String body = mockMvc.perform(post("/api/v1/seat-holds")
+                        .header("Authorization", token)
+                        .header("Idempotency-Key", UUID.randomUUID().toString())
+                        .contentType(MediaType.APPLICATION_JSON).content(request))
                 .andExpect(status().isCreated())
-                .andReturn().getResponse().getHeader("Location");
-        return Long.parseLong(location.substring(location.lastIndexOf('/') + 1));
+                .andExpect(jsonPath("$.data.status").value("HELD"))
+                .andReturn().getResponse().getContentAsString();
+        return JsonPath.<Number>read(body, "$.data.reservationId").longValue();
     }
 
     private Long currentReservationId(long screeningId, String row, int number) {
-        entityManager.flush();
         return jdbcTemplate.queryForObject("""
                 SELECT current_reservation_id FROM screening_seats
                 WHERE screening_id = ? AND seat_row = ? AND seat_number = ?

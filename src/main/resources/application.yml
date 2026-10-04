@@ -20,3 +20,9 @@ cgv:
     max-active: 1
     cleanup-batch-size: 100
     cleanup-delay-ms: 60000
+  payment:
+    toss:
+      client-key: ${TOSS_CLIENT_KEY:}
+      secret-key: ${TOSS_SECRET_KEY:}
+      connect-timeout: 3s
+      read-timeout: 10s

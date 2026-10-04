@@ -14,6 +14,9 @@ import lombok.AccessLevel;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import com.ceos.cgv.global.exception.BusinessException;
+import com.ceos.cgv.global.exception.ErrorCode;
+import java.time.Instant;
 
 @Entity
 @Table(name = "reserved_seats")
@@ -39,6 +42,23 @@ public class ReservedSeat {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "screening_seat_id")
     private ScreeningSeat screeningSeat;
+
+    @Column(name = "canceled_at")
+    private Instant canceledAt;
+
+    public boolean isCanceled() {
+        return canceledAt != null;
+    }
+
+    public void cancel(Instant now) {
+        if (now == null) {
+            throw new BusinessException(ErrorCode.INVALID_REQUEST);
+        }
+        if (isCanceled()) {
+            throw new BusinessException(ErrorCode.RESERVATION_ALREADY_CANCELED);
+        }
+        canceledAt = now;
+    }
 
     @Builder
     public ReservedSeat(Reservation reservation, String seatRow, Integer seatNumber,

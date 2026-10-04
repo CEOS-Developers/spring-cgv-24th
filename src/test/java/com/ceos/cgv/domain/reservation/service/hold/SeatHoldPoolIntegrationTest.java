@@ -1,6 +1,8 @@
-package com.ceos.cgv.domain.reservation.service;
+package com.ceos.cgv.domain.reservation.service.hold;
 
-import com.ceos.cgv.domain.reservation.dto.ReservationCreateRequest;
+import com.ceos.cgv.domain.reservation.dto.SeatHoldCreateRequest;
+import com.ceos.cgv.domain.reservation.service.hold.SeatHoldService;
+import java.util.UUID;
 import com.ceos.cgv.domain.reservation.dto.ReservedSeatRequest;
 import com.ceos.cgv.global.exception.BusinessException;
 import com.ceos.cgv.global.exception.ErrorCode;
@@ -22,14 +24,14 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
         "spring.datasource.hikari.minimum-idle=0", "spring.datasource.hikari.connection-timeout=500"})
 @ActiveProfiles("test")
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
-class DirectReservationPoolIntegrationTest {
-    @Autowired ReservationService reservations;
+class SeatHoldPoolIntegrationTest {
+    @Autowired SeatHoldService reservations;
     @Autowired JdbcTemplate jdbc;
     @Autowired HikariDataSource pool;
 
     @BeforeEach
     void setUp() {
-        jdbc.update("INSERT INTO users(user_id,name,email) VALUES(991,'풀 검증','pool@example.test')");
+        jdbc.update("INSERT INTO users(user_id,name,email) VALUES(991,'기존 선점','pool@example.test'),(999,'새 선점','pool-new@example.test')");
         jdbc.update("INSERT INTO cinemas(cinema_id,name,address) VALUES(992,'영화관','서울')");
         jdbc.update("INSERT INTO screens(screen_id,cinema_id,screen_type,row_count,seats_per_row) VALUES(993,992,'GENERAL',1,1)");
         jdbc.update("INSERT INTO movies(movie_id,title,description,running_time,release_date,age_rating,visibility) VALUES(994,'영화','설명',120,'2026-01-01','ALL','PUBLIC')");
@@ -49,13 +51,13 @@ class DirectReservationPoolIntegrationTest {
     }
 
     @Test
-    void 연결이_하나여도_만료_정리_후_새_예매가_성공한다() {
-        var created = reservations.create(request());
+    void 연결이_하나여도_만료_정리_후_새_선점이_성공한다() {
+        var created = reservations.create(999L, UUID.randomUUID(), request());
 
         assertThat(jdbc.queryForObject("SELECT status FROM reservations WHERE reservation_id=996", String.class))
                 .isEqualTo("EXPIRED");
         assertThat(jdbc.queryForObject("SELECT current_reservation_id FROM screening_seats WHERE screening_seat_id=997", Long.class))
-                .isEqualTo(created.reservationId());
+                .isEqualTo(created.response().reservationId());
     }
 
     @Test
@@ -71,12 +73,12 @@ class DirectReservationPoolIntegrationTest {
     }
 
     private void assertRejected(ErrorCode expected) {
-        assertThatThrownBy(() -> reservations.create(request()))
+        assertThatThrownBy(() -> reservations.create(999L, UUID.randomUUID(), request()))
                 .isInstanceOf(BusinessException.class)
                 .extracting(error -> ((BusinessException) error).getErrorCode()).isEqualTo(expected);
     }
 
-    private ReservationCreateRequest request() {
-        return new ReservationCreateRequest(991L, 995L, List.of(new ReservedSeatRequest("A", 1)));
+    private SeatHoldCreateRequest request() {
+        return new SeatHoldCreateRequest(995L, List.of(new ReservedSeatRequest("A", 1)));
     }
 }

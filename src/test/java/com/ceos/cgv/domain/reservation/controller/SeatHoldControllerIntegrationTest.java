@@ -1,6 +1,7 @@
 package com.ceos.cgv.domain.reservation.controller;
 
 import com.ceos.cgv.domain.reservation.config.SeatHoldProperties;
+import com.ceos.cgv.domain.reservation.support.LegacyReservationFixture;
 import com.ceos.cgv.domain.reservation.repository.ReservationRepository;
 import com.ceos.cgv.domain.reservation.service.hold.SeatHoldCleanupService;
 import com.ceos.cgv.domain.reservation.service.hold.SeatHoldExpiryService;
@@ -249,7 +250,7 @@ class SeatHoldControllerIntegrationTest {
     }
 
     @Test
-    void 좌석_배열의_null_항목은_선점과_직접_예매에서_400으로_거절한다() throws Exception {
+    void 좌석_배열의_null_항목은_선점에서_400으로_거절한다() throws Exception {
         String invalid = """
                 {"screeningId":8616,"seats":[null]}
                 """;
@@ -259,11 +260,7 @@ class SeatHoldControllerIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON).content(invalid))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
-        mockMvc.perform(post("/api/v1/reservations")
-                        .header("Authorization", userToken(8611))
-                        .contentType(MediaType.APPLICATION_JSON).content(invalid))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
+
     }
 
     @Test
@@ -322,9 +319,7 @@ class SeatHoldControllerIntegrationTest {
                 .andExpect(jsonPath("$.code").value("HOLD_NOT_ACTIVE"));
 
         long confirmedId = createHold(8611, "123e4567-e89b-12d3-a456-426614174004", "B", 1);
-        mockMvc.perform(post("/api/v1/seat-holds/{id}/confirm", confirmedId)
-                        .header("Authorization", userToken(8611)))
-                .andExpect(status().isOk());
+        LegacyReservationFixture.markReserved(jdbc, confirmedId);
         mockMvc.perform(delete("/api/v1/seat-holds/{id}", confirmedId)
                         .header("Authorization", userToken(8611)))
                 .andExpect(status().isConflict())
@@ -340,29 +335,30 @@ class SeatHoldControllerIntegrationTest {
     }
 
     @Test
-    void 선점_확정은_같은_예매_ID로_한번만_처리한다() throws Exception {
+    void 삭제된_직접_예약과_무료_확정은_회원과_관리자도_거절한다() throws Exception {
         long holdId = createHold(8611, KEY, "A", 1);
-
-        for (int attempt = 0; attempt < 2; attempt++) {
+        for (UserRole role : java.util.List.of(UserRole.USER, UserRole.ADMIN)) {
+            String token = "Bearer " + jwtService.issue(8611L, role);
             mockMvc.perform(post("/api/v1/seat-holds/{id}/confirm", holdId)
-                            .header("Authorization", userToken(8611)))
-                    .andExpect(status().isOk())
-                    .andExpect(jsonPath("$.data.reservationId").value(holdId))
-                    .andExpect(jsonPath("$.data.status").value("RESERVED"));
+                            .header("Authorization", token))
+                    .andExpect(status().isForbidden())
+                    .andExpect(jsonPath("$.code").value("ACCESS_DENIED"));
+            mockMvc.perform(post("/api/v1/reservations")
+                            .header("Authorization", token)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"screeningId\":8616,\"seats\":[{\"seatRow\":\"A\",\"seatNumber\":2}]}"))
+                    .andExpect(status().isForbidden());
         }
-        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM reservations WHERE user_id=8611",
-                Integer.class)).isEqualTo(1);
-        assertThat(jdbc.queryForObject("""
-                SELECT current_reservation_id FROM screening_seats WHERE screening_seat_id=8617
-                """, Long.class)).isEqualTo(holdId);
+        assertThat(jdbc.queryForObject("SELECT status FROM reservations WHERE reservation_id=?", String.class, holdId))
+                .isEqualTo("HELD");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM reservations WHERE user_id=8611", Integer.class)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT current_reservation_id FROM screening_seats WHERE screening_seat_id=8617", Long.class))
+                .isEqualTo(holdId);
     }
 
     @Test
     void 본인만_선점을_해제하고_늦게_온_해제는_새_점유를_지우지_못한다() throws Exception {
         long oldHold = createHold(8611, KEY, "A", 1);
-        mockMvc.perform(post("/api/v1/seat-holds/{id}/confirm", oldHold)
-                        .header("Authorization", userToken(8612)))
-                .andExpect(status().isForbidden());
         mockMvc.perform(delete("/api/v1/seat-holds/{id}", oldHold)
                         .header("Authorization", userToken(8612)))
                 .andExpect(status().isForbidden());
@@ -384,29 +380,24 @@ class SeatHoldControllerIntegrationTest {
     }
 
     @Test
-    void 영화가_비공개면_선점_확정을_거절하고_점유를_반환한다() throws Exception {
+    void 비공개_영화의_선점도_삭제된_무료_확정으로_승인하지_못한다() throws Exception {
         long holdId = createHold(8611, KEY, "B", 2);
         mockMvc.perform(delete("/api/v1/movies/8615")
                         .header("Authorization", "Bearer " + jwtService.issue(8611L, UserRole.ADMIN)))
                 .andExpect(status().isNoContent());
-
         mockMvc.perform(post("/api/v1/seat-holds/{id}/confirm", holdId)
                         .header("Authorization", userToken(8611)))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.code").value("MOVIE_NOT_AVAILABLE"));
-        assertThat(jdbc.queryForObject("SELECT status FROM reservations WHERE reservation_id=?",
-                String.class, holdId)).isEqualTo("RELEASED");
-        assertThat(jdbc.queryForObject("""
-                SELECT current_reservation_id FROM screening_seats WHERE screening_seat_id=8620
-                """, Long.class)).isNull();
+                .andExpect(status().isForbidden());
+        assertThat(jdbc.queryForObject("SELECT status FROM reservations WHERE reservation_id=?", String.class, holdId))
+                .isEqualTo("HELD");
+        assertThat(jdbc.queryForObject("SELECT current_reservation_id FROM screening_seats WHERE screening_seat_id=8620", Long.class))
+                .isEqualTo(holdId);
     }
 
     @Test
-    void 이미_확정된_예매는_영화_비공개와_과거_선점_기한_후에도_같은_결과를_반환한다() throws Exception {
+    void 기존_확정_예매의_선점_키_재시도는_영화_비공개와_과거_기한_후에도_같은_결과를_반환한다() throws Exception {
         long reservationId = createHold(8611, KEY, "B", 2);
-        mockMvc.perform(post("/api/v1/seat-holds/{id}/confirm", reservationId)
-                        .header("Authorization", userToken(8611)))
-                .andExpect(status().isOk());
+        LegacyReservationFixture.markReserved(jdbc, reservationId);
         jdbc.update("UPDATE reservations SET expires_at=DATEADD('MINUTE',-1,CURRENT_TIMESTAMP) "
                 + "WHERE reservation_id=?", reservationId);
         mockMvc.perform(delete("/api/v1/movies/8615")
@@ -422,10 +413,6 @@ class SeatHoldControllerIntegrationTest {
                                 """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.reservationId").value(reservationId))
-                .andExpect(jsonPath("$.data.status").value("RESERVED"));
-        mockMvc.perform(post("/api/v1/seat-holds/{id}/confirm", reservationId)
-                        .header("Authorization", userToken(8611)))
-                .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.status").value("RESERVED"));
         assertThat(jdbc.queryForObject("""
                 SELECT current_reservation_id FROM screening_seats WHERE screening_seat_id=8620
@@ -468,18 +455,15 @@ class SeatHoldControllerIntegrationTest {
     }
 
     @Test
-    void 만료된_선점은_유효한_JWT로도_확정되지_않고_좌석을_반환한다() throws Exception {
+    void 만료된_선점도_유효한_JWT로_무료_확정할_수_없다() throws Exception {
         seedExpiredHold(8621L, "B", 1);
-
         mockMvc.perform(post("/api/v1/seat-holds/{id}/confirm", 8621L)
                         .header("Authorization", userToken(8611)))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.code").value("HOLD_EXPIRED"));
-        assertThat(jdbc.queryForObject("SELECT status FROM reservations WHERE reservation_id=8621",
-                String.class)).isEqualTo("EXPIRED");
-        assertThat(jdbc.queryForObject("""
-                SELECT current_reservation_id FROM screening_seats WHERE screening_seat_id=8619
-                """, Long.class)).isNull();
+                .andExpect(status().isForbidden());
+        assertThat(jdbc.queryForObject("SELECT status FROM reservations WHERE reservation_id=8621", String.class))
+                .isEqualTo("HELD");
+        assertThat(jdbc.queryForObject("SELECT current_reservation_id FROM screening_seats WHERE screening_seat_id=8619", Long.class))
+                .isEqualTo(8621L);
     }
 
     @Test
@@ -555,24 +539,28 @@ class SeatHoldControllerIntegrationTest {
     }
 
     @Test
-    void 직접_예매도_만료된_선점을_요청_시_정리한_뒤_진행한다() throws Exception {
-        seedExpiredHold(8621L, "B", 2);
-
-        String response = mockMvc.perform(post("/api/v1/reservations")
+    void 여러_좌석의_만료된_선점을_각각_정리한_뒤_한_요청으로_모두_확보한다() throws Exception {
+        seedExpiredHold(8621L, "A", 1);
+        jdbc.update("""
+                INSERT INTO reservations(reservation_id,user_id,screening_id,status,request_key,expires_at,created_at,updated_at)
+                VALUES(8630,8612,8616,'HELD','123e4567-e89b-12d3-a456-426614174099',
+                       DATEADD('MINUTE',-1,CURRENT_TIMESTAMP),CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+                """);
+        jdbc.update("INSERT INTO reserved_seats(reservation_id,seat_row,seat_number,screening_seat_id) VALUES(8630,'B',2,8620)");
+        jdbc.update("UPDATE screening_seats SET current_reservation_id=8630 WHERE screening_seat_id=8620");
+        mockMvc.perform(post("/api/v1/seat-holds")
                         .header("Authorization", userToken(8612))
+                        .header("Idempotency-Key", "123e4567-e89b-12d3-a456-426614174098")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {"screeningId":8616,"seats":[{"seatRow":"B","seatNumber":2}]}
-                                """))
+                        .content("{\"screeningId\":8616,\"seats\":[{\"seatRow\":\"A\",\"seatNumber\":1},{\"seatRow\":\"B\",\"seatNumber\":2}]}"))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.data.status").value("RESERVED"))
-                .andReturn().getResponse().getContentAsString();
-        long bookingId = JsonPath.<Number>read(response, "$.data.reservationId").longValue();
-        assertThat(jdbc.queryForObject("SELECT status FROM reservations WHERE reservation_id=8621",
-                String.class)).isEqualTo("EXPIRED");
-        assertThat(jdbc.queryForObject("""
-                SELECT current_reservation_id FROM screening_seats WHERE screening_seat_id=8620
-                """, Long.class)).isEqualTo(bookingId);
+                .andExpect(jsonPath("$.data.status").value("HELD"));
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM reservations WHERE reservation_id IN(8621,8630) AND status='EXPIRED'", Integer.class))
+                .isEqualTo(2);
+        assertThat(jdbc.queryForObject("SELECT COUNT(DISTINCT current_reservation_id) FROM screening_seats WHERE screening_seat_id IN(8617,8620)", Integer.class))
+                .isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM screening_seats WHERE screening_seat_id IN(8617,8620) AND current_reservation_id IS NOT NULL", Integer.class))
+                .isEqualTo(2);
     }
 
     @Test
@@ -591,9 +579,7 @@ class SeatHoldControllerIntegrationTest {
         mockMvc.perform(get("/api/v1/screenings/8616/seats"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data[4].status").value("HELD"));
-        mockMvc.perform(post("/api/v1/seat-holds/{id}/confirm", holdId)
-                        .header("Authorization", userToken(8612)))
-                .andExpect(status().isOk());
+        LegacyReservationFixture.markReserved(jdbc, holdId);
         mockMvc.perform(get("/api/v1/screenings/8616/seats"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data[4].status").value("RESERVED"));
@@ -616,14 +602,7 @@ class SeatHoldControllerIntegrationTest {
                                 """))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("SCREENING_SEATS_NOT_READY"));
-        mockMvc.perform(post("/api/v1/reservations")
-                        .header("Authorization", userToken(8612))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {"screeningId":8616,"seats":[{"seatRow":"A","seatNumber":1}]}
-                                """))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.code").value("SCREENING_SEATS_NOT_READY"));
+
     }
 
     private void seedExpiredHold(long id, String row, int number) {
