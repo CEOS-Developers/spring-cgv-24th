@@ -263,7 +263,8 @@ public class PaymentTransactionService {
             return paymentResponses.operation(operation);
         }
         if (matches(payment, result)
-                && result.status() == GatewayPaymentStatus.CANCELED
+                && (result.status() == GatewayPaymentStatus.CANCELED
+                        || result.status() == GatewayPaymentStatus.PARTIAL_CANCELED)
                 && validCancellation(operation, result)) {
             operation.startCompensation("EXTERNALLY_CANCELED");
             payment.compensate();
@@ -383,12 +384,12 @@ public class PaymentTransactionService {
                 operation.isCompensating()
                         ? 0
                         : operation.getPreviousBalance() - operation.getRequestAmount();
+        // 누적 부분취소는 잔액이 0이어도 PG 상태가 PARTIAL_CANCELED로 유지될 수 있다.
         if (!matches(payment, result)
                 || result.balanceAmount() != expected
-                || result.status()
-                        != (expected == 0
-                                ? GatewayPaymentStatus.CANCELED
-                                : GatewayPaymentStatus.PARTIAL_CANCELED)) return false;
+                || (result.status() != GatewayPaymentStatus.PARTIAL_CANCELED
+                        && (expected != 0 || result.status() != GatewayPaymentStatus.CANCELED)))
+            return false;
         List<GatewayCancellation> existing =
                 paymentJson.cancellations(payment.getCancellationsJson());
         if (!result.cancellations().containsAll(existing)) return false;

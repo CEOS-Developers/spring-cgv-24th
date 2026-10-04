@@ -96,6 +96,23 @@ class PaymentWorkflowIntegrationTest extends com.ceos.cgv.support.DatabaseIntegr
                 .build();
     }
 
+    GatewayPayment cancellationResult(
+            GatewayPayment payment,
+            long balance,
+            GatewayPaymentStatus status,
+            List<GatewayCancellation> cancellations) {
+        return new GatewayPayment(
+                payment.paymentKey(),
+                payment.orderId(),
+                payment.totalAmount(),
+                balance,
+                status,
+                payment.method(),
+                payment.approvedAt(),
+                payment.receiptUrl(),
+                cancellations);
+    }
+
     PaymentOperationResponse confirm(PaymentOrderResponse order) {
         GatewayPayment payment = done(order);
         when(gateway.confirm(any()))
@@ -187,8 +204,12 @@ class PaymentWorkflowIntegrationTest extends com.ceos.cgv.support.DatabaseIntegr
         verify(gateway, times(1)).confirm(any());
     }
 
-    @Test
-    void 부분취소_후_전체취소와_이전결과_재전송은_누적잔액을_보존한다() {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.EnumSource(
+            value = GatewayPaymentStatus.class,
+            names = {"CANCELED", "PARTIAL_CANCELED"})
+    void 부분취소_후_전체취소와_이전결과_재전송은_누적잔액을_보존한다(
+            GatewayPaymentStatus finalStatus) {
         PaymentOrderResponse order = order(2);
         PaymentOperationResponse approved = confirm(order);
         GatewayPayment payment = done(order);
@@ -215,7 +236,7 @@ class PaymentWorkflowIntegrationTest extends com.ceos.cgv.support.DatabaseIntegr
                                     payment.totalAmount(),
                                     balance,
                                     balance == 0
-                                            ? GatewayPaymentStatus.CANCELED
+                                            ? finalStatus
                                             : GatewayPaymentStatus.PARTIAL_CANCELED,
                                     "카드",
                                     payment.approvedAt(),
@@ -226,11 +247,29 @@ class PaymentWorkflowIntegrationTest extends com.ceos.cgv.support.DatabaseIntegr
                 new PaymentCancelRequest(
                         List.of(order.seats().getFirst().reservedSeatId()), "좌석 취소");
         PaymentOperationResponse partial = service.cancel(8711L, order.paymentId(), partKey, part);
+        assertThat(partial.status()).isEqualTo(PaymentOperationStatus.SUCCEEDED);
+        assertThat(partial.result().status()).isEqualTo(PaymentStatus.PARTIALLY_CANCELED);
         assertThat(partial.result().balanceAmount()).isEqualTo(10000);
         PaymentOperationResponse full =
                 service.cancel(
                         8711L, order.paymentId(), fullKey, new PaymentCancelRequest(null, "전체 취소"));
+        assertThat(full.status()).isEqualTo(PaymentOperationStatus.SUCCEEDED);
+        assertThat(full.result().status()).isEqualTo(PaymentStatus.CANCELED);
         assertThat(full.result().balanceAmount()).isZero();
+        assertThat(full.result().cancellations())
+                .hasSize(2)
+                .containsAll(partial.result().cancellations());
+        assertThat(full.result().cancellations().stream().mapToLong(GatewayCancellation::amount).sum())
+                .isEqualTo(20000);
+        assertThat(full.result().seats()).allMatch(seat -> seat.canceledAt() != null);
+        assertThat(queries.payment(8711L, order.paymentId()).status())
+                .isEqualTo(PaymentStatus.CANCELED);
+        assertThat(jdbc.queryForObject(
+                "SELECT status FROM reservations WHERE reservation_id=?",
+                String.class, order.reservationId())).isEqualTo("CANCELED");
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM screening_seats WHERE current_reservation_id=?",
+                Integer.class, order.reservationId())).isZero();
         assertThat(
                         service.cancel(
                                 8711L,
@@ -239,9 +278,100 @@ class PaymentWorkflowIntegrationTest extends com.ceos.cgv.support.DatabaseIntegr
                                 new PaymentCancelRequest(null, "전체 취소")))
                 .isEqualTo(full);
         assertThat(service.cancel(8711L, order.paymentId(), partKey, part)).isEqualTo(partial);
+        assertThat(service.reconcile(8711L, full.operationId())).isEqualTo(full);
         assertThat(queries.operation(8711L, approved.operationId()).result().status())
                 .isEqualTo(PaymentStatus.DONE);
         verify(gateway, times(2)).cancel(any());
+        verify(gateway, never()).getPayment(any());
+    }
+
+    @Test
+    void 누적취소_UNKNOWN은_이력검증_후_잔액0_부분취소상태를_조회로만_복구한다() {
+        PaymentOrderResponse order = order(2);
+        confirm(order);
+        GatewayPayment payment = done(order);
+        Instant canceledAt = Instant.parse("2026-10-05T00:00:00Z");
+        GatewayCancellation first = new GatewayCancellation("first", 10000, canceledAt, "DONE");
+        GatewayCancellation last = new GatewayCancellation("last", 10000, canceledAt, "DONE");
+        List<GatewayCancellation> completeHistory = List.of(first, last);
+        when(gateway.cancel(any())).thenReturn(
+                cancellationResult(payment, 10000, GatewayPaymentStatus.PARTIAL_CANCELED, List.of(first)),
+                cancellationResult(payment, 0, GatewayPaymentStatus.DONE, completeHistory));
+        PaymentOperationResponse partial = service.cancel(
+                8711L, order.paymentId(), UUID.randomUUID(),
+                new PaymentCancelRequest(List.of(order.seats().getFirst().reservedSeatId()), "첫좌석"));
+        assertThat(partial.status()).isEqualTo(PaymentOperationStatus.SUCCEEDED);
+        UUID finalKey = UUID.randomUUID();
+        PaymentCancelRequest remaining = new PaymentCancelRequest(null, "남은전체");
+        PaymentOperationResponse pending = service.cancel(8711L, order.paymentId(), finalKey, remaining);
+        assertThat(pending.status()).isEqualTo(PaymentOperationStatus.UNKNOWN);
+        assertThat(pending.failureCode()).isEqualTo("INVALID_CANCELLATION_RESULT");
+        clearInvocations(gateway);
+
+        List<GatewayPayment> invalidResults = List.of(
+                cancellationResult(payment, 10000, GatewayPaymentStatus.PARTIAL_CANCELED, completeHistory),
+                cancellationResult(payment, 0, GatewayPaymentStatus.DONE, completeHistory),
+                cancellationResult(payment, 0, GatewayPaymentStatus.PARTIAL_CANCELED, List.of(first)),
+                cancellationResult(payment, 0, GatewayPaymentStatus.PARTIAL_CANCELED,
+                        List.of(first, new GatewayCancellation("last", 9999, canceledAt, "DONE"))),
+                cancellationResult(payment, 0, GatewayPaymentStatus.PARTIAL_CANCELED, List.of(first, first)),
+                cancellationResult(payment, 0, GatewayPaymentStatus.PARTIAL_CANCELED,
+                        List.of(first, new GatewayCancellation(null, 10000, canceledAt, "DONE"))),
+                cancellationResult(payment, 0, GatewayPaymentStatus.PARTIAL_CANCELED,
+                        List.of(first, last, new GatewayCancellation("zero", 0, canceledAt, "DONE"))),
+                cancellationResult(payment, 0, GatewayPaymentStatus.PARTIAL_CANCELED,
+                        List.of(first,
+                                new GatewayCancellation("last", 11000, canceledAt, "DONE"),
+                                new GatewayCancellation("negative", -1000, canceledAt, "DONE"))),
+                cancellationResult(payment, 0, GatewayPaymentStatus.PARTIAL_CANCELED,
+                        List.of(first, new GatewayCancellation("last", 10000, canceledAt, "FAILED"))),
+                cancellationResult(payment, 0, GatewayPaymentStatus.PARTIAL_CANCELED,
+                        List.of(first, new GatewayCancellation("last", 10000, null, "DONE"))),
+                cancellationResult(payment, 0, GatewayPaymentStatus.PARTIAL_CANCELED,
+                        List.of(new GatewayCancellation("first", 10000, canceledAt.plusSeconds(1), "DONE"), last)),
+                new GatewayPayment("wrong-key", payment.orderId(), 20000, 0,
+                        GatewayPaymentStatus.PARTIAL_CANCELED, "카드", payment.approvedAt(), null, completeHistory),
+                new GatewayPayment(payment.paymentKey(), "wrong-order", 20000, 0,
+                        GatewayPaymentStatus.PARTIAL_CANCELED, "카드", payment.approvedAt(), null, completeHistory),
+                new GatewayPayment(payment.paymentKey(), payment.orderId(), 30000, 0,
+                        GatewayPaymentStatus.PARTIAL_CANCELED, "카드", payment.approvedAt(), null, completeHistory));
+        for (GatewayPayment invalid : invalidResults) {
+            when(gateway.getPayment(payment.paymentKey())).thenReturn(invalid);
+            PaymentOperationResponse unknown = service.reconcile(8711L, pending.operationId());
+            assertThat(unknown.status()).isEqualTo(PaymentOperationStatus.UNKNOWN);
+            assertThat(unknown.failureCode()).isEqualTo("INVALID_CANCELLATION_RESULT");
+            PaymentResponse unchanged = queries.payment(8711L, order.paymentId());
+            assertThat(unchanged.status()).isEqualTo(PaymentStatus.PARTIALLY_CANCELED);
+            assertThat(unchanged.balanceAmount()).isEqualTo(10000);
+            assertThat(unchanged.cancellations()).containsExactly(first);
+            assertThat(unchanged.activeOperationId()).isEqualTo(pending.operationId());
+            assertThat(jdbc.queryForObject(
+                    "SELECT COUNT(*) FROM screening_seats WHERE current_reservation_id=?",
+                    Integer.class, order.reservationId())).isEqualTo(1);
+            assertThat(jdbc.queryForObject(
+                    "SELECT status FROM reservations WHERE reservation_id=?",
+                    String.class, order.reservationId())).isEqualTo("RESERVED");
+        }
+
+        when(gateway.getPayment(payment.paymentKey())).thenReturn(
+                cancellationResult(payment, 0, GatewayPaymentStatus.PARTIAL_CANCELED, completeHistory));
+        PaymentOperationResponse completed = service.reconcile(8711L, pending.operationId());
+        assertThat(completed.operationId()).isEqualTo(pending.operationId());
+        assertThat(completed.status()).isEqualTo(PaymentOperationStatus.SUCCEEDED);
+        assertThat(completed.result().status()).isEqualTo(PaymentStatus.CANCELED);
+        assertThat(completed.result().balanceAmount()).isZero();
+        assertThat(completed.result().cancellations()).containsExactly(first, last);
+        assertThat(queries.payment(8711L, order.paymentId()).activeOperationId()).isNull();
+        assertThat(jdbc.queryForObject(
+                "SELECT status FROM reservations WHERE reservation_id=?",
+                String.class, order.reservationId())).isEqualTo("CANCELED");
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM screening_seats WHERE current_reservation_id=?",
+                Integer.class, order.reservationId())).isZero();
+        assertThat(service.cancel(8711L, order.paymentId(), finalKey, remaining)).isEqualTo(completed);
+        assertThat(service.reconcile(8711L, pending.operationId())).isEqualTo(completed);
+        verify(gateway, never()).cancel(any());
+        verify(gateway, times(invalidResults.size() + 1)).getPayment(payment.paymentKey());
     }
 
     @Test
@@ -336,8 +466,12 @@ class PaymentWorkflowIntegrationTest extends com.ceos.cgv.support.DatabaseIntegr
         verify(gateway, times(1)).confirm(any());
     }
 
-    @Test
-    void PG_성공후_영구좌석확정실패는_고정키_보상취소_후에만_해제한다() {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.EnumSource(
+            value = GatewayPaymentStatus.class,
+            names = {"CANCELED", "PARTIAL_CANCELED"})
+    void PG_성공후_영구좌석확정실패는_고정키_보상취소_후에만_해제한다(
+            GatewayPaymentStatus cancellationStatus) {
         PaymentOrderResponse order = order(1);
         GatewayPayment payment = done(order);
         new org.springframework.transaction.support.TransactionTemplate(transactionManager)
@@ -363,7 +497,7 @@ class PaymentWorkflowIntegrationTest extends com.ceos.cgv.support.DatabaseIntegr
                         payment.orderId(),
                         payment.totalAmount(),
                         0,
-                        GatewayPaymentStatus.CANCELED,
+                        cancellationStatus,
                         "카드",
                         payment.approvedAt(),
                         null,
@@ -390,6 +524,48 @@ class PaymentWorkflowIntegrationTest extends com.ceos.cgv.support.DatabaseIntegr
                 .extracting(CancelPaymentCommand::idempotencyKey)
                 .containsOnly(commands.getValue().idempotencyKey());
         verify(gateway, times(1)).confirm(any());
+    }
+
+    @Test
+    void 보상취소중_조회가_잔액0_부분취소상태를_증명하면_추가취소없이_해제한다() {
+        PaymentOrderResponse order = order(2);
+        GatewayPayment payment = done(order);
+        new org.springframework.transaction.support.TransactionTemplate(transactionManager)
+                .executeWithoutResult(
+                        status ->
+                                doThrow(new BusinessException(ErrorCode.SEAT_OWNER_MISMATCH))
+                                        .when(reservationPayments)
+                                        .confirmPayment(order.reservationId(), 8711L));
+        when(gateway.cancel(any()))
+                .thenThrow(new PaymentGatewayException(GatewayFailureType.UNKNOWN, "TIMEOUT"));
+        PaymentOperationResponse pending = confirm(order);
+        assertThat(pending.status()).isEqualTo(PaymentOperationStatus.COMPENSATING);
+        GatewayPayment canceled = cancellationResult(
+                payment, 0, GatewayPaymentStatus.PARTIAL_CANCELED,
+                List.of(
+                        new GatewayCancellation("compensation-first", 10000, Instant.now(), "DONE"),
+                        new GatewayCancellation("compensation-last", 10000, Instant.now(), "DONE")));
+        when(gateway.getPayment(payment.paymentKey())).thenReturn(canceled);
+        clearInvocations(gateway);
+
+        PaymentOperationResponse failed = service.reconcile(8711L, pending.operationId());
+        assertThat(failed.operationId()).isEqualTo(pending.operationId());
+        assertThat(failed.status()).isEqualTo(PaymentOperationStatus.FAILED);
+        assertThat(failed.failureCode()).isEqualTo("APPROVAL_COMPENSATED");
+        assertThat(failed.result().status()).isEqualTo(PaymentStatus.CANCELED);
+        assertThat(failed.result().balanceAmount()).isZero();
+        assertThat(failed.result().cancellations())
+                .containsExactlyElementsOf(canceled.cancellations());
+        assertThat(queries.payment(8711L, order.paymentId()).activeOperationId()).isNull();
+        assertThat(jdbc.queryForObject(
+                "SELECT status FROM reservations WHERE reservation_id=?",
+                String.class, order.reservationId())).isEqualTo("RELEASED");
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM screening_seats WHERE current_reservation_id=?",
+                Integer.class, order.reservationId())).isZero();
+        assertThat(service.reconcile(8711L, pending.operationId())).isEqualTo(failed);
+        verify(gateway, times(1)).getPayment(payment.paymentKey());
+        verify(gateway, never()).cancel(any());
     }
 
     @Test
@@ -696,6 +872,11 @@ class PaymentWorkflowIntegrationTest extends com.ceos.cgv.support.DatabaseIntegr
                                 List.of()));
         assertThat(service.reconcile(8711L, pending.operationId()).status())
                 .isEqualTo(PaymentOperationStatus.UNKNOWN);
+        when(gateway.getPayment(payment.paymentKey())).thenReturn(
+                cancellationResult(payment, 10000, GatewayPaymentStatus.CANCELED,
+                        List.of(new GatewayCancellation("partial", 10000, Instant.now(), "DONE"))));
+        assertThat(service.reconcile(8711L, pending.operationId()).status())
+                .isEqualTo(PaymentOperationStatus.UNKNOWN);
         when(gateway.getPayment(payment.paymentKey()))
                 .thenReturn(
                         new GatewayPayment(
@@ -887,9 +1068,13 @@ class PaymentWorkflowIntegrationTest extends com.ceos.cgv.support.DatabaseIntegr
         verify(gateway, times(1)).confirm(any());
     }
 
-    @Test
-    void 조회에서_승인_전체취소가_확인되면_다시_취소하지_않고_실패로_종결한다() {
-        PaymentOrderResponse order = order(1);
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.EnumSource(
+            value = GatewayPaymentStatus.class,
+            names = {"CANCELED", "PARTIAL_CANCELED"})
+    void 조회에서_승인_전체취소가_확인되면_다시_취소하지_않고_실패로_종결한다(
+            GatewayPaymentStatus cancellationStatus) {
+        PaymentOrderResponse order = order(2);
         GatewayPayment payment = done(order);
         when(gateway.confirm(any()))
                 .thenThrow(new PaymentGatewayException(GatewayFailureType.UNKNOWN, "TIMEOUT"));
@@ -906,26 +1091,39 @@ class PaymentWorkflowIntegrationTest extends com.ceos.cgv.support.DatabaseIntegr
                                 payment.orderId(),
                                 payment.totalAmount(),
                                 0,
-                                GatewayPaymentStatus.CANCELED,
+                                cancellationStatus,
                                 "카드",
                                 payment.approvedAt(),
                                 null,
                                 List.of(
                                         new GatewayCancellation(
                                                 "external",
-                                                payment.totalAmount(),
+                                                10000,
+                                                Instant.now(),
+                                                "DONE"),
+                                        new GatewayCancellation(
+                                                "external-last",
+                                                10000,
                                                 Instant.now(),
                                                 "DONE"))));
         PaymentOperationResponse failed = service.reconcile(8711L, pending.operationId());
         assertThat(failed.status()).isEqualTo(PaymentOperationStatus.FAILED);
         assertThat(failed.failureCode()).isEqualTo("APPROVAL_EXTERNALLY_CANCELED");
+        assertThat(failed.result().status()).isEqualTo(PaymentStatus.CANCELED);
         assertThat(failed.result().balanceAmount()).isZero();
+        assertThat(failed.result().cancellations()).hasSize(2);
+        assertThat(queries.payment(8711L, order.paymentId()).activeOperationId()).isNull();
         assertThat(
                         jdbc.queryForObject(
                                 "SELECT status FROM reservations WHERE reservation_id=?",
                                 String.class,
                                 order.reservationId()))
                 .isEqualTo("RELEASED");
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM screening_seats WHERE current_reservation_id=?",
+                Integer.class, order.reservationId())).isZero();
+        assertThat(service.reconcile(8711L, pending.operationId())).isEqualTo(failed);
+        verify(gateway, times(1)).getPayment(payment.paymentKey());
         verify(gateway, never()).cancel(any());
     }
 
