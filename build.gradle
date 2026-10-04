@@ -62,7 +62,6 @@ tasks.register('mysqlTest', Test) {
 	// Every invocation verifies a fresh database rather than reuse an earlier result.
 	outputs.upToDateWhen { false }
 	testLogging {
-		events 'passed', 'skipped', 'failed'
-		showStandardStreams = true
+		events 'passed', 'failed'
 	}
 }
