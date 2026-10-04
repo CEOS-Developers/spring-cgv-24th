@@ -1,12 +1,14 @@
 package com.ceos.cgv.domain.reservation.service.payment;
 
 import com.ceos.cgv.domain.movie.dto.SeatAvailabilityResponse;
+import com.ceos.cgv.domain.movie.entity.Screening;
 import com.ceos.cgv.domain.movie.service.ScreeningSeatBackfillService;
 import com.ceos.cgv.domain.movie.service.SeatAvailabilityService;
 import com.ceos.cgv.domain.reservation.dto.ReservationResponse;
 import com.ceos.cgv.domain.reservation.dto.ReservedSeatRequest;
 import com.ceos.cgv.domain.reservation.dto.SeatHoldCreateRequest;
 import com.ceos.cgv.domain.reservation.enums.ReservationStatus;
+import com.ceos.cgv.domain.reservation.entity.Reservation;
 import com.ceos.cgv.domain.reservation.repository.ReservationRepository;
 import com.ceos.cgv.domain.reservation.repository.ReservedSeatRepository;
 import com.ceos.cgv.domain.reservation.service.hold.SeatHoldCreationService;
@@ -14,8 +16,10 @@ import com.ceos.cgv.domain.reservation.service.hold.SeatHoldExpiryService;
 import com.ceos.cgv.domain.reservation.service.hold.SeatHoldTransitionService;
 import com.ceos.cgv.domain.reservation.support.ReservationDatabaseIntegrationTest;
 import com.ceos.cgv.domain.reservation.value.SeatCoordinate;
+import com.ceos.cgv.domain.user.entity.User;
 import com.ceos.cgv.global.exception.BusinessException;
 import com.ceos.cgv.global.exception.ErrorCode;
+import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -27,7 +31,6 @@ import org.springframework.transaction.IllegalTransactionStateException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
-import java.sql.Timestamp;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
@@ -45,6 +48,7 @@ class ReservationPaymentIntegrationTest extends ReservationDatabaseIntegrationTe
     private static final Instant NOW = Instant.parse("2030-01-01T01:00:00Z");
     @Autowired JdbcTemplate jdbc;
     @Autowired PlatformTransactionManager transactionManager;
+    @Autowired EntityManager entityManager;
     @Autowired ReservationPaymentService payments;
     @Autowired ReservationRepository reservations;
     @Autowired ReservedSeatRepository histories;
@@ -72,7 +76,6 @@ class ReservationPaymentIntegrationTest extends ReservationDatabaseIntegrationTe
         userId = base;
         movieId = base + 3;
         screeningId = base + 4;
-        reservationId = base + 5;
         firstSeatId = base + 9;
         secondSeatId = base + 10;
         requestKey = UUID.randomUUID();
@@ -81,7 +84,10 @@ class ReservationPaymentIntegrationTest extends ReservationDatabaseIntegrationTe
         jdbc.update("INSERT INTO screens(screen_id,cinema_id,screen_type,row_count,seats_per_row) VALUES(?,?,'GENERAL',1,3)", base + 2, base + 1);
         jdbc.update("INSERT INTO movies(movie_id,title,description,running_time,release_date,age_rating,visibility) VALUES(?,'영화','설명',120,'2030-01-01','ALL','PUBLIC')", movieId);
         jdbc.update("INSERT INTO screenings(screening_id,movie_id,screen_id,start_at) VALUES(?,?,?,'2030-01-01 12:00:00')", screeningId, movieId, base + 2);
-        jdbc.update("INSERT INTO reservations(reservation_id,user_id,screening_id,status,expires_at,request_key,created_at,updated_at) VALUES(?,?,?,'HELD',?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)", reservationId, userId, screeningId, Timestamp.from(NOW.plusSeconds(300)), requestKey.toString());
+        reservationId = tx.execute(ignored -> reservations.saveAndFlush(Reservation.hold(
+                entityManager.getReference(User.class, userId),
+                entityManager.getReference(Screening.class, screeningId),
+                requestKey, NOW.plusSeconds(300))).getId());
         for (int number = 1; number <= 3; number++) {
             jdbc.update("INSERT INTO screening_seats(screening_seat_id,screening_id,seat_row,seat_number,current_reservation_id) VALUES(?,?,'A',?,?)", base + 5 + number, screeningId, number, number <= 2 ? reservationId : null);
         }
@@ -206,6 +212,8 @@ class ReservationPaymentIntegrationTest extends ReservationDatabaseIntegrationTe
 
     @Test
     void 결제_시작은_만료와_영화_공개_상태와_점유를_검증한다() {
+        Instant storedExpiresAt = tx.execute(ignored -> payments.lockOwned(reservationId, userId).expiresAt());
+        assertThat(storedExpiresAt).isEqualTo(NOW.plusSeconds(300));
         when(clock.instant()).thenReturn(NOW.plusSeconds(300));
         assertError(this::start, ErrorCode.HOLD_EXPIRED);
         when(clock.instant()).thenReturn(NOW);
