@@ -135,6 +135,12 @@
     if (operation.type === 'CONFIRM' && operation.status === 'SUCCEEDED' && session.confirmation) {
       session.confirmation.complete = true;
     }
+    if (operation.type === 'CONFIRM' && operation.status === 'FAILED') {
+      delete session.hold;
+      delete session.holdRequest;
+      delete session.order;
+      delete session.confirmation;
+    }
     save();
     // 작업의 저장된 결과보다 현재 결제 상태와 잔액을 취소 화면의 기준으로 사용한다.
     if (session.paymentId) renderPayment(await api(`/api/v1/payments/${session.paymentId}`));

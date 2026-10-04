@@ -196,3 +196,34 @@ test('compensation also blocks new payment actions', async () => {
   assert.equal(app.elements.get('hold-seats').disabled, true);
   assert.equal(app.elements.get('reconcile-operation').disabled, false);
 });
+
+test('failed approval clears the completed hold so the same seats get a fresh hold key', async () => {
+  const holdBody = { screeningId: 3, seats: [
+    { seatRow: 'A', seatNumber: 1 }, { seatRow: 'A', seatNumber: 2 }
+  ] };
+  const app = boot({ state: { token: 'test-token', order, hold: { reservationId: 4 }, paymentId: 2,
+    holdRequest: { signature: JSON.stringify(holdBody), key: 'old-hold-key' },
+    confirmation: { orderId: order.orderId, paymentKey: 'fixture', amount: 24000, key: 'approval-key' },
+    operation: { operationId: 7, type: 'CONFIRM', status: 'UNKNOWN' } },
+    fetchHandler: url => {
+      if (url === '/api/v1/payment-operations/7') return { operationId: 7, type: 'CONFIRM', status: 'FAILED', paymentId: 2 };
+      if (url === '/api/v1/payments/2') return { ...approved, status: 'FAILED' };
+      if (url === '/api/v1/seat-holds') return { reservationId: 8 };
+      return [];
+    } });
+  await app.ready();
+  await app.elements.get('refresh-operation').fire();
+  assert.equal(app.state().hold, undefined);
+  assert.equal(app.state().holdRequest, undefined);
+  assert.equal(app.state().order, undefined);
+  assert.equal(app.state().confirmation, undefined);
+  assert.equal(app.state().paymentId, 2);
+  assert.equal(app.state().operation.operationId, 7);
+  app.elements.get('screening-id').value = '3';
+  app.elements.get('seats').value = 'A1,A2';
+  await app.elements.get('hold-seats').fire();
+  const request = app.calls.find(call => call.url === '/api/v1/seat-holds');
+  assert.ok(request);
+  assert.notEqual(request.headers['Idempotency-Key'], 'old-hold-key');
+  assert.equal(app.state().hold.reservationId, 8);
+});
