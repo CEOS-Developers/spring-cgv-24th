@@ -1,8 +1,10 @@
-package com.ceos.cgv.domain.reservation.service;
+package com.ceos.cgv.domain.reservation.service.hold;
 
-import com.ceos.cgv.domain.reservation.dto.ReservationCreateRequest;
+import com.ceos.cgv.domain.reservation.dto.SeatHoldCreateRequest;
 import com.ceos.cgv.domain.reservation.dto.ReservedSeatRequest;
-import com.ceos.cgv.domain.reservation.dto.ReservationResponse;
+import com.ceos.cgv.domain.reservation.service.result.HoldCreationResult;
+import com.ceos.cgv.domain.reservation.service.hold.SeatHoldService;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -24,10 +26,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 @SpringBootTest
 @ActiveProfiles("test")
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
-class SeatLevelReservationConcurrencyIntegrationTest {
+class SeatLevelHoldConcurrencyIntegrationTest {
     @Autowired JdbcTemplate jdbc;
     @Autowired PlatformTransactionManager transactionManager;
-    @Autowired ReservationService reservationService;
+    @Autowired SeatHoldService reservationService;
 
     @Test
     void 같은_회차의_다른_좌석은_첫_좌석의_잠금_해제를_기다리지_않는다() throws Exception {
@@ -71,14 +73,14 @@ class SeatLevelReservationConcurrencyIntegrationTest {
                     }));
             assertThat(firstSeatLocked.await(2, TimeUnit.SECONDS)).isTrue();
 
-            Future<ReservationResponse> otherSeat = executor.submit(() -> reservationService.create(
-                    new ReservationCreateRequest(8952L, 8956L,
+            Future<HoldCreationResult> otherSeat = executor.submit(() -> reservationService.create(8952L, UUID.randomUUID(),
+                    new SeatHoldCreateRequest(8956L,
                             List.of(new ReservedSeatRequest("A", 2)))));
-            ReservationResponse booked = otherSeat.get(2, TimeUnit.SECONDS);
-            assertThat(booked.reservationId()).isNotNull();
+            HoldCreationResult booked = otherSeat.get(2, TimeUnit.SECONDS);
+            assertThat(booked.response().reservationId()).isNotNull();
             assertThat(jdbc.queryForObject("""
                     SELECT current_reservation_id FROM screening_seats WHERE screening_seat_id=8958
-                    """, Long.class)).isEqualTo(booked.reservationId());
+                    """, Long.class)).isEqualTo(booked.response().reservationId());
             releaseFirst.countDown();
             first.get(3, TimeUnit.SECONDS);
         } finally {

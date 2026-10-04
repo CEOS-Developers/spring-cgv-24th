@@ -1,6 +1,9 @@
-package com.ceos.cgv.domain.reservation.service;
+package com.ceos.cgv.domain.reservation.service.hold;
 
-import com.ceos.cgv.domain.reservation.dto.ReservationCreateRequest;
+import com.ceos.cgv.domain.reservation.dto.SeatHoldCreateRequest;
+import com.ceos.cgv.domain.reservation.service.hold.SeatHoldService;
+import com.ceos.cgv.global.exception.ErrorCode;
+import java.util.UUID;
 import com.ceos.cgv.domain.reservation.dto.ReservedSeatRequest;
 import com.ceos.cgv.global.exception.BusinessException;
 import org.junit.jupiter.api.AfterEach;
@@ -29,7 +32,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 @SpringBootTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.ANY)
 @ActiveProfiles("test")
-class ReservationConcurrencyIntegrationTest {
+class SeatHoldLockConflictIntegrationTest {
 
     private static final long USER_ID = 401L;
     private static final long CINEMA_ID = 402L;
@@ -40,7 +43,7 @@ class ReservationConcurrencyIntegrationTest {
     private static final long EXISTING_RESERVED_SEAT_ID = 407L;
 
     @Autowired
-    private ReservationService reservationService;
+    private SeatHoldService reservationService;
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
@@ -70,58 +73,38 @@ class ReservationConcurrencyIntegrationTest {
     }
 
     @Test
-    void 같은_상영일정의_두번째_예약은_첫번째_예약이_끝날_때까지_대기한다() throws Exception {
-        ExecutorService executor = Executors.newFixedThreadPool(2);
-        CountDownLatch firstLockAcquired = new CountDownLatch(1);
-        CountDownLatch releaseFirstTransaction = new CountDownLatch(1);
-        Future<?> firstReservation = null;
-
-        try {
-            firstReservation = executor.submit(() ->
-                    new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
-                        jdbcTemplate.queryForObject(
-                                "SELECT screening_id FROM screenings WHERE screening_id = ? FOR UPDATE",
-                                Long.class,
-                                SCREENING_ID
-                        );
-                        firstLockAcquired.countDown();
-
-                        jdbcTemplate.update("INSERT INTO reservations (reservation_id, user_id, screening_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
-                                EXISTING_RESERVATION_ID, USER_ID, SCREENING_ID, "RESERVED");
-                        jdbcTemplate.update("INSERT INTO reserved_seats (reserved_seat_id, reservation_id, seat_row, seat_number) VALUES (?, ?, ?, ?)",
-                                EXISTING_RESERVED_SEAT_ID, EXISTING_RESERVATION_ID, "A", 1);
-
-                        await(releaseFirstTransaction);
-                    })
-            );
-
-            assertThat(firstLockAcquired.await(2, TimeUnit.SECONDS)).isTrue();
-            Future<?> secondReservation = executor.submit(() -> reservationService.create(
-                    new ReservationCreateRequest(
-                            USER_ID,
-                            SCREENING_ID,
-                            List.of(new ReservedSeatRequest("A", 1))
-                    )
-            ));
-
-            assertThrows(TimeoutException.class, () -> secondReservation.get(1, TimeUnit.SECONDS));
-            releaseFirstTransaction.countDown();
-
-            ExecutionException exception = assertThrows(
-                    ExecutionException.class,
-                    () -> secondReservation.get(2, TimeUnit.SECONDS)
-            );
-            assertThat(exception.getCause()).isInstanceOf(BusinessException.class);
-        } finally {
-            releaseFirstTransaction.countDown();
-            executor.shutdownNow();
-            firstReservation.get(2, TimeUnit.SECONDS);
+    void 같은_좌석이_잠긴_동안_새_선점은_부분_생성되지_않는다() throws Exception {
+        jdbcTemplate.update("INSERT INTO screening_seats(screening_id,seat_row,seat_number) VALUES(?,'A',1)", SCREENING_ID);
+        jdbcTemplate.update("UPDATE screens SET row_count=1,seats_per_row=1 WHERE screen_id=?", SCREEN_ID);
+        CountDownLatch seatLocked = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+            Future<?> first = executor.submit(() -> new TransactionTemplate(transactionManager)
+                    .executeWithoutResult(status -> {
+                        jdbcTemplate.queryForObject("SELECT screening_seat_id FROM screening_seats WHERE screening_id=? FOR UPDATE",
+                                Long.class, SCREENING_ID);
+                        seatLocked.countDown();
+                        await(release);
+                    }));
+            try {
+                assertThat(seatLocked.await(2, TimeUnit.SECONDS)).isTrue();
+                Future<?> second = executor.submit(() -> reservationService.create(USER_ID, UUID.randomUUID(),
+                        new SeatHoldCreateRequest(SCREENING_ID, List.of(new ReservedSeatRequest("A", 1)))));
+                ExecutionException failure = assertThrows(ExecutionException.class, () -> second.get(3, TimeUnit.SECONDS));
+                assertThat(failure.getCause()).isInstanceOf(BusinessException.class);
+                assertThat(((BusinessException) failure.getCause()).getErrorCode()).isEqualTo(ErrorCode.SEAT_BUSY);
+                assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM reservations WHERE screening_id=?", Integer.class, SCREENING_ID)).isZero();
+            } finally {
+                release.countDown();
+                first.get(3, TimeUnit.SECONDS);
+            }
         }
     }
 
     private void cleanUp() {
         jdbcTemplate.update("DELETE FROM reserved_seats WHERE reservation_id IN (SELECT reservation_id FROM reservations WHERE screening_id = ?)", SCREENING_ID);
         jdbcTemplate.update("DELETE FROM reservations WHERE screening_id = ?", SCREENING_ID);
+        jdbcTemplate.update("DELETE FROM screening_seats WHERE screening_id = ?", SCREENING_ID);
         jdbcTemplate.update("DELETE FROM screenings WHERE screening_id = ?", SCREENING_ID);
         jdbcTemplate.update("DELETE FROM movies WHERE movie_id = ?", MOVIE_ID);
         jdbcTemplate.update("DELETE FROM screens WHERE screen_id = ?", SCREEN_ID);

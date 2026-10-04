@@ -32,6 +32,8 @@ class SecurityPathAccessIntegrationTest {
     @ParameterizedTest
     @CsvSource({
             "GET, /api/v1/reservations",
+            "POST, /api/v1/reservations",
+            "POST, /api/v1/seat-holds/42/confirm",
             "DELETE, /api/v1/reservations",
             "POST, /api/v1/reservations/42",
             "GET, /api/v1/food-orders",
@@ -57,7 +59,7 @@ class SecurityPathAccessIntegrationTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"/api/v1/reservations", "/api/v1/seat-holds", "/api/v1/food-orders"})
+    @ValueSource(strings = {"/api/v1/seat-holds", "/api/v1/food-orders"})
     void 사용자_생성_API는_인증을_요구하고_인증_후_컨트롤러_검증에_도달한다(String path) throws Exception {
         mockMvc.perform(post(path).contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isUnauthorized())
@@ -66,6 +68,16 @@ class SecurityPathAccessIntegrationTest {
                         .header("Authorization", "Bearer " + jwtService.issue(1L, UserRole.USER))
                         .contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isBadRequest());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"/api/v1/reservations", "/api/v1/seat-holds/42/confirm"})
+    void 삭제된_무료_확정_경로는_일반_회원도_호출할_수_없다(String path) throws Exception {
+        mockMvc.perform(post(path)
+                        .header("Authorization", "Bearer " + jwtService.issue(1L, UserRole.USER))
+                        .contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("ACCESS_DENIED"));
     }
 
     @Test
