@@ -15,6 +15,10 @@ import java.util.List;
 import java.util.Optional;
 
 public interface ReservationRepository extends JpaRepository<Reservation, Long> {
+    @Query(value = "SELECT * FROM reservations WHERE reservation_id = :reservationId FOR UPDATE NOWAIT",
+            nativeQuery = true)
+    Optional<Reservation> lockByIdNowait(@Param("reservationId") Long reservationId);
+
     @EntityGraph(attributePaths = "reservedSeats")
     Optional<Reservation> findWithSeatsById(Long reservationId);
 
@@ -44,7 +48,9 @@ public interface ReservationRepository extends JpaRepository<Reservation, Long> 
 
     @Query("""
             select count(r) from Reservation r
-            where r.user.id = :userId and r.status = :status and r.expiresAt > :now
+            where r.user.id = :userId
+              and ((r.status = :status and r.expiresAt > :now)
+                   or r.status = com.ceos.cgv.domain.reservation.enums.ReservationStatus.PAYMENT_PENDING)
             """)
     long countActiveHolds(@Param("userId") Long userId,
                           @Param("status") ReservationStatus status,

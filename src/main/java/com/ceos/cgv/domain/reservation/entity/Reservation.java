@@ -103,6 +103,45 @@ public class Reservation extends BaseTimeEntity {
         status = ReservationStatus.RESERVED;
     }
 
+    public void startPayment(Instant now) {
+        if (status != ReservationStatus.HELD) {
+            throw new BusinessException(ErrorCode.HOLD_NOT_ACTIVE);
+        }
+        if (isExpiredAt(now)) {
+            throw new BusinessException(ErrorCode.HOLD_EXPIRED);
+        }
+        status = ReservationStatus.PAYMENT_PENDING;
+    }
+
+    public void confirmPayment() {
+        if (status == ReservationStatus.RESERVED) {
+            return;
+        }
+        if (status != ReservationStatus.PAYMENT_PENDING) {
+            throw new BusinessException(ErrorCode.HOLD_NOT_ACTIVE);
+        }
+        status = ReservationStatus.RESERVED;
+    }
+
+    public void releaseFailedPayment() {
+        if (status == ReservationStatus.RELEASED) {
+            return;
+        }
+        if (status != ReservationStatus.PAYMENT_PENDING) {
+            throw new BusinessException(ErrorCode.HOLD_NOT_ACTIVE);
+        }
+        status = ReservationStatus.RELEASED;
+    }
+
+    public void completeSeatCancellation() {
+        if (status != ReservationStatus.RESERVED) {
+            throw new BusinessException(ErrorCode.HOLD_NOT_ACTIVE);
+        }
+        if (reservedSeats.stream().allMatch(ReservedSeat::isCanceled)) {
+            status = ReservationStatus.CANCELED;
+        }
+    }
+
     public void release() {
         if (status != ReservationStatus.HELD) {
             throw new BusinessException(ErrorCode.HOLD_NOT_ACTIVE);
