@@ -33,13 +33,19 @@ public class SecurityConfig {
         RequestMatcher userApiMatcher = new OrRequestMatcher(
                 pathPattern(POST, "/api/v1/movies/{movieId}/likes"),
                 pathPattern(POST, "/api/v1/cinemas/{cinemaId}/likes"),
-                pathPattern(POST, "/api/v1/reservations"),
                 pathPattern(GET, "/api/v1/reservations/{reservationId}"),
                 pathPattern(DELETE, "/api/v1/reservations/{reservationId}"),
                 pathPattern(POST, "/api/v1/food-orders"),
                 pathPattern(GET, "/api/v1/food-orders/{orderId}"),
+                pathPattern(GET, "/api/v1/payment-config"),
+                pathPattern(POST, "/api/v1/payment-orders"),
+                pathPattern(GET, "/api/v1/payment-orders/{orderId}"),
+                pathPattern(POST, "/api/v1/payments/confirm"),
+                pathPattern(GET, "/api/v1/payments/{paymentId}"),
+                pathPattern(POST, "/api/v1/payments/{paymentId}/cancellations"),
+                pathPattern(GET, "/api/v1/payment-operations/{operationId}"),
+                pathPattern(POST, "/api/v1/payment-operations/{operationId}/reconcile"),
                 pathPattern(POST, "/api/v1/seat-holds"),
-                pathPattern(POST, "/api/v1/seat-holds/{reservationId}/confirm"),
                 pathPattern(DELETE, "/api/v1/seat-holds/{reservationId}"));
         RequestMatcher adminApiMatcher = new OrRequestMatcher(
                 pathPattern(POST, "/api/v1/movies"),
