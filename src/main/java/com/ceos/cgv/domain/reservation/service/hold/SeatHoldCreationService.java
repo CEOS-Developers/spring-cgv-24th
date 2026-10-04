@@ -56,6 +56,9 @@ public class SeatHoldCreationService {
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public HoldCreationResult create(
             Long userId, UUID requestKey, SeatHoldCreateRequest request) {
+        if (requestKey == null) {
+            throw new BusinessException(ErrorCode.INVALID_REQUEST);
+        }
         if (request.seats() == null || request.seats().isEmpty()
                 || request.seats().size() > properties.maxSeats()) {
             throw new BusinessException(ErrorCode.INVALID_REQUEST);

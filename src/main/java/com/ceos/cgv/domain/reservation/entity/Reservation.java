@@ -76,6 +76,9 @@ public class Reservation extends BaseTimeEntity {
     }
 
     public static Reservation hold(User user, Screening screening, UUID requestKey, Instant expiresAt) {
+        if (user == null || screening == null || requestKey == null || expiresAt == null) {
+            throw new BusinessException(ErrorCode.INVALID_REQUEST);
+        }
         Reservation reservation = new Reservation(user, screening);
         reservation.status = ReservationStatus.HELD;
         reservation.requestKey = requestKey.toString();

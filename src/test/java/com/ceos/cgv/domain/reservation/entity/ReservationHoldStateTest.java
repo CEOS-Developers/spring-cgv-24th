@@ -15,7 +15,28 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ReservationHoldStateTest {
+    private static final UUID REQUEST_KEY = UUID.fromString("123e4567-e89b-12d3-a456-426614174000");
     private static final Instant EXPIRES_AT = Instant.parse("2026-09-25T09:05:00Z");
+
+    @Test
+    void 사용자가_없으면_선점을_생성할_수_없다() {
+        assertInvalidHold(null, screening(), REQUEST_KEY, EXPIRES_AT);
+    }
+
+    @Test
+    void 상영이_없으면_선점을_생성할_수_없다() {
+        assertInvalidHold(user(), null, REQUEST_KEY, EXPIRES_AT);
+    }
+
+    @Test
+    void 요청_키가_없으면_선점을_생성할_수_없다() {
+        assertInvalidHold(user(), screening(), null, EXPIRES_AT);
+    }
+
+    @Test
+    void 만료시각이_없으면_선점을_생성할_수_없다() {
+        assertInvalidHold(user(), screening(), REQUEST_KEY, null);
+    }
 
     @Test
     void 선점은_기한_전에만_확정되고_같은_진행_건을_재사용한다() {
@@ -68,8 +89,21 @@ class ReservationHoldStateTest {
     }
 
     private static Reservation hold() {
-        return Reservation.hold(new User("회원", "member@example.com"),
-                new Screening(null, null, LocalDateTime.of(2026, 9, 26, 12, 0)),
-                UUID.fromString("123e4567-e89b-12d3-a456-426614174000"), EXPIRES_AT);
+        return Reservation.hold(user(), screening(), REQUEST_KEY, EXPIRES_AT);
+    }
+
+    private static User user() {
+        return new User("회원", "member@example.com");
+    }
+
+    private static Screening screening() {
+        return new Screening(null, null, LocalDateTime.of(2026, 9, 26, 12, 0));
+    }
+
+    private static void assertInvalidHold(User user, Screening screening, UUID requestKey, Instant expiresAt) {
+        assertThatThrownBy(() -> Reservation.hold(user, screening, requestKey, expiresAt))
+                .isInstanceOf(BusinessException.class)
+                .extracting(error -> ((BusinessException) error).getErrorCode())
+                .isEqualTo(ErrorCode.INVALID_REQUEST);
     }
 }
