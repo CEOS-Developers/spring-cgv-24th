@@ -6,14 +6,26 @@ spring:
     driver-class-name: com.mysql.cj.jdbc.Driver
 
   jpa:
+    open-in-view: false
     hibernate:
       ddl-auto: update
-    show-sql: true
+    show-sql: false
     properties:
       hibernate:
         format_sql: true
   application:
     name: spring-cgv-24th
+
+jwt:
+  secret: ${JWT_SECRET}
+  # 누가 토큰을 발급했는가
+  issuer: ${JWT_ISSUE}
+  # 토큰을 누가 사용하도록 발급했는지
+  audience: ${JWT_AUDIENCE}
+  # 토큰 만료 시간
+  access-token-expiration: ${JWT_ACCESS_TOKEN_EXPIRATION}
+  refresh-token-expiration: ${REFRESH_TOKEN_EXPIRATION}
+
 logging:
   level:
     org.hibernate.SQL: debug

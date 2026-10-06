@@ -12,6 +12,7 @@ import com.spring_cgv_24th.global.exception.CustomException;
 import com.spring_cgv_24th.global.exception.ErrorCode;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -24,6 +25,7 @@ public class AuditoriumService {
     private final TheaterRepository theaterRepository;
 
     @Transactional
+    @PreAuthorize("hasRole('ADMIN')")
     public AuditoriumResDTO createAuditorium(Long theaterId, AuditoriumReqDTO.CreateAuditoriumDTO request) {
         Theater theater = theaterRepository.findById(theaterId)
                 .orElseThrow(() -> new CustomException(ErrorCode.THEATER_NOT_FOUND));

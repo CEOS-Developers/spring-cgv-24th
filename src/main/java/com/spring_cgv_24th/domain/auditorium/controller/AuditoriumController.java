@@ -5,6 +5,7 @@ import com.spring_cgv_24th.domain.auditorium.dto.AuditoriumResDTO;
 import com.spring_cgv_24th.domain.auditorium.service.AuditoriumService;
 import com.spring_cgv_24th.global.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Positive;
@@ -28,6 +29,7 @@ public class AuditoriumController {
     private final AuditoriumService auditoriumService;
 
     @Operation(summary = "상영관 등록")
+    @SecurityRequirement(name = "bearerAuth")
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public ApiResponse<AuditoriumResDTO> createAuditorium(

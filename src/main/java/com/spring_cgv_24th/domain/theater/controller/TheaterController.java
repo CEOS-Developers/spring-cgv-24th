@@ -5,6 +5,7 @@ import com.spring_cgv_24th.domain.theater.dto.TheaterReqDTO;
 import com.spring_cgv_24th.domain.theater.service.TheaterService;
 import com.spring_cgv_24th.global.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import java.util.List;
@@ -21,6 +22,7 @@ public class TheaterController {
     private final TheaterService theaterService;
 
     @Operation(summary = "영화관 등록")
+    @SecurityRequirement(name = "bearerAuth")
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public ApiResponse<TheaterResDTO> createTheater(

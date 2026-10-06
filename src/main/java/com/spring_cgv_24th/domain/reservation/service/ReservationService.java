@@ -38,7 +38,7 @@ public class ReservationService {
     private final Clock clock;
 
     @Transactional
-    public ReservationResDTO createReservation(ReservationReqDTO.CreateReservationDTO request) {
+    public ReservationResDTO createReservation(Long memberId, ReservationReqDTO.CreateReservationDTO request) {
         List<Long> seatIds = request.screeningSeatIds();
         if (seatIds == null || seatIds.isEmpty() || seatIds.stream().anyMatch(id -> id == null || id <= 0)
                 || new HashSet<>(seatIds).size() != seatIds.size()) {
@@ -48,7 +48,7 @@ public class ReservationService {
         Screening screening = screeningRepository.findById(request.screeningId())
                 .orElseThrow(() -> new CustomException(ErrorCode.SCREENING_NOT_FOUND));
         requireBeforeStart(screening, ErrorCode.SCREENING_ALREADY_STARTED);
-        Member member = memberRepository.findById(request.memberId())
+        Member member = memberRepository.findById(memberId)
                 .orElseThrow(() -> new CustomException(ErrorCode.MEMBER_NOT_FOUND));
 
         // 서로 겹치는 좌석 요청도 항상 같은 ID 순서로 잠근다. 동시성 문제 방지

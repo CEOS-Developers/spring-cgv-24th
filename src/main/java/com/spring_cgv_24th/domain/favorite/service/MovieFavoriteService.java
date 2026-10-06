@@ -24,7 +24,6 @@ public class MovieFavoriteService {
     private final MovieRepository movieRepository;
     private final MovieFavoriteRepository movieFavoriteRepository;
 
-    // 임시: 로그인 구현 후에는 memberId 파라미터 제거하고 인증된 회원 ID 사용할 것임.
     @Transactional
     public MovieFavoriteResDTO addFavorite(Long movieId, Long memberId) {
         Member member = memberRepository.findById(memberId)

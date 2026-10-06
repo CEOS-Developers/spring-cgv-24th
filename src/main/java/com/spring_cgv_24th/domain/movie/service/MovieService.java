@@ -9,6 +9,7 @@ import com.spring_cgv_24th.global.exception.ErrorCode;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Sort;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -20,6 +21,7 @@ public class MovieService {
     private final MovieRepository movieRepository;
 
     @Transactional
+    @PreAuthorize("hasRole('ADMIN')")
     public MovieResDTO createMovie(MovieReqDTO.CreateMovieDTO request) {
         Movie movie = Movie.builder()
                 .title(request.title().strip())

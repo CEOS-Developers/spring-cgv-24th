@@ -5,6 +5,7 @@ import com.spring_cgv_24th.domain.movie.dto.MovieResDTO;
 import com.spring_cgv_24th.domain.movie.service.MovieService;
 import com.spring_cgv_24th.global.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import java.util.List;
@@ -27,6 +28,7 @@ public class MovieController {
     private final MovieService movieService;
 
     @Operation(summary = "영화 생성")
+    @SecurityRequirement(name = "bearerAuth")
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public ApiResponse<MovieResDTO> createMovie(

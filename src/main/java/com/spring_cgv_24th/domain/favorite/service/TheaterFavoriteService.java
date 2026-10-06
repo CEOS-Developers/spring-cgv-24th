@@ -24,7 +24,6 @@ public class TheaterFavoriteService {
     private final TheaterRepository theaterRepository;
     private final TheaterFavoriteRepository theaterFavoriteRepository;
 
-    // 임시: 로그인 구현 후에는 memberId 파라미터 제거하고 인증된 회원 ID 사용할 것임.
     @Transactional
     public TheaterFavoriteResDTO addFavorite(Long theaterId, Long memberId) {
         Member member = memberRepository.findById(memberId)
@@ -40,7 +39,6 @@ public class TheaterFavoriteService {
         return TheaterFavoriteResDTO.from(favorite);
     }
 
-    // 임시: 로그인 구현 후에는 memberId 파라미터 제거하고 인증된 회원 ID 사용할 것임.
     @Transactional
     public void removeFavorite(Long theaterId, Long memberId) {
         TheaterFavorite favorite = theaterFavoriteRepository.findByMember_IdAndTheater_Id(memberId, theaterId)

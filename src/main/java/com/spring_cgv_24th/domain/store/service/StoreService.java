@@ -25,6 +25,7 @@ import java.util.HashSet;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Sort;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -57,6 +58,7 @@ public class StoreService {
     }
 
     @Transactional
+    @PreAuthorize("hasRole('ADMIN')")
     public TheaterStockResDTO replenishStock(Long theaterId, Long productId, StoreStockReqDTO request) {
         Integer additionalQuantity = request.quantity();
         if (additionalQuantity == null || additionalQuantity <= 0) {
@@ -84,7 +86,7 @@ public class StoreService {
     }
 
     @Transactional
-    public StoreOrderResDTO createOrder(Long theaterId, StoreOrderReqDTO.CreateOrderDTO request) {
+    public StoreOrderResDTO createOrder(Long theaterId, Long memberId, StoreOrderReqDTO.CreateOrderDTO request) {
         List<Long> productIds = request.items().stream()
                 .map(StoreOrderReqDTO.OrderItemDTO::productId)
                 .toList();
@@ -92,8 +94,7 @@ public class StoreService {
             throw new CustomException(ErrorCode.BAD_REQUEST);
         }
 
-        // 임시: 로그인 구현 후에는 요청의 memberId 대신 인증된 회원 ID를 사용할 예정.
-        Member member = memberRepository.findById(request.memberId())
+        Member member = memberRepository.findById(memberId)
                 .orElseThrow(() -> new CustomException(ErrorCode.MEMBER_NOT_FOUND));
         Theater theater = theaterRepository.findById(theaterId)
                 .orElseThrow(() -> new CustomException(ErrorCode.THEATER_NOT_FOUND));

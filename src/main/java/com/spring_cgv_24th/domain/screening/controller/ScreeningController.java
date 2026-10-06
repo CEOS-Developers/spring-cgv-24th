@@ -6,6 +6,7 @@ import com.spring_cgv_24th.domain.screening.dto.response.ScreeningSeatResDTO;
 import com.spring_cgv_24th.domain.screening.service.ScreeningService;
 import com.spring_cgv_24th.global.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import java.util.List;
@@ -28,6 +29,7 @@ public class ScreeningController {
     private final ScreeningService screeningService;
 
     @Operation(summary = "상영 회차 생성")
+    @SecurityRequirement(name = "bearerAuth")
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public ApiResponse<ScreeningResDTO> createScreening(

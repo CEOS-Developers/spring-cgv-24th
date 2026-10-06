@@ -12,6 +12,7 @@ import com.spring_cgv_24th.global.exception.ErrorCode;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Sort;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,6 +26,7 @@ public class TheaterService {
     private final TheaterStockRepository theaterStockRepository;
 
     @Transactional
+    @PreAuthorize("hasRole('ADMIN')")
     public TheaterResDTO createTheater(TheaterReqDTO.CreateTheaterReqDTO request) {
         Theater theater = Theater.builder()
                 .name(request.name())

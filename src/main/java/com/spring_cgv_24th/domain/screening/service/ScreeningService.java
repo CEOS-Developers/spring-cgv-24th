@@ -18,6 +18,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -33,6 +34,7 @@ public class ScreeningService {
 
     // 상영관의 회차 시간 중복을 확인하고 회차와 모든 좌석을 함께 생성한다.
     @Transactional
+    @PreAuthorize("hasRole('ADMIN')")
     public ScreeningResDTO createScreening(ScreeningReqDTO.CreateScreeningDTO request) {
         Movie movie = movieRepository.findById(request.movieId())
                 .orElseThrow(() -> new CustomException(ErrorCode.MOVIE_NOT_FOUND));

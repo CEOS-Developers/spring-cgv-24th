@@ -4,6 +4,7 @@ import com.spring_cgv_24th.global.response.ApiResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -23,6 +24,11 @@ public class GlobalExceptionHandler {
                 .body(ApiResponse.onFailure(errorCode.getCode(), errorCode.getMessage(), null));
     }
 
+    // 메서드 권한 검사 실패가 일반 서버 오류(500)로 처리되지 않도록 공통 403으로 변환한다.
+    @ExceptionHandler(AccessDeniedException.class)
+    public ResponseEntity<ApiResponse<Void>> handleAccessDeniedException(AccessDeniedException e) {
+        return handleCustomException(new CustomException(ErrorCode.ACCESS_DENIED));
+    }
 
     // 서비스에 도달하기 전 Spring이 발견한 요청 형식/검증 오류만 공통 400으로 변환한다.
     @ExceptionHandler({MethodArgumentNotValidException.class, MethodArgumentTypeMismatchException.class,

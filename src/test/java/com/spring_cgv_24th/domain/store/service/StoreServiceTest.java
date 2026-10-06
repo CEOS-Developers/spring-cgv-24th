@@ -153,7 +153,7 @@ class StoreServiceTest {
         when(storeOrderItemRepository.saveAll(anyList()))
                 .thenAnswer(invocation -> invocation.getArgument(0));
 
-        StoreOrderResDTO response = storeService.createOrder(1L, order(2));
+        StoreOrderResDTO response = storeService.createOrder(1L, 1L, order(2));
 
         assertEquals(1, stock.getQuantity());
         assertEquals(18000L, response.totalPrice());
@@ -171,7 +171,7 @@ class StoreServiceTest {
                 .thenReturn(Optional.of(stock));
 
         CustomException error = assertThrows(CustomException.class,
-                () -> storeService.createOrder(1L, order(1)));
+                () -> storeService.createOrder(1L, 1L, order(1)));
 
         assertEquals(ErrorCode.STORE_STOCK_INSUFFICIENT, error.getErrorCode());
         assertEquals(1, stock.getQuantity());
@@ -187,7 +187,7 @@ class StoreServiceTest {
                 .thenReturn(Optional.of(stock));
 
         CustomException error = assertThrows(CustomException.class,
-                () -> storeService.createOrder(1L, order(2)));
+                () -> storeService.createOrder(1L, 1L, order(2)));
 
         assertEquals(ErrorCode.STORE_STOCK_INSUFFICIENT, error.getErrorCode());
         assertEquals(1, stock.getQuantity());
@@ -203,7 +203,7 @@ class StoreServiceTest {
         when(productRepository.existsById(1L)).thenReturn(true);
 
         CustomException error = assertThrows(CustomException.class,
-                () -> storeService.createOrder(1L, order(1)));
+                () -> storeService.createOrder(1L, 1L, order(1)));
 
         assertEquals(ErrorCode.THEATER_STOCK_NOT_FOUND, error.getErrorCode());
         verifyNoInteractions(storeOrderRepository, storeOrderItemRepository);
@@ -236,7 +236,7 @@ class StoreServiceTest {
     }
 
     private static StoreOrderReqDTO.CreateOrderDTO order(int quantity) {
-        return new StoreOrderReqDTO.CreateOrderDTO(1L,
+        return new StoreOrderReqDTO.CreateOrderDTO(
                 List.of(new StoreOrderReqDTO.OrderItemDTO(1L, quantity)));
     }
 }
