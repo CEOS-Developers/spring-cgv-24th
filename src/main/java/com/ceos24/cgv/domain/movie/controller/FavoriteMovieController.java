@@ -22,8 +22,7 @@ public class FavoriteMovieController {
     @Operation(summary = "찜한 영화 등록", description = "사용자가 특정 영화를 찜한 영화로 등록합니다.")
     @PostMapping("/api/movies/{movieId}/favorite")
     public ResponseEntity<ApiResponse<Void>> addFavoriteMovie(
-            @PathVariable Long movieId,
-            @AuthenticationPrincipal CustomUserDetails userDetails) {
+            @PathVariable Long movieId, @AuthenticationPrincipal CustomUserDetails userDetails) {
         favoriteMovieService.addFavoriteMovie(movieId, userDetails.getMemberId());
         return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.success(null));
     }
@@ -31,8 +30,7 @@ public class FavoriteMovieController {
     @Operation(summary = "찜한 영화 삭제", description = "등록된 찜한 영화를 삭제합니다.")
     @DeleteMapping("/api/favoriteMovies/{favoriteMovieId}")
     public ResponseEntity<ApiResponse<Void>> deleteFavoriteMovie(
-            @PathVariable Long favoriteMovieId,
-            @AuthenticationPrincipal CustomUserDetails userDetails) {
+            @PathVariable Long favoriteMovieId, @AuthenticationPrincipal CustomUserDetails userDetails) {
         favoriteMovieService.deleteFavoriteMovie(favoriteMovieId, userDetails.getMemberId());
         return ResponseEntity.ok(ApiResponse.success(null));
     }
@@ -41,7 +39,7 @@ public class FavoriteMovieController {
     @GetMapping("/api/favoriteMovies")
     public ResponseEntity<ApiResponse<GetMovieResponse>> getAllFavoriteMovies(
             @AuthenticationPrincipal CustomUserDetails userDetails) {
-        return ResponseEntity.ok(ApiResponse
-                .success(favoriteMovieService.getAllFavoriteMovies(userDetails.getMemberId())));
+        return ResponseEntity.ok(
+                ApiResponse.success(favoriteMovieService.getAllFavoriteMovies(userDetails.getMemberId())));
     }
 }

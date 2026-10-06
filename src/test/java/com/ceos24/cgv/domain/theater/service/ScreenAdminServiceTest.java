@@ -5,14 +5,15 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
+import com.ceos24.cgv.domain.theater.dto.request.ScreenCreateRequest;
 import com.ceos24.cgv.domain.theater.entity.Screen;
 import com.ceos24.cgv.domain.theater.entity.ScreenType;
 import com.ceos24.cgv.domain.theater.entity.Theater;
-import com.ceos24.cgv.domain.theater.dto.request.ScreenCreateRequest;
 import com.ceos24.cgv.domain.theater.repository.ScreenRepository;
 import com.ceos24.cgv.domain.theater.repository.TheaterRepository;
 import com.ceos24.cgv.global.exception.BusinessException;
 import com.ceos24.cgv.global.exception.ErrorCode;
+import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -20,8 +21,6 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
-
-import java.util.Optional;
 
 @ExtendWith(MockitoExtension.class)
 class ScreenAdminServiceTest {
@@ -64,8 +63,8 @@ class ScreenAdminServiceTest {
         when(theaterRepository.findById(theaterId)).thenReturn(Optional.empty());
 
         // when & then
-        BusinessException exception = assertThrows(BusinessException.class, () -> 
-                screenAdminService.createScreen(theaterId, request));
+        BusinessException exception =
+                assertThrows(BusinessException.class, () -> screenAdminService.createScreen(theaterId, request));
         assertEquals(ErrorCode.THEATER_NOT_FOUND, exception.getErrorCode());
     }
 }

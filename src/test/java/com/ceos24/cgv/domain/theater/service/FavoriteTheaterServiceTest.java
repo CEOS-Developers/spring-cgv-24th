@@ -13,6 +13,7 @@ import com.ceos24.cgv.domain.theater.repository.FavoriteTheaterRepository;
 import com.ceos24.cgv.domain.theater.repository.TheaterRepository;
 import com.ceos24.cgv.global.exception.BusinessException;
 import com.ceos24.cgv.global.exception.ErrorCode;
+import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -20,8 +21,6 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
-
-import java.util.Optional;
 
 @ExtendWith(MockitoExtension.class)
 class FavoriteTheaterServiceTest {
@@ -44,10 +43,10 @@ class FavoriteTheaterServiceTest {
         // given
         Long theaterId = 1L;
         Long memberId = 1L;
-        
+
         Theater theater = new Theater("CGV 강남", "서울 강남구");
         ReflectionTestUtils.setField(theater, "id", theaterId);
-        
+
         Member member = mock(Member.class);
         lenient().when(member.getId()).thenReturn(memberId);
 
@@ -71,8 +70,8 @@ class FavoriteTheaterServiceTest {
         when(theaterRepository.findById(theaterId)).thenReturn(Optional.empty());
 
         // when & then
-        BusinessException exception = assertThrows(BusinessException.class, () -> 
-                favoriteTheaterService.addFavoriteTheater(theaterId, memberId));
+        BusinessException exception = assertThrows(
+                BusinessException.class, () -> favoriteTheaterService.addFavoriteTheater(theaterId, memberId));
         assertEquals(ErrorCode.THEATER_NOT_FOUND, exception.getErrorCode());
     }
 
@@ -88,8 +87,8 @@ class FavoriteTheaterServiceTest {
         when(memberRepository.findById(memberId)).thenReturn(Optional.empty());
 
         // when & then
-        BusinessException exception = assertThrows(BusinessException.class, () -> 
-                favoriteTheaterService.addFavoriteTheater(theaterId, memberId));
+        BusinessException exception = assertThrows(
+                BusinessException.class, () -> favoriteTheaterService.addFavoriteTheater(theaterId, memberId));
         assertEquals(ErrorCode.MEMBER_NOT_FOUND, exception.getErrorCode());
     }
 }

@@ -1,7 +1,10 @@
 package com.ceos24.cgv.domain.store.service;
 
-import com.ceos24.cgv.domain.store.entity.Menu;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
+
 import com.ceos24.cgv.domain.store.dto.request.CreateMenuRequest;
+import com.ceos24.cgv.domain.store.entity.Menu;
 import com.ceos24.cgv.domain.store.repository.MenuRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -9,9 +12,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.verify;
 
 @ExtendWith(MockitoExtension.class)
 class MenuAdminServiceTest {

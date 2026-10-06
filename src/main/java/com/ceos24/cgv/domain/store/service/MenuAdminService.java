@@ -1,7 +1,7 @@
 package com.ceos24.cgv.domain.store.service;
 
-import com.ceos24.cgv.domain.store.entity.Menu;
 import com.ceos24.cgv.domain.store.dto.request.CreateMenuRequest;
+import com.ceos24.cgv.domain.store.entity.Menu;
 import com.ceos24.cgv.domain.store.repository.MenuRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;

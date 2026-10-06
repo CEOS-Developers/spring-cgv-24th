@@ -1,6 +1,8 @@
 package com.ceos24.cgv.domain.theater.entity;
 
 import com.ceos24.cgv.domain.screening.entity.Screening;
+import com.ceos24.cgv.global.exception.BusinessException;
+import com.ceos24.cgv.global.exception.ErrorCode;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -30,6 +32,9 @@ public class Seat {
     private Boolean isReserved;
 
     public void reserveSeat() {
+        if (this.isReserved != null && this.isReserved) {
+            throw new BusinessException(ErrorCode.ALREADY_RESERVED);
+        }
         this.isReserved = true;
     }
 

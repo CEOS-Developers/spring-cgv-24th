@@ -1,12 +1,10 @@
 package com.ceos24.cgv.global.security;
 
 import com.ceos24.cgv.domain.member.entity.Member;
-import lombok.Getter;
-import lombok.RequiredArgsConstructor;
-
 import java.util.Collection;
 import java.util.Collections;
-
+import lombok.Getter;
+import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -20,8 +18,7 @@ public class CustomUserDetails implements UserDetails {
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {
         return Collections.singletonList(
-                new SimpleGrantedAuthority(member.getRole().getKey())
-        );
+                new SimpleGrantedAuthority(member.getRole().getKey()));
     }
 
     @Override
@@ -37,8 +34,8 @@ public class CustomUserDetails implements UserDetails {
     public Long getMemberId() {
         return member.getId();
     }
+
     public String getName() {
         return member.getName();
     }
-
 }

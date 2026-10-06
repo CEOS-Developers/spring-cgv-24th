@@ -24,14 +24,17 @@ public class ReservationService {
     public void reserveSeat(Long memberId, Long screeningId, Long seatNumber) {
         Seat seat = seatRepository.findByScreeningIdAndSeatNumber(screeningId, seatNumber);
         seat.reserveSeat();
-        Member member = memberRepository.findById(memberId).orElseThrow(() -> new BusinessException(ErrorCode.MEMBER_NOT_FOUND));
+        Member member = memberRepository
+                .findById(memberId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.MEMBER_NOT_FOUND));
         Reservation reservation = new Reservation(member, seat);
         reservationRepository.save(reservation);
     }
 
     @Transactional
     public void cancelReservation(Long memberId, Long screeningId, Long seatNumber) {
-        Reservation reservation = reservationRepository.findReservationToCancel(memberId, screeningId, seatNumber)
+        Reservation reservation = reservationRepository
+                .findReservationToCancel(memberId, screeningId, seatNumber)
                 .orElseThrow(() -> new BusinessException(ErrorCode.RESERVATION_NOT_FOUND));
 
         Seat seat = reservation.getSeat();

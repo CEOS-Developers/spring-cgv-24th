@@ -1,12 +1,12 @@
 package com.ceos24.cgv.domain.movie.service;
 
-import com.ceos24.cgv.domain.movie.entity.Movie;
 import com.ceos24.cgv.domain.movie.dto.MovieInfo;
 import com.ceos24.cgv.domain.movie.dto.ScheduleTimeInfo;
 import com.ceos24.cgv.domain.movie.dto.ScreenScheduleInfo;
 import com.ceos24.cgv.domain.movie.dto.ScreeningMovieInfo;
 import com.ceos24.cgv.domain.movie.dto.response.GetMovieResponse;
 import com.ceos24.cgv.domain.movie.dto.response.GetScreeningResponse;
+import com.ceos24.cgv.domain.movie.entity.Movie;
 import com.ceos24.cgv.domain.movie.repository.MovieRepository;
 import com.ceos24.cgv.domain.screening.entity.Screening;
 import com.ceos24.cgv.domain.screening.repository.ScreeningRepository;
@@ -117,7 +117,8 @@ public class MovieService {
 
                     List<ScheduleTimeInfo> scheduleInfos = createScheduleTimeInfos(screen, screenScreenings);
                     return new ScreenScheduleInfo(screen.getId(), screen.getName(), scheduleInfos);
-                }).toList();
+                })
+                .toList();
     }
 
     /**
@@ -125,8 +126,7 @@ public class MovieService {
      */
     private List<ScheduleTimeInfo> createScheduleTimeInfos(Screen screen, List<Screening> screenScreenings) {
         return screenScreenings.stream()
-                .map(s -> new ScheduleTimeInfo(
-                        s.getId(), s.getStartTime(), s.getEndTime(), screen.getTotalSeats()))
+                .map(s -> new ScheduleTimeInfo(s.getId(), s.getStartTime(), s.getEndTime(), screen.getTotalSeats()))
                 .toList();
     }
 }

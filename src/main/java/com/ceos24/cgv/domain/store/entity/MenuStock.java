@@ -1,11 +1,11 @@
 package com.ceos24.cgv.domain.store.entity;
 
+import com.ceos24.cgv.global.exception.BusinessException;
+import com.ceos24.cgv.global.exception.ErrorCode;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
-import com.ceos24.cgv.global.exception.BusinessException;
-import com.ceos24.cgv.global.exception.ErrorCode;
 
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)

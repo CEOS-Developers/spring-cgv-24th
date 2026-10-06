@@ -1,15 +1,23 @@
 package com.ceos24.cgv.domain.screening.service;
 
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.BDDMockito.given;
+import static org.mockito.BDDMockito.then;
+import static org.mockito.Mockito.times;
+
 import com.ceos24.cgv.domain.movie.entity.Movie;
 import com.ceos24.cgv.domain.movie.repository.MovieRepository;
-import com.ceos24.cgv.domain.screening.entity.Screening;
 import com.ceos24.cgv.domain.screening.dto.request.CreateScreeningRequest;
+import com.ceos24.cgv.domain.screening.entity.Screening;
 import com.ceos24.cgv.domain.screening.repository.ScreeningRepository;
 import com.ceos24.cgv.domain.theater.entity.Screen;
 import com.ceos24.cgv.domain.theater.repository.ScreenRepository;
 import com.ceos24.cgv.domain.theater.service.SeatService;
 import com.ceos24.cgv.global.exception.BusinessException;
 import com.ceos24.cgv.global.exception.ErrorCode;
+import java.time.LocalDateTime;
+import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -17,15 +25,6 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
-
-import java.time.LocalDateTime;
-import java.util.Optional;
-
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.BDDMockito.given;
-import static org.mockito.BDDMockito.then;
-import static org.mockito.Mockito.times;
 
 @ExtendWith(MockitoExtension.class)
 class ScreeningAdminServiceTest {
@@ -78,7 +77,8 @@ class ScreeningAdminServiceTest {
         // given
         Long movieId = 999L;
         Long screenId = 1L;
-        CreateScreeningRequest request = new CreateScreeningRequest(movieId, screenId, LocalDateTime.now(), LocalDateTime.now().plusHours(2));
+        CreateScreeningRequest request = new CreateScreeningRequest(
+                movieId, screenId, LocalDateTime.now(), LocalDateTime.now().plusHours(2));
 
         given(movieRepository.findById(movieId)).willReturn(Optional.empty());
 
@@ -100,7 +100,8 @@ class ScreeningAdminServiceTest {
         // given
         Long movieId = 1L;
         Long screenId = 999L;
-        CreateScreeningRequest request = new CreateScreeningRequest(movieId, screenId, LocalDateTime.now(), LocalDateTime.now().plusHours(2));
+        CreateScreeningRequest request = new CreateScreeningRequest(
+                movieId, screenId, LocalDateTime.now(), LocalDateTime.now().plusHours(2));
 
         Movie movie = new Movie("테스트 영화");
         ReflectionTestUtils.setField(movie, "id", movieId);

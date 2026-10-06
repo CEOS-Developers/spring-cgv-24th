@@ -3,13 +3,12 @@ package com.ceos24.cgv.domain.reservation.controller;
 import com.ceos24.cgv.domain.reservation.service.ReservationService;
 import com.ceos24.cgv.global.common.ApiResponse;
 import com.ceos24.cgv.global.security.CustomUserDetails;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
-
-import io.swagger.v3.oas.annotations.Operation;
-import io.swagger.v3.oas.annotations.tags.Tag;
 
 @RequiredArgsConstructor
 @RequestMapping("/api/screenings/{screeningId}")

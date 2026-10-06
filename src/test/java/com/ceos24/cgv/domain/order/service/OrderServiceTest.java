@@ -1,10 +1,19 @@
 package com.ceos24.cgv.domain.order.service;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+
 import com.ceos24.cgv.domain.member.entity.Member;
 import com.ceos24.cgv.domain.member.repository.MemberRepository;
-import com.ceos24.cgv.domain.order.entity.Order;
 import com.ceos24.cgv.domain.order.dto.request.CreateOrderRequest;
 import com.ceos24.cgv.domain.order.dto.request.OrderItemRequest;
+import com.ceos24.cgv.domain.order.entity.Order;
 import com.ceos24.cgv.domain.order.repository.OrderItemRepository;
 import com.ceos24.cgv.domain.order.repository.OrderRepository;
 import com.ceos24.cgv.domain.store.entity.Menu;
@@ -14,6 +23,8 @@ import com.ceos24.cgv.domain.store.repository.MenuStockRepository;
 import com.ceos24.cgv.domain.store.repository.StoreRepository;
 import com.ceos24.cgv.global.exception.BusinessException;
 import com.ceos24.cgv.global.exception.ErrorCode;
+import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -21,20 +32,6 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
-
-import java.util.List;
-import java.util.Optional;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyList;
-import static org.mockito.BDDMockito.given;
-import static org.mockito.Mockito.lenient;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verify;
 
 @ExtendWith(MockitoExtension.class)
 class OrderServiceTest {
@@ -82,7 +79,8 @@ class OrderServiceTest {
 
         given(memberRepository.findById(memberId)).willReturn(Optional.of(member));
         given(storeRepository.findById(storeId)).willReturn(Optional.of(store));
-        given(menuStockRepository.findByStoreIdAndMenuId(storeId, menuId)).willReturn(Optional.of(menuStock));
+        given(menuStockRepository.findAllByStoreIdAndMenuIdIn(storeId, List.of(menuId)))
+                .willReturn(List.of(menuStock));
 
         // when
         orderService.createOrder(memberId, request);
@@ -103,9 +101,8 @@ class OrderServiceTest {
         given(memberRepository.findById(memberId)).willReturn(Optional.empty());
 
         // when & then
-        BusinessException exception = assertThrows(BusinessException.class, () ->
-                orderService.createOrder(memberId, request)
-        );
+        BusinessException exception =
+                assertThrows(BusinessException.class, () -> orderService.createOrder(memberId, request));
         assertEquals(ErrorCode.MEMBER_NOT_FOUND, exception.getErrorCode());
     }
 
@@ -123,9 +120,8 @@ class OrderServiceTest {
         given(storeRepository.findById(storeId)).willReturn(Optional.empty());
 
         // when & then
-        BusinessException exception = assertThrows(BusinessException.class, () ->
-                orderService.createOrder(memberId, request)
-        );
+        BusinessException exception =
+                assertThrows(BusinessException.class, () -> orderService.createOrder(memberId, request));
         assertEquals(ErrorCode.STORE_NOT_FOUND, exception.getErrorCode());
     }
 
@@ -145,12 +141,12 @@ class OrderServiceTest {
 
         given(memberRepository.findById(memberId)).willReturn(Optional.of(member));
         given(storeRepository.findById(storeId)).willReturn(Optional.of(store));
-        given(menuStockRepository.findByStoreIdAndMenuId(storeId, menuId)).willReturn(Optional.empty());
+        given(menuStockRepository.findAllByStoreIdAndMenuIdIn(storeId, List.of(menuId)))
+                .willReturn(List.of());
 
         // when & then
-        BusinessException exception = assertThrows(BusinessException.class, () ->
-                orderService.createOrder(memberId, request)
-        );
+        BusinessException exception =
+                assertThrows(BusinessException.class, () -> orderService.createOrder(memberId, request));
         assertEquals(ErrorCode.MENU_NOT_FOUND, exception.getErrorCode());
     }
 
@@ -173,12 +169,12 @@ class OrderServiceTest {
 
         given(memberRepository.findById(memberId)).willReturn(Optional.of(member));
         given(storeRepository.findById(storeId)).willReturn(Optional.of(store));
-        given(menuStockRepository.findByStoreIdAndMenuId(storeId, menuId)).willReturn(Optional.of(menuStock));
+        given(menuStockRepository.findAllByStoreIdAndMenuIdIn(storeId, List.of(menuId)))
+                .willReturn(List.of(menuStock));
 
         // when & then
-        BusinessException exception = assertThrows(BusinessException.class, () ->
-                orderService.createOrder(memberId, request)
-        );
+        BusinessException exception =
+                assertThrows(BusinessException.class, () -> orderService.createOrder(memberId, request));
         assertEquals(ErrorCode.OUT_OF_STOCK, exception.getErrorCode());
     }
 }

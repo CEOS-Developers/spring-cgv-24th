@@ -16,19 +16,21 @@ public enum ErrorCode {
     // Auth
     AUTH_LOGIN_ID_ALREADY_EXISTS(409, "이미 존재하는 로그인 ID 입니다."),
     AUTH_EMAIL_ALREADY_EXISTS(409, "이미 사용중인 EMAIL입니다."),
-    AUTH_INVALID_CREDENTIALS(500, "올바르지 않은 인증 정보입니다."),
+    AUTH_INVALID_CREDENTIALS(401, "올바르지 않은 인증 정보입니다."),
     AUTH_UNAUTHORIZED_USER(401, "인증되지 않은 사용자입니다."),
     AUTH_FORBIDDEN_USER(403, "권한이 없는 사용자입니다."),
     AUTH_EXPIRED_TOKEN(401, "만료된 토큰입니다."),
     AUTH_INVALID_TOKEN(401, "유효하지 않은 토큰입니다."),
     AUTH_TOKEN_NOT_EXIST(401, "토큰이 존재하지 않습니다."),
+    AUTH_HIJACK_DETECTED(401, "토큰 탈취가 의심됩니다."),
 
     // Store / Order
     STORE_NOT_FOUND(404, "존재하지 않는 매장입니다."),
     MENU_NOT_FOUND(404, "해당 매장에 존재하지 않는 메뉴입니다."),
     OUT_OF_STOCK(400, "재고가 부족합니다."),
-    
+
     // Reservation / Theater / FavoriteTheater
+    ALREADY_RESERVED(409, "이미 예매된 좌석입니다."),
     THEATER_NOT_FOUND(404, "존재하지 않는 영화관입니다."),
     RESERVATION_NOT_FOUND(404, "존재하지 않는 예매이거나 권한이 없습니다."),
     SEAT_NOT_FOUND(404, "존재하지 않는 좌석입니다."),
@@ -36,7 +38,7 @@ public enum ErrorCode {
     SCREEN_NOT_FOUND(404, "존재하지 않는 상영관입니다."),
     FAVORITE_THEATER_ALREADY_EXIST(409, "이미 찜한 영화관입니다."),
     FAVORITE_THEATER_NOT_FOUND(404, "찜한 영화관이 존재하지 않습니다."),
-    
+
     // Movie / FavoriteMovie
     MOVIE_NOT_FOUND(404, "존재하지 않는 영화입니다."),
     FAVORITE_MOVIE_ALREADY_EXIST(409, "이미 찜한 영화입니다."),

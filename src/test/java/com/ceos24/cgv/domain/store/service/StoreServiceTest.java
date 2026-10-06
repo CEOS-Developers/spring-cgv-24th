@@ -1,15 +1,23 @@
 package com.ceos24.cgv.domain.store.service;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+
+import com.ceos24.cgv.domain.store.dto.response.MenuStockInfo;
+import com.ceos24.cgv.domain.store.dto.response.StoreResponse;
 import com.ceos24.cgv.domain.store.entity.Menu;
 import com.ceos24.cgv.domain.store.entity.MenuStock;
 import com.ceos24.cgv.domain.store.entity.Store;
-import com.ceos24.cgv.domain.store.dto.response.MenuStockInfo;
-import com.ceos24.cgv.domain.store.dto.response.StoreResponse;
 import com.ceos24.cgv.domain.store.repository.MenuStockRepository;
 import com.ceos24.cgv.domain.store.repository.StoreRepository;
 import com.ceos24.cgv.domain.theater.entity.Theater;
 import com.ceos24.cgv.global.exception.BusinessException;
 import com.ceos24.cgv.global.exception.ErrorCode;
+import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -17,15 +25,6 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
-
-import java.util.List;
-import java.util.Optional;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.BDDMockito.given;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verify;
 
 @ExtendWith(MockitoExtension.class)
 class StoreServiceTest {

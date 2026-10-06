@@ -3,11 +3,10 @@ package com.ceos24.cgv.domain.order.entity;
 import com.ceos24.cgv.domain.member.entity.Member;
 import com.ceos24.cgv.domain.store.entity.Store;
 import jakarta.persistence.*;
+import java.time.LocalDateTime;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
-
-import java.time.LocalDateTime;
 
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)

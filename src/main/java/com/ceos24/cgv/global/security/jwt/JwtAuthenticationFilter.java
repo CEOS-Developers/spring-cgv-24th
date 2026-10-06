@@ -10,13 +10,13 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import java.io.IOException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.filter.OncePerRequestFilter;
-
-import java.io.IOException;
 
 @Slf4j
 @RequiredArgsConstructor
@@ -26,22 +26,22 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private final MemberRepository memberRepository;
 
     @Override
-    protected void doFilterInternal(
-            HttpServletRequest request,
-            HttpServletResponse response,
-            FilterChain filterChain) throws IOException, ServletException {
+    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
+            throws IOException, ServletException {
         String token = resolveToken(request);
-
         try {
             if (token != null) {
-                jwtProvider.validateToken(token);
-                Long memberId = jwtProvider.getMemberIdFromToken(token);
+                String subjectStr = jwtProvider.getMemberIdFromTokenAfterValidate(token);
+                Long memberId = Long.parseLong(subjectStr);
                 Member member = memberRepository.findById(memberId).orElse(null);
                 if (member != null) {
                     CustomUserDetails userDetails = new CustomUserDetails(member);
                     UsernamePasswordAuthenticationToken authentication =
                             new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
-                    SecurityContextHolder.getContext().setAuthentication(authentication);
+
+                    SecurityContext context = SecurityContextHolder.createEmptyContext();
+                    context.setAuthentication(authentication);
+                    SecurityContextHolder.setContext(context);
                 }
             }
         } catch (ExpiredJwtException e) {
@@ -49,10 +49,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             request.setAttribute("exception", ErrorCode.AUTH_EXPIRED_TOKEN);
         } catch (JwtException e) {
             log.warn("토큰이 유효하지 않습니다: {}", e.getMessage());
-            request.setAttribute("exception",ErrorCode.AUTH_INVALID_TOKEN);
+            request.setAttribute("exception", ErrorCode.AUTH_INVALID_TOKEN);
         } catch (IllegalArgumentException e) {
             log.warn("토큰이 없습니다: {}", e.getMessage());
-            request.setAttribute("exception",ErrorCode.AUTH_TOKEN_NOT_EXIST);
+            request.setAttribute("exception", ErrorCode.AUTH_TOKEN_NOT_EXIST);
         }
         filterChain.doFilter(request, response);
     }
@@ -60,9 +60,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private String resolveToken(HttpServletRequest request) {
         String bearerToken = request.getHeader("Authorization");
         if (bearerToken != null && bearerToken.startsWith("Bearer ")) {
-            return  bearerToken.substring(7);
+            return bearerToken.substring(7);
         }
         return null;
     }
-
 }

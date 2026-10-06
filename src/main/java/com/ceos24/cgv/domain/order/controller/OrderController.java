@@ -23,8 +23,7 @@ public class OrderController {
     @Operation(summary = "주문 생성", description = "새로운 주문을 생성합니다.")
     @PostMapping("/orders")
     public ResponseEntity<ApiResponse<Void>> createOrder(
-            @AuthenticationPrincipal CustomUserDetails userDetails,
-            @RequestBody CreateOrderRequest request) {
+            @AuthenticationPrincipal CustomUserDetails userDetails, @RequestBody CreateOrderRequest request) {
         orderService.createOrder(userDetails.getMemberId(), request);
         return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.success(null));
     }

@@ -1,8 +1,8 @@
 package com.ceos24.cgv.domain.theater.service;
 
+import com.ceos24.cgv.domain.theater.dto.request.ScreenCreateRequest;
 import com.ceos24.cgv.domain.theater.entity.Screen;
 import com.ceos24.cgv.domain.theater.entity.Theater;
-import com.ceos24.cgv.domain.theater.dto.request.ScreenCreateRequest;
 import com.ceos24.cgv.domain.theater.repository.ScreenRepository;
 import com.ceos24.cgv.domain.theater.repository.TheaterRepository;
 import com.ceos24.cgv.global.exception.BusinessException;
@@ -20,7 +20,9 @@ public class ScreenAdminService {
 
     @Transactional
     public void createScreen(Long theaterId, ScreenCreateRequest request) {
-        Theater theater = theaterRepository.findById(theaterId).orElseThrow(() -> new BusinessException(ErrorCode.THEATER_NOT_FOUND));
+        Theater theater = theaterRepository
+                .findById(theaterId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.THEATER_NOT_FOUND));
         Screen screen = new Screen(theater, request.screenType(), request.name(), request.totalSeats());
         screenRepository.save(screen);
     }
