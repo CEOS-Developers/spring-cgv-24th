@@ -1,3 +1,137 @@
+# spring-cgv-24th
+
+CEOS 24기 백엔드 스터디 - CGV 클론 코딩 프로젝트
+
+## 3주차 구현 및 개선
+
+### 인증, 인가
+
+- 별도 로그인 ID를 사용하는 회원가입, 로그인과 Spring Security 기반 JWT 인증을 구현했습니다.
+- Access Token은 30분, Refresh Token은 14일로 설정했습니다. 회원당 Refresh Token 하나를 해시로 저장하고, 재발급 시 교체하며 로그아웃 시 폐기합니다.
+- 개인 예매, 주문은 토큰의 회원 ID로 처리하고 소유권을 확인합니다. 운영용 등록 API와 영화 비공개 처리는 ADMIN 권한으로 제한했습니다.
+
+### 영화 예매
+
+- 회차별 좌석(`ScreeningSeat`)을 생성하고, 요청한 좌석에 비관적 락(`FOR UPDATE NOWAIT`)을 걸어 같은 좌석의 중복 예매를 막았습니다. 잠금 충돌 시 기다리지 않고 오류를 반환합니다.
+- 한 번에 최대 8석을 5분간 선점할 수 있습니다. 선점 연장은 허용하지 않으며, 유효한 선점, 확정 예매는 같은 요청 키로 재시도하면 기존 결과를 반환합니다.
+- 선점 확정, 해제, 만료 처리를 추가하고, 예매 상태와 좌석 점유를 함께 변경하도록 정리했습니다. 상세 조회에도 만료 상태와 시각을 반영했습니다.
+- 직접 예매의 만료 정리를 트랜잭션 밖으로 분리해 추가 커넥션을 기다리는 문제를 수정했습니다. 기존 좌석 데이터를 연결하는 백필도 정상 만료된 선점을 처리하도록 보완했습니다.
+- 영화 삭제는 비공개 전환으로 처리해 기존 예매 이력을 보존합니다.
+
+### 매점 주문
+
+- 동시 주문으로 재고 차감이 겹치지 않도록 영화관별 재고에 비관적 락(`PESSIMISTIC_WRITE`)을 적용했습니다. 상품 ID 순서로 잠금을 얻고, 모든 항목을 검증한 뒤 차감합니다.
+- 주문 당시 단가(`unitPrice`)를 보존하고, 주문 항목과 총액을 함께 생성하도록 변경했습니다. null 주문 항목과 잘못된 재고 차감 수량도 차단했습니다.
+
+### 공통 구조와 오류 처리
+
+- 인증 기능은 `auth`, 공통 보안 코드는 `global/security`로 분리했습니다. 예매 코드는 서비스, 정책, 값 객체, 스케줄러의 역할에 따라 나눴습니다.
+- 예매, 주문, 상영 서비스에서 응답 DTO를 완성하고 OSIV를 껐습니다. 재시도할 때 이전 트랜잭션의 좌석 상태를 재사용하지 않도록 했습니다.
+- 보안 오류도 공통 `ErrorResponse`를 사용합니다. 일반 요청 오류가 401로 바뀌지 않도록 오류 디스패치를 보완하고, Swagger에 Bearer 인증과 오류 응답을 명시했습니다.
+
+## JWT 인증 흐름
+
+### JWT 구조와 토큰의 역할
+
+- Header에는 서명 알고리즘 같은 메타데이터가 들어갑니다. 현재는 `HS256`을 사용합니다.
+- Payload에는 회원 ID, 역할, 만료 시각 같은 Claim이 들어갑니다.
+- Signature는 Header와 Payload를 서명한 값입니다. 서버의 키로 서명을 검증해 내용이 바뀌었는지 확인합니다.
+
+현재 사용하는 서명된 JWT의 Header와 Payload는 Base64URL로 인코딩되어 있어 내용을 읽을 수 있습니다. 서명이 내용을 암호화하는 것은 아니므로 비밀번호 같은 민감한 정보는 넣지 않았습니다. [JWT 표준](https://www.rfc-editor.org/rfc/rfc7519.html)
+
+Access Token은 일반 API 요청의 인증에 사용하고, Refresh Token은 새 Access Token을 받는 데 사용합니다. 두 토큰의 구분은 용도에 따른 것이며, 반드시 JWT여야 하는 것은 아닙니다. 현재 프로젝트에서는 둘 다 JWT로 만들고 `token_type`으로 용도를 구분합니다.
+
+쿠키는 브라우저에 값을 저장하고 조건에 맞는 요청에 자동으로 첨부하는 수단입니다. 세션은 서버가 로그인 상태를 보관하는 방식이며, 보통 쿠키로 세션 ID를 전달합니다. JWT는 서명된 정보를 전달하는 토큰 형식이고, 이번 프로젝트는 `Authorization: Bearer <access-token>` 헤더로 전달합니다.
+
+### Access Token에 담은 Claim
+
+| Claim | 사용 목적 |
+| --- | --- |
+| `sub` | 내부 회원 ID로 요청한 사용자를 식별 |
+| `role` | `USER`, `ADMIN` 역할 구분 |
+| `token_type` | `ACCESS`인지 확인해 Refresh Token의 일반 API 사용 차단 |
+| `iss` | 발급자가 `spring-cgv-24th`인지 확인 |
+| `iat` | 토큰 발급 시각 |
+| `exp` | 토큰 만료 시각 |
+
+`JwtService`는 서명, 허용 알고리즘, 발급자, 만료 시각, 토큰 용도와 필수 Claim을 확인합니다. 검증이 끝난 뒤에만 회원 ID와 역할을 사용하며, 서명키는 `CGV_JWT_SECRET_BASE64` 환경변수로 전달합니다.
+
+### 로그인과 JWT 인증 처리
+
+```text
+로그인 요청
+→ AuthenticationManager
+→ DaoAuthenticationProvider
+→ CgvUserDetailsService에서 회원 조회
+→ PasswordEncoder로 저장된 해시와 비밀번호 비교
+→ 인증 성공 후 토큰 발급
+```
+
+회원가입 시 비밀번호는 `PasswordEncoder`로 해시해서 저장합니다. 없는 계정과 틀린 비밀번호는 모두 `401 LOGIN_FAILED`로 응답하고 토큰을 발급하지 않습니다. 로그인과 JWT 인증에는 `UserDetails`를 구현한 `CgvUserDetails`를 사용합니다. 로그인용 객체에는 저장된 비밀번호 해시가 필요하고, JWT용 객체는 검증된 회원 ID와 역할로 만들며 비밀번호를 담지 않습니다.
+
+```text
+보호 API 요청
+→ JwtAuthenticationFilter에서 Bearer Token 추출
+→ JwtService에서 토큰 검증
+→ CgvUserDetails와 Authentication 생성
+→ 새 SecurityContext에 인증 객체 설정
+→ 인가 처리 후 컨트롤러 호출
+```
+
+필터는 `OncePerRequestFilter`를 상속하고, 인가 처리보다 앞에서 실행됩니다. `SecurityConfig`에서 직접 생성해 Security 체인에만 등록하므로 서블릿 필터로 중복 등록하지 않았습니다.
+
+### 인증, 인가와 오류 처리
+
+인증은 요청한 사용자가 누구인지 확인하는 것이고, 인가는 그 사용자가 해당 작업을 할 수 있는지 확인하는 것입니다.
+
+- 토큰이 없으면 인증 객체를 만들지 않고 다음 필터로 넘깁니다. 보호 API라면 `401 TOKEN_NOT_EXIST`를 반환합니다.
+- 보호 API에 만료되거나 잘못된 토큰이 들어오면 필터에서 `AuthenticationEntryPoint`를 호출하고 요청을 종료합니다. 각각 `TOKEN_EXPIRED`, `TOKEN_INVALID`로 구분합니다.
+- 공개 조회는 JWT 검증을 생략합니다. 만료되거나 잘못된 토큰을 함께 보내도 공개 데이터는 조회할 수 있습니다.
+- `@AuthenticationPrincipal`로 받은 회원 ID를 사용하고, 예매 조회와 취소는 소유권도 확인합니다. 관리자도 다른 회원의 예매를 취소할 수 없습니다.
+- 역할을 Authentication에 넣을 때 `ROLE_`를 붙이고, 관리자 API에서는 `hasRole("ADMIN")`으로 검사합니다. 일반 회원가입은 `USER`로 고정합니다.
+
+Security 체인의 인증 실패는 `AuthenticationEntryPoint`, 권한 부족은 `AccessDeniedHandler`가 처리합니다. 필터 계층에서는 `@RestControllerAdvice`에 맡기지 않고 같은 `ErrorResponse`를 직렬화해 `status`, `code`, `message` 형식으로 반환합니다.
+
+### STATELESS와 CSRF 설정
+
+`SessionCreationPolicy.STATELESS`로 인증 정보를 세션에 저장하지 않고 매 요청의 JWT를 확인합니다. 사용하지 않는 `formLogin`, `httpBasic`도 비활성화했습니다.
+
+이번 API는 세션이나 인증 쿠키를 사용하지 않고, 클라이언트가 Bearer 헤더에 토큰을 직접 넣습니다. 브라우저가 인증 정보를 자동 첨부하는 쿠키 인증을 사용하지 않는 전제에서 CSRF 보호를 껐습니다. 이후 인증 쿠키를 도입한다면 CSRF 설정도 다시 검토해야 합니다. [Spring Security CSRF 문서](https://docs.spring.io/spring-security/reference/servlet/exploits/csrf.html)
+
+### 인증 요청별 처리 결과
+
+H2 기반 자동화 테스트로 아래 결과를 확인했습니다. Payload를 변경한 토큰은 임시 H2 서버에 실제 HTTP 요청을 보내서도 확인했습니다.
+
+| 요청 상황 | 확인한 결과 |
+| --- | --- |
+| 올바른 로그인 정보 | 200, Access Token 발급 |
+| 없는 계정, 잘못된 비밀번호 | 모두 401 `LOGIN_FAILED`, 토큰 미발급 |
+| 토큰 없이 공개 영화 조회 | 200 |
+| 정상 토큰으로 영화 찜 | 200 |
+| 토큰 없이 보호 API 호출 | 401 `TOKEN_NOT_EXIST`, 공통 JSON |
+| 만료된 토큰으로 보호 API 호출 | 401 `TOKEN_EXPIRED` |
+| 변조되거나 형식이 잘못된 토큰 | 401 `TOKEN_INVALID` |
+| 다른 키로 서명한 토큰 | 401 `TOKEN_INVALID` |
+| 일반 사용자로 관리자 API 호출 | 403 `ACCESS_DENIED`, 공통 JSON |
+| 관리자로 영화 등록, 비공개 전환 | 각각 201, 204 |
+| 정상 인증 요청 직후 토큰 없이 보호 API 호출 | 401, 이전 요청의 인증 정보가 남지 않음 |
+| 다른 회원의 예매 조회, 취소 | 403 `ACCESS_DENIED`, 예매 상태 유지 |
+
+관련 테스트: [로그인](src/test/java/com/ceos/cgv/domain/auth/controller/AuthLoginIntegrationTest.java), [JWT 인증 흐름](src/test/java/com/ceos/cgv/global/security/jwt/SecurityFlowIntegrationTest.java), [관리자 권한](src/test/java/com/ceos/cgv/domain/movie/controller/MovieAdminAccessIntegrationTest.java), [예매 소유권](src/test/java/com/ceos/cgv/domain/reservation/controller/ReservationControllerIntegrationTest.java)
+
+## ERD
+
+![3주차 CGV ERD](docs/cgv-erd-week3.png)
+
+[ERD Cloud에서 보기](https://www.erdcloud.com/d/GgS73rR7gzSAZZXie)
+
+---
+
+<details>
+<summary>이전 과제내용</summary>
+
+아래는 이전 과제 작성 당시의 내용입니다.
+
 ## spring-cgv-24th
 
 ---
@@ -14,7 +148,7 @@ CEOS 24기 백엔드 스터디 - CGV 클론 코딩 프로젝트
 
 ## 서비스 요구사항
 
-- 영화관과 영화 정보를 조회하고, 영화관·영화를 찜합니다.
+- 영화관과 영화 정보를 조회하고, 영화관, 영화를 찜합니다.
 - 영화관 안의 상영관에서 상영 일정을 만들고 조회합니다.
 - 상영 일정의 좌석을 예매하고, 예약을 취소합니다.
 - 영화관별 매점 재고를 관리하고, 상품을 주문합니다. 주문 환불은 범위에 포함하지 않습니다.
@@ -31,9 +165,9 @@ CEOS 24기 백엔드 스터디 - CGV 클론 코딩 프로젝트
 | --- | --- |
 | `user` | 사용자 엔티티와 저장소. 과제 조건에 따라 포함 |
 | `cinema` | 영화관 조회, 영화관 찜, 상영관 생성 |
-| `movie` | 영화 생성·조회·삭제, 영화 찜, 상영 일정 생성·조회 |
-| `reservation` | 좌석 예매·조회·취소와 좌석 검증 |
-| `concession` | 상품·지점별 재고 관리, 매점 주문과 주문 조회 |
+| `movie` | 영화 생성, 조회, 삭제, 영화 찜, 상영 일정 생성, 조회 |
+| `reservation` | 좌석 예매, 조회, 취소와 좌석 검증 |
+| `concession` | 상품, 지점별 재고 관리, 매점 주문과 주문 조회 |
 | `global` | OpenAPI 설정과 공통 예외 응답 |
 
 ## 세션 중 질문 정리
@@ -56,7 +190,7 @@ Hibernate의 기본 UPDATE SQL은 변경된 필드만이 아니라 여러 매핑
 
 #### `@JoinColumn`을 생략하면 어떻게 되나요?
 
-JPA가 기본 이름 규칙을 적용합니다. 예를 들어 `team` 필드가 `Team`의 `id`를 참조하면 기본 FK 컬럼명은 보통 `team_id`가 됩니다. 필드명·참조 PK 이름·매핑 방식에 따라 달라질 수 있으므로 생성된 스키마를 확인하거나 이름을 명시하는 편이 안전합니다.
+JPA가 기본 이름 규칙을 적용합니다. 예를 들어 `team` 필드가 `Team`의 `id`를 참조하면 기본 FK 컬럼명은 보통 `team_id`가 됩니다. 필드명, 참조 PK 이름, 매핑 방식에 따라 달라질 수 있으므로 생성된 스키마를 확인하거나 이름을 명시하는 편이 안전합니다.
 
 #### 양방향 매핑은 항상 좋은가요?
 
@@ -72,7 +206,7 @@ JPA가 하나의 양방향 관계라고 알아서 합쳐주는 것이 아닙니�
 
 #### 내부 PK로 Long을 쓸까요, UUID를 쓸까요?
 
-둘 중 하나만 골라야 하는 것은 아닙니다. 내부 DB 식별자는 Long PK로 두고, 외부에 노출할 식별자가 필요하면 별도 UUID/ULID를 둘 수 있습니다. 현재 프로젝트는 Long ID를 API 경로 등에 사용하므로 외부 식별자 분리는 아직 적용하지 않았습니다. UUID만으로 인증·인가 문제가 해결되는 것은 아닙니다.
+둘 중 하나만 골라야 하는 것은 아닙니다. 내부 DB 식별자는 Long PK로 두고, 외부에 노출할 식별자가 필요하면 별도 UUID/ULID를 둘 수 있습니다. 현재 프로젝트는 Long ID를 API 경로 등에 사용하므로 외부 식별자 분리는 아직 적용하지 않았습니다. UUID만으로 인증, 인가 문제가 해결되는 것은 아닙니다.
 
 #### 프록시란 무엇이고, N+1과 어떤 관계가 있나요?
 
@@ -80,11 +214,11 @@ Hibernate 프록시는 지연 로딩할 연관 엔티티를 대신하는 객체�
 
 #### Hibernate 프록시와 Spring AOP 프록시는 어떻게 다른가요?
 
-둘 다 실제 객체를 감싸거나 대신하는 프록시 패턴이지만 목적이 다릅니다. Hibernate 프록시는 연관 엔티티 지연 로딩에 쓰이고, Spring AOP 프록시는 트랜잭션·로깅 같은 부가 동작을 메서드 호출 앞뒤에 적용합니다.
+둘 다 실제 객체를 감싸거나 대신하는 프록시 패턴이지만 목적이 다릅니다. Hibernate 프록시는 연관 엔티티 지연 로딩에 쓰이고, Spring AOP 프록시는 트랜잭션, 로깅 같은 부가 동작을 메서드 호출 앞뒤에 적용합니다.
 
 #### 양방향 `@OneToOne`에서 `nullable=true`이면 지연 로딩이 왜 어려울 수 있나요?
 
-FK가 없는 반대편(주인이 아닌 쪽)을 조회할 때, 연관 행이 실제로 존재하는지 아니면 `null`인지 알려면 Hibernate가 추가 조회를 해야 할 수 있습니다. 그래서 `LAZY`를 선언해도 기대한 대로 미뤄지지 않는 경우가 있습니다. 구체적 동작은 관계 방향·Hibernate 버전·바이트코드 향상 설정에 따라 달라집니다. 단방향 설계나 `@MapsId`, 바이트코드 향상 등이 선택지가 될 수 있습니다.
+FK가 없는 반대편(주인이 아닌 쪽)을 조회할 때, 연관 행이 실제로 존재하는지 아니면 `null`인지 알려면 Hibernate가 추가 조회를 해야 할 수 있습니다. 그래서 `LAZY`를 선언해도 기대한 대로 미뤄지지 않는 경우가 있습니다. 구체적 동작은 관계 방향, Hibernate 버전, 바이트코드 향상 설정에 따라 달라집니다. 단방향 설계나 `@MapsId`, 바이트코드 향상 등이 선택지가 될 수 있습니다.
 
 ### 로딩 전략과 N+1
 
@@ -108,7 +242,7 @@ Spring Data JPA가 공유 `EntityManager` 프록시를 주입할 수 있기 때�
 
 - `firstResult/maxResults specified with collection fetch; applying in memory`: 컬렉션 fetch join과 DB 페이징의 행 단위가 맞지 않아 메모리 페이징으로 바뀔 수 있습니다. 페이지 ID 선조회와 연관 데이터 후조회, 배치 로딩 등을 검토합니다.
 - `query specified join fetching, but the owner ... was not present in the select list`: fetch 대상 관계의 주인 엔티티를 조회 결과에 포함하지 않은 쿼리입니다. 주인 엔티티를 선택하거나, 엔티티를 가져오지 않는 DTO/컬럼 조회라면 fetch join 대신 일반 join을 사용합니다.
-- `MultipleBagFetchException`: 여러 bag 컬렉션을 한 번에 fetch join하려는 상황에서 발생할 수 있습니다. 컬렉션을 쿼리별로 나누거나 배치 로딩을 고려합니다. 자료구조만 `Set`으로 바꾸기 전에 중복·정렬·도메인 의미도 확인해야 합니다.
+- `MultipleBagFetchException`: 여러 bag 컬렉션을 한 번에 fetch join하려는 상황에서 발생할 수 있습니다. 컬렉션을 쿼리별로 나누거나 배치 로딩을 고려합니다. 자료구조만 `Set`으로 바꾸기 전에 중복, 정렬, 도메인 의미도 확인해야 합니다.
 
 ## 구현하며 확인한 점과 보완 사항
 
@@ -143,7 +277,7 @@ Spring Data JPA가 공유 `EntityManager` 프록시를 주입할 수 있기 때�
 }
 ```
 
-생성 응답은 HTTP 201과 `data`를 반환하고, 조회 응답은 HTTP 200과 `data`를 반환합니다. `204 No Content`가 적절한 삭제·찜 API와 오류 응답 형식은 유지했습니다.
+생성 응답은 HTTP 201과 `data`를 반환하고, 조회 응답은 HTTP 200과 `data`를 반환합니다. `204 No Content`가 적절한 삭제, 찜 API와 오류 응답 형식은 유지했습니다.
 
 ### 4. 동시 좌석 예매 경쟁 조건 처리
 
@@ -155,7 +289,7 @@ MySQL의 트랜잭션 스냅샷 문제를 피하기 위해 예약 생성 트랜�
 ```text
 상영 일정 행 잠금
 → 좌석 중복 확인
-→ 예약·좌석 저장
+→ 예약, 좌석 저장
 → 커밋
 ```
 
@@ -183,3 +317,5 @@ Entity 생성 방식을 Builder로 통일했습니다. JPA용 protected 기본 �
 - [`FoodOrderService.create()`](https://github.com/Wannys26/spring-cgv-24th/blob/Wannys26/src/main/java/com/ceos/cgv/domain/concession/service/FoodOrderService.java): 상품별 수량 합산, 상품 일괄 조회, 영화관별 재고 잠금, 재고 부족 검증, 총액 계산, 재고 차감과 주문 저장 흐름을 확인합니다.
 
 검증과 동시성 제어가 끝난 뒤 데이터를 저장하는 순서를 신경썼습니다
+
+</details>

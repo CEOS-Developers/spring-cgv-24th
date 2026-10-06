@@ -5,6 +5,7 @@ import com.ceos.cgv.domain.concession.dto.ProductResponse;
 import com.ceos.cgv.domain.concession.service.ProductService;
 import com.ceos.cgv.global.common.dto.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -26,8 +27,10 @@ public class ProductController {
     private final ProductService productService;
 
     @PostMapping
+    @SecurityRequirement(name = "bearerAuth")
     @Operation(summary = "매점 상품 생성")
     @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "201", description = "매점 상품 생성 성공")
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "관리자 권한이 필요합니다.")
     public ResponseEntity<ApiResponse<ProductResponse>> create(@Valid @RequestBody ProductCreateRequest request) {
         ProductResponse response = ProductResponse.from(productService.create(request));
         return ResponseEntity.created(URI.create("/api/v1/products/" + response.productId()))

@@ -1,6 +1,9 @@
 package com.ceos.cgv.domain.movie.entity;
 
 import com.ceos.cgv.domain.movie.enums.AgeRating;
+import com.ceos.cgv.domain.movie.enums.MovieVisibility;
+import com.ceos.cgv.global.exception.BusinessException;
+import com.ceos.cgv.global.exception.ErrorCode;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Builder;
@@ -36,6 +39,11 @@ public class Movie {
     @Column(name = "age_rating", nullable = false)
     private AgeRating ageRating;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "visibility", nullable = false, length = 16,
+            columnDefinition = "varchar(16) default 'PUBLIC'")
+    private MovieVisibility visibility = MovieVisibility.PUBLIC;
+
     @Builder
     public Movie(
             String title,
@@ -49,5 +57,15 @@ public class Movie {
         this.runningTime = runningTime;
         this.releaseDate = releaseDate;
         this.ageRating = ageRating;
+    }
+
+    public void hide() {
+        this.visibility = MovieVisibility.HIDDEN;
+    }
+
+    public void ensurePublic() {
+        if (visibility != MovieVisibility.PUBLIC) {
+            throw new BusinessException(ErrorCode.MOVIE_NOT_AVAILABLE);
+        }
     }
 }

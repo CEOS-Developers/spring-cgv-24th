@@ -25,7 +25,7 @@ public class MovieLikeService {
     public boolean toggle(Long userId, Long movieId) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
-        Movie movie = movieRepository.findById(movieId)
+        Movie movie = movieRepository.findByIdForShare(movieId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.MOVIE_NOT_FOUND));
 
         Optional<MovieLike> existingLike = movieLikeRepository.findByUser_IdAndMovie_Id(userId, movieId);
@@ -34,6 +34,7 @@ public class MovieLikeService {
             return false;
         }
 
+        movie.ensurePublic();
         movieLikeRepository.save(MovieLike.builder()
                 .user(user)
                 .movie(movie)

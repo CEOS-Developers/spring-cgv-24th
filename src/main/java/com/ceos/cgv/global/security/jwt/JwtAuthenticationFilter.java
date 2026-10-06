@@ -1,0 +1,76 @@
+package com.ceos.cgv.global.security.jwt;
+
+import com.ceos.cgv.global.security.exception.SecurityErrorCode;
+import com.ceos.cgv.global.security.handler.RestAuthenticationEntryPoint;
+import com.ceos.cgv.global.security.principal.CgvUserDetails;
+import io.jsonwebtoken.ExpiredJwtException;
+import io.jsonwebtoken.JwtException;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.http.HttpHeaders;
+import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContext;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.web.util.matcher.RequestMatcher;
+import org.springframework.web.filter.OncePerRequestFilter;
+
+import java.io.IOException;
+
+public class JwtAuthenticationFilter extends OncePerRequestFilter {
+    private final JwtService jwtService;
+    private final RestAuthenticationEntryPoint entryPoint;
+    private final RequestMatcher publicApiMatcher;
+
+    public JwtAuthenticationFilter(JwtService jwtService,
+                                   RestAuthenticationEntryPoint entryPoint,
+                                   RequestMatcher publicApiMatcher) {
+        this.jwtService = jwtService;
+        this.entryPoint = entryPoint;
+        this.publicApiMatcher = publicApiMatcher;
+    }
+
+    @Override
+    protected boolean shouldNotFilter(HttpServletRequest request) {
+        return publicApiMatcher.matches(request);
+    }
+
+    @Override
+    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
+                                    FilterChain chain) throws ServletException, IOException {
+        String header = request.getHeader(HttpHeaders.AUTHORIZATION);
+        if (header == null) {
+            chain.doFilter(request, response);
+            return;
+        }
+        if (!header.startsWith("Bearer ") || header.length() == "Bearer ".length()) {
+            reject(request, response, SecurityErrorCode.TOKEN_INVALID);
+            return;
+        }
+        try {
+            JwtService.VerifiedToken token = jwtService.verify(header.substring("Bearer ".length()));
+            CgvUserDetails principal = CgvUserDetails.fromToken(token.userId(), token.role());
+            var authentication = UsernamePasswordAuthenticationToken.authenticated(
+                    principal, null, principal.getAuthorities());
+            SecurityContext context = SecurityContextHolder.createEmptyContext();
+            context.setAuthentication(authentication);
+            SecurityContextHolder.setContext(context);
+        } catch (ExpiredJwtException exception) {
+            reject(request, response, SecurityErrorCode.TOKEN_EXPIRED);
+            return;
+        } catch (JwtException | IllegalArgumentException exception) {
+            reject(request, response, SecurityErrorCode.TOKEN_INVALID);
+            return;
+        }
+        chain.doFilter(request, response);
+    }
+
+    private void reject(HttpServletRequest request, HttpServletResponse response,
+                        SecurityErrorCode errorCode) throws IOException {
+        SecurityContextHolder.clearContext();
+        request.setAttribute(RestAuthenticationEntryPoint.ERROR_ATTRIBUTE, errorCode);
+        entryPoint.commence(request, response, new BadCredentialsException(errorCode.name()));
+    }
+}

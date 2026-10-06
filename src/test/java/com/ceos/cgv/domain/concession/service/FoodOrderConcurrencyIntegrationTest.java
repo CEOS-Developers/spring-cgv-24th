@@ -7,13 +7,13 @@ import com.ceos.cgv.global.exception.ErrorCode;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.test.context.ActiveProfiles;
 
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -28,14 +28,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 @SpringBootTest
-@ActiveProfiles("local")
-@EnabledIfEnvironmentVariable(named = "CGV_DB_LOCAL", matches = ".+")
+@AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.ANY)
+@ActiveProfiles("test")
 class FoodOrderConcurrencyIntegrationTest {
 
     private static final long USER_ID = 801L;
     private static final long CINEMA_ID = 802L;
     private static final long PRODUCT_ID = 803L;
     private static final long INVENTORY_ID = 804L;
+    private static final long SECOND_PRODUCT_ID = 805L;
+    private static final long SECOND_INVENTORY_ID = 806L;
 
     @Autowired
     private FoodOrderService foodOrderService;
@@ -58,6 +60,10 @@ class FoodOrderConcurrencyIntegrationTest {
                 PRODUCT_ID, "재고 테스트 상품", 1200, "테스트 상품");
         jdbcTemplate.update("INSERT INTO inventories (inventory_id, cinema_id, product_id, stock_quantity) VALUES (?, ?, ?, ?)",
                 INVENTORY_ID, CINEMA_ID, PRODUCT_ID, 3);
+        jdbcTemplate.update("INSERT INTO products (product_id, name, price, description) VALUES (?, ?, ?, ?)",
+                SECOND_PRODUCT_ID, "두 번째 재고 동시성 테스트 상품", 1800, "테스트 상품 2");
+        jdbcTemplate.update("INSERT INTO inventories (inventory_id, cinema_id, product_id, stock_quantity) VALUES (?, ?, ?, ?)",
+                SECOND_INVENTORY_ID, CINEMA_ID, SECOND_PRODUCT_ID, 5);
     }
 
     @AfterEach
@@ -117,12 +123,61 @@ class FoodOrderConcurrencyIntegrationTest {
         }
     }
 
+    @Test
+    void 반대_상품_입력_순서의_두_주문이_모두_완료되고_주문마다_각_재고가_한개씩_차감된다() throws Exception {
+        jdbcTemplate.update(
+                "UPDATE inventories SET stock_quantity = 5 WHERE inventory_id = ?",
+                INVENTORY_ID);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        CountDownLatch start = new CountDownLatch(1);
+
+        try {
+            Future<?> firstOrder = executor.submit(() -> {
+                await(start);
+                foodOrderService.create(new FoodOrderCreateRequest(
+                        USER_ID, CINEMA_ID, List.of(
+                                new FoodOrderItemRequest(PRODUCT_ID, 1),
+                                new FoodOrderItemRequest(SECOND_PRODUCT_ID, 1))));
+            });
+            Future<?> secondOrder = executor.submit(() -> {
+                await(start);
+                foodOrderService.create(new FoodOrderCreateRequest(
+                        USER_ID, CINEMA_ID, List.of(
+                                new FoodOrderItemRequest(SECOND_PRODUCT_ID, 1),
+                                new FoodOrderItemRequest(PRODUCT_ID, 1))));
+            });
+
+            start.countDown();
+            firstOrder.get(10, TimeUnit.SECONDS);
+            secondOrder.get(10, TimeUnit.SECONDS);
+
+            Integer savedOrders = jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM food_orders WHERE user_id = ? AND cinema_id = ?",
+                    Integer.class, USER_ID, CINEMA_ID);
+            Integer firstStock = jdbcTemplate.queryForObject(
+                    "SELECT stock_quantity FROM inventories WHERE inventory_id = ?",
+                    Integer.class, INVENTORY_ID);
+            Integer secondStock = jdbcTemplate.queryForObject(
+                    "SELECT stock_quantity FROM inventories WHERE inventory_id = ?",
+                    Integer.class, SECOND_INVENTORY_ID);
+
+            assertThat(savedOrders).isEqualTo(2);
+            assertThat(firstStock).isEqualTo(3);
+            assertThat(secondStock).isEqualTo(3);
+        } finally {
+            executor.shutdownNow();
+            assertThat(executor.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+        }
+    }
+
     private void cleanUp() {
-        jdbcTemplate.update("DELETE oi FROM order_items oi JOIN food_orders fo ON fo.order_id = oi.order_id WHERE fo.user_id = ? AND fo.cinema_id = ?",
+        jdbcTemplate.update("DELETE FROM order_items WHERE order_id IN (SELECT order_id FROM food_orders WHERE user_id = ? AND cinema_id = ?)",
                 USER_ID, CINEMA_ID);
         jdbcTemplate.update("DELETE FROM food_orders WHERE user_id = ? AND cinema_id = ?", USER_ID, CINEMA_ID);
         jdbcTemplate.update("DELETE FROM inventories WHERE inventory_id = ?", INVENTORY_ID);
+        jdbcTemplate.update("DELETE FROM inventories WHERE inventory_id = ?", SECOND_INVENTORY_ID);
         jdbcTemplate.update("DELETE FROM products WHERE product_id = ?", PRODUCT_ID);
+        jdbcTemplate.update("DELETE FROM products WHERE product_id = ?", SECOND_PRODUCT_ID);
         jdbcTemplate.update("DELETE FROM cinemas WHERE cinema_id = ?", CINEMA_ID);
         jdbcTemplate.update("DELETE FROM users WHERE user_id = ?", USER_ID);
     }

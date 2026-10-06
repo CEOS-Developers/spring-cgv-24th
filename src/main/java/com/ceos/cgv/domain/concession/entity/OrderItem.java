@@ -1,5 +1,7 @@
 package com.ceos.cgv.domain.concession.entity;
 
+import com.ceos.cgv.global.exception.BusinessException;
+import com.ceos.cgv.global.exception.ErrorCode;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
@@ -10,7 +12,6 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import lombok.AccessLevel;
-import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
@@ -39,11 +40,18 @@ public class OrderItem {
     @Column(name = "unit_price", nullable = false)
     private Long unitPrice;
 
-    @Builder
-    public OrderItem(FoodOrder foodOrder, Product product, Integer quantity) {
+    OrderItem(FoodOrder foodOrder, Product product, Integer quantity) {
+        if (foodOrder == null || product == null || quantity == null || quantity <= 0
+                || product.getPrice() == null || product.getPrice() < 0) {
+            throw new BusinessException(ErrorCode.INVALID_REQUEST);
+        }
         this.foodOrder = foodOrder;
         this.product = product;
         this.quantity = quantity;
         this.unitPrice = product.getPrice();
+    }
+
+    public long subtotal() {
+        return Math.multiplyExact(unitPrice, quantity.longValue());
     }
 }

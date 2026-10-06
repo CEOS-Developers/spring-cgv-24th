@@ -6,13 +6,13 @@ import com.ceos.cgv.global.exception.BusinessException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.test.context.ActiveProfiles;
 
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -27,8 +27,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 @SpringBootTest
-@ActiveProfiles("local")
-@EnabledIfEnvironmentVariable(named = "CGV_DB_LOCAL", matches = ".+")
+@AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.ANY)
+@ActiveProfiles("test")
 class ReservationConcurrencyIntegrationTest {
 
     private static final long USER_ID = 401L;
@@ -58,8 +58,8 @@ class ReservationConcurrencyIntegrationTest {
                 CINEMA_ID, "동시성 테스트 영화관", "서울");
         jdbcTemplate.update("INSERT INTO screens (screen_id, cinema_id, screen_type, row_count, seats_per_row) VALUES (?, ?, ?, ?, ?)",
                 SCREEN_ID, CINEMA_ID, "GENERAL", 10, 12);
-        jdbcTemplate.update("INSERT INTO movies (movie_id, title, description, running_time, release_date, age_rating) VALUES (?, ?, ?, ?, ?, ?)",
-                MOVIE_ID, "동시성 테스트 영화", "설명", 120, "2026-09-15", "ALL");
+        jdbcTemplate.update("INSERT INTO movies (movie_id, title, description, running_time, release_date, age_rating, visibility) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                MOVIE_ID, "동시성 테스트 영화", "설명", 120, "2026-09-15", "ALL", "PUBLIC");
         jdbcTemplate.update("INSERT INTO screenings (screening_id, movie_id, screen_id, start_at) VALUES (?, ?, ?, ?)",
                 SCREENING_ID, MOVIE_ID, SCREEN_ID, "2026-09-20 12:30:00");
     }
@@ -120,7 +120,7 @@ class ReservationConcurrencyIntegrationTest {
     }
 
     private void cleanUp() {
-        jdbcTemplate.update("DELETE rs FROM reserved_seats rs JOIN reservations r ON r.reservation_id = rs.reservation_id WHERE r.screening_id = ?", SCREENING_ID);
+        jdbcTemplate.update("DELETE FROM reserved_seats WHERE reservation_id IN (SELECT reservation_id FROM reservations WHERE screening_id = ?)", SCREENING_ID);
         jdbcTemplate.update("DELETE FROM reservations WHERE screening_id = ?", SCREENING_ID);
         jdbcTemplate.update("DELETE FROM screenings WHERE screening_id = ?", SCREENING_ID);
         jdbcTemplate.update("DELETE FROM movies WHERE movie_id = ?", MOVIE_ID);

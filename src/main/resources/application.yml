@@ -1,8 +1,22 @@
 spring:
   application:
     name: spring-cgv-24th
+  jpa:
+    open-in-view: false
 
 springdoc:
   paths-to-match: /api/**
   default-consumes-media-type: application/json
   default-produces-media-type: application/json
+
+cgv:
+  jwt:
+    secret-base64: ${CGV_JWT_SECRET_BASE64}
+    access-token-seconds: ${CGV_ACCESS_TOKEN_SECONDS:1800}
+    refresh-token-seconds: ${CGV_REFRESH_TOKEN_SECONDS:1209600}
+  seat-hold:
+    duration: PT5M
+    max-seats: 8
+    max-active: 1
+    cleanup-batch-size: 100
+    cleanup-delay-ms: 60000

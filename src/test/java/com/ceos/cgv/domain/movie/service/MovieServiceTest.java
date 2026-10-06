@@ -3,6 +3,7 @@ package com.ceos.cgv.domain.movie.service;
 import com.ceos.cgv.domain.movie.entity.Movie;
 import com.ceos.cgv.domain.movie.dto.MovieCreateRequest;
 import com.ceos.cgv.domain.movie.enums.AgeRating;
+import com.ceos.cgv.domain.movie.enums.MovieVisibility;
 import com.ceos.cgv.domain.movie.repository.MovieRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -37,7 +38,8 @@ class MovieServiceTest {
                 LocalDate.of(2026, 9, 1),
                 AgeRating.ALL
         );
-        given(movieRepository.findById(1L)).willReturn(Optional.of(movie));
+        given(movieRepository.findByIdAndVisibility(1L, MovieVisibility.PUBLIC))
+                .willReturn(Optional.of(movie));
 
         Movie result = movieService.findById(1L);
 
@@ -46,7 +48,8 @@ class MovieServiceTest {
 
     @Test
     void 없는_아이디로_조회하면_예외가_발생한다() {
-        given(movieRepository.findById(999L)).willReturn(Optional.empty());
+        given(movieRepository.findByIdAndVisibility(999L, MovieVisibility.PUBLIC))
+                .willReturn(Optional.empty());
 
         assertThatThrownBy(() -> movieService.findById(999L))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -62,7 +65,8 @@ class MovieServiceTest {
                 LocalDate.of(2026, 9, 1),
                 AgeRating.ALL
         );
-        given(movieRepository.findAll()).willReturn(List.of(movie));
+        given(movieRepository.findAllByVisibility(MovieVisibility.PUBLIC))
+                .willReturn(List.of(movie));
 
         List<Movie> result = movieService.findAll();
 
@@ -85,15 +89,18 @@ class MovieServiceTest {
         assertThat(result.getTitle()).isEqualTo("새 영화");
         assertThat(result.getRunningTime()).isEqualTo(105);
         assertThat(result.getAgeRating()).isEqualTo(AgeRating.TWELVE);
+        assertThat(result.getVisibility()).isEqualTo(MovieVisibility.PUBLIC);
     }
 
     @Test
     void 존재하는_영화를_삭제한다() {
         Movie movie = new Movie("삭제 영화", "설명", 90, LocalDate.of(2026, 9, 1), AgeRating.ALL);
-        given(movieRepository.findById(1L)).willReturn(Optional.of(movie));
+        given(movieRepository.findByIdForUpdate(1L)).willReturn(Optional.of(movie));
 
         movieService.delete(1L);
 
-        then(movieRepository).should().delete(movie);
+        assertThat(movie.getVisibility()).isEqualTo(MovieVisibility.HIDDEN);
+        then(movieRepository).should().findByIdForUpdate(1L);
+        then(movieRepository).shouldHaveNoMoreInteractions();
     }
 }

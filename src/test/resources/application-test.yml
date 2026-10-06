@@ -1,0 +1,12 @@
+spring:
+  datasource:
+    embedded-database-connection: h2
+    generate-unique-name: true
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+
+cgv:
+  jwt:
+    secret-base64: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+    access-token-seconds: 1800

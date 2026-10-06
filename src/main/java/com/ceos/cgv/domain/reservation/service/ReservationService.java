@@ -1,17 +1,18 @@
 package com.ceos.cgv.domain.reservation.service;
 
-import com.ceos.cgv.domain.cinema.entity.Screen;
-import com.ceos.cgv.domain.movie.entity.Screening;
-import com.ceos.cgv.domain.movie.repository.ScreeningRepository;
+import com.ceos.cgv.domain.movie.entity.ScreeningSeat;
 import com.ceos.cgv.domain.reservation.dto.ReservationCreateRequest;
-import com.ceos.cgv.domain.reservation.dto.ReservedSeatRequest;
+import com.ceos.cgv.domain.reservation.dto.ReservationResponse;
+import com.ceos.cgv.domain.reservation.dto.ReservationSnapshot;
 import com.ceos.cgv.domain.reservation.entity.Reservation;
 import com.ceos.cgv.domain.reservation.entity.ReservedSeat;
 import com.ceos.cgv.domain.reservation.enums.ReservationStatus;
 import com.ceos.cgv.domain.reservation.repository.ReservationRepository;
-import com.ceos.cgv.domain.reservation.repository.ReservedSeatRepository;
-import com.ceos.cgv.domain.user.entity.User;
-import com.ceos.cgv.domain.user.repository.UserRepository;
+import com.ceos.cgv.domain.reservation.service.exception.ExpiredHoldEncountered;
+import com.ceos.cgv.domain.reservation.service.hold.SeatHoldExpiryService;
+import com.ceos.cgv.domain.reservation.service.seat.ReservationSeatLifecycle;
+import com.ceos.cgv.domain.reservation.service.seat.ScreeningSeatLockService;
+import com.ceos.cgv.domain.reservation.value.SeatCoordinate;
 import com.ceos.cgv.global.exception.BusinessException;
 import com.ceos.cgv.global.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
@@ -19,92 +20,73 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.HashSet;
-import java.util.Set;
+import java.time.Clock;
+import java.util.List;
 
 @Service
 @RequiredArgsConstructor
 public class ReservationService {
-    private final UserRepository userRepository;
-    private final ScreeningRepository screeningRepository;
+    private final ReservationCreationService creationService;
     private final ReservationRepository reservationRepository;
-    private final ReservedSeatRepository reservedSeatRepository;
+    private final ScreeningSeatLockService screeningSeatLockService;
+    private final SeatHoldExpiryService seatHoldExpiryService;
+    private final Clock seatHoldClock;
 
-    // 예매 생성 전체를 하나의 트랜잭션으로 처리하고 커밋된 데이터만 읽음
-    @Transactional(isolation = Isolation.READ_COMMITTED)
-    public Reservation create(ReservationCreateRequest request) {
-        // 예매를 요청한 사용자가 실제로 존재하는지 확인
-        User user = userRepository.findById(request.userId())
-                .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
-
-        // 같은 상영 일정에 대한 동시 예매를 순서대로 처리하기 위해 행을 잠금
-        Screening screening = screeningRepository.findByIdWithLock(request.screeningId())
-                .orElseThrow(() -> new BusinessException(ErrorCode.SCREENING_NOT_FOUND));
-
-        // 좌석 유효성 검증에 필요한 상영관 좌석 구조를 가져옴
-        Screen screen = screening.getScreen();
-
-        // 한 번의 요청 안에서 같은 좌석이 중복으로 들어오는지 검사하기 위해 HashSet 사용
-        Set<String> requestedSeats = new HashSet<>();
-        for (ReservedSeatRequest seat : request.seats()) {
-            // 상영관의 좌석 범위를 벗어난 좌석인지 확인
-            validateSeat(screen, seat);
-
-            // 예씨) A열 1번 좌석은 A1이라는 하나의 키로 만든다
-            String seatKey = seat.seatRow() + seat.seatNumber();
-            if (!requestedSeats.add(seatKey)) {
-                throw new BusinessException(ErrorCode.DUPLICATE_SEAT_IN_REQUEST);
-            }
-
-            // 다른 사용자가 이미 예매한 좌석인지 DB에서 확인
-            boolean alreadyReserved = reservedSeatRepository
-                    .findIdByReservationScreeningIdAndSeatRowAndSeatNumberAndReservationStatus(
-                            screening.getId(), seat.seatRow(), seat.seatNumber(), ReservationStatus.RESERVED
-                    )
-                    .isPresent();
-            if (alreadyReserved) {
-                throw new BusinessException(ErrorCode.SEAT_ALREADY_RESERVED);
+    public ReservationResponse create(ReservationCreateRequest request) {
+        int maxCleanups = request.seats() == null ? 0 : request.seats().size();
+        for (int attempt = 0; attempt <= maxCleanups; attempt++) {
+            try {
+                return creationService.create(request);
+            } catch (ExpiredHoldEncountered expired) {
+                seatHoldExpiryService.expireIfElapsed(expired.reservationId());
             }
         }
-
-        // 사용자와 상영 일정을 연결한 예매 엔티티 객체를 생성함
-        Reservation reservation = Reservation.builder()
-                .user(user)
-                .screening(screening)
-                .build();
-
-        // 요청받은 좌석마다 예매 좌석 자식 엔티티를 만듦
-        for (ReservedSeatRequest seat : request.seats()) {
-            reservation.addReservedSeat(ReservedSeat.builder()
-                    .reservation(reservation)
-                    .seatRow(seat.seatRow())
-                    .seatNumber(seat.seatNumber())
-                    .build());
-        }
-
-        // Reservation의 cascade 설정을 이용해 예매와 좌석을 함께 저장
-        return reservationRepository.save(reservation);
+        throw new BusinessException(ErrorCode.SEAT_BUSY);
     }
 
     @Transactional(readOnly = true)
-    public Reservation findById(Long reservationId) {
-        return reservationRepository.findWithSeatsById(reservationId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.RESERVATION_NOT_FOUND));
+    public ReservationResponse findById(Long reservationId, Long userId) {
+        return ReservationResponse.from(owned(reservationId, userId), seatHoldClock.instant());
     }
 
-    @Transactional
-    public void cancel(Long reservationId) {
-        Reservation reservation = findById(reservationId);
+    private Reservation owned(Long reservationId, Long userId) {
+        Reservation reservation = reservationRepository.findWithSeatsById(reservationId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.RESERVATION_NOT_FOUND));
+        if (!reservation.getUser().getId().equals(userId)) {
+            throw new BusinessException(ErrorCode.ACCESS_DENIED);
+        }
+        return reservation;
+    }
+
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public void cancel(Long reservationId, Long userId) {
+        Reservation reservation = owned(reservationId, userId);
         if (reservation.getStatus() == ReservationStatus.CANCELED) {
             throw new BusinessException(ErrorCode.RESERVATION_ALREADY_CANCELED);
+        }
+        List<ReservedSeat> histories = reservation.getReservedSeats();
+        long linkedCount = histories.stream().filter(seat -> seat.getScreeningSeat() != null).count();
+        if (linkedCount > 0 && linkedCount != histories.size()) {
+            throw new BusinessException(ErrorCode.SCREENING_SEATS_NOT_READY);
+        }
+        if (linkedCount > 0) {
+            List<SeatCoordinate> coordinates = histories.stream()
+                    .map(seat -> new SeatCoordinate(seat.getSeatRow(), seat.getSeatNumber()))
+                    .toList();
+            List<ScreeningSeat> locked = screeningSeatLockService.lockSeats(
+                    reservation.getScreening().getId(), coordinates);
+            ReservationSnapshot current = reservationRepository.findSnapshotById(reservationId)
+                    .orElseThrow(() -> new BusinessException(ErrorCode.RESERVATION_NOT_FOUND));
+            if (current.status() == ReservationStatus.CANCELED) {
+                throw new BusinessException(ErrorCode.RESERVATION_ALREADY_CANCELED);
+            }
+            if (current.status() != ReservationStatus.RESERVED) {
+                throw new BusinessException(ErrorCode.HOLD_NOT_ACTIVE);
+            }
+            ReservationSeatLifecycle.cancel(reservation, locked);
+            return;
         }
         reservation.cancel();
     }
 
-    private void validateSeat(Screen screen, ReservedSeatRequest seat) {
-        int rowNumber = seat.seatRow().charAt(0) - 'A' + 1;
-        if (rowNumber > screen.getRowCount() || seat.seatNumber() > screen.getSeatsPerRow()) {
-            throw new BusinessException(ErrorCode.INVALID_SEAT);
-        }
-    }
 }

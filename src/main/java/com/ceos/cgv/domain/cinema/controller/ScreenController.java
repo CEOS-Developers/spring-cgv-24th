@@ -5,6 +5,7 @@ import com.ceos.cgv.domain.cinema.dto.ScreenResponse;
 import com.ceos.cgv.domain.cinema.service.ScreenService;
 import com.ceos.cgv.global.common.dto.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -20,12 +21,14 @@ import java.net.URI;
 @RequestMapping("/api/v1/screens")
 @RequiredArgsConstructor
 @Tag(name = "상영관", description = "상영관 생성")
+@SecurityRequirement(name = "bearerAuth")
 public class ScreenController {
     private final ScreenService screenService;
 
     @PostMapping
     @Operation(summary = "상영관 생성")
     @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "201", description = "상영관 생성 성공")
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "관리자 권한이 필요합니다.")
     public ResponseEntity<ApiResponse<ScreenResponse>> create(@Valid @RequestBody ScreenCreateRequest request) {
         ScreenResponse response = ScreenResponse.from(screenService.create(request));
         return ResponseEntity.created(URI.create("/api/v1/screens/" + response.screenId()))

@@ -1,5 +1,6 @@
 package com.ceos.cgv.domain.reservation.entity;
 
+import com.ceos.cgv.domain.movie.entity.ScreeningSeat;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
@@ -35,10 +36,20 @@ public class ReservedSeat {
     @Column(name = "seat_number", nullable = false)
     private Integer seatNumber;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "screening_seat_id")
+    private ScreeningSeat screeningSeat;
+
     @Builder
-    public ReservedSeat(Reservation reservation, String seatRow, Integer seatNumber) {
+    public ReservedSeat(Reservation reservation, String seatRow, Integer seatNumber,
+                        ScreeningSeat screeningSeat) {
         this.reservation = reservation;
         this.seatRow = seatRow;
         this.seatNumber = seatNumber;
+        this.screeningSeat = screeningSeat;
+    }
+
+    public void linkScreeningSeat(ScreeningSeat screeningSeat) {
+        this.screeningSeat = screeningSeat;
     }
 }

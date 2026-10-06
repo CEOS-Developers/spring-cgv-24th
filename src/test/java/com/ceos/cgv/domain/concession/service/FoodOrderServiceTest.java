@@ -17,6 +17,7 @@ import com.ceos.cgv.global.exception.ErrorCode;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -29,6 +30,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.when;
 import static org.mockito.BDDMockito.then;
 
@@ -63,12 +66,12 @@ class FoodOrderServiceTest {
         given(inventoryRepository.findByCinema_IdAndProduct_IdForUpdate(2L, 3L)).willReturn(Optional.of(inventory));
         given(foodOrderRepository.save(any(FoodOrder.class))).willAnswer(invocation -> invocation.getArgument(0));
 
-        FoodOrder result = foodOrderService.create(new FoodOrderCreateRequest(
+        var result = foodOrderService.create(new FoodOrderCreateRequest(
                 1L, 2L, List.of(new FoodOrderItemRequest(3L, 2))
         ));
 
-        assertThat(result.getTotalPrice()).isEqualTo(2400L);
-        assertThat(result.getItems()).hasSize(1);
+        assertThat(result.totalPrice()).isEqualTo(2400L);
+        assertThat(result.items()).hasSize(1);
         assertThat(inventory.getStockQuantity()).isEqualTo(3);
         then(productRepository).should().findAllById(Set.of(3L));
     }
@@ -92,5 +95,89 @@ class FoodOrderServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .extracting(exception -> ((BusinessException) exception).getErrorCode())
                 .isEqualTo(ErrorCode.STOCK_NOT_ENOUGH);
+    }
+
+    @Test
+    void 중복_수량은_합산하고_재고는_id_순서로_잠그며_주문항목은_입력_순서를_유지한다() {
+        User user = mock(User.class);
+        Cinema cinema = mock(Cinema.class);
+        Product product3 = mock(Product.class);
+        Product product1 = mock(Product.class);
+        when(cinema.getId()).thenReturn(2L);
+        when(product3.getId()).thenReturn(3L);
+        when(product3.getPrice()).thenReturn(1200L);
+        when(product1.getId()).thenReturn(1L);
+        when(product1.getPrice()).thenReturn(1000L);
+
+        Inventory inventory3 = new Inventory(cinema, product3, 5);
+        Inventory inventory1 = new Inventory(cinema, product1, 5);
+        given(userRepository.findById(1L)).willReturn(Optional.of(user));
+        given(cinemaRepository.findById(2L)).willReturn(Optional.of(cinema));
+        given(productRepository.findAllById(Set.of(3L, 1L)))
+                .willReturn(List.of(product3, product1));
+        given(inventoryRepository.findByCinema_IdAndProduct_IdForUpdate(2L, 1L))
+                .willReturn(Optional.of(inventory1));
+        given(inventoryRepository.findByCinema_IdAndProduct_IdForUpdate(2L, 3L))
+                .willReturn(Optional.of(inventory3));
+        given(foodOrderRepository.save(any(FoodOrder.class)))
+                .willAnswer(invocation -> invocation.getArgument(0));
+
+        var result = foodOrderService.create(new FoodOrderCreateRequest(
+                1L, 2L, List.of(
+                        new FoodOrderItemRequest(3L, 1),
+                        new FoodOrderItemRequest(1L, 2),
+                        new FoodOrderItemRequest(3L, 2))));
+
+        InOrder lockOrder = inOrder(inventoryRepository);
+        lockOrder.verify(inventoryRepository).findByCinema_IdAndProduct_IdForUpdate(2L, 1L);
+        lockOrder.verify(inventoryRepository).findByCinema_IdAndProduct_IdForUpdate(2L, 3L);
+        then(inventoryRepository).shouldHaveNoMoreInteractions();
+
+        assertThat(result.totalPrice()).isEqualTo(5600L);
+        assertThat(result.items())
+                .extracting(item -> item.productId(), item -> item.quantity())
+                .containsExactly(
+                        org.assertj.core.groups.Tuple.tuple(3L, 3),
+                        org.assertj.core.groups.Tuple.tuple(1L, 2));
+        assertThat(inventory3.getStockQuantity()).isEqualTo(2);
+        assertThat(inventory1.getStockQuantity()).isEqualTo(3);
+    }
+
+    @Test
+    void 잠금_순서상_두번째_상품의_재고가_부족하면_첫번째_재고와_주문을_변경하지_않는다() {
+        User user = mock(User.class);
+        Cinema cinema = mock(Cinema.class);
+        Product product3 = mock(Product.class);
+        Product product1 = mock(Product.class);
+        when(cinema.getId()).thenReturn(2L);
+        when(product3.getId()).thenReturn(3L);
+        when(product1.getId()).thenReturn(1L);
+
+        Inventory inventory3 = new Inventory(cinema, product3, 2);
+        Inventory inventory1 = new Inventory(cinema, product1, 5);
+        given(userRepository.findById(1L)).willReturn(Optional.of(user));
+        given(cinemaRepository.findById(2L)).willReturn(Optional.of(cinema));
+        given(productRepository.findAllById(Set.of(3L, 1L)))
+                .willReturn(List.of(product3, product1));
+        given(inventoryRepository.findByCinema_IdAndProduct_IdForUpdate(2L, 1L))
+                .willReturn(Optional.of(inventory1));
+        given(inventoryRepository.findByCinema_IdAndProduct_IdForUpdate(2L, 3L))
+                .willReturn(Optional.of(inventory3));
+
+        assertThatThrownBy(() -> foodOrderService.create(new FoodOrderCreateRequest(
+                1L, 2L, List.of(
+                        new FoodOrderItemRequest(3L, 1),
+                        new FoodOrderItemRequest(1L, 2),
+                        new FoodOrderItemRequest(3L, 2)))))
+                .isInstanceOf(BusinessException.class)
+                .extracting(exception -> ((BusinessException) exception).getErrorCode())
+                .isEqualTo(ErrorCode.STOCK_NOT_ENOUGH);
+
+        InOrder lockOrder = inOrder(inventoryRepository);
+        lockOrder.verify(inventoryRepository).findByCinema_IdAndProduct_IdForUpdate(2L, 1L);
+        lockOrder.verify(inventoryRepository).findByCinema_IdAndProduct_IdForUpdate(2L, 3L);
+        assertThat(inventory1.getStockQuantity()).isEqualTo(5);
+        assertThat(inventory3.getStockQuantity()).isEqualTo(2);
+        then(foodOrderRepository).should(never()).save(any(FoodOrder.class));
     }
 }
