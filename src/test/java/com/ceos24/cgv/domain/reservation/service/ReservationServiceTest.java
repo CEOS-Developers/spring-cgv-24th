@@ -15,7 +15,7 @@ import com.ceos24.cgv.domain.reservation.repository.ReservationRepository;
 import com.ceos24.cgv.domain.reservation.repository.ReservationSeatRepository;
 import com.ceos24.cgv.domain.screening.entity.Screening;
 import com.ceos24.cgv.domain.screening.repository.ScreeningRepository;
-import com.ceos24.cgv.domain.user.entity.User;
+import com.ceos24.cgv.domain.user.entity.UserEntity;
 import com.ceos24.cgv.domain.user.repository.UserRepository;
 import com.ceos24.cgv.global.apiPayload.code.ErrorCode;
 import com.ceos24.cgv.global.exception.BusinessException;
@@ -63,7 +63,7 @@ class ReservationServiceTest {
 
     @Test
     void 예매하면_확정상태의_예매와_선택좌석을_저장한다() {
-        User user = user(1L);
+        UserEntity userEntity = user(1L);
         Auditorium auditorium = auditorium(10L, "1관");
         Screening screening = screening(20L, auditorium);
         Seat firstSeat = seat(100L, auditorium, 1, 1);
@@ -73,7 +73,7 @@ class ReservationServiceTest {
                 List.of(101L, 100L)
         );
 
-        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+        mockAuthenticatedUser(userEntity);
         when(screeningRepository.findById(20L)).thenReturn(Optional.of(screening));
         when(seatRepository.findAllByIdInForUpdate(List.of(100L, 101L)))
                 .thenReturn(List.of(firstSeat, secondSeat));
@@ -87,7 +87,7 @@ class ReservationServiceTest {
             return reservation;
         });
 
-        Long result = reservationService.createReservation(1L, request);
+        Long result = reservationService.createReservation(userEntity.getUsername(), request);
 
         assertEquals(30L, result);
 
@@ -95,7 +95,7 @@ class ReservationServiceTest {
                 ArgumentCaptor.forClass(Reservation.class);
         verify(reservationRepository).save(reservationCaptor.capture());
         assertEquals(ReservationStatus.CONFIRMED, reservationCaptor.getValue().getStatus());
-        assertEquals(user, reservationCaptor.getValue().getUser());
+        assertEquals(userEntity, reservationCaptor.getValue().getUserEntity());
         assertEquals(screening, reservationCaptor.getValue().getScreening());
 
         @SuppressWarnings("unchecked")
@@ -106,18 +106,18 @@ class ReservationServiceTest {
 
     @Test
     void 중복된_좌석ID가_있으면_예매하지_않는다() {
-        User user = user(1L);
+        UserEntity userEntity = user(1L);
         Screening screening = screening(20L, auditorium(10L, "1관"));
         ReservationCreateRequest request = new ReservationCreateRequest(
                 20L,
                 List.of(100L, 100L)
         );
-        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+        mockAuthenticatedUser(userEntity);
         when(screeningRepository.findById(20L)).thenReturn(Optional.of(screening));
 
         BusinessException exception = assertThrows(
                 BusinessException.class,
-                () -> reservationService.createReservation(1L, request)
+                () -> reservationService.createReservation(userEntity.getUsername(), request)
         );
 
         assertEquals(ErrorCode.DUPLICATE_SEAT_REQUEST, exception.getErrorCode());
@@ -127,21 +127,21 @@ class ReservationServiceTest {
 
     @Test
     void 다른_상영관의_좌석이면_예매하지_않는다() {
-        User user = user(1L);
+        UserEntity userEntity = user(1L);
         Auditorium screeningAuditorium = auditorium(10L, "1관");
         Auditorium otherAuditorium = auditorium(11L, "2관");
         Screening screening = screening(20L, screeningAuditorium);
         Seat otherSeat = seat(100L, otherAuditorium, 1, 1);
         ReservationCreateRequest request = new ReservationCreateRequest(20L, List.of(100L));
 
-        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+        mockAuthenticatedUser(userEntity);
         when(screeningRepository.findById(20L)).thenReturn(Optional.of(screening));
         when(seatRepository.findAllByIdInForUpdate(List.of(100L)))
                 .thenReturn(List.of(otherSeat));
 
         BusinessException exception = assertThrows(
                 BusinessException.class,
-                () -> reservationService.createReservation(1L, request)
+                () -> reservationService.createReservation(userEntity.getUsername(), request)
         );
 
         assertEquals(ErrorCode.SEAT_NOT_IN_SCREENING_AUDITORIUM, exception.getErrorCode());
@@ -150,13 +150,13 @@ class ReservationServiceTest {
 
     @Test
     void 이미_확정된_좌석이면_예매하지_않는다() {
-        User user = user(1L);
+        UserEntity userEntity = user(1L);
         Auditorium auditorium = auditorium(10L, "1관");
         Screening screening = screening(20L, auditorium);
         Seat seat = seat(100L, auditorium, 1, 1);
         ReservationCreateRequest request = new ReservationCreateRequest(20L, List.of(100L));
 
-        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+        mockAuthenticatedUser(userEntity);
         when(screeningRepository.findById(20L)).thenReturn(Optional.of(screening));
         when(seatRepository.findAllByIdInForUpdate(List.of(100L))).thenReturn(List.of(seat));
         when(reservationSeatRepository.findSeatIdsByScreeningIdAndStatus(
@@ -166,7 +166,7 @@ class ReservationServiceTest {
 
         BusinessException exception = assertThrows(
                 BusinessException.class,
-                () -> reservationService.createReservation(1L, request)
+                () -> reservationService.createReservation(userEntity.getUsername(), request)
         );
 
         assertEquals(ErrorCode.SEAT_ALREADY_RESERVED, exception.getErrorCode());
@@ -175,24 +175,37 @@ class ReservationServiceTest {
 
     @Test
     void 예매를_취소하면_취소상태와_취소시간이_기록된다() {
-        User user = user(1L);
+        UserEntity userEntity = user(1L);
         Reservation reservation = Reservation.create(
                 screening(20L, auditorium(10L, "1관")),
-                user
+                userEntity
         );
         ReflectionTestUtils.setField(reservation, "id", 30L);
+        mockAuthenticatedUser(userEntity);
         when(reservationRepository.findById(30L)).thenReturn(Optional.of(reservation));
 
-        reservationService.cancelReservation(1L, 30L);
+        reservationService.cancelReservation(userEntity.getUsername(), 30L);
 
         assertEquals(ReservationStatus.CANCELLED, reservation.getStatus());
         assertNotNull(reservation.getCancelledAt());
     }
 
-    private User user(Long id) {
-        User user = User.create("테스트 사용자");
-        ReflectionTestUtils.setField(user, "id", id);
-        return user;
+    private void mockAuthenticatedUser(UserEntity userEntity) {
+        when(userRepository.findByUsernameAndIsLockAndIsSocial(
+                userEntity.getUsername(),
+                false,
+                false
+        )).thenReturn(Optional.of(userEntity));
+    }
+
+    private UserEntity user(Long id) {
+        UserEntity userEntity = UserEntity.createLocalUser(
+                "test-user-" + id,
+                "encoded-password",
+                "테스트 사용자"
+        );
+        ReflectionTestUtils.setField(userEntity, "id", id);
+        return userEntity;
     }
 
     private Auditorium auditorium(Long id, String name) {

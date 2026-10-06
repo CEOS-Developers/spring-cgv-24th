@@ -11,7 +11,7 @@ import com.ceos24.cgv.domain.reservation.repository.ReservationRepository;
 import com.ceos24.cgv.domain.reservation.repository.ReservationSeatRepository;
 import com.ceos24.cgv.domain.screening.entity.Screening;
 import com.ceos24.cgv.domain.screening.repository.ScreeningRepository;
-import com.ceos24.cgv.domain.user.entity.User;
+import com.ceos24.cgv.domain.user.entity.UserEntity;
 import com.ceos24.cgv.domain.user.repository.UserRepository;
 import com.ceos24.cgv.global.apiPayload.code.ErrorCode;
 import com.ceos24.cgv.global.exception.BusinessException;
@@ -37,11 +37,10 @@ public class ReservationService {
 
     // 예매 등록
     @Transactional
-    public Long createReservation(Long userId, ReservationCreateRequest request) {
+    public Long createReservation(String username, ReservationCreateRequest request) {
 
         // 사용자 조회
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
+        UserEntity userEntity = findActiveLocalUser(username);
 
         // 상영 정보 조회
         Screening screening = screeningRepository.findById(request.screeningId())
@@ -95,7 +94,7 @@ public class ReservationService {
         }
 
         Reservation reservation = reservationRepository.save(
-                Reservation.create(screening, user)
+                Reservation.create(screening, userEntity)
         );
 
         List<ReservationSeat> reservationSeats = seats.stream()
@@ -106,27 +105,50 @@ public class ReservationService {
         return reservation.getId();
     }
 
-    public List<ReservationResponse> getReservations(Long userId) {
-        if (!userRepository.existsById(userId)) {
-            throw new BusinessException(ErrorCode.USER_NOT_FOUND);
-        }
+    public List<ReservationResponse> getReservations(String username) {
+        UserEntity userEntity = findActiveLocalUser(username);
 
-        return reservationRepository.findAllByUserIdOrderByReservedAtDesc(userId)
+        return reservationRepository
+                .findAllByUserEntity_IdOrderByReservedAtDesc(
+                        userEntity.getId()
+                )
                 .stream()
                 .map(this::toResponse)
                 .toList();
     }
 
-    public ReservationResponse getReservation(Long userId, Long reservationId) {
-        return toResponse(getOwnedReservation(userId, reservationId));
+    public ReservationResponse getReservation(
+            String username,
+            Long reservationId
+    ) {
+        UserEntity userEntity = findActiveLocalUser(username);
+
+        return toResponse(
+                getOwnedReservation(
+                        userEntity.getId(),
+                        reservationId
+                )
+        );
     }
 
     @Transactional
-    public void cancelReservation(Long userId, Long reservationId) {
-        Reservation reservation = getOwnedReservation(userId, reservationId);
+    public void cancelReservation(
+            String username,
+            Long reservationId
+    ) {
+        UserEntity userEntity = findActiveLocalUser(username);
 
-        if (reservation.getStatus() == ReservationStatus.CANCELLED) {
-            throw new BusinessException(ErrorCode.RESERVATION_ALREADY_CANCELLED);
+        Reservation reservation =
+                getOwnedReservation(
+                        userEntity.getId(),
+                        reservationId
+                );
+
+        if (reservation.getStatus()
+                == ReservationStatus.CANCELLED) {
+            throw new BusinessException(
+                    ErrorCode.RESERVATION_ALREADY_CANCELLED
+            );
         }
 
         reservation.cancel();
@@ -137,7 +159,7 @@ public class ReservationService {
         Reservation reservation = reservationRepository.findById(reservationId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.RESERVATION_NOT_FOUND));
 
-        if (!reservation.getUser().getId().equals(userId)) {
+        if (!reservation.getUserEntity().getId().equals(userId)) {
             throw new BusinessException(ErrorCode.RESERVATION_ACCESS_DENIED);
         }
 
@@ -149,5 +171,19 @@ public class ReservationService {
                 .findAllByReservationIdOrderBySeatRowNumberAscSeatColumnNumberAsc(reservation.getId());
 
         return ReservationResponse.from(reservation, reservationSeats);
+    }
+
+    private UserEntity findActiveLocalUser(String username) {
+        return userRepository
+                .findByUsernameAndIsLockAndIsSocial(
+                        username,
+                        false,
+                        false
+                )
+                .orElseThrow(() ->
+                        new BusinessException(
+                                ErrorCode.USER_NOT_FOUND
+                        )
+                );
     }
 }

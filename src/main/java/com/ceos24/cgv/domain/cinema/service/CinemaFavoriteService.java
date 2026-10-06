@@ -5,7 +5,7 @@ import com.ceos24.cgv.domain.cinema.entity.Cinema;
 import com.ceos24.cgv.domain.cinema.entity.CinemaFavorite;
 import com.ceos24.cgv.domain.cinema.repository.CinemaFavoriteRepository;
 import com.ceos24.cgv.domain.cinema.repository.CinemaRepository;
-import com.ceos24.cgv.domain.user.entity.User;
+import com.ceos24.cgv.domain.user.entity.UserEntity;
 import com.ceos24.cgv.domain.user.repository.UserRepository;
 import com.ceos24.cgv.global.apiPayload.code.ErrorCode;
 import com.ceos24.cgv.global.exception.BusinessException;
@@ -25,46 +25,51 @@ public class CinemaFavoriteService {
     private final UserRepository userRepository;
 
     @Transactional
-    public Long createCinemaFavorite(Long userId, Long cinemaId) {
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
+    public Long createCinemaFavorite(String username, Long cinemaId) {
+        UserEntity userEntity = findActiveLocalUser(username);
 
-        Cinema cinema = cinemaRepository.findById(cinemaId)
+        Cinema cinema = cinemaRepository.findByIdAndActiveTrue(cinemaId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.CINEMA_NOT_FOUND));
 
-        if (cinemaFavoriteRepository.existsByUser_IdAndCinema_Id(userId, cinemaId)) {
+        if (cinemaFavoriteRepository.existsByUserEntity_IdAndCinema_Id(
+                userEntity.getId(),
+                cinemaId
+        )) {
             throw new BusinessException(ErrorCode.CINEMA_ALREADY_FAVORITED);
         }
 
-        CinemaFavorite favorite = CinemaFavorite.create(user, cinema);
+        CinemaFavorite favorite = CinemaFavorite.create(userEntity, cinema);
         return cinemaFavoriteRepository.save(favorite).getId();
     }
 
     @Transactional
-    public void removeCinemaFavorite(Long userId, Long cinemaId) {
-        if (!userRepository.existsById(userId)) {
-            throw new BusinessException(ErrorCode.USER_NOT_FOUND);
-        }
+    public void removeCinemaFavorite(String username, Long cinemaId) {
+        UserEntity userEntity = findActiveLocalUser(username);
 
         if (!cinemaRepository.existsById(cinemaId)) {
             throw new BusinessException(ErrorCode.CINEMA_NOT_FOUND);
         }
 
         CinemaFavorite favorite = cinemaFavoriteRepository
-                .findByUser_IdAndCinema_Id(userId, cinemaId)
+                .findByUserEntity_IdAndCinema_Id(userEntity.getId(), cinemaId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.CINEMA_FAVORITE_NOT_FOUND));
 
         cinemaFavoriteRepository.delete(favorite);
     }
 
-    public List<CinemaFavoriteResponse> getCinemaFavorites(Long userId) {
-        if (!userRepository.existsById(userId)) {
-            throw new BusinessException(ErrorCode.USER_NOT_FOUND);
-        }
+    public List<CinemaFavoriteResponse> getCinemaFavorites(String username) {
+        UserEntity userEntity = findActiveLocalUser(username);
 
-        return cinemaFavoriteRepository.findAllByUser_IdOrderByCreatedAtDesc(userId)
+        return cinemaFavoriteRepository
+                .findAllByUserEntity_IdOrderByCreatedAtDesc(userEntity.getId())
                 .stream()
                 .map(CinemaFavoriteResponse::from)
                 .toList();
+    }
+
+    private UserEntity findActiveLocalUser(String username) {
+        return userRepository
+                .findByUsernameAndIsLockAndIsSocial(username, false, false)
+                .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
     }
 }

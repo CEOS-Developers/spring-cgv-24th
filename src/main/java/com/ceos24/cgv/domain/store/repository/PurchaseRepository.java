@@ -7,5 +7,5 @@ import java.util.List;
 
 public interface PurchaseRepository extends JpaRepository<Purchase, Long> {
 
-    List<Purchase> findAllByUserIdOrderByPurchasedAtDesc(Long userId);
+    List<Purchase> findAllByUserEntity_IdOrderByPurchasedAtDesc(Long userId);
 }

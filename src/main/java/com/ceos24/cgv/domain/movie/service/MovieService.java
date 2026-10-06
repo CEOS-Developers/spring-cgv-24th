@@ -33,13 +33,9 @@ public class MovieService {
     public List<MovieResponse> getMovies() {
         List<Movie> movies = movieRepository.findAll(Sort.by(Sort.Direction.ASC, "id"));
 
-        List<MovieResponse> responses = new ArrayList<>();
-        for (Movie movie : movies) {
-            MovieResponse response = MovieResponse.from(movie);
-            responses.add(response);
-        }
-
-        return responses;
+        return movies.stream()
+                .map(MovieResponse::from)
+                .toList();
     }
 
     // 영화 조회

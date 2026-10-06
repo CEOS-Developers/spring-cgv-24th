@@ -12,7 +12,7 @@ import com.ceos24.cgv.domain.store.entity.PurchaseItem;
 import com.ceos24.cgv.domain.store.repository.CinemaStockRepository;
 import com.ceos24.cgv.domain.store.repository.PurchaseItemRepository;
 import com.ceos24.cgv.domain.store.repository.PurchaseRepository;
-import com.ceos24.cgv.domain.user.entity.User;
+import com.ceos24.cgv.domain.user.entity.UserEntity;
 import com.ceos24.cgv.domain.user.repository.UserRepository;
 import com.ceos24.cgv.global.apiPayload.code.ErrorCode;
 import com.ceos24.cgv.global.exception.BusinessException;
@@ -38,7 +38,7 @@ public class PurchaseService {
 
     // 상품·재고 조회
     public List<ProductStockResponse> getProductsByCinema(Long cinemaId) {
-        if (!cinemaRepository.existsById(cinemaId)) {
+        if (!cinemaRepository.existsByIdAndActiveTrue(cinemaId)) {
             throw new BusinessException(ErrorCode.CINEMA_NOT_FOUND);
         }
 
@@ -51,15 +51,14 @@ public class PurchaseService {
     // 구매 등록
     @Transactional
     public Long createPurchase(
-            Long userId,
+            String username,
             PurchaseCreateRequest request
     ) {
         // 사용자 조회
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
+        UserEntity userEntity = findActiveLocalUser(username);
 
         // 영화관 조회
-        Cinema cinema = cinemaRepository.findById(request.cinemaId()).
+        Cinema cinema = cinemaRepository.findByIdAndActiveTrue(request.cinemaId()).
                 orElseThrow(() -> new BusinessException(ErrorCode.CINEMA_NOT_FOUND));
 
         // 요청에서 상품 ID 목록 추출
@@ -110,7 +109,7 @@ public class PurchaseService {
         }
 
         Purchase purchase = purchaseRepository.save(
-                Purchase.create(user, cinema)
+                Purchase.create(userEntity, cinema)
         );
 
         // 재고 차감과 PurchaseItem 생성
@@ -138,27 +137,28 @@ public class PurchaseService {
     }
 
     // 사용자의 구매 목록 조회
-    public List<PurchaseResponse> getPurchases(Long userId) {
-        if (!userRepository.existsById(userId)) {
-            throw new BusinessException(ErrorCode.USER_NOT_FOUND);
-        }
+    public List<PurchaseResponse> getPurchases(String username) {
+        UserEntity userEntity = findActiveLocalUser(username);
 
-        return purchaseRepository.findAllByUserIdOrderByPurchasedAtDesc(userId)
+        return purchaseRepository
+                .findAllByUserEntity_IdOrderByPurchasedAtDesc(userEntity.getId())
                 .stream()
                 .map(this::toResponse)
                 .toList();
     }
 
     // 사용자의 구매 단건 조회
-    public PurchaseResponse getPurchase(Long userId, Long purchaseId) {
-        return toResponse(getOwnedPurchase(userId, purchaseId));
+    public PurchaseResponse getPurchase(String username, Long purchaseId) {
+        UserEntity userEntity = findActiveLocalUser(username);
+
+        return toResponse(getOwnedPurchase(userEntity.getId(), purchaseId));
     }
 
-    private Purchase getOwnedPurchase(Long userId, Long purchaseId) {
+    private Purchase getOwnedPurchase(Long authenticatedUserId, Long purchaseId) {
         Purchase purchase = purchaseRepository.findById(purchaseId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.PURCHASE_NOT_FOUND));
 
-        if (!purchase.getUser().getId().equals(userId)) {
+        if (!purchase.getUserEntity().getId().equals(authenticatedUserId)) {
             throw new BusinessException(ErrorCode.PURCHASE_ACCESS_DENIED);
         }
 
@@ -170,5 +170,17 @@ public class PurchaseService {
                 .findAllByPurchaseIdOrderByIdAsc(purchase.getId());
 
         return PurchaseResponse.from(purchase, purchaseItems);
+    }
+
+    private UserEntity findActiveLocalUser(String username) {
+        return userRepository
+                .findByUsernameAndIsLockAndIsSocial(
+                        username,
+                        false,
+                        false
+                )
+                .orElseThrow(() ->
+                        new BusinessException(ErrorCode.USER_NOT_FOUND)
+                );
     }
 }

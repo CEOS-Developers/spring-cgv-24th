@@ -2,7 +2,7 @@ package com.ceos24.cgv.domain.cinema.dto.response;
 
 import com.ceos24.cgv.domain.cinema.entity.Cinema;
 import com.ceos24.cgv.domain.cinema.entity.CinemaFavorite;
-import com.ceos24.cgv.domain.user.entity.User;
+import com.ceos24.cgv.domain.user.entity.UserEntity;
 
 import java.time.LocalDateTime;
 
@@ -17,13 +17,13 @@ public record CinemaFavoriteResponse(
         LocalDateTime createdAt
 ) {
     public static CinemaFavoriteResponse from(CinemaFavorite cinemaFavorite) {
-        User user = cinemaFavorite.getUser();
+        UserEntity userEntity = cinemaFavorite.getUserEntity();
         Cinema cinema = cinemaFavorite.getCinema();
 
         return new CinemaFavoriteResponse(
                 cinemaFavorite.getId(),
-                user.getId(),
-                user.getName(),
+                userEntity.getId(),
+                userEntity.getUsername(),
                 cinema.getId(),
                 cinema.getName(),
                 cinema.getAddress(),

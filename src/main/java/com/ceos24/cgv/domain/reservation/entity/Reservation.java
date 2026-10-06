@@ -1,7 +1,7 @@
 package com.ceos24.cgv.domain.reservation.entity;
 
 import com.ceos24.cgv.domain.screening.entity.Screening;
-import com.ceos24.cgv.domain.user.entity.User;
+import com.ceos24.cgv.domain.user.entity.UserEntity;
 import jakarta.persistence.*;
 import lombok.Getter;
 
@@ -21,7 +21,7 @@ public class Reservation {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "user_id", nullable = false)
-    private User user;
+    private UserEntity userEntity;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
@@ -35,11 +35,11 @@ public class Reservation {
 
     public static Reservation create(
             Screening screening,
-            User user
+            UserEntity userEntity
     ) {
         Reservation reservation = new Reservation();
         reservation.screening = screening;
-        reservation.user = user;
+        reservation.userEntity = userEntity;
         reservation.status = ReservationStatus.CONFIRMED;
         reservation.reservedAt = LocalDateTime.now();
         reservation.cancelledAt = null;

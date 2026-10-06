@@ -27,3 +27,10 @@ springdoc:
     path: /swagger-ui.html
     operations-sorter: method
     tags-sorter: alpha
+
+
+jwt:
+  secret: ${JWT_SECRET}
+  access-token-expiration: ${JWT_ACCESS_EXPIRATION}
+  refresh-token-expiration: ${JWT_REFRESH_EXPIRATION}
+  issuer: cgv-api

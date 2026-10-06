@@ -11,7 +11,7 @@ import com.ceos24.cgv.domain.store.entity.Purchase;
 import com.ceos24.cgv.domain.store.repository.CinemaStockRepository;
 import com.ceos24.cgv.domain.store.repository.PurchaseItemRepository;
 import com.ceos24.cgv.domain.store.repository.PurchaseRepository;
-import com.ceos24.cgv.domain.user.entity.User;
+import com.ceos24.cgv.domain.user.entity.UserEntity;
 import com.ceos24.cgv.domain.user.repository.UserRepository;
 import com.ceos24.cgv.global.apiPayload.code.ErrorCode;
 import com.ceos24.cgv.global.exception.BusinessException;
@@ -59,7 +59,7 @@ class PurchaseServiceTest {
         Product product = product(10L, "고소팝콘(M)", 5_000);
         CinemaStock stock = CinemaStock.create(cinema, product, 100);
 
-        when(cinemaRepository.existsById(1L)).thenReturn(true);
+        when(cinemaRepository.existsByIdAndActiveTrue(1L)).thenReturn(true);
         when(cinemaStockRepository.findAllByCinemaIdOrderByProductIdAsc(1L))
                 .thenReturn(List.of(stock));
 
@@ -73,7 +73,7 @@ class PurchaseServiceTest {
 
     @Test
     void 구매하면_구매내역과_상품을_저장하고_재고를_차감한다() {
-        User user = user(1L);
+        UserEntity userEntity = user(1L);
         Cinema cinema = cinema(2L);
         Product product = product(10L, "고소팝콘(M)", 5_000);
         CinemaStock stock = CinemaStock.create(cinema, product, 10);
@@ -82,8 +82,8 @@ class PurchaseServiceTest {
                 List.of(new PurchaseItemRequest(10L, 2))
         );
 
-        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
-        when(cinemaRepository.findById(2L)).thenReturn(Optional.of(cinema));
+        mockAuthenticatedUser(userEntity);
+        when(cinemaRepository.findByIdAndActiveTrue(2L)).thenReturn(Optional.of(cinema));
         when(cinemaStockRepository.findAllByCinemaIdAndProductIdsForUpdate(
                 2L,
                 List.of(10L)
@@ -94,7 +94,7 @@ class PurchaseServiceTest {
             return purchase;
         });
 
-        Long result = purchaseService.createPurchase(1L, request);
+        Long result = purchaseService.createPurchase(userEntity.getUsername(), request);
 
         assertEquals(20L, result);
         assertEquals(8, stock.getQuantity());
@@ -104,7 +104,7 @@ class PurchaseServiceTest {
 
     @Test
     void 재고가_부족하면_구매를_저장하거나_재고를_차감하지_않는다() {
-        User user = user(1L);
+        UserEntity userEntity = user(1L);
         Cinema cinema = cinema(2L);
         Product product = product(10L, "고소팝콘(M)", 5_000);
         CinemaStock stock = CinemaStock.create(cinema, product, 1);
@@ -113,8 +113,8 @@ class PurchaseServiceTest {
                 List.of(new PurchaseItemRequest(10L, 2))
         );
 
-        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
-        when(cinemaRepository.findById(2L)).thenReturn(Optional.of(cinema));
+        mockAuthenticatedUser(userEntity);
+        when(cinemaRepository.findByIdAndActiveTrue(2L)).thenReturn(Optional.of(cinema));
         when(cinemaStockRepository.findAllByCinemaIdAndProductIdsForUpdate(
                 2L,
                 List.of(10L)
@@ -122,7 +122,7 @@ class PurchaseServiceTest {
 
         BusinessException exception = assertThrows(
                 BusinessException.class,
-                () -> purchaseService.createPurchase(1L, request)
+                () -> purchaseService.createPurchase(userEntity.getUsername(), request)
         );
 
         assertEquals(ErrorCode.INSUFFICIENT_STOCK, exception.getErrorCode());
@@ -133,13 +133,15 @@ class PurchaseServiceTest {
 
     @Test
     void 다른_사용자의_구매내역은_조회할_수_없다() {
+        UserEntity authenticatedUser = user(1L);
         Purchase purchase = Purchase.create(user(2L), cinema(1L));
         ReflectionTestUtils.setField(purchase, "id", 20L);
+        mockAuthenticatedUser(authenticatedUser);
         when(purchaseRepository.findById(20L)).thenReturn(Optional.of(purchase));
 
         BusinessException exception = assertThrows(
                 BusinessException.class,
-                () -> purchaseService.getPurchase(1L, 20L)
+                () -> purchaseService.getPurchase(authenticatedUser.getUsername(), 20L)
         );
 
         assertEquals(ErrorCode.PURCHASE_ACCESS_DENIED, exception.getErrorCode());
@@ -147,10 +149,22 @@ class PurchaseServiceTest {
                 .findAllByPurchaseIdOrderByIdAsc(any());
     }
 
-    private User user(Long id) {
-        User user = User.create("테스트 사용자");
-        ReflectionTestUtils.setField(user, "id", id);
-        return user;
+    private void mockAuthenticatedUser(UserEntity userEntity) {
+        when(userRepository.findByUsernameAndIsLockAndIsSocial(
+                userEntity.getUsername(),
+                false,
+                false
+        )).thenReturn(Optional.of(userEntity));
+    }
+
+    private UserEntity user(Long id) {
+        UserEntity userEntity = UserEntity.createLocalUser(
+                "test-user-" + id,
+                "encoded-password",
+                "테스트 사용자"
+        );
+        ReflectionTestUtils.setField(userEntity, "id", id);
+        return userEntity;
     }
 
     private Cinema cinema(Long id) {
