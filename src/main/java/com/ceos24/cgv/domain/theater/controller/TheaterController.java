@@ -6,7 +6,9 @@ import com.ceos24.cgv.domain.theater.dto.response.TheaterResponse;
 import com.ceos24.cgv.domain.theater.service.TheaterService;
 import com.ceos24.cgv.global.apiPayload.ApiResponse;
 import com.ceos24.cgv.global.apiPayload.code.status.SuccessStatus;
+import com.ceos24.cgv.global.config.SwaggerConfig;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -24,7 +26,8 @@ public class TheaterController {
 
     private final TheaterService theaterService;
 
-    @Operation(summary = "영화관 생성 API", description = "새로운 영화관 데이터를 생성합니다.")
+    @Operation(summary = "영화관 생성 API", description = "관리자 권한으로 새로운 영화관 데이터를 생성합니다.")
+    @SecurityRequirement(name = SwaggerConfig.JWT_SCHEME)
     @PostMapping
     public ResponseEntity<ApiResponse<Long>> createTheater(@Valid @RequestBody TheaterCreateRequest request) {
         Long theaterId = theaterService.create(request);
@@ -47,10 +50,8 @@ public class TheaterController {
 
     @Operation(summary = "영화관 수정 API", description = "특정 영화관 정보를 수정합니다.")
     @PatchMapping("/{theaterId}")
-    public ApiResponse<Void> updateTheater(
-            @PathVariable Long theaterId,
-            @Valid @RequestBody TheaterUpdateRequest request
-    ) {
+    public ApiResponse<Void> updateTheater(@PathVariable Long theaterId,
+                                           @Valid @RequestBody TheaterUpdateRequest request) {
         theaterService.update(theaterId, request);
         return ApiResponse.onSuccess(null);
     }

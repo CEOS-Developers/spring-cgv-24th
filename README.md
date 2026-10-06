@@ -6,7 +6,7 @@ CGV의 핵심 서비스를 클론코딩한 프로젝트입니다.
 <details>
 <summary><h2>ERD</h2></summary>
 
-![img_1.png](img_1.png)
+![img_1.png](docs/images/img_1.png)
 📎 [ERDCloud에서 보기](https://www.erdcloud.com/d/W8KHbPARz5j4dP2Ay)
 
 ## 1. 전체 엔티티 연관관계 정리
@@ -573,5 +573,676 @@ Hibernate는 이런 결과에서 여러 Bag 컬렉션을 정상적으로 구성�
 - Batch Fetching을 사용해 여러 컬렉션을 나눠서 로딩합니다.
 
 단순히 `distinct`를 추가한다고 해결되는 문제는 아닙니다.
+
+</details>
+
+<details>
+<summary><h2>JWT / Spring Security</h2></summary>
+
+<details>
+<summary><h3>JWT를 활용한 인증 흐름</h3></summary>
+
+### 인증과 인가
+
+인증(Authentication)은 **요청을 보낸 사용자가 누구인지 확인하는 과정**이고, 인가(Authorization)는 **인증된 사용자가 특정 기능을 사용할 권한이 있는지 확인하는 과정**입니다.
+
+| 구분 | 의미 | 프로젝트 적용 예시 |
+| --- | --- | --- |
+| 인증 | 사용자가 누구인지 확인합니다. | 로그인, Access Token 검증 |
+| 인가 | 사용자가 해당 기능을 사용할 권한이 있는지 확인합니다. | 영화관 찜, 관리자 영화관 생성 |
+
+일반 사용자가 정상적으로 로그인했더라도 `ADMIN` 권한이 필요한 영화관 생성 API에는 접근할 수 없습니다.
+
+---
+
+### HTTP의 Stateless 특성과 JWT 인증
+
+HTTP 요청은 기본적으로 서로 독립적입니다.
+
+따라서 로그인에 성공하더라도 서버가 별도로 인증 상태를 저장하지 않는다면 다음 요청에서 이전 로그인 정보를 알 수 없습니다.
+
+이번 프로젝트에서는 서버 세션에 인증 정보를 저장하지 않고, 클라이언트가 매 요청마다 Access Token을 전달하는 방식으로 구성했습니다.
+
+```text
+로그인 요청
+    ↓
+사용자 인증
+    ↓
+Access Token 발급
+    ↓
+클라이언트가 Access Token 보관
+    ↓
+Authorization 헤더에 Access Token 전달
+    ↓
+서버가 요청마다 JWT 검증
+```
+
+Access Token은 다음 형식으로 전달합니다.
+
+```http
+Authorization: Bearer <access-token>
+```
+
+Spring Security에는 `SessionCreationPolicy.STATELESS`를 적용하여 이전 요청의 인증 상태가 다음 요청에 유지되지 않도록 구성했습니다.
+
+---
+
+### 쿠키, 세션, JWT의 역할
+
+쿠키, 세션, JWT는 동일한 종류의 개념이 아닙니다.
+
+| 구분 | 역할 |
+| --- | --- |
+| Cookie | 브라우저가 데이터를 저장하고 요청 시 함께 전송하기 위한 수단입니다. |
+| Session | 서버가 사용자의 상태를 저장하고 Session ID로 사용자를 식별하는 방식입니다. |
+| Token | 클라이언트가 자신의 인증 정보를 증명하기 위해 서버에 전달하는 값입니다. |
+| JWT | Claim을 포함할 수 있는 토큰의 표현 형식 중 하나입니다. |
+
+쿠키에는 Session ID를 저장할 수도 있고 JWT를 저장할 수도 있습니다.
+
+이번 프로젝트에서는 인증 정보를 쿠키로 전달하지 않고 `Authorization` 헤더의 Bearer Token으로 전달합니다.
+
+---
+
+### JWT의 구조
+
+JWT는 `Header`, `Payload`, `Signature` 세 부분으로 구성됩니다.
+
+```text
+xxxxx.yyyyy.zzzzz
+  │     │     │
+  │     │     └─ Signature
+  │     └─────── Payload
+  └───────────── Header
+```
+
+#### Header
+
+Header에는 토큰의 타입과 서명에 사용된 알고리즘 정보가 포함됩니다.
+
+```json
+{
+  "alg": "HS256",
+  "typ": "JWT"
+}
+```
+
+현재 프로젝트에서는 HS256 알고리즘을 이용하여 Access Token에 서명합니다.
+
+#### Payload
+
+Payload에는 사용자 및 토큰과 관련된 Claim이 저장됩니다.
+
+현재 프로젝트의 Access Token에는 다음 Claim을 사용합니다.
+
+| Claim | 값 | 용도 |
+| --- | --- | --- |
+| `sub` | 사용자 ID | 인증된 사용자를 식별합니다. |
+| `role` | `USER` / `ADMIN` | 역할 기반 인가에 사용합니다. |
+| `iat` | 토큰 발급 시각 | 토큰이 발급된 시간을 나타냅니다. |
+| `exp` | 토큰 만료 시각 | Access Token의 유효 기간을 제한합니다. |
+
+JWT의 Payload는 암호화된 영역이 아니므로 비밀번호와 같은 민감한 정보는 포함하지 않습니다.
+
+#### Signature
+
+Signature는 Header와 Payload가 토큰 발급 이후 변경되지 않았는지 검증하기 위해 사용합니다.
+
+서버는 Secret Key를 이용해 토큰에 서명하며, 요청으로 전달된 JWT의 서명을 동일한 키를 기준으로 검증합니다.
+
+서명이 일치하지 않는 경우 변조되었거나 신뢰할 수 없는 토큰으로 판단합니다.
+
+즉 Signature는 JWT의 내용을 숨기는 용도가 아니라 **토큰의 무결성을 검증하는 용도**입니다.
+
+---
+
+### Access Token과 Refresh Token
+
+Access Token과 Refresh Token은 사용 목적이 다릅니다.
+
+| 구분 | Access Token | Refresh Token |
+| --- | --- | --- |
+| 목적 | 보호된 API 접근 | 새로운 Access Token 발급 |
+| 사용 시점 | 일반 API 요청 | Access Token 재발급 |
+| 일반적인 만료 기간 | 상대적으로 짧음 | 상대적으로 김 |
+| 탈취 시 위험 | 권한 있는 API 호출 가능 | Access Token 재발급 가능 |
+
+---
+
+### 로그인 인증 흐름
+
+로그인 시 애플리케이션에서 비밀번호를 직접 비교하지 않고 Spring Security의 인증 구조를 사용합니다.
+
+```text
+로그인 요청
+    ↓
+AuthenticationManager
+    ↓
+DaoAuthenticationProvider
+    ↓
+CustomUserDetailsService
+    ↓
+UserRepository에서 사용자 조회
+    ↓
+PasswordEncoder로 비밀번호 검증
+    ↓
+인증 성공
+    ↓
+Access Token 발급
+```
+
+`CustomUserDetailsService`는 사용자 조회와 `UserDetails` 반환을 담당합니다.
+
+비밀번호 비교는 `DaoAuthenticationProvider`가 `PasswordEncoder`를 이용하여 수행합니다.
+
+존재하지 않는 로그인 아이디와 잘못된 비밀번호는 모두 동일한 로그인 실패 응답으로 처리하여 사용자의 존재 여부가 노출되지 않도록 구성했습니다.
+
+---
+
+### JWT 인증 흐름
+
+로그인 이후 보호 API 요청은 다음과 같이 처리됩니다.
+
+```text
+클라이언트 요청
+Authorization: Bearer <access-token>
+          ↓
+JwtAuthenticationFilter
+          ↓
+Bearer Token 추출
+          ↓
+JWT 서명 / 만료 검증
+          ↓
+userId / role 추출
+          ↓
+CustomUserDetails 생성
+          ↓
+Authentication 생성
+          ↓
+새 SecurityContext 생성
+          ↓
+Authentication 저장
+          ↓
+인가 규칙 확인
+          ↓
+Controller
+```
+
+`JwtAuthenticationFilter`는 `OncePerRequestFilter`를 상속하여 구현했습니다.
+
+정상적으로 검증된 JWT의 사용자 ID와 역할을 이용하여 `CustomUserDetails`를 만들고, 이를 principal로 갖는 `Authentication` 객체를 생성합니다.
+
+이후 새로운 `SecurityContext`에 Authentication을 저장하여 현재 요청의 인증 정보로 사용합니다.
+
+---
+
+### Authentication과 SecurityContext
+
+JWT 인증에 성공하면 다음과 같은 Authentication이 생성됩니다.
+
+```text
+Authentication
+├── principal   = CustomUserDetails
+├── credentials = null
+├── authorities = ROLE_USER 또는 ROLE_ADMIN
+└── authenticated = true
+```
+
+JWT 검증 이후에는 토큰 자체가 인증의 근거이므로 비밀번호를 Authentication에 저장하지 않습니다.
+
+`SecurityContext`는 현재 요청의 Authentication을 보관합니다.
+
+```text
+SecurityContext
+└── Authentication
+    ├── principal
+    └── authorities
+```
+
+Controller에서는 다음과 같이 인증된 사용자의 principal을 받을 수 있습니다.
+
+```java
+@AuthenticationPrincipal CustomUserDetails userDetails
+```
+
+---
+
+### 401과 403의 차이
+
+인증 실패와 인가 실패는 구분하여 처리했습니다.
+
+| 상황 | HTTP Status | Error Code |
+| --- | ---: | --- |
+| 보호 API에 토큰 없이 접근 | 401 | `TOKEN_NOT_EXIST` |
+| 만료된 토큰 | 401 | `TOKEN_EXPIRED` |
+| 변조되거나 유효하지 않은 토큰 | 401 | `TOKEN_INVALID` |
+| 인증됐지만 필요한 권한이 없음 | 403 | `ACCESS_DENIED` |
+
+```text
+401 Unauthorized
+→ 사용자가 누구인지 인증할 수 없는 상태입니다.
+
+403 Forbidden
+→ 사용자가 누구인지는 알지만 해당 기능을 사용할 권한이 없는 상태입니다.
+```
+
+인증 실패는 `AuthenticationEntryPoint`, 인가 실패는 `AccessDeniedHandler`에서 처리합니다.
+
+</details>
+
+<details>
+<summary><h3>구현 내용</h3></summary>
+
+### 회원가입
+
+테스트를 편리하게 하기 위해 회원가입 API를 구현했습니다.
+
+```http
+POST /api/auth/signup
+```
+
+회원가입 요청은 다음 정보를 전달받습니다.
+
+```json
+{
+  "loginId": "user01",
+  "nickname": "사용자1",
+  "password": "password123"
+}
+```
+
+비밀번호는 `PasswordEncoder`를 이용하여 해시한 뒤 DB에 저장합니다.
+
+일반 회원가입에서는 역할을 입력받지 않으며 모든 사용자를 `USER` 권한으로 생성합니다.
+
+따라서 클라이언트가 회원가입 요청을 통해 임의로 `ADMIN` 권한을 지정할 수 없는 구조입니다.
+
+---
+
+### 로그인 및 Access Token 발급
+
+로그인 API는 다음과 같습니다.
+
+```http
+POST /api/auth/login
+```
+
+```json
+{
+  "loginId": "user01",
+  "password": "password123"
+}
+```
+
+로그인 요청은 `AuthenticationManager`에 전달하여 인증합니다.
+
+인증에 성공한 경우 사용자 ID와 역할, 발급 시각, 만료 시각을 포함하는 Access Token을 발급합니다.
+
+```text
+sub  = userId
+role = USER / ADMIN
+iat  = 발급 시각
+exp  = 만료 시각
+```
+
+---
+
+### JWT 인증 필터
+
+JWT 인증을 위해 `OncePerRequestFilter`를 상속한 `JwtAuthenticationFilter`를 구현했습니다.
+
+필터의 처리 과정은 다음과 같습니다.
+
+```text
+Authorization 헤더 조회
+        ↓
+Bearer Token 추출
+        ↓
+JWT 검증
+        ↓
+CustomUserDetails 생성
+        ↓
+Authentication 생성
+        ↓
+SecurityContext 저장
+```
+
+Authorization 헤더가 존재하지 않는 경우에는 Authentication을 생성하지 않고 다음 필터로 요청을 전달합니다.
+
+최종 접근 허용 여부는 `SecurityConfig`에 설정한 공개 API와 보호 API의 인가 규칙에 따라 결정됩니다.
+
+#### JWT 검증 실패 정책
+
+| 상황 | 처리 |
+| --- | --- |
+| Authorization 헤더 없음 | 인증 객체를 만들지 않고 다음 필터로 전달합니다. |
+| Access Token 만료 | `401 TOKEN_EXPIRED`를 반환합니다. |
+| 토큰 변조 또는 형식 오류 | `401 TOKEN_INVALID`를 반환합니다. |
+| 정상 Access Token | Authentication을 SecurityContext에 저장합니다. |
+
+토큰 검증에 실패한 경우 JWT 필터에서 `AuthenticationEntryPoint`를 직접 호출하고 필터 체인을 종료합니다.
+
+공개 API는 토큰 없이 접근할 수 있습니다.
+
+다만 클라이언트가 Authorization 헤더를 통해 Access Token을 명시적으로 전달한 경우에는 해당 토큰을 검증하며, 만료되거나 유효하지 않은 토큰이면 공개 API에서도 401 응답을 반환하도록 구성했습니다.
+
+로그인, 회원가입, Swagger 관련 경로는 JWT 필터의 검사 대상에서 제외했습니다.
+
+---
+
+### Stateless 인증 설정
+
+이번 프로젝트에서는 인증 정보를 Bearer Header로만 전달하고 서버 세션과 인증 쿠키를 사용하지 않습니다.
+
+```java
+.sessionManagement(session ->
+        session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+```
+
+따라서 로그인에 성공하더라도 인증 상태가 서버에 저장되지 않으며, 보호 API 요청마다 Access Token을 다시 전달해야 합니다.
+
+또한 JWT 필터가 매 요청마다 JWT를 검증하고 새로운 Authentication과 SecurityContext를 생성합니다.
+
+---
+
+### CSRF 설정
+
+이번 프로젝트에서는 CSRF 보호를 비활성화했습니다.
+
+```java
+.csrf(csrf -> csrf.disable())
+```
+
+CSRF는 브라우저가 인증 쿠키를 요청에 자동으로 포함하는 특성을 악용하는 공격과 밀접한 관련이 있습니다.
+
+이번 구현에서는 인증 정보를 쿠키가 아닌 `Authorization: Bearer <access-token>` 헤더를 통해 명시적으로 전달하고, 서버 세션에 인증 상태를 저장하지 않습니다.
+
+따라서 이번 과제의 인증 방식에서는 CSRF 보호를 비활성화하여 구성했습니다.
+
+---
+
+### 영화관 찜 API 사용자 인증
+
+사용자 인증이 필요한 API로 영화관 찜 기능을 선택했습니다.
+
+```http
+POST /api/theaters/{theaterId}/likes
+DELETE /api/theaters/{theaterId}/likes
+```
+
+기존에는 요청 파라미터로 `userId`를 전달받는 구조였습니다.
+
+```text
+기존
+
+Request Parameter userId
+        ↓
+TheaterLikeService
+```
+
+이 방식은 클라이언트가 임의의 사용자 ID를 지정할 수 있다는 문제가 있습니다.
+
+이를 다음과 같이 변경했습니다.
+
+```text
+변경
+
+JWT
+ ↓
+JwtAuthenticationFilter
+ ↓
+CustomUserDetails
+ ↓
+@AuthenticationPrincipal
+ ↓
+인증된 userId
+ ↓
+TheaterLikeService
+```
+
+Controller에서는 다음과 같이 현재 인증된 사용자를 전달받습니다.
+
+```java
+@AuthenticationPrincipal CustomUserDetails userDetails
+```
+
+영화관 찜 및 찜 취소 처리에는 `userDetails.getUserId()`를 사용합니다.
+
+따라서 클라이언트가 임의의 사용자 ID를 전달하여 다른 사용자의 데이터에 접근할 수 없도록 구성했습니다.
+
+---
+
+### 영화관 찜 소유권 보호
+
+`@AuthenticationPrincipal`은 현재 인증된 사용자를 식별하기 위한 기능이고, 실제 소유권 보호는 인증된 사용자 ID를 데이터 조회 조건에 포함하는 방식으로 구현했습니다.
+
+영화관 찜 취소 시 다음 조건으로 데이터를 조회합니다.
+
+```text
+인증된 userId + theaterId
+        ↓
+findByUserIdAndTheaterId()
+        ↓
+현재 사용자의 찜 데이터만 조회
+        ↓
+삭제
+```
+
+따라서 사용자 A가 특정 영화관을 찜한 상태에서 사용자 B가 동일한 영화관에 대한 찜 취소 요청을 보내더라도 B의 사용자 ID를 기준으로 데이터를 조회합니다.
+
+사용자 A의 찜 데이터는 조회 대상이 아니므로 다른 사용자의 찜을 삭제할 수 없는 구조입니다.
+
+---
+
+### 역할 기반 접근 제어
+
+사용자 역할은 `USER`와 `ADMIN`으로 구분했습니다.
+
+| Role | 설명                   |
+| --- |----------------------|
+| `USER` | 일반 사용자               |
+| `ADMIN` | 관리자 기능을 사용할 수 있는 사용자 |
+
+DB에는 다음과 같이 역할을 저장합니다.
+
+```text
+USER
+ADMIN
+```
+
+Spring Security의 권한으로 변환할 때 `CustomUserDetails#getAuthorities()`에서 `ROLE_` 접두사를 추가합니다.
+
+```text
+ADMIN
+ ↓
+ROLE_ADMIN
+ ↓
+hasRole("ADMIN")
+```
+
+관리자 전용 API로 영화관 생성 API를 사용했습니다.
+
+```http
+POST /api/theaters
+```
+
+`SecurityConfig`에는 다음 규칙을 적용했습니다.
+
+```java
+.requestMatchers(HttpMethod.POST, "/api/theaters").hasRole("ADMIN")
+```
+
+따라서 접근 결과는 다음과 같습니다.
+
+| 요청 | 결과 |
+| --- | --- |
+| 토큰 없이 영화관 생성 | `401 TOKEN_NOT_EXIST` |
+| `USER` 토큰으로 영화관 생성 | `403 ACCESS_DENIED` |
+| `ADMIN` 토큰으로 영화관 생성 | 정상 처리 |
+
+일반 회원가입으로 생성된 사용자는 항상 `USER` 권한을 갖습니다.
+
+테스트용 관리자 계정은 일반 회원가입으로 생성한 뒤 DB의 역할 값을 `ADMIN`으로 변경하여 준비했습니다.
+
+DB에서 역할을 변경한 이후에는 새로 로그인하여 `ADMIN` 역할이 포함된 Access Token을 다시 발급받아 사용합니다.
+
+---
+
+### 인증·인가 실패 공통 응답 처리
+
+Spring Security의 인증·인가 실패는 Security Filter Chain에서 발생하므로 `@RestControllerAdvice`에서 자동으로 처리되지 않습니다.
+
+따라서 `AuthenticationEntryPoint`와 `AccessDeniedHandler`를 별도로 구현하여 `SecurityConfig`에 연결했습니다.
+
+| 처리기 | 역할 |
+| --- | --- |
+| `AuthenticationEntryPoint` | 인증이 필요한 요청의 인증 실패를 처리합니다. |
+| `AccessDeniedHandler` | 인증된 사용자의 권한 부족을 처리합니다. |
+
+#### 인증 실패
+
+토큰이 존재하지 않거나 JWT 검증에 실패한 경우 `AuthenticationEntryPoint`에서 401 응답을 생성합니다.
+
+```text
+토큰 없음
+→ TOKEN_NOT_EXIST
+
+토큰 만료
+→ TOKEN_EXPIRED
+
+토큰 변조 / 형식 오류
+→ TOKEN_INVALID
+```
+
+JWT 검증에 실패한 경우에는 필터에서 실패 원인을 request attribute에 저장한 뒤 `AuthenticationEntryPoint`를 직접 호출하고 요청 처리를 종료합니다.
+
+#### 인가 실패
+
+정상적으로 인증된 사용자이지만 필요한 역할이 없는 경우에는 `AccessDeniedHandler`를 통해 403 응답을 생성합니다.
+
+```text
+ROLE_USER
+    ↓
+ADMIN 전용 API 요청
+    ↓
+권한 부족
+    ↓
+ACCESS_DENIED
+```
+
+#### 공통 JSON 응답
+
+Security 계층의 오류 역시 기존 프로젝트의 `ApiResponse` 형식을 사용하도록 `SecurityResponseWriter`에서 JSON 응답을 공통으로 생성합니다.
+
+```json
+{
+  "isSuccess": false,
+  "code": "TOKEN_EXPIRED",
+  "message": "토큰이 만료되었습니다.",
+  "data": null
+}
+```
+
+최종 오류 정책은 다음과 같습니다.
+
+| 상황 | HTTP Status | Error Code |
+| --- | ---: | --- |
+| 보호 API에 토큰 없이 접근 | 401 | `TOKEN_NOT_EXIST` |
+| 만료된 Access Token | 401 | `TOKEN_EXPIRED` |
+| 변조되거나 유효하지 않은 Access Token | 401 | `TOKEN_INVALID` |
+| 인증됐지만 권한 부족 | 403 | `ACCESS_DENIED` |
+
+</details>
+
+<details>
+<summary><h3>정상·실패 상황 테스트</h3></summary>
+
+JWT 및 Spring Security 인증·인가 로직을 Swagger를 이용하여 수동으로 테스트했습니다.
+
+### 정상 로그인
+
+올바른 로그인 아이디와 비밀번호를 전달한 경우 인증에 성공하고 Access Token이 정상적으로 발급되는 것을 확인했습니다.
+
+![img.png](docs/images/img.png)
+
+### 로그인 실패
+
+존재하지 않는 로그인 아이디와 잘못된 비밀번호를 각각 사용하여 로그인 요청을 수행했습니다.
+
+두 경우 모두 `401 Unauthorized`와 동일한 `LOGIN_FAILED` 응답이 반환되며 Access Token이 발급되지 않는 것을 확인했습니다. 이를 통해 사용자의 존재 여부가 로그인 실패 응답을 통해 구분되지 않도록 구성했습니다.
+
+![img_3.png](docs/images/img_3.png)
+
+![img_2.png](docs/images/img_2.png)
+
+### 공개 API 접근
+
+Authorization 헤더 없이 영화관 조회 API를 호출했을 때 정상적으로 처리되는 것을 확인했습니다.
+
+![img_4.png](docs/images/img_4.png)
+
+### 정상 토큰으로 보호 API 접근
+
+정상적으로 발급된 Access Token을 `Authorization: Bearer <access-token>` 형식으로 전달하여 영화관 찜 API를 호출했습니다.
+
+JWT 인증 필터에서 토큰 검증 후 Authentication이 SecurityContext에 저장되며, `@AuthenticationPrincipal`을 통해 인증된 사용자의 ID를 사용하여 영화관 찜이 정상적으로 처리되는 것을 확인했습니다.
+
+![img_5.png](docs/images/img_5.png)
+
+### 토큰 없이 보호 API 접근
+
+Access Token 없이 영화관 찜 API를 호출한 경우 `401 Unauthorized`와 `TOKEN_NOT_EXIST` 응답이 반환되는 것을 확인했습니다.
+
+![img_6.png](docs/images/img_6.png)
+
+### 만료된 토큰
+
+짧은 만료 시간을 적용하여 발급한 Access Token이 만료된 이후 보호 API를 호출했습니다.
+
+`401 Unauthorized`와 `TOKEN_EXPIRED` 응답이 반환되는 것을 확인했습니다.
+
+![img_7.png](docs/images/img_7.png)
+
+### 변조된 토큰
+
+발급받은 JWT의 Payload 일부를 변경한 뒤 보호 API를 호출했습니다.
+
+서명 검증에 실패하여 `401 Unauthorized`와 `TOKEN_INVALID` 응답이 반환되는 것을 확인했습니다.
+
+![img_8.png](docs/images/img_8.png)
+
+### 다른 서명 키로 발급된 토큰
+
+Access Token 발급 시 사용한 서명 키와 다른 키를 서버의 검증 키로 설정한 뒤 기존 Access Token으로 보호 API를 호출했습니다.
+
+서명 검증에 실패하여 `401 Unauthorized` 응답이 반환되는 것을 확인했습니다.
+
+![img_9.png](docs/images/img_9.png)
+
+### 일반 사용자의 관리자 API 접근
+
+`USER` 권한의 Access Token으로 관리자 전용 영화관 생성 API를 호출했습니다.
+
+사용자 인증 자체는 성공했지만 `ADMIN` 권한이 없으므로 `403 Forbidden`과 `ACCESS_DENIED` 응답이 반환되는 것을 확인했습니다.
+
+![img_10.png](docs/images/img_10.png)
+
+### 관리자의 관리자 API 접근
+
+테스트용 관리자 계정으로 로그인하여 `ADMIN` 권한이 포함된 Access Token을 발급받았습니다.
+
+해당 토큰으로 영화관 생성 API를 호출한 경우 정상적으로 영화관이 생성되는 것을 확인했습니다.
+
+![img_11.png](docs/images/img_11.png)
+
+### Stateless 인증 확인
+
+로그인 요청에 성공한 직후 Access Token을 전달하지 않고 보호 API를 호출했습니다.
+
+이전 요청의 인증 상태가 유지되지 않고 `401 Unauthorized`가 반환되는 것을 확인했습니다. 이를 통해 서버가 세션에 인증 상태를 저장하지 않고 각 요청의 JWT를 이용하여 인증하는 Stateless 방식으로 동작하는 것을 확인했습니다.
+
+![img_12.png](docs/images/img_12.png)
+
+</details>
 
 </details>

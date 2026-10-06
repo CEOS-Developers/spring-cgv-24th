@@ -1,4 +1,4 @@
-package com.ceos24.cgv.domain.user.exception;
+package com.ceos24.cgv.global.security.exception;
 
 import com.ceos24.cgv.global.apiPayload.code.BaseErrorCode;
 import com.ceos24.cgv.global.apiPayload.code.ErrorReasonDTO;
@@ -8,11 +8,12 @@ import org.springframework.http.HttpStatus;
 
 @Getter
 @AllArgsConstructor
-public enum UserErrorStatus implements BaseErrorCode {
+public enum SecurityErrorCode implements BaseErrorCode {
 
-    USER_NOT_FOUND(HttpStatus.NOT_FOUND, "USER404", "존재하지 않는 유저입니다."),
-    DUPLICATE_LOGIN_ID(HttpStatus.CONFLICT, "USER409", "이미 사용중인 아이디입니다."),
-    LOGIN_FAILED(HttpStatus.UNAUTHORIZED, "LOGIN_FAILED", "로그인 아이디 또는 비밀번호가 올바르지 않습니다.");
+    TOKEN_NOT_EXIST(HttpStatus.UNAUTHORIZED, "TOKEN_NOT_EXIST", "인증 토큰이 존재하지 않습니다."),
+    TOKEN_EXPIRED(HttpStatus.UNAUTHORIZED, "TOKEN_EXPIRED", "토큰이 만료되었습니다."),
+    TOKEN_INVALID(HttpStatus.UNAUTHORIZED, "TOKEN_INVALID", "유효하지 않은 토큰입니다."),
+    ACCESS_DENIED(HttpStatus.FORBIDDEN, "ACCESS_DENIED", "접근 권한이 없습니다.");
 
     private final HttpStatus httpStatus;
     private final String code;
@@ -21,19 +22,19 @@ public enum UserErrorStatus implements BaseErrorCode {
     @Override
     public ErrorReasonDTO getReason() {
         return ErrorReasonDTO.builder()
-                .message(message)
-                .code(code)
                 .isSuccess(false)
+                .code(code)
+                .message(message)
                 .build();
     }
 
     @Override
     public ErrorReasonDTO getReasonHttpStatus() {
         return ErrorReasonDTO.builder()
-                .message(message)
-                .code(code)
                 .isSuccess(false)
                 .httpStatus(httpStatus)
+                .code(code)
+                .message(message)
                 .build();
     }
 }
