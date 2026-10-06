@@ -3,6 +3,8 @@ package com.cgvclone.cgv.domain.cinema;
 import com.cgvclone.cgv.common.exception.ErrorCode;
 import com.cgvclone.cgv.common.exception.GlobalException;
 import com.cgvclone.cgv.domain.cinema.dto.CinemaDetailResponse;
+import com.cgvclone.cgv.domain.cinema.dto.CinemaListResponse;
+import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -18,6 +20,14 @@ public class CinemaService {
     public Cinema getCinemaEntity(Long cinemaId) {
         return cinemaRepository.findById(cinemaId)
                 .orElseThrow(() -> new GlobalException(ErrorCode.CINEMA_NOT_FOUND));
+    }
+
+    @Transactional(readOnly = true)
+    public CinemaListResponse getCinemas(Long regionId) {
+        List<Cinema> cinemas = regionId == null
+                ? cinemaRepository.findAll()
+                : cinemaRepository.findByRegion_RegionId(regionId);
+        return CinemaListResponse.from(cinemas);
     }
 
     @Transactional(readOnly = true)

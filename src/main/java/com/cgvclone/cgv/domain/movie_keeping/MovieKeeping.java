@@ -1,8 +1,8 @@
 package com.cgvclone.cgv.domain.movie_keeping;
 
 import com.cgvclone.cgv.common.BaseEntity;
-import com.cgvclone.cgv.domain.user.User;
 import com.cgvclone.cgv.domain.movie.Movie;
+import com.cgvclone.cgv.domain.user.User;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
@@ -33,11 +33,11 @@ public class MovieKeeping extends BaseEntity {
     private Long movieKeepingId;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "user_id")
+    @JoinColumn(name = "user_id", nullable = false)
     private User user;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "movie_id")
+    @JoinColumn(name = "movie_id", nullable = false)
     private Movie movie;
 
     @Builder

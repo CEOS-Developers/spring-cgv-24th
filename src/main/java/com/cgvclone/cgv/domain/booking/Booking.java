@@ -3,8 +3,8 @@ package com.cgvclone.cgv.domain.booking;
 import com.cgvclone.cgv.common.BaseEntity;
 import com.cgvclone.cgv.common.exception.ErrorCode;
 import com.cgvclone.cgv.common.exception.GlobalException;
-import com.cgvclone.cgv.domain.user.User;
 import com.cgvclone.cgv.domain.showtime.Showtime;
+import com.cgvclone.cgv.domain.user.User;
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -60,6 +60,15 @@ public class Booking extends BaseEntity {
         this.status = BookingStatus.BOOKED;
     }
 
+    public void addSeat(int rowNo, int columnNo) {
+        BookingSeat bookingSeat = BookingSeat.builder()
+                .booking(this)
+                .rowNo(rowNo)
+                .columnNo(columnNo)
+                .build();
+        this.bookingSeats.add(bookingSeat);
+    }
+
     public void cancel(LocalDateTime currentTime) {
         if (this.status == BookingStatus.CANCELLED) {
             throw new GlobalException(ErrorCode.BOOKING_ALREADY_CANCELLED);
@@ -70,10 +79,10 @@ public class Booking extends BaseEntity {
         }
 
         this.status = BookingStatus.CANCELLED;
-        this.canceledAt = LocalDateTime.now();
+        this.canceledAt = currentTime;
 
         for (BookingSeat seat : this.bookingSeats) {
-            seat.cancel();
+            seat.cancel(currentTime);
         }
     }
 }
