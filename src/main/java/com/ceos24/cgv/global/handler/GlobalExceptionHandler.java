@@ -4,10 +4,12 @@ import com.ceos24.cgv.global.apiPayload.ApiResponse;
 import com.ceos24.cgv.global.code.BaseErrorCode;
 import com.ceos24.cgv.global.code.GeneralErrorCode;
 import com.ceos24.cgv.global.exception.GeneralException;
+import com.ceos24.cgv.global.security.exception.AuthErrorCode;
 import jakarta.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.security.core.AuthenticationException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestController;
@@ -104,6 +106,18 @@ public class GlobalExceptionHandler {
                 ));
     }
 
+    @ExceptionHandler(AuthenticationException.class)
+    public ResponseEntity<ApiResponse<Object>> handleAuthenticationException(
+            AuthenticationException e
+    ) {
+        BaseErrorCode errorCode = AuthErrorCode.LOGIN_FAILED;
+
+        log.warn("Login failed");
+
+        return ResponseEntity
+                .status(errorCode.getHttpStatus())
+                .body(ApiResponse.onFailure(errorCode, null));
+    }
     /**
      * JSON 문법 오류 또는 타입 불일치 처리
      */
