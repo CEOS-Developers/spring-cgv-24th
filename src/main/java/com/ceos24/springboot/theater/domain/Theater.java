@@ -36,4 +36,12 @@ public class Theater {
 
     }
 
+//    Entity가 스스로 생성 책임을 가지도록 수정하였음.
+    public static Theater create(String theaterName, Region region) {
+        return Theater.builder()
+                .theaterName(theaterName)
+                .region(region)
+                .build();
+    }
+
 }

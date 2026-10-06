@@ -21,12 +21,12 @@ public class Reservation {
     @Column(name = "reservation_id")
     private Long reservationId;
 
-    // 여러 예매는 한 명의 사용자에게 속함
+    // 여러좌석 예매는 한 명의 사용자에게 속함
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "user_id")
     private User user;
 
-    // 한번에 여러명 예매는 하나의 상영회차를 참조할 수 있음
+    // 한번에 여러좌석 예매는 하나의 상영회차를 참조할 수 있음
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "screening_id")
     private Screening screening;
@@ -42,9 +42,6 @@ public class Reservation {
 
     @Column(name = "senior_count")
     private Integer seniorCount;
-
-    @Column(name = "seat_numbers")
-    private String seatNumbers;
 
     @Column(name = "total_price")
     private Integer totalPrice;
@@ -64,7 +61,6 @@ public class Reservation {
             Integer youthCount,
             Integer adultCount,
             Integer seniorCount,
-            String seatNumbers,
             Integer totalPrice,
             ReservationStatus status,
             LocalDateTime reservationAt
@@ -75,7 +71,6 @@ public class Reservation {
         this.youthCount = youthCount;
         this.adultCount = adultCount;
         this.seniorCount = seniorCount;
-        this.seatNumbers = seatNumbers;
         this.totalPrice = totalPrice;
         this.status = status;
         this.reservationAt = reservationAt;

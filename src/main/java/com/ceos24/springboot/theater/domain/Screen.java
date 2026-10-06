@@ -48,6 +48,23 @@ public class Screen {
         this.screenName = screenName;
         this.screenType = screenType;
         this.rowCount = rowCount;
-        this.colCount = this.colCount;
+        this.colCount = colCount;
+    }
+
+//  정적 팩토리 메서드
+    public static Screen create(
+            Theater theater,
+            String screenName,
+            ScreenType screenType,
+            Integer rowCount,
+            Integer colCount
+    ) {
+        return new Screen(
+                theater,
+                screenName,
+                screenType,
+                rowCount,
+                colCount
+        );
     }
 }

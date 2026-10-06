@@ -34,7 +34,7 @@ public class ShopService {
     private final UserRepository userRepository;
 
 
-    // 영화관 매점 재고 등록
+    // 영화관 매점 재고 초기 등록
     @Transactional
     public InventoryResponse createInventory(
             Long theaterId,
@@ -63,7 +63,6 @@ public class ShopService {
 
         if (storeInventoryRepository
                 .existsByTheaterAndMenu(theater, menu)) {
-
             throw new IllegalArgumentException(
                     "이미 등록된 매점 메뉴입니다."
             );
@@ -100,6 +99,35 @@ public class ShopService {
                 .toList();
     }
 
+    // 매점 재고 추가
+    @Transactional
+    public InventoryResponse addStock(
+            Long theaterId,
+            Long inventoryId,
+            Integer quantity
+    ) {
+
+        Theater theater = theaterRepository.findById(theaterId)
+                .orElseThrow(() ->
+                        new IllegalArgumentException(
+                                "해당 영화관을 찾을 수 없습니다."
+                        )
+                );
+
+        StoreInventory inventory =
+                storeInventoryRepository
+                        .findByInventoryIdAndTheater(inventoryId, theater)
+                        .orElseThrow(() ->
+                                new IllegalArgumentException(
+                                        "해당 영화관의 재고를 찾을 수 없습니다."
+                                )
+                        );
+
+        inventory.increaseStock(quantity);
+
+        return InventoryResponse.from(inventory);
+    }
+
 
     // 매점 주문
     @Transactional
@@ -131,6 +159,7 @@ public class ShopService {
             );
         }
 
+//      사용자가 주문할 메뉴의 총 가격
         int totalAmount = 0;
 
         List<OrderMenu> orderMenus = new ArrayList<>();
@@ -205,23 +234,33 @@ public class ShopService {
 
 
     // 매점 주문 내역 조회
-    public StoreOrderResponse getOrder(Long orderId) {
+    public StoreOrderResponse getOrder(Long userId, Long orderId) {
 
-        StoreOrder order =
-                storeOrderRepository.findById(orderId)
-                        .orElseThrow(() ->
-                                new IllegalArgumentException(
+        User user = userRepository.findById(userId)
+                .orElseThrow(() ->
+                        new IllegalArgumentException(
+                                "해당 사용자를 찾을 수 없습니다."
+                        )
+                );
+
+        StoreOrder order = storeOrderRepository.findById(orderId)
+                            .orElseThrow(() ->
+                                    new IllegalArgumentException(
                                         "해당 주문을 찾을 수 없습니다."
-                                )
-                        );
+                                    )
+                            );
+
+        // 로그인한 사용자의 주문인지 확인
+        if (!order.getUser().getId().equals(user.getId())) {
+            throw new IllegalArgumentException(
+                    "본인의 주문만 조회할 수 있습니다."
+            );
+        }
 
         List<OrderItem> items =
                 orderItemRepository.findAllByOrder(order);
 
-        return StoreOrderResponse.from(
-                order,
-                items
-        );
+        return StoreOrderResponse.from(order, items);
     }
 
 

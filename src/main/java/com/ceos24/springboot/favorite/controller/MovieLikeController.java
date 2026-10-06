@@ -8,6 +8,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import com.ceos24.springboot.user.security.CustomUserDetails;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 
 import java.util.List;
 
@@ -25,11 +27,14 @@ public class MovieLikeController {
     @PostMapping("/{movieId}")
     public ResponseEntity<MovieLikeResponse> addMovieLike(
             @PathVariable Long movieId,
-            @RequestParam Long userId
+            @AuthenticationPrincipal CustomUserDetails userDetails
     ) {
 
         MovieLikeResponse response =
-                movieLikeService.addMovieLike(userId, movieId);
+                movieLikeService.addMovieLike(
+                        userDetails.getUserId(),
+                        movieId
+                );
 
         return ResponseEntity
                 .status(HttpStatus.CREATED)
@@ -41,11 +46,13 @@ public class MovieLikeController {
     @Operation(summary = "찜한 영화 목록 조회")
     @GetMapping
     public ResponseEntity<List<MovieLikeResponse>> getMovieLikes(
-            @RequestParam Long userId
+            @AuthenticationPrincipal CustomUserDetails userDetails
     ) {
 
         return ResponseEntity.ok(
-                movieLikeService.getMovieLikes(userId)
+                movieLikeService.getMovieLikes(
+                        userDetails.getUserId()
+                )
         );
     }
 
@@ -55,10 +62,13 @@ public class MovieLikeController {
     @DeleteMapping("/{movieId}")
     public ResponseEntity<Void> deleteMovieLike(
             @PathVariable Long movieId,
-            @RequestParam Long userId
+            @AuthenticationPrincipal CustomUserDetails userDetails
     ) {
 
-        movieLikeService.deleteMovieLike(userId, movieId);
+        movieLikeService.deleteMovieLike(
+                userDetails.getUserId(),
+                movieId
+        );
 
         return ResponseEntity.noContent().build();
     }

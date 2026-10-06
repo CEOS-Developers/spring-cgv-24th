@@ -1,5 +1,7 @@
 package com.ceos24.springboot.movie.service;
 
+import com.ceos24.springboot.global.exception.ErrorCode;
+import com.ceos24.springboot.global.exception.GlobalException;
 import com.ceos24.springboot.movie.domain.Movie;
 import com.ceos24.springboot.movie.dto.MovieCreateRequest;
 import com.ceos24.springboot.movie.dto.MovieResponse;
@@ -38,9 +40,7 @@ public class MovieService {
     public MovieResponse getMovie(Long movieId) {
         Movie movie = movieRepository.findById(movieId)
                 .orElseThrow(() ->
-                        new EntityNotFoundException(
-                                "해당 영화를 찾을 수 없습니다. movieId=" + movieId
-                        )
+                        new GlobalException(ErrorCode.MOVIE_NOT_FOUND)
                 );
 
         return MovieResponse.from(movie);

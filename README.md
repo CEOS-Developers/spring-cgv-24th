@@ -654,3 +654,545 @@ Favorites와 Likes의 분리
 
 [2주차 실습 정리](https://www.notion.so/CEOS-2-3dade222d8e480a29f3fd1494b1cb96e?source=copy_link)
 
+---
+# 📝2주차 코드 피드백 및 개선사항
+ERD 수정
+```md
+![CGV ERD](cgv-erd2.png)
+```
+
+### 1. 예외 처리 방식 통일
+
+기존에는 도메인마다 예외를 처리하는 방식이 달라질 수 있었기 때문에,
+`GlobalException`, `ErrorCode`, `GlobalExceptionHandler`를 활용하여 예외 처리 방식을 통일했습니다.
+
+```text
+TheaterService
+    ↓
+GlobalException 발생
+    ↓
+ErrorCode.THEATER_NOT_FOUND
+    ↓
+GlobalExceptionHandler
+    ↓
+ErrorResponse 생성
+    ↓
+HTTP 404 응답
+```
+
+Service에서는 상황에 맞는 `ErrorCode`를 담아 `GlobalException`을 발생시키고,
+`GlobalExceptionHandler`가 이를 공통으로 처리하여 `ErrorResponse`를 반환하도록 구성했습니다.
+
+이를 통해 각 Controller나 Service에서 직접 HTTP 응답을 생성하지 않고,
+애플리케이션 전체에서 일관된 형식으로 예외를 처리할 수 있도록 개선했습니다.
+
+---
+
+### 2. 재고 추가 API에서 `@RequestParam` 활용
+
+영화관 매점의 특정 재고 수량을 추가하는 API를 구현했습니다.
+
+```http
+PATCH /api/shop/1/inventories/3/addStock?quantity=10
+```
+
+처리 흐름은 다음과 같습니다.
+
+```text
+PATCH 요청
+    ↓
+Controller
+quantity = 10
+    ↓
+ShopService.addStock(1, 3, 10)
+    ↓
+StoreInventory.increaseStock(10)
+    ↓
+기존 stock 20
+    ↓
+stock 30
+```
+
+재고 수량이라는 하나의 단순한 값만 전달하기 때문에 별도의 Request DTO를 추가하지 않고
+`@RequestParam`을 사용하여 요청 값을 전달하도록 구현했습니다.
+
+이를 통해 모든 요청에 DTO가 반드시 필요한 것은 아니며,
+요청 데이터의 구조와 복잡도에 따라 적절한 전달 방식을 선택할 수 있다는 점을 학습했습니다.
+
+---
+
+### 3. Entity가 생성 책임을 가지도록 개선
+
+기존 영화관 등록 코드에서는 Request DTO가 Entity의 생성 방법까지 알고 있었습니다.
+
+피드백을 반영하여 DTO는 **요청 데이터를 전달하는 역할**에 집중하고,
+Entity가 자신의 생성 규칙을 직접 관리하도록 수정했습니다.
+
+```text
+기존
+
+RequestDTO
+ ├─ 요청 데이터 전달
+ └─ Entity 생성 규칙까지 알고 있음
+
+
+개선
+
+RequestDTO
+ └─ 요청 데이터 전달
+          ↓
+Theater.create(...)
+          ↓
+Theater가 자신의 생성 규칙 관리
+```
+
+이를 통해 객체 생성에 대한 책임을 Entity 내부로 이동시키고,
+Request DTO와 Entity의 역할을 명확하게 분리했습니다.
+
+---
+
+### 4. 좌석과 예약된 좌석 분리
+
+처음에는 예매 정보에서 좌석 번호를 직접 관리했지만,
+좌석 자체의 정보와 실제 예매된 좌석을 구분하기 위해 테이블 구조를 개선했습니다.
+
+- `seat` : 영화관 상영관별 실제 좌석 정보
+- `reservation_seat` : 특정 예매에 할당된 좌석 정보
+
+```text
+Screen
+  │
+  └── Seat
+        │
+        └── ReservationSeat
+                │
+                └── Reservation
+```
+
+이를 통해 **존재하는 좌석**과 **현재 예매에 할당된 좌석**의 역할을 분리했습니다.
+
+또한 예매 취소 과정에서 두 데이터의 처리 방식에도 차이가 있습니다.
+
+- `Reservation` : 데이터를 바로 삭제하는 대신 예매 상태를 `CANCELED`로 변경
+- `ReservationSeat` : 예매 취소 시 해당 좌석의 할당 정보를 제거
+
+즉, 예매 기록은 상태값을 통해 남겨두면서 실제 좌석은 다시 예약할 수 있도록 처리했습니다.
+
+---
+
+### 5. 비관적 락을 이용한 좌석 동시성 처리
+
+같은 좌석에 여러 사용자가 동시에 예매 요청을 보내는 상황에서는
+좌석 중복 예약이 발생할 가능성이 있습니다.
+
+이를 방지하기 위해 비관적 락(`PESSIMISTIC_WRITE`)을 적용했습니다.
+
+비관적 락은 데이터 충돌이 발생할 것이라고 가정하고,
+데이터를 조회하는 시점부터 Lock을 걸어 다른 트랜잭션의 수정을 제한하는 방식입니다.
+
+```java
+@Lock(LockModeType.PESSIMISTIC_WRITE)
+@Query("""
+        select s
+        from Screening s
+        where s.screeningId = :screeningId
+        """)
+Optional<Screening> findByIdWithLock(
+        @Param("screeningId") Long screeningId
+);
+```
+
+해당 메서드는 `screeningId`에 해당하는 `Screening`을 조회하면서
+DB에 `SELECT ... FOR UPDATE`에 해당하는 락을 걸도록 구성했습니다.
+
+```text
+사용자 A                    사용자 B
+   │                           │
+   │ Screening 조회 + Lock     │
+   ▼                           │
+좌석 예매 처리                  │ 대기
+   │                           │
+Transaction 종료               │
+   │                           ▼
+   └──── Lock 해제 ───────→ 이후 처리
+```
+
+이를 통해 같은 상영 회차의 좌석 예매 로직이 동시에 실행되면서
+중복 예약이 발생하는 상황을 방지하고자 했습니다.
+
+---
+
+### 6. `saveAll()` → `saveAllAndFlush()` 변경
+
+예약 좌석을 저장할 때 `saveAll()` 대신 `saveAllAndFlush()`를 사용하도록 수정했습니다.
+
+```java
+reservationSeatRepository.saveAllAndFlush(reservationSeats);
+```
+
+좌석 중복 방지를 위해 DB의 `UNIQUE` 제약 조건을 사용하는 경우,
+실제 SQL 실행 시점에 제약 조건 위반이 확인됩니다.
+
+따라서 저장 후 즉시 `flush`하여 SQL을 DB에 반영하도록 하고,
+`UNIQUE` 제약 조건 위반이 발생한다면 해당 시점에서 확인할 수 있도록 변경했습니다.
+
+
+---
+
+[3주차 실습 정리](https://app.notion.com/p/CEOS-3-3e5de222d8e48099a302fc1397cf944c?source=copy_link)
+
+# 5. JWT 를 이용한 인증 흐름
+
+## 5-1. JWT의 Header, Payload, Signature 각각의 역할
+
+JWT(JSON Web Token)는 `Header.Payload.Signature` 세 부분으로 구성됩니다.
+
+| 구성 | 역할 |
+| --- | --- |
+| Header | 토큰 타입과 서명에 사용하는 알고리즘 정보를 저장 |
+| Payload | 사용자 정보, 만료 시간 등의 Claim을 저장 |
+| Signature | 토큰이 서버에서 발급되었는지, 변조되지 않았는지 검증 |
+
+#### Header
+JWT가 어떤 방식으로 서명되었는지에 대한 알고리즘 정보를 담습니다.
+
+#### Payload
+JWT에 전달하고 싶은 정보를 `Claim` 형태로 저장합니다.
+예를 들어 `userId`, 발급 시간, 만료 시간 등을 저장할 수 있습니다.
+
+> Payload는 암호화되어 숨겨지는 영역이 아니므로 비밀번호와 같은 민감한 정보는 저장하지 않습니다.
+
+#### Signature
+JWT가 서버에서 발급된 토큰인지, 전달 과정에서 변조되지 않았는지를 확인하기 위한 서명입니다.
+
+서버의 Secret Key를 이용해 Signature를 생성하기 때문에 Payload를 임의로 변경하거나 다른 Secret Key로 JWT를 생성하면 검증에 실패합니다.
+
+---
+
+## 5-2. Access Token과 Refresh Token 차이
+
+JWT 인증에서는 Access Token과 Refresh Token을 함께 사용할 수 있습니다.
+
+| 구분 | Access Token | Refresh Token |
+| --- | --- | --- |
+| 역할 | API 접근 및 사용자 인증 | Access Token 재발급 |
+| 유효 기간 | 비교적 짧음 | 비교적 긺 |
+| 사용 시점 | API 요청 시 | Access Token 만료 후 재발급 시 |
+
+Access Token의 유효 기간을 짧게 설정하면 토큰이 탈취되었을 때 사용할 수 있는 시간을 제한할 수 있습니다.
+
+Refresh Token은 Access Token이 만료되었을 때 새로운 Access Token을 발급받는 데 사용합니다.
+
+현재 CGV 프로젝트에서는 **Access Token을 이용한 인증을 구현**했습니다.
+
+---
+
+### 3. Cookie & Session & JWT의 역할
+
+HTTP는 기본적으로 이전 요청의 로그인 상태를 스스로 기억하지 못하는 **무상태성 한계**를 가집니다.
+
+따라서 사용자를 지속적으로 식별하기 위한 방법이 필요합니다.
+> Cookie : 브라우저가 정보를 저장하고 이후 요청에 전달하는 역할
+
+| 구분 | 역할 |
+| --- | --- |
+| Session | 서버가 사용자의 로그인 상태를 기억하여 저장 |
+| JWT | 사용자 인증 정보를 토큰에 담아 전달 |
+
+#### Session 기반 인증
+
+```text
+Client
+  ↓
+Cookie에 Session ID 저장
+  ↓
+Server
+  ↓
+Session 저장소 조회
+  ↓
+사용자 식별
+```
+
+#### JWT 기반 인증
+
+CGV 프로젝트에서는 세션에 로그인 상태를 저장하지 않고 클라이언트가 매 요청마다 Access Token을 전달하도록 구현했습니다.
+
+```http
+Authorization: Bearer <access-token>
+```
+
+또한 다음과 같이 `STATELESS` 정책을 적용했습니다.
+
+```java
+.sessionManagement(session ->
+        session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)
+)
+```
+
+따라서 서버가 이전 요청의 인증 상태를 세션에 저장하지 않고, **각 요청마다 JWT를 검증하여 사용자를 인증**합니다.
+
+---
+
+## 5-4. 인증(Authentication)과 인가(Authorization)
+
+### 인증 (Authentication)
+
+> **"현재 요청을 보낸 사용자가 누구인가?"**
+
+사용자의 신원을 확인하는 과정입니다.
+
+CGV 프로젝트에서는 로그인할 때 이메일과 비밀번호를 검증하고, 이후 요청에서는 JWT를 검증하여 사용자를 인증합니다.
+
+#### 401 Unauthorized(인증되지 않음)
+클라이언트가 **로그인 등 올바른 인증 정보가 없어** 요청이 거부된 상태
+
+- 원인 : 로그인을 하지 않았거나, 만료된 토큰을 사용했거나, 잘못된 비밀번호를 입력한 경우 발생
+- 해결 : 로그인을 다시 하거나 유효한 인증 토큰을 첨부해 재요청
+
+### 인가 (Authorization)
+
+> **"인증된 사용자가 해당 기능을 사용할 권한이 있는가?"**
+
+인증된 사용자의 권한을 확인하는 과정입니다.
+
+예를 들어 관리자 API는 다음과 같이 제한했습니다.
+
+```java
+.requestMatchers("/api/admin/**").hasRole("ADMIN")
+```
+
+따라서 정상적인 JWT를 가지고 있더라도 `ADMIN` 권한이 없다면 관리자 API에 접근할 수 없습니다.
+
+#### 403 Forbidden(권한이 없음)
+서버가 클라이언트의 **신원을 확인(인증)했으나, 해당 리소스에 접근할 권한이 없는** 상태
+
+- 원인 : 일반 사용자가 관리자 전용 페이제이 접속하려고 할 때처럼, 로그인한 사용자의 등급이나 권한이 부족한 경우 발생
+- 해결 : 로그인을 다시 해도 권한이 바뀌지 않는 한 해결되지 않으며, 관리자에게 권한을 요청해야 함
+
+---
+
+## 5-5. JWT 검증 결과가 Authentication 와 SecurityContext로 어떻게 연결될까?
+
+JWT를 검증한 이후에는 검증된 사용자 정보를 Spring Security가 이해할 수 있는 `Authentication` 객체로 변환해야 합니다.
+
+CGV 프로젝트에서는 `JwtAuthenticationFilter`가 이 역할을 담당합니다.
+
+```text
+HTTP Request
+      ↓
+Authorization: Bearer <JWT>
+      ↓
+JwtAuthenticationFilter
+      ↓
+JWT 검증
+      ↓
+userId 추출
+      ↓
+CustomUserDetails 조회
+      ↓
+Authentication 생성
+      ↓
+SecurityContext 저장
+      ↓
+인가 검사
+      ↓
+Controller
+```
+
+JWT 검증에 성공하면 `UsernamePasswordAuthenticationToken`을 생성합니다.
+
+```java
+UsernamePasswordAuthenticationToken authentication =
+        new UsernamePasswordAuthenticationToken(
+                userDetails,
+                null,
+                userDetails.getAuthorities()
+        );
+```
+
+각 값의 의미는 다음과 같습니다.
+
+- `principal` : 인증된 사용자인 `CustomUserDetails`
+- `credentials` : JWT 검증이 완료되었으므로 `null`
+- `authorities` : 사용자가 가진 권한
+
+생성된 `Authentication` 객체는 `SecurityContext`에 저장합니다.
+
+```java
+SecurityContext context =
+        SecurityContextHolder.createEmptyContext();
+
+context.setAuthentication(authentication);
+
+SecurityContextHolder.setContext(context);
+```
+
+이후 Spring Security는 `SecurityContext`에 저장된 인증 정보를 이용하여 현재 사용자가 누구인지 확인하고 접근 권한을 판단합니다.
+
+Controller에서는 다음과 같이 현재 인증된 사용자 정보를 사용할 수 있습니다.
+
+```java
+@AuthenticationPrincipal CustomUserDetails userDetails
+```
+
+이를 통해 Controller에서 JWT를 다시 직접 파싱하지 않고 현재 로그인 사용자의 `userId`를 사용할 수 있습니다.
+
+---
+
+## 5-6. JWT 인증 흐름
+> JwtUtil -> JwtFilter -> Security/FilterConfig
+
+#### JwtUtil 
+토큰을 생성하고, 읽고, 검증하는 "엔진 핵심 클래스"
+
+#### JwtFilter
+요청이 Controller에 도착하기 전, 토큰을 검사하는 "감시자"
+
+#### Security/FilterConfig
+JwtFilter가 실제 요청 앞에서 실행되도록 "등록"하는 설정 파일
+
+
+### 🔐 CGV JWT 인증 흐름
+
+```text
+Client
+  │
+  │ Authorization: Bearer <Access Token>
+  ▼
+JwtAuthenticationFilter
+  │
+  ├── 토큰 없음
+  │      └── 보호 API → 401 TOKEN_NOT_EXIST
+  │
+  ├── 만료된 토큰
+  │      └── 401 TOKEN_EXPIRED
+  │
+  ├── 유효하지 않은 토큰
+  │      └── 401 TOKEN_INVALID
+  │
+  └── 정상 JWT
+          │
+          ▼
+       userId 추출
+          │
+          ▼
+   CustomUserDetails 조회
+          │
+          ▼
+   Authentication 생성
+          │
+          ▼
+   SecurityContext 저장
+          │
+          ▼
+       인가 검사
+       /        \
+    권한 O      권한 X
+      │           │
+      ▼           ▼
+ Controller   403 ACCESS_DENIED
+```
+
+JWT를 단순히 발급하고 검증하는 것에서 끝나는 것이 아니라, 검증된 사용자 정보를 Spring Security의 `Authentication`으로 변환하여 `SecurityContext`에 저장하고 이를 기반으로 인증과 인가가 이루어지도록 구성했습니다.
+
+---
+
+## 5-7. CGV 프로젝트의 Access Token에는 어떤 Claim이 필요한가요?
+
+CGV 프로젝트에서 Access Token의 가장 중요한 목적은 **현재 요청을 보낸 사용자가 누구인지 식별하는 것**입니다.
+
+현재 Access Token에는 다음 Claim을 사용합니다.
+
+| Claim | 역할 |
+| --- | --- |
+| `sub` | 로그인 사용자의 `userId` |
+| `iat` | Access Token 발급 시간 |
+| `exp` | Access Token 만료 시간 |
+
+Access Token을 생성할 때 `userId`를 `subject`에 저장합니다.
+
+```java
+return Jwts.builder()
+        .subject(String.valueOf(userId))
+        .issuedAt(now)
+        .expiration(expiration)
+        .signWith(secretKey)
+        .compact();
+```
+
+JWT 인증 시에는 `subject`에서 `userId`를 추출합니다.
+
+```text
+JWT
+ ↓
+subject(userId)
+ ↓
+CustomUserDetailsService.loadUserById(userId)
+ ↓
+사용자 조회
+```
+
+`movieId`, `reservationId`와 같은 값은 인증 정보가 아니라 요청마다 달라지는 리소스 정보이므로 JWT에 저장하지 않고 `PathVariable` 또는 `Request Body` 등을 통해 전달합니다.
+
+> Q : 영화 ID나 예매 ID도 토큰에 넣어야 할까요?
+> A : 영화 ID나 예매 ID는 사용자 인증 정보가 아니라 요청마다 달라지는 리소스 정보이므로 JWT에 저장하지 않고 PathVariable이나 Request Body를 통해 전달하는 것이 적절함.
+
+---
+
+CGV 프로젝트에서는 인증·인가 실패 상황을 다음과 같이 구분했습니다.
+
+```text
+토큰 없음
+→ 401 TOKEN_NOT_EXIST
+
+만료된 토큰
+→ 401 TOKEN_EXPIRED
+
+변조되거나 유효하지 않은 토큰
+→ 401 TOKEN_INVALID
+
+정상 JWT + 권한 부족
+→ 403 ACCESS_DENIED
+```
+
+인증 실패는 `JwtAuthenticationEntryPoint`에서 처리하고, 인증은 되었지만 권한이 부족한 경우는 `JwtAccessDeniedHandler`에서 처리하도록 구현했습니다.
+
+---
+
+# 6. CSRF 설정
+
+이번 JWT 인증에서는 `Authorization` 헤더를 통해 Access Token을 전달하며,
+세션이나 인증 쿠키를 사용하지 않는다.
+
+```http
+Authorization: Bearer <access-token>
+
+
+쿠키 기반 인증은 브라우저가 쿠키를 요청에 자동으로 포함하기 때문에
+사용자의 의도와 관계없이 인증 정보가 포함된 요청이 전송될 수 있어 CSRF 공격을 고려해야 합니다.
+반면 현재 구현에서는 클라이언트가 요청마다 직접 Authorization 헤더에 Bearer Token을 포함해야 하며, 브라우저가 인증 정보를 자동으로 전송하지 않습니다.
+따라서 현재의 Stateless JWT 인증 구조에서는 CSRF 보호를 비활성화하였습니다.
+```
+
+---
+
+# 7. 직접 구현하며  이해한 부분
+
+- JWT 검증과 Spring Security의 인증 처리는 별개의 과정이라는 점
+- `Authentication`이 현재 인증된 사용자와 권한 정보를 표현한다는 점
+- `SecurityContext`를 통해 현재 요청의 인증 정보를 관리한다는 점
+- `@AuthenticationPrincipal`을 통해 Controller에서 인증된 사용자를 가져올 수 있다는 점
+- `SessionCreationPolicy.STATELESS`에서는 매 요청마다 JWT 인증이 필요하다는 점
+- 인증 실패(`401`)와 권한 부족(`403`)을 구분해야 한다는 점
+- JWT의 Payload에는 민감한 정보를 저장하면 안 된다는 점
+- JWT에는 요청마다 달라지는 리소스 정보가 아닌 사용자 식별에 필요한 Claim을 저장해야 한다는 점
+
+이번 구현을 통해 Spring Security를 단순히 설정 코드를 작성하는 방식으로 사용하는 것이 아니라,
+
+> **요청이 Security Filter를 통과하면서 어떻게 사용자가 인증되고,  
+> 인증된 사용자의 권한을 바탕으로 어떻게 접근이 제어되는지**
+
+전체 흐름을 이해할 수 있었습니다.
+
+앞으로 인증 기능을 구현할 때에도 단순히 로그인 성공 여부만 고려하는 것이 아니라
+**토큰의 수명, 인증 상태 관리, 권한 검증, 예외 처리까지 하나의 인증 흐름으로 설계해야 한다는 점**을 배웠습니다.

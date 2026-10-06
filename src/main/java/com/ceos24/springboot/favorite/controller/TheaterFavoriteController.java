@@ -2,11 +2,13 @@ package com.ceos24.springboot.favorite.controller;
 
 import com.ceos24.springboot.favorite.dto.TheaterFavoriteResponse;
 import com.ceos24.springboot.favorite.service.TheaterFavoriteService;
+import com.ceos24.springboot.user.security.CustomUserDetails;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -25,12 +27,15 @@ public class TheaterFavoriteController {
     @PostMapping("/{theaterId}")
     public ResponseEntity<TheaterFavoriteResponse> addTheaterFavorite(
             @PathVariable Long theaterId,
-            @RequestParam Long userId
+            @AuthenticationPrincipal CustomUserDetails userDetails
     ) {
 
         TheaterFavoriteResponse response =
                 theaterFavoriteService
-                        .addTheaterFavorite(userId, theaterId);
+                        .addTheaterFavorite(
+                                userDetails.getUserId(),
+                                theaterId
+                        );
 
         return ResponseEntity
                 .status(HttpStatus.CREATED)
@@ -43,12 +48,14 @@ public class TheaterFavoriteController {
     @GetMapping
     public ResponseEntity<List<TheaterFavoriteResponse>>
     getTheaterFavorites(
-            @RequestParam Long userId
+            @AuthenticationPrincipal CustomUserDetails userDetails
     ) {
 
         return ResponseEntity.ok(
                 theaterFavoriteService
-                        .getTheaterFavorites(userId)
+                        .getTheaterFavorites(
+                                userDetails.getUserId()
+                        )
         );
     }
 
@@ -58,11 +65,14 @@ public class TheaterFavoriteController {
     @DeleteMapping("/{theaterId}")
     public ResponseEntity<Void> deleteTheaterFavorite(
             @PathVariable Long theaterId,
-            @RequestParam Long userId
+            @AuthenticationPrincipal CustomUserDetails userDetails
     ) {
 
         theaterFavoriteService
-                .deleteTheaterFavorite(userId, theaterId);
+                .deleteTheaterFavorite(
+                        userDetails.getUserId(),
+                        theaterId
+                );
 
         return ResponseEntity.noContent().build();
     }

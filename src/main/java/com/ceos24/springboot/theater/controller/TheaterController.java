@@ -2,6 +2,7 @@ package com.ceos24.springboot.theater.controller;
 
 
 import com.ceos24.springboot.theater.domain.Region;
+import com.ceos24.springboot.theater.domain.Theater;
 import com.ceos24.springboot.theater.dto.ScreeningResponse;
 import com.ceos24.springboot.theater.dto.TheaterCreateRequest;
 import com.ceos24.springboot.theater.dto.TheaterResponse;
@@ -62,7 +63,7 @@ public class TheaterController {
     // 영화관 하나 조회
     @Operation(summary = "영화관 하나 조회", description = "theaterId를 이용해 특정 영화를 조회합니다.")
     @GetMapping("/{theaterId}")
-    public ResponseEntity<TheaterResponse> getTheater(
+    public ResponseEntity<Theater> getTheater(
             @PathVariable Long theaterId
     ) {
         return ResponseEntity.ok(

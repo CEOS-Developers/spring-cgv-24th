@@ -7,11 +7,4 @@ public record TheaterCreateRequest(
         String theaterName,
         Region region
 ) {
-
-    public Theater toEntity() {
-        return Theater.builder()
-                .theaterName(theaterName)
-                .region(region)
-                .build();
-    }
 }

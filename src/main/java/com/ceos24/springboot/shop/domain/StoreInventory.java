@@ -59,4 +59,16 @@ public class StoreInventory {
 
         this.stock -= quantity;
     }
+
+// 재고 추가 메서드
+    public void increaseStock(Integer addQuantity) {
+        if (addQuantity == null || addQuantity <= 0) {
+            throw new IllegalArgumentException(
+                    "추가할 재고 수량은 1개 이상이어야 합니다."
+            );
+        }
+
+        this.stock += addQuantity;
+    }
+
 }
