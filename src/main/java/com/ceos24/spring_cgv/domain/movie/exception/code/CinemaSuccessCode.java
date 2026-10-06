@@ -1,6 +1,6 @@
 package com.ceos24.spring_cgv.domain.movie.exception.code;
 
-import com.ceos24.spring_cgv.global.apiPayload.code.BaseSuccessCode;
+import com.ceos24.spring_cgv.global.apipayload.code.BaseSuccessCode;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;

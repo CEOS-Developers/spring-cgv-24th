@@ -7,8 +7,8 @@ import com.ceos24.spring_cgv.domain.movie.entity.Cinema;
 import com.ceos24.spring_cgv.domain.movie.exception.CinemaException;
 import com.ceos24.spring_cgv.domain.movie.exception.code.CinemaErrorCode;
 import com.ceos24.spring_cgv.domain.movie.repository.CinemaRepository;
-import com.ceos24.spring_cgv.global.apiPayload.exception.ProjectException;
 import lombok.RequiredArgsConstructor;
+import org.jspecify.annotations.NonNull;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -35,6 +35,7 @@ public class CinemaService {
         }
 
         Cinema cinema = Cinema.builder()
+                .name(request.name())
                 .region(request.region())
                 .address(request.address())
                 .build();
@@ -60,8 +61,7 @@ public class CinemaService {
      */
     public CinemaResponse findCinema(Long cinemaId) {
 
-        Cinema cinema = cinemaRepository.findById(cinemaId)
-                .orElseThrow(() -> new CinemaException(CinemaErrorCode.CINEMA_NOT_FOUND));
+        Cinema cinema = findCinemaById(cinemaId);
 
         return CinemaResponse.from(cinema);
     }
@@ -75,15 +75,14 @@ public class CinemaService {
     @Transactional
     public CinemaResponse updateCinema(Long cinemaId, CinemaUpdateRequest request) {
 
-        Cinema cinema = cinemaRepository.findById(cinemaId)
-                .orElseThrow(() -> new CinemaException(CinemaErrorCode.CINEMA_NOT_FOUND));
+        Cinema cinema = findCinemaById(cinemaId);
 
         // 자신 제외 같은 지역과 주소가 존재하는지 검사한다.
         if (cinemaRepository.existsByRegionAndAddressAndIdNot(request.region(), request.address(), cinemaId)) {
             throw new CinemaException(CinemaErrorCode.CINEMA_ALREADY_EXISTS);
         }
 
-        cinema.update(request.region(), request.address());
+        cinema.update(request.name(), request.region(), request.address());
 
         return CinemaResponse.from(cinema);
     }
@@ -95,9 +94,13 @@ public class CinemaService {
     @Transactional
     public void deleteCinema(Long cinemaId) {
 
-        Cinema cinema = cinemaRepository.findById(cinemaId)
-                .orElseThrow(() -> new CinemaException(CinemaErrorCode.CINEMA_NOT_FOUND));
+        Cinema cinema = findCinemaById(cinemaId);
 
         cinemaRepository.delete(cinema);
+    }
+
+    private @NonNull Cinema findCinemaById(Long cinemaId) {
+        return cinemaRepository.findById(cinemaId)
+                .orElseThrow(() -> new CinemaException(CinemaErrorCode.CINEMA_NOT_FOUND));
     }
 }

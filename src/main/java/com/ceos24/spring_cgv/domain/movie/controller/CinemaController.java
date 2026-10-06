@@ -5,11 +5,14 @@ import com.ceos24.spring_cgv.domain.movie.dto.request.CinemaUpdateRequest;
 import com.ceos24.spring_cgv.domain.movie.dto.response.CinemaResponse;
 import com.ceos24.spring_cgv.domain.movie.exception.code.CinemaSuccessCode;
 import com.ceos24.spring_cgv.domain.movie.service.CinemaService;
-import com.ceos24.spring_cgv.global.apiPayload.ApiResponse;
+import com.ceos24.spring_cgv.global.apipayload.ApiResponse;
+import com.ceos24.spring_cgv.global.security.userdetails.CustomUserDetails;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -31,6 +34,7 @@ public class CinemaController {
 
     @Operation(summary = "영화관 생성", description = "새로운 영화관을 등록합니다.")
     @PostMapping
+    @PreAuthorize("hasRole('ADMIN')")
     public ApiResponse<CinemaResponse> createCinema(
             @Valid @RequestBody CinemaCreateRequest request
     ) {
@@ -56,6 +60,7 @@ public class CinemaController {
 
     @Operation(summary = "영화관 수정", description = "ID로 특정 영화관의 정보를 수정합니다.")
     @PutMapping("/{cinemaId}")
+    @PreAuthorize("hasRole('ADMIN')")
     public ApiResponse<CinemaResponse> updateCinema(
             @PathVariable Long cinemaId,
             @Valid @RequestBody CinemaUpdateRequest request
@@ -66,12 +71,13 @@ public class CinemaController {
 
     @Operation(summary = "영화관 삭제", description = "ID로 특정 영화관을 삭제합니다.")
     @DeleteMapping("/{cinemaId}")
+    @PreAuthorize("hasRole('ADMIN')")
     public ApiResponse<Void> deleteCinema(
             @PathVariable Long cinemaId
     ) {
 
         cinemaService.deleteCinema(cinemaId);
 
-        return ApiResponse.onSuccess(CinemaSuccessCode.CINEMA_DELETED, null);
+        return ApiResponse.onSuccess(CinemaSuccessCode.CINEMA_DELETED);
     }
 }

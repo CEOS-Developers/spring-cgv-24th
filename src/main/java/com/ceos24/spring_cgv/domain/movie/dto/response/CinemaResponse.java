@@ -9,6 +9,9 @@ public record CinemaResponse(
         @Schema(description = "영화관 ID", example = "1")
         Long id,
 
+        @Schema(description = "영화관 이름", example = "CGV 강남")
+        String name,
+
         @Schema(description = "지역", example = "강남")
         String region,
 
@@ -17,6 +20,6 @@ public record CinemaResponse(
 ) {
 
     public static CinemaResponse from(Cinema cinema) {
-        return new CinemaResponse(cinema.getId(), cinema.getRegion(), cinema.getAddress());
+        return new CinemaResponse(cinema.getId(), cinema.getName(), cinema.getRegion(), cinema.getAddress());
     }
 }

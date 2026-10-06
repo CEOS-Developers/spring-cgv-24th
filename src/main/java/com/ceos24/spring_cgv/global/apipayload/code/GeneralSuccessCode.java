@@ -1,4 +1,4 @@
-package com.ceos24.spring_cgv.global.apiPayload.code;
+package com.ceos24.spring_cgv.global.apipayload.code;
 
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;

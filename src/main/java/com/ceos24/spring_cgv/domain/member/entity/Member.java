@@ -1,11 +1,8 @@
 package com.ceos24.spring_cgv.domain.member.entity;
 
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
-import jakarta.persistence.Id;
-import jakarta.persistence.Table;
+import com.ceos24.spring_cgv.domain.member.enums.Role;
+import com.ceos24.spring_cgv.global.common.BaseEntity;
+import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Builder;
 import lombok.Getter;
@@ -15,7 +12,7 @@ import lombok.NoArgsConstructor;
 @Table(name = "member")
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
-public class Member {
+public class Member extends BaseEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -25,8 +22,21 @@ public class Member {
     @Column(name = "name", length = 50, nullable = false)
     private String name;
 
+    @Column(name = "email", length = 50, nullable = false, unique = true)
+    private String email;
+
+    @Column(name = "password", nullable = false)
+    private String password;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "role", nullable = false)
+    private Role role;
+
     @Builder
-    private Member(String name) {
+    private Member(String name, String email, String password, Role role) {
         this.name = name;
+        this.email = email;
+        this.password = password;
+        this.role = role;
     }
 }

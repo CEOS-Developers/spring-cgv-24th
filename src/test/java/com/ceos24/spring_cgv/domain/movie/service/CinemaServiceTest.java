@@ -34,11 +34,13 @@ class CinemaServiceTest {
     @InjectMocks
     private CinemaService cinemaService;
 
+    private static final String NAME = "CGV 강남";
     private static final String REGION = "강남";
     private static final String ADDRESS = "주소";
 
     private Cinema createCinema(){
         Cinema cinema = Cinema.builder()
+                .name(CinemaServiceTest.NAME)
                 .region(CinemaServiceTest.REGION)
                 .address(CinemaServiceTest.ADDRESS)
                 .build();
@@ -56,7 +58,7 @@ class CinemaServiceTest {
         void 영화관_등록_성공(){
 
             // given
-            CinemaCreateRequest request = new CinemaCreateRequest(REGION, ADDRESS);
+            CinemaCreateRequest request = new CinemaCreateRequest(NAME, REGION, ADDRESS);
             given(cinemaRepository.existsByRegionAndAddress(REGION, ADDRESS)).willReturn(false);
             given(cinemaRepository.save(any(Cinema.class))).willReturn(createCinema());
 
@@ -65,6 +67,7 @@ class CinemaServiceTest {
 
             // then
             assertThat(response.id()).isEqualTo(1L);
+            assertThat(response.name()).isEqualTo(NAME);
             assertThat(response.region()).isEqualTo(REGION);
             assertThat(response.address()).isEqualTo(ADDRESS);
         }
@@ -74,7 +77,7 @@ class CinemaServiceTest {
         void 영화관_중복_등록_실패(){
 
             // given
-            CinemaCreateRequest request = new CinemaCreateRequest(REGION, ADDRESS);
+            CinemaCreateRequest request = new CinemaCreateRequest(NAME, REGION, ADDRESS);
             given(cinemaRepository.existsByRegionAndAddress(REGION,ADDRESS)).willReturn(true);
 
             // when, then
@@ -153,7 +156,7 @@ class CinemaServiceTest {
 
             // given
             Cinema cinema = createCinema();
-            CinemaUpdateRequest request = new CinemaUpdateRequest("의왕", "포일로30");
+            CinemaUpdateRequest request = new CinemaUpdateRequest("CGV 의왕", "의왕", "포일로30");
             given(cinemaRepository.findById(1L)).willReturn(Optional.of(cinema));
             given(cinemaRepository.existsByRegionAndAddressAndIdNot("의왕", "포일로30", 1L))
                     .willReturn(false);
@@ -162,6 +165,7 @@ class CinemaServiceTest {
             CinemaResponse response = cinemaService.updateCinema(1L, request);
 
             // then
+            assertThat(response.name()).isEqualTo("CGV 의왕");
             assertThat(response.region()).isEqualTo("의왕");
             assertThat(response.address()).isEqualTo("포일로30");
         }
@@ -171,7 +175,7 @@ class CinemaServiceTest {
         void 영화관_수정_실패(){
 
             // given
-            CinemaUpdateRequest request = new CinemaUpdateRequest("의왕", "포일로30");
+            CinemaUpdateRequest request = new CinemaUpdateRequest("CGV 의왕", "의왕", "포일로30");
             given(cinemaRepository.findById(2L)).willReturn(Optional.empty());
 
             // when, then

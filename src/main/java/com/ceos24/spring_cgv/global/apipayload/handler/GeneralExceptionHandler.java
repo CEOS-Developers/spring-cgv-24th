@@ -1,11 +1,12 @@
-package com.ceos24.spring_cgv.global.apiPayload.handler;
+package com.ceos24.spring_cgv.global.apipayload.handler;
 
-import com.ceos24.spring_cgv.global.apiPayload.ApiResponse;
-import com.ceos24.spring_cgv.global.apiPayload.code.BaseErrorCode;
-import com.ceos24.spring_cgv.global.apiPayload.code.GeneralErrorCode;
-import com.ceos24.spring_cgv.global.apiPayload.exception.ProjectException;
+import com.ceos24.spring_cgv.global.apipayload.ApiResponse;
+import com.ceos24.spring_cgv.global.apipayload.code.BaseErrorCode;
+import com.ceos24.spring_cgv.global.apipayload.code.GeneralErrorCode;
+import com.ceos24.spring_cgv.global.apipayload.exception.ProjectException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.authorization.AuthorizationDeniedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -27,7 +28,7 @@ public class GeneralExceptionHandler {
         log.warn("[프로젝트 지정 예외] code={}, message={}", errorCode.getCode(), errorCode.getMessage());
 
         return ResponseEntity.status(errorCode.getStatus())
-                .body(ApiResponse.onFailure(errorCode, null));
+                .body(ApiResponse.onFailure(errorCode));
     }
 
     // @ModelAttribute의 타입 변환 실패 혹은 검증 실패, @RequestBody의 검증 실패
@@ -78,14 +79,25 @@ public class GeneralExceptionHandler {
                 .body(ApiResponse.onFailure(errorCode, errors));
     }
 
-    // 그 외 지정되지 않은 예외
-    @ExceptionHandler(RuntimeException.class)
-    public ResponseEntity<ApiResponse<String>> handleGlobalException(RuntimeException e){
+    // @PreAuthorize 인가 실패
+    @ExceptionHandler(AuthorizationDeniedException.class)
+    public ResponseEntity<ApiResponse<Void>> handleAuthorizationDenied(AuthorizationDeniedException e){
 
-        BaseErrorCode errorCode = GeneralErrorCode.INTERNAL_SERVER_ERROR;
-        log.error("[미지정 예외] code={}, message={}", errorCode.getCode(), errorCode.getMessage());
+        BaseErrorCode errorCode = GeneralErrorCode.FORBIDDEN;
+        log.warn("[인가 실패] code={}, message={}", errorCode.getCode(), errorCode.getMessage());
 
         return ResponseEntity.status(errorCode.getStatus())
-                .body(ApiResponse.onFailure(errorCode, e.getMessage()));
+                .body(ApiResponse.onFailure(errorCode));
+    }
+
+    // 그 외 지정되지 않은 예외
+    @ExceptionHandler(RuntimeException.class)
+    public ResponseEntity<ApiResponse<Void>> handleGlobalException(RuntimeException e){
+
+        BaseErrorCode errorCode = GeneralErrorCode.INTERNAL_SERVER_ERROR;
+        log.error("[미지정 예외] code={}", errorCode.getCode(), e);
+
+        return ResponseEntity.status(errorCode.getStatus())
+                .body(ApiResponse.onFailure(errorCode));
     }
 }

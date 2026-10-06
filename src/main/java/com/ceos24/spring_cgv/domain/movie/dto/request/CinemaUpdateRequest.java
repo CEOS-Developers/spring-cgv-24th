@@ -7,6 +7,11 @@ import jakarta.validation.constraints.Size;
 @Schema(description = "영화관 수정 요청")
 public record CinemaUpdateRequest(
 
+        @Schema(description = "영화관 이름", example = "CGV 강남")
+        @NotBlank(message = "영화관 이름은 필수입니다.")
+        @Size(max = 50, message = "영화관 이름은 50자를 넘을 수 없습니다.")
+        String name,
+
         @Schema(description = "지역", example = "강남")
         @NotBlank(message = "지역은 필수입니다.")
         @Size(max = 50, message = "지역은 50자를 넘을 수 없습니다.")

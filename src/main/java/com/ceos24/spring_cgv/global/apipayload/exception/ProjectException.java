@@ -1,6 +1,6 @@
-package com.ceos24.spring_cgv.global.apiPayload.exception;
+package com.ceos24.spring_cgv.global.apipayload.exception;
 
-import com.ceos24.spring_cgv.global.apiPayload.code.BaseErrorCode;
+import com.ceos24.spring_cgv.global.apipayload.code.BaseErrorCode;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 

@@ -23,6 +23,9 @@ public class Cinema {
     @Column(name = "id")
     private Long id;
 
+    @Column(name = "name", length = 50, nullable = false)
+    private String name;
+
     @Column(name = "region", length = 50, nullable = false)
     private String region;
 
@@ -30,12 +33,14 @@ public class Cinema {
     private String address;
 
     @Builder
-    private Cinema(String region, String address) {
+    private Cinema(String name, String region, String address) {
+        this.name = name;
         this.region = region;
         this.address = address;
     }
 
-    public void update(String region, String address) {
+    public void update(String name, String region, String address) {
+        this.name = name;
         this.region = region;
         this.address = address;
     }
