@@ -22,6 +22,8 @@ public class Reservation extends BaseTimeEntity {
 
     private static final int HOLD_MINUTES = 10;
     private static final int CANCEL_DEADLINE_MINUTES = 20;
+    // 토스 승인 호출의 최대 소요 시간(연결 5초 + 읽기 60초)보다 넉넉하게 둔다.
+    private static final int PAYMENT_GRACE_MINUTES = 3;
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -78,11 +80,34 @@ public class Reservation extends BaseTimeEntity {
         return this.status.isHoldExpired(this.expiresAt, now);
     }
 
-    public void confirm(LocalDateTime now) {
+    public void verifyPayable(LocalDateTime now) {
         requirePending();
         if (isExpired(now)) {
             throw new CustomException(ErrorCode.RESERVATION_EXPIRED);
         }
+    }
+
+    // 토스 승인 호출은 1분 넘게 걸릴 수 있다. 그사이 선점이 만료되면 다른 요청이 좌석을 가져가고
+    // 토스는 그대로 승인해 이중 판매가 된다. 호출이 끝날 때까지 좌석이 풀리지 않게 만료 시각을 뒤로 민다.
+    // 남은 시간이 유예보다 길면 그대로 둔다. 줄이면 결제를 시작했다는 이유로 선점이 짧아진다.
+    public void holdForPayment(LocalDateTime now) {
+        verifyPayable(now);
+        LocalDateTime paymentDeadline = now.plusMinutes(PAYMENT_GRACE_MINUTES);
+        if (paymentDeadline.isAfter(this.expiresAt)) {
+            this.expiresAt = paymentDeadline;
+        }
+    }
+
+    // 거절되면 늘린 시간을 결제 시작 전 값으로 되돌린다. 남겨 두면 거절을 반복해 좌석을 계속 붙잡을 수 있다.
+    // 되돌린 값이 이미 지났으면 선점은 그대로 만료된 것으로 보인다.
+    public void endPaymentHold(LocalDateTime expiresAtBeforePayment) {
+        if (expiresAtBeforePayment.isBefore(this.expiresAt)) {
+            this.expiresAt = expiresAtBeforePayment;
+        }
+    }
+
+    public void confirm(LocalDateTime now) {
+        verifyPayable(now);
         this.status = ReservationStatus.RESERVED;
         this.confirmedAt = now;
     }

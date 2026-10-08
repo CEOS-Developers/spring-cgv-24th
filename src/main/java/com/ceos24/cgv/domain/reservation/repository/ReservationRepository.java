@@ -3,7 +3,9 @@ package com.ceos24.cgv.domain.reservation.repository;
 import com.ceos24.cgv.domain.reservation.dto.ReservationDetailRow;
 import com.ceos24.cgv.domain.reservation.entity.Reservation;
 import com.ceos24.cgv.domain.reservation.entity.ReservationStatus;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -69,14 +71,13 @@ public interface ReservationRepository extends JpaRepository<Reservation, Long> 
             """)
     List<ReservationDetailRow> findDetailRowsByUserId(@Param("userId") Long userId);
 
-    // 취소는 좌석 해제와 취소 기한 비교만 한다. 응답을 만들지 않으므로 사용자·영화·지점은 읽지 않는다.
-    @Query("""
-            SELECT r FROM Reservation r
-            JOIN FETCH r.screening
-            LEFT JOIN FETCH r.seats
-            WHERE r.id = :id AND r.user.id = :userId
-            """)
-    Optional<Reservation> findOwnedWithSeats(@Param("id") Long id, @Param("userId") Long userId);
+    // 결제 주문 생성·승인 시작·취소가 같은 예매에서 겹치지 않도록 예매 행을 잠근다.
+    // 조인하지 않는다. FOR UPDATE는 조인한 행까지 잠가, 회차·영화를 붙이면 같은 영화의 결제가 전부 줄을 선다.
+    // 이 조회가 트랜잭션의 첫 쿼리여야 한다. InnoDB는 첫 일반 SELECT 시점의 스냅샷을 끝까지 쓰므로, 잠금보다 먼저
+    // 읽은 것이 있으면 앞 트랜잭션이 커밋한 결제 상태를 잠금을 얻은 뒤에도 보지 못한다.
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT r FROM Reservation r WHERE r.id = :id AND r.user.id = :userId")
+    Optional<Reservation> findOwnedForUpdate(@Param("id") Long id, @Param("userId") Long userId);
 
     // 요청한 좌석을 실제로 막고 있는 만료 선점만 고른다. 회차의 만료 선점을 전부 풀면
     // 그 행들에 UPDATE 락이 걸려, 같은 회차를 골랐을 뿐인 다른 좌석 요청까지 서로를 기다린다.

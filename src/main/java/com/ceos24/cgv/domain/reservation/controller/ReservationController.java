@@ -1,8 +1,10 @@
 package com.ceos24.cgv.domain.reservation.controller;
 
-import com.ceos24.cgv.domain.reservation.dto.PaymentRequest;
+import com.ceos24.cgv.domain.payment.dto.PaymentConfirmRequest;
+import com.ceos24.cgv.domain.payment.dto.PaymentOrderResponse;
 import com.ceos24.cgv.domain.reservation.dto.ReservationCreateRequest;
 import com.ceos24.cgv.domain.reservation.dto.ReservationResponse;
+import com.ceos24.cgv.domain.reservation.service.ReservationPaymentService;
 import com.ceos24.cgv.domain.reservation.service.ReservationService;
 import com.ceos24.cgv.global.response.ApiResponse;
 import com.ceos24.cgv.global.security.AuthUser;
@@ -18,13 +20,14 @@ import java.util.List;
 
 // principal에서 userId만 꺼내 넘긴다. 서비스가 인증 방식을 모르면 테스트나 다른 호출 경로에서
 // Long 하나로 부를 수 있다.
-@Tag(name = "예매", description = "예매 생성/조회/취소")
+@Tag(name = "예매", description = "예매 생성/결제/조회/취소")
 @RestController
 @RequestMapping("/api/reservations")
 @RequiredArgsConstructor
 public class ReservationController {
 
     private final ReservationService reservationService;
+    private final ReservationPaymentService reservationPaymentService;
 
     @Operation(summary = "좌석 선점 (결제 대기 예매 생성)")
     @PostMapping
@@ -34,12 +37,20 @@ public class ReservationController {
         return ApiResponse.success(reservationService.create(authUser.userId(), req));
     }
 
-    @Operation(summary = "결제 (mock) — 성공 시 예매 확정, 실패 시 좌석 해제")
-    @PostMapping("/{id}/payment")
-    public ApiResponse<ReservationResponse> pay(@AuthenticationPrincipal AuthUser authUser,
-                                                @PathVariable Long id,
-                                                @Valid @RequestBody PaymentRequest req) {
-        return ApiResponse.success(reservationService.pay(id, authUser.userId(), req));
+    @Operation(summary = "결제 주문 생성 — 결제위젯에 넘길 orderId·금액 발급")
+    @PostMapping("/{id}/payments")
+    @ResponseStatus(HttpStatus.CREATED)
+    public ApiResponse<PaymentOrderResponse> createPaymentOrder(@AuthenticationPrincipal AuthUser authUser,
+                                                                @PathVariable Long id) {
+        return ApiResponse.success(reservationService.createPaymentOrder(id, authUser.userId()));
+    }
+
+    @Operation(summary = "결제 승인 — successUrl로 받은 값으로 토스 승인. 성공 시 예매 확정, 거절 시 선점 유지")
+    @PostMapping("/{id}/payments/confirm")
+    public ApiResponse<ReservationResponse> confirmPayment(@AuthenticationPrincipal AuthUser authUser,
+                                                           @PathVariable Long id,
+                                                           @Valid @RequestBody PaymentConfirmRequest req) {
+        return ApiResponse.success(reservationPaymentService.confirm(id, authUser.userId(), req));
     }
 
     @Operation(summary = "내 예매 내역 (최근 예매 순, 취소·만료 포함)")

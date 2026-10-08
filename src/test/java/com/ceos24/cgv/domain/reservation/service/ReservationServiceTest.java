@@ -3,11 +3,15 @@ package com.ceos24.cgv.domain.reservation.service;
 import com.ceos24.cgv.domain.branch.entity.Branch;
 import com.ceos24.cgv.domain.branch.entity.Theater;
 import com.ceos24.cgv.domain.branch.entity.TheaterType;
-import com.ceos24.cgv.global.common.PaymentResult;
+import com.ceos24.cgv.domain.payment.dto.PaymentConfirmRequest;
+import com.ceos24.cgv.domain.payment.dto.PaymentOrderResponse;
+import com.ceos24.cgv.domain.payment.entity.Payment;
+import com.ceos24.cgv.domain.payment.entity.PaymentStatus;
+import com.ceos24.cgv.domain.payment.repository.PaymentRepository;
+import com.ceos24.cgv.global.client.TossPayment;
 import com.ceos24.cgv.global.exception.CustomException;
 import com.ceos24.cgv.global.exception.ErrorCode;
 import com.ceos24.cgv.domain.movie.entity.Movie;
-import com.ceos24.cgv.domain.reservation.dto.PaymentRequest;
 import com.ceos24.cgv.domain.reservation.entity.AudienceType;
 import com.ceos24.cgv.domain.reservation.entity.Reservation;
 import com.ceos24.cgv.domain.reservation.repository.ReservationRepository;
@@ -17,6 +21,7 @@ import com.ceos24.cgv.domain.reservation.entity.ReservationSeat;
 import com.ceos24.cgv.domain.reservation.entity.ReservationStatus;
 import com.ceos24.cgv.domain.reservation.dto.ReservationCreateRequest;
 import com.ceos24.cgv.domain.reservation.dto.ReservationDetailRow;
+import com.ceos24.cgv.domain.reservation.dto.ReservationPaymentAttempt;
 import com.ceos24.cgv.domain.reservation.dto.ReservationResponse;
 import com.ceos24.cgv.domain.screening.entity.Screening;
 import com.ceos24.cgv.domain.screening.repository.ScreeningRepository;
@@ -38,6 +43,7 @@ import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
@@ -66,6 +72,7 @@ class ReservationServiceTest {
     // 실제 구현을 타게 해서 아래 findById stub이 그대로 쓰이게 한다.
     @Mock(answer = Answers.CALLS_REAL_METHODS) UserRepository userRepository;
     @Mock ReservationSeatRepository reservationSeatRepository;
+    @Mock PaymentRepository paymentRepository;
 
     ReservationService service;
 
@@ -73,7 +80,7 @@ class ReservationServiceTest {
     void setUp() {
         Clock clock = Clock.fixed(NOW.atZone(ZONE).toInstant(), ZONE);
         service = new ReservationService(reservationRepository, screeningRepository,
-                userRepository, reservationSeatRepository, clock);
+                userRepository, reservationSeatRepository, paymentRepository, clock);
     }
 
     // ─── create ───────────────────────────────────────────────────────────────
@@ -255,63 +262,193 @@ class ReservationServiceTest {
                 .extracting("errorCode").isEqualTo(ErrorCode.SEAT_RESERVATION_CONFLICT);
     }
 
-    // ─── pay ──────────────────────────────────────────────────────────────────
+    // ─── 결제 주문 생성 ───────────────────────────────────────────────────────
 
     @Test
-    void 결제_성공이면_RESERVED로_확정된다() {
-        Reservation hold = holdWithId(1L, NOW, 1, 1);
-        given(reservationRepository.findOwnedWithDetails(1L, 2L)).willReturn(Optional.of(hold));
+    void 결제_주문은_좌석_가격_합을_금액으로_새_주문번호를_발급한다() {
+        Reservation hold = holdWithId(1L, NOW, 1, 1, 1, 2);
+        given(reservationRepository.findOwnedForUpdate(1L, 2L)).willReturn(Optional.of(hold));
+        given(paymentRepository.save(any(Payment.class))).willAnswer(inv -> inv.getArgument(0));
 
-        ReservationResponse response = service.pay(1L, 2L, new PaymentRequest(PaymentResult.SUCCESS));
+        PaymentOrderResponse first = service.createPaymentOrder(1L, 2L);
+        PaymentOrderResponse second = service.createPaymentOrder(1L, 2L);
 
-        assertThat(response.status()).isEqualTo(ReservationStatus.RESERVED);
-        assertThat(hold.getConfirmedAt()).isEqualTo(NOW);
-        assertThat(hold.getSeats()).allMatch(ReservationSeat::isOccupied);
+        assertThat(first.amount()).isEqualTo(28000);
+        assertThat(first.orderName()).isEqualTo("범죄도시4 2매");
+        // 토스 규칙: 6~64자, 영문·숫자·-·_
+        assertThat(first.orderId()).startsWith("cgv-r-").hasSize(38).matches("[A-Za-z0-9_-]+");
+        assertThat(second.orderId()).isNotEqualTo(first.orderId());
     }
 
     @Test
-    void 결제_실패면_좌석이_풀리고_PAYMENT_FAILED() {
-        Reservation hold = holdWithId(1L, NOW, 1, 1);
-        given(reservationRepository.findOwnedWithDetails(1L, 2L)).willReturn(Optional.of(hold));
+    void 만료된_선점은_결제_주문을_만들_수_없다() {
+        Reservation hold = holdWithId(1L, NOW.minusMinutes(11), 1, 1);
+        given(reservationRepository.findOwnedForUpdate(1L, 2L)).willReturn(Optional.of(hold));
 
-        assertThatThrownBy(() -> service.pay(1L, 2L, new PaymentRequest(PaymentResult.FAILURE)))
-                .isInstanceOf(CustomException.class)
-                .extracting("errorCode").isEqualTo(ErrorCode.PAYMENT_FAILED);
-
-        assertThat(hold.getStatus()).isEqualTo(ReservationStatus.CANCELLED);
-        assertThat(hold.getSeats()).noneMatch(ReservationSeat::isOccupied);
-    }
-
-    @Test
-    void 만료된_선점을_결제하면_RESERVATION_EXPIRED() {
-        Reservation hold = holdWithId(1L, NOW.minusMinutes(20), 1, 1);
-        given(reservationRepository.findOwnedWithDetails(1L, 2L)).willReturn(Optional.of(hold));
-
-        assertThatThrownBy(() -> service.pay(1L, 2L, new PaymentRequest(PaymentResult.SUCCESS)))
+        assertThatThrownBy(() -> service.createPaymentOrder(1L, 2L))
                 .isInstanceOf(CustomException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.RESERVATION_EXPIRED);
-        assertThat(hold.getStatus()).isEqualTo(ReservationStatus.PENDING);
+        verify(paymentRepository, never()).save(any());
     }
 
     @Test
-    void 이미_확정된_예매를_다시_결제하면_RESERVATION_NOT_PENDING() {
+    void 승인_중인_결제가_있으면_새_주문을_만들_수_없다() {
         Reservation hold = holdWithId(1L, NOW, 1, 1);
-        hold.confirm(NOW);
-        given(reservationRepository.findOwnedWithDetails(1L, 2L)).willReturn(Optional.of(hold));
+        given(reservationRepository.findOwnedForUpdate(1L, 2L)).willReturn(Optional.of(hold));
+        given(paymentRepository.existsByReservationIdAndStatus(1L, PaymentStatus.IN_PROGRESS)).willReturn(true);
 
-        assertThatThrownBy(() -> service.pay(1L, 2L, new PaymentRequest(PaymentResult.SUCCESS)))
+        assertThatThrownBy(() -> service.createPaymentOrder(1L, 2L))
+                .isInstanceOf(CustomException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.PAYMENT_IN_PROGRESS);
+        verify(paymentRepository, never()).save(any());
+    }
+
+    @Test
+    void 남의_예매에는_결제_주문을_만들_수_없다() {
+        given(reservationRepository.findOwnedForUpdate(1L, 3L)).willReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.createPaymentOrder(1L, 3L))
+                .isInstanceOf(CustomException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.RESERVATION_NOT_FOUND);
+    }
+
+    // ─── 승인 시작 (T1) ───────────────────────────────────────────────────────
+
+    @Test
+    void 승인을_시작하면_IN_PROGRESS가_되고_선점이_유예만큼_늘어난다() {
+        // 선점이 1분 남았다. 토스 호출 중에 만료되면 다른 요청이 좌석을 가져간다
+        Reservation hold = holdWithId(1L, NOW.minusMinutes(9), 1, 1);
+        Payment payment = givenPayment(hold, 50L);
+
+        ReservationPaymentAttempt attempt = service.startPayment(1L, 2L, confirmReq(payment, 14000));
+
+        assertThat(payment.getStatus()).isEqualTo(PaymentStatus.IN_PROGRESS);
+        assertThat(hold.getExpiresAt()).isEqualTo(NOW.plusMinutes(3));
+        assertThat(attempt.expiresAtBeforePayment()).isEqualTo(NOW.plusMinutes(1));
+        assertThat(attempt.paymentId()).isEqualTo(50L);
+        assertThat(attempt.amount()).isEqualTo(14000);
+        assertThat(attempt.paymentKey()).isEqualTo("tgen_test_key");
+    }
+
+    @Test
+    void 남은_선점이_유예보다_길면_만료_시각을_줄이지_않는다() {
+        Reservation hold = holdWithId(1L, NOW, 1, 1);
+        Payment payment = givenPayment(hold, 50L);
+
+        service.startPayment(1L, 2L, confirmReq(payment, 14000));
+
+        assertThat(hold.getExpiresAt()).isEqualTo(NOW.plusMinutes(10));
+    }
+
+    @Test
+    void 금액이_주문과_다르면_PAYMENT_AMOUNT_MISMATCH이고_결제는_그대로다() {
+        Reservation hold = holdWithId(1L, NOW, 1, 1);
+        Payment payment = givenPayment(hold, 50L);
+
+        assertThatThrownBy(() -> service.startPayment(1L, 2L, confirmReq(payment, 100)))
+                .isInstanceOf(CustomException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.PAYMENT_AMOUNT_MISMATCH);
+        assertThat(payment.getStatus()).isEqualTo(PaymentStatus.READY);
+    }
+
+    @Test
+    void 이_예매의_주문번호가_아니면_PAYMENT_NOT_FOUND() {
+        Reservation hold = holdWithId(1L, NOW, 1, 1);
+        given(reservationRepository.findOwnedForUpdate(1L, 2L)).willReturn(Optional.of(hold));
+        given(paymentRepository.findByOrderIdAndReservationId("cgv-r-other", 1L)).willReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.startPayment(1L, 2L,
+                new PaymentConfirmRequest("tgen_test_key", "cgv-r-other", 14000)))
+                .isInstanceOf(CustomException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.PAYMENT_NOT_FOUND);
+    }
+
+    @Test
+    void 같은_예매의_다른_결제가_승인_중이면_PAYMENT_IN_PROGRESS() {
+        Reservation hold = holdWithId(1L, NOW, 1, 1);
+        Payment payment = givenPayment(hold, 50L);
+        given(paymentRepository.existsByReservationIdAndStatus(1L, PaymentStatus.IN_PROGRESS)).willReturn(true);
+
+        assertThatThrownBy(() -> service.startPayment(1L, 2L, confirmReq(payment, 14000)))
+                .isInstanceOf(CustomException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.PAYMENT_IN_PROGRESS);
+        assertThat(payment.getStatus()).isEqualTo(PaymentStatus.READY);
+    }
+
+    @Test
+    void 만료된_선점은_승인을_시작할_수_없다() {
+        Reservation hold = holdWithId(1L, NOW.minusMinutes(11), 1, 1);
+        Payment payment = givenPayment(hold, 50L);
+
+        assertThatThrownBy(() -> service.startPayment(1L, 2L, confirmReq(payment, 14000)))
+                .isInstanceOf(CustomException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.RESERVATION_EXPIRED);
+        assertThat(payment.getStatus()).isEqualTo(PaymentStatus.READY);
+    }
+
+    @Test
+    void 확정된_예매는_승인을_시작할_수_없다() {
+        Reservation hold = holdWithId(1L, NOW, 1, 1);
+        Payment payment = givenPayment(hold, 50L);
+        hold.confirm(NOW);
+
+        assertThatThrownBy(() -> service.startPayment(1L, 2L, confirmReq(payment, 14000)))
                 .isInstanceOf(CustomException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.RESERVATION_NOT_PENDING);
     }
 
     @Test
-    void 남의_예매를_결제하면_RESERVATION_NOT_FOUND() {
-        // 소유자 조건이 붙은 조회가 비므로 엔티티가 로딩되지 않는다. 확정도 해제도 일어날 수 없다
-        given(reservationRepository.findOwnedWithDetails(1L, 3L)).willReturn(Optional.empty());
+    void 거절된_결제를_다시_승인하면_INVALID_PAYMENT_STATUS() {
+        Reservation hold = holdWithId(1L, NOW, 1, 1);
+        Payment payment = givenPayment(hold, 50L);
+        payment.startApproval();
+        payment.fail("REJECT_CARD_COMPANY", "카드사 거절");
 
-        assertThatThrownBy(() -> service.pay(1L, 3L, new PaymentRequest(PaymentResult.FAILURE)))
+        assertThatThrownBy(() -> service.startPayment(1L, 2L, confirmReq(payment, 14000)))
                 .isInstanceOf(CustomException.class)
-                .extracting("errorCode").isEqualTo(ErrorCode.RESERVATION_NOT_FOUND);
+                .extracting("errorCode").isEqualTo(ErrorCode.INVALID_PAYMENT_STATUS);
+    }
+
+    // ─── 승인 결과 반영 (T2) ──────────────────────────────────────────────────
+
+    @Test
+    void 승인되면_결제는_DONE_예매는_RESERVED가_된다() {
+        Reservation hold = holdWithId(1L, NOW, 1, 1);
+        Payment payment = paymentWithId(hold, 50L);
+        payment.startApproval();
+        given(paymentRepository.findById(50L)).willReturn(Optional.of(payment));
+        given(reservationRepository.findOwnedWithDetails(1L, 2L)).willReturn(Optional.of(hold));
+        // 토스는 +09:00으로 준다. 우리 시각대로 바꿔 저장한다
+        TossPayment approved = new TossPayment("tgen_test_key", payment.getOrderId(), "DONE", "카드", 14000,
+                NOW.atZone(ZONE).toOffsetDateTime().withOffsetSameInstant(ZoneOffset.ofHours(9)));
+
+        ReservationResponse response = service.completePayment(attemptOf(payment, hold, NOW.plusMinutes(10)), approved);
+
+        assertThat(response.status()).isEqualTo(ReservationStatus.RESERVED);
+        assertThat(hold.getConfirmedAt()).isEqualTo(NOW);
+        assertThat(payment.getStatus()).isEqualTo(PaymentStatus.DONE);
+        assertThat(payment.getPaymentKey()).isEqualTo("tgen_test_key");
+        assertThat(payment.getMethod()).isEqualTo("카드");
+        assertThat(payment.getApprovedAt()).isEqualTo(NOW);
+    }
+
+    @Test
+    void 거절되면_결제는_FAILED_좌석은_유지되고_늘린_선점은_되돌린다() {
+        Reservation hold = holdWithId(1L, NOW.minusMinutes(9), 1, 1);
+        Payment payment = paymentWithId(hold, 50L);
+        LocalDateTime before = hold.getExpiresAt();
+        hold.holdForPayment(NOW);
+        payment.startApproval();
+        given(paymentRepository.findById(50L)).willReturn(Optional.of(payment));
+
+        service.failPayment(attemptOf(payment, hold, before), "REJECT_CARD_COMPANY", "카드사 거절");
+
+        assertThat(payment.getStatus()).isEqualTo(PaymentStatus.FAILED);
+        assertThat(payment.getFailureCode()).isEqualTo("REJECT_CARD_COMPANY");
+        assertThat(hold.getStatus()).isEqualTo(ReservationStatus.PENDING);
+        assertThat(hold.getSeats()).allMatch(ReservationSeat::isOccupied);
+        // 거절을 반복해 좌석을 붙잡지 못하도록 원래 만료 시각으로 돌아간다
+        assertThat(hold.getExpiresAt()).isEqualTo(before);
     }
 
     // ─── getById ──────────────────────────────────────────────────────────────
@@ -356,7 +493,7 @@ class ReservationServiceTest {
 
     @Test
     void 없는_예매_취소시_RESERVATION_NOT_FOUND() {
-        given(reservationRepository.findOwnedWithSeats(99L, 2L)).willReturn(Optional.empty());
+        given(reservationRepository.findOwnedForUpdate(99L, 2L)).willReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.cancel(99L, 2L))
                 .isInstanceOf(CustomException.class)
@@ -366,7 +503,7 @@ class ReservationServiceTest {
     @Test
     void 취소해도_어느_좌석을_얼마에_잡았는지가_남는다() {
         Reservation hold = holdWithId(1L, NOW, 1, 1, 1, 2);
-        given(reservationRepository.findOwnedWithSeats(1L, 2L)).willReturn(Optional.of(hold));
+        given(reservationRepository.findOwnedForUpdate(1L, 2L)).willReturn(Optional.of(hold));
 
         service.cancel(1L, 2L);
 
@@ -381,7 +518,7 @@ class ReservationServiceTest {
     void 이미_취소된_예매_취소시_ALREADY_CANCELLED() {
         Reservation hold = holdWithId(1L, NOW, 1, 1);
         hold.cancel(NOW);
-        given(reservationRepository.findOwnedWithSeats(1L, 2L)).willReturn(Optional.of(hold));
+        given(reservationRepository.findOwnedForUpdate(1L, 2L)).willReturn(Optional.of(hold));
 
         assertThatThrownBy(() -> service.cancel(1L, 2L))
                 .isInstanceOf(CustomException.class)
@@ -392,7 +529,7 @@ class ReservationServiceTest {
     void 상영_20분_이내면_확정된_예매를_취소할_수_없다() {
         Reservation hold = holdWithId(1L, NOW, NOW.plusMinutes(19), 1, 1);
         hold.confirm(NOW);
-        given(reservationRepository.findOwnedWithSeats(1L, 2L)).willReturn(Optional.of(hold));
+        given(reservationRepository.findOwnedForUpdate(1L, 2L)).willReturn(Optional.of(hold));
 
         assertThatThrownBy(() -> service.cancel(1L, 2L))
                 .isInstanceOf(CustomException.class)
@@ -401,9 +538,23 @@ class ReservationServiceTest {
     }
 
     @Test
+    void 승인_중인_선점은_취소할_수_없다() {
+        // 토스가 승인한 뒤 확정할 예매가 없어진다
+        Reservation hold = holdWithId(1L, NOW, 1, 1);
+        given(reservationRepository.findOwnedForUpdate(1L, 2L)).willReturn(Optional.of(hold));
+        given(paymentRepository.existsByReservationIdAndStatus(1L, PaymentStatus.IN_PROGRESS)).willReturn(true);
+
+        assertThatThrownBy(() -> service.cancel(1L, 2L))
+                .isInstanceOf(CustomException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.PAYMENT_IN_PROGRESS);
+        assertThat(hold.getStatus()).isEqualTo(ReservationStatus.PENDING);
+        assertThat(hold.getSeats()).allMatch(ReservationSeat::isOccupied);
+    }
+
+    @Test
     void 선점은_상영_20분_이내여도_놓을_수_있다() {
         Reservation hold = holdWithId(1L, NOW, NOW.plusMinutes(19), 1, 1);
-        given(reservationRepository.findOwnedWithSeats(1L, 2L)).willReturn(Optional.of(hold));
+        given(reservationRepository.findOwnedForUpdate(1L, 2L)).willReturn(Optional.of(hold));
 
         service.cancel(1L, 2L);
 
@@ -441,6 +592,29 @@ class ReservationServiceTest {
             reservation.addSeat(rowCols[i], rowCols[i + 1], AudienceType.ADULT);
         }
         return reservation;
+    }
+
+    private Payment paymentWithId(Reservation reservation, long id) {
+        Payment payment = Payment.builder().reservation(reservation).build();
+        ReflectionTestUtils.setField(payment, "id", id);
+        return payment;
+    }
+
+    private Payment givenPayment(Reservation reservation, long paymentId) {
+        Payment payment = paymentWithId(reservation, paymentId);
+        given(reservationRepository.findOwnedForUpdate(reservation.getId(), 2L)).willReturn(Optional.of(reservation));
+        given(paymentRepository.findByOrderIdAndReservationId(payment.getOrderId(), reservation.getId()))
+                .willReturn(Optional.of(payment));
+        return payment;
+    }
+
+    private PaymentConfirmRequest confirmReq(Payment payment, int amount) {
+        return new PaymentConfirmRequest("tgen_test_key", payment.getOrderId(), amount);
+    }
+
+    private ReservationPaymentAttempt attemptOf(Payment payment, Reservation reservation, LocalDateTime expiresAtBefore) {
+        return new ReservationPaymentAttempt(payment.getId(), reservation.getId(), 2L, "tgen_test_key",
+                payment.getOrderId(), payment.getAmount(), expiresAtBefore);
     }
 
     private ReservationDetailRow detailRow(long id, LocalDateTime expiresAt, ReservationStatus status,

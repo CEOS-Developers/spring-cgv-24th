@@ -43,7 +43,15 @@ public enum ErrorCode {
     RESERVATION_NOT_PENDING(HttpStatus.CONFLICT, "결제 대기 상태인 예매가 아닙니다."),
     RESERVATION_EXPIRED(HttpStatus.CONFLICT, "선점 시간이 만료된 예매입니다."),
     CANCEL_DEADLINE_PASSED(HttpStatus.CONFLICT, "상영 20분 전까지만 취소할 수 있습니다."),
-    PAYMENT_FAILED(HttpStatus.PAYMENT_REQUIRED, "결제에 실패했습니다. 좌석 선택부터 다시 진행해 주세요."),
+
+    // 결제
+    PAYMENT_NOT_FOUND(HttpStatus.NOT_FOUND, "결제 정보를 찾을 수 없습니다."),
+    PAYMENT_AMOUNT_MISMATCH(HttpStatus.BAD_REQUEST, "결제 금액이 주문 금액과 다릅니다."),
+    PAYMENT_IN_PROGRESS(HttpStatus.CONFLICT, "이미 진행 중인 결제가 있습니다. 잠시 후 결제 결과를 확인해 주세요."),
+    INVALID_PAYMENT_STATUS(HttpStatus.CONFLICT, "현재 상태에서 처리할 수 없는 결제입니다. 결제를 다시 시작해 주세요."),
+    PAYMENT_REJECTED(HttpStatus.PAYMENT_REQUIRED, "결제가 승인되지 않았습니다. 다른 결제수단으로 다시 시도해 주세요."),
+    // 토스가 승인했는지 모르는 상태다. 실패로 안내하면 이미 돈이 빠진 회원이 다시 결제할 수 있다.
+    PAYMENT_RESULT_UNKNOWN(HttpStatus.GATEWAY_TIMEOUT, "결제 결과를 확인하지 못했습니다. 잠시 후 내역에서 결제 여부를 확인해 주세요."),
 
     // 찜
     LIKE_REQUEST_CONFLICT(HttpStatus.CONFLICT, "찜 요청이 동시에 처리되었습니다. 다시 시도해 주세요."),
