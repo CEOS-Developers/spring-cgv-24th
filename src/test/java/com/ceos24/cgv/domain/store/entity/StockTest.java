@@ -51,6 +51,27 @@ class StockTest {
     }
 
     @Test
+    void 거절된_주문이_차감한_수량을_되돌린다() {
+        Stock stock = stock(5);
+        stock.decrease(3);
+
+        stock.restore(3);
+
+        assertThat(stock.getQuantity()).isEqualTo(5);
+    }
+
+    @Test
+    void 영_이하_복구는_거부한다() {
+        Stock stock = stock(5);
+
+        assertThatThrownBy(() -> stock.restore(-1))
+                .isInstanceOf(CustomException.class)
+                .extracting(e -> ((CustomException) e).getErrorCode())
+                .isEqualTo(ErrorCode.INVALID_INPUT_VALUE);
+        assertThat(stock.getQuantity()).isEqualTo(5);
+    }
+
+    @Test
     void 판매_가능_수량은_재고보다_하나_적다() {
         assertThat(stock(10).availableQuantity()).isEqualTo(9);
         assertThat(stock(10).isSoldOut()).isFalse();

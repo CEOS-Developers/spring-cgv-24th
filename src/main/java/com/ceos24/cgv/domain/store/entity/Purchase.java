@@ -2,6 +2,8 @@ package com.ceos24.cgv.domain.store.entity;
 
 import com.ceos24.cgv.domain.branch.entity.Branch;
 import com.ceos24.cgv.global.entity.BaseTimeEntity;
+import com.ceos24.cgv.global.exception.CustomException;
+import com.ceos24.cgv.global.exception.ErrorCode;
 import com.ceos24.cgv.domain.user.entity.User;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
@@ -34,20 +36,22 @@ public class Purchase extends BaseTimeEntity {
     @Column(nullable = false)
     private int totalPrice;
 
-    @Column(nullable = false)
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    private PurchaseStatus status;
+
+    // 결제가 승인된 시각. 주문을 만든 시각은 createdAt이 갖는다.
     private LocalDateTime purchasedAt;
 
     @OneToMany(mappedBy = "purchase", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<PurchaseProduct> items = new ArrayList<>();
 
-    // 시각을 직접 읽지 않고 받는다. 예매(Reservation)와 같이 서비스가 주입받은 Clock 기준으로 기록해야
-    // 테스트에서 시각을 고정할 수 있다.
     @Builder
-    private Purchase(User user, Branch branch, LocalDateTime now) {
+    private Purchase(User user, Branch branch) {
         this.user = user;
         this.branch = branch;
         this.totalPrice = 0;
-        this.purchasedAt = now;
+        this.status = PurchaseStatus.PENDING;
     }
 
     // 자식 항목 합계와 어긋나지 않도록 이 메서드 안에서만 총액을 갱신한다.
@@ -62,5 +66,24 @@ public class Purchase extends BaseTimeEntity {
                 .build();
         this.items.add(item);
         this.totalPrice += unitPrice * quantity;
+    }
+
+    // 결제를 다시 하려면 새 주문을 만든다. 구매 하나에 결제 시도는 하나다.
+    public void verifyPayable() {
+        if (this.status != PurchaseStatus.PENDING) {
+            throw new CustomException(ErrorCode.PURCHASE_NOT_PENDING);
+        }
+    }
+
+    // 시각을 직접 읽지 않고 받는다. 서비스가 주입받은 Clock 기준으로 기록해야 테스트에서 시각을 고정할 수 있다.
+    public void complete(LocalDateTime now) {
+        verifyPayable();
+        this.status = PurchaseStatus.PAID;
+        this.purchasedAt = now;
+    }
+
+    public void fail() {
+        verifyPayable();
+        this.status = PurchaseStatus.FAILED;
     }
 }

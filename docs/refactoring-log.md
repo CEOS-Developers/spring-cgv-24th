@@ -2342,3 +2342,119 @@ POST /api/reservations/{id}/payments/confirm  {paymentKey, orderId, amount} → 
 | `domain/reservation/controller/ReservationController.java` | `/payment` → `/payments`, `/payments/confirm` |
 | `domain/reservation/dto/PaymentRequest.java` | 삭제 |
 | `global/exception/ErrorCode.java` | 결제 코드 6개 추가, `PAYMENT_FAILED` 삭제 |
+
+---
+
+## 결제 세션 2: 매점 결제
+
+매점의 mock 결제(`PurchaseCreateRequest.paymentResult`)를 토스 승인으로 바꿨다. 이로써 `global/common/PaymentResult`와 `PURCHASE_PAYMENT_FAILED`를 삭제했다.
+승인 흐름(T1 → 토스 → T2, 순서 잇는 클래스에 트랜잭션 없음, 결과 3분류)은 결제 세션 1과 같다. 여기서는 매점이 예매와 다른 점만 적는다.
+
+### 흐름
+
+```
+POST /api/purchases                         주문 → PENDING Purchase(단가 복사) + 결제 주문. 재고는 그대로
+   [브라우저 결제위젯 → successUrl]
+POST /api/purchases/{id}/payments/confirm   T1: 재고 차감 → 토스 승인 → T2: PAID / 거절 시 재고 복구 + FAILED
+```
+
+### 결정 1 — 재고는 승인 직전(T1)에 차감한다
+
+| 차감 시점 | 문제 |
+|---|---|
+| 주문 생성 | 결제창을 닫고 떠난 주문이 재고를 붙잡는다. 풀려면 만료·복구 장치가 필요한데, 재고는 아무 단위나 대체할 수 있어 미리 잡아 둘 이유가 없다 |
+| **T1 (승인 직전)** | 품절이면 토스를 부르지 않아 돈이 빠지지 않는다. 재고 락은 T1 커밋과 함께 풀린다 |
+| 토스 승인 후 | 품절이면 이미 빠진 돈을 환불해야 한다 |
+
+- 예매와 다른 점: 좌석은 "이 좌석"이라 결제 전에 선점으로 잡아 두지만, 재고는 대체 가능해 결제 직전까지 잡지 않는다
+- 주문 생성 때는 잠그지 않는 사전 검사(`ensureAvailable`)로 지금 팔 수 없는 주문을 거른다. 통과해도 승인 직전에 품절일 수 있다(먼저 승인한 쪽이 가져간다)
+- 세션 5(매점 구매) 기록의 "실제 PG였다면 외부 호출 동안 락을 쥐게 된다"를 이것으로 해결했다. 재고 락 보유 구간은 T1뿐이다
+- 차감·복구 모두 상품 id 오름차순으로 한 건씩 잠근다(기존 데드락 방지 그대로). `forEachStockInLockOrder` 하나를 같이 쓴다
+
+### 결정 2 — 거절되면 재고를 되돌리고 주문도 실패로 끝낸다. 구매 하나에 결제 하나
+
+- 예매는 거절돼도 선점을 남겨 같은 예매로 다시 결제한다(Reservation : Payment = 1 : N). 매점은 붙잡아 둔 자원이 없으니 다시 결제하려면 새로 주문한다(Purchase : Payment = 1 : 1)
+- `Payment.purchase`는 `@OneToOne` + `purchase_id` 유니크. 거절된 주문을 다시 승인하면 `PURCHASE_NOT_PENDING`
+- 복구(`Stock.restore`)는 T2에서 하므로 재고 락 대기에 걸릴 수 있다. 그래도 회원에게는 `PAYMENT_REJECTED`로 답한다. 돈은 빠지지 않았기 때문이다.
+  복구가 롤백되면 결제가 `IN_PROGRESS`로, 재고는 차감된 채로 남는다. 결제 조회(세션 3)로 정리할 대상이다
+
+### 결정 3 — 결과 불명이면 재고는 차감된 채로 둔다
+
+되돌렸는데 토스에서는 승인됐다면 판 수량보다 재고가 많아진다(초과 판매). 덜 파는 쪽이 안전하다.
+
+### 결정 4 — 같은 주문의 승인은 구매 행 잠금으로 줄 세운다
+
+- `PurchaseRepository.findOwnedForUpdate`. 예매와 같이 트랜잭션의 첫 쿼리이고, 조인하지 않는다(지점을 붙이면 같은 지점 결제가 전부 줄을 선다)
+- 1:1이라 "같은 구매의 다른 시도"는 없다. 같은 주문의 중복 승인만 막으면 된다. 잠금 뒤 `payment.startApproval()`이 `IN_PROGRESS`를 보고 `PAYMENT_IN_PROGRESS`로 거른다
+- T1에서 `startApproval()`을 재고 차감보다 먼저 부른다. 중복 요청이 재고 행을 잠갔다가 롤백하는 일이 없다. 차감이 실패하면 상태 변경도 함께 롤백된다
+- 주문 뒤에 지점이 휴관했으면 T1에서 `BRANCH_NOT_OPERATING`
+
+### 결정 5 — `Payment`는 예매·구매 중 정확히 하나에 속한다
+
+- `reservation_id`를 nullable로 바꾸고 CHECK `ck_payment_one_target` 추가. 생성자가 1차로 막고(둘 다 있거나 둘 다 없으면 서버 오류), CHECK는 엔티티를 거치지 않는 쓰기까지 막는다(`Stock`의 CHECK와 같은 방식)
+- 빌더 하나로 `.reservation(r)` 또는 `.purchase(p)`. 주문번호 접두사는 `cgv-r-` / `cgv-p-`
+- `Payment.startApproval()`: `IN_PROGRESS`면 `INVALID_PAYMENT_STATUS` 대신 `PAYMENT_IN_PROGRESS`. 예매 쪽은 T1의 다른 시도 확인이 먼저 거르므로 응답이 바뀌지 않는다
+
+### 결정 6 — `Purchase`에 상태, `purchasedAt`은 결제 승인 시각
+
+- `PurchaseStatus`: `PENDING` → `PAID` / `FAILED`. 주문 시각은 `createdAt`이 갖는다
+- `purchasedAt`은 nullable. `complete(now)`가 서비스의 `Clock` 기준으로 기록한다. 빌더에서 `now`를 뺐다
+- 구매 내역은 `PAID`만 보인다. 결제창을 닫고 떠난 주문과 거절된 주문은 산 것이 아니다
+
+### 기타
+
+- 주문 응답: `PurchaseOrderResponse { purchase, payment }`. `payment`는 예매와 같은 `PaymentOrderResponse`(orderId, orderName, amount). orderName은 "팝콘" / "팝콘 외 1건"
+- 승인 응답은 기존 `PurchaseResponse`
+- 토스 승인 시각 변환(`OffsetDateTime` → 서버 시간대 `LocalDateTime`)이 예매·매점에 중복돼 `TossPayment.approvedAtIn(zone, fallback)`으로 옮겼다. `ReservationService`는 이 한 줄만 바뀌었다
+- 주문 항목은 상품 id 순으로 담는다. 이전에는 잠금 순서대로 담아서 생긴 순서였는데, 이제 담는 시점(주문)과 잠그는 시점(T1)이 달라 명시적으로 정렬한다
+
+### 오류 코드
+
+| 코드 | 상태 | 경우 |
+|---|---|---|
+| `PURCHASE_NOT_FOUND` | 404 | 없거나 남의 주문 |
+| `PURCHASE_NOT_PENDING` | 409 | 이미 결제됐거나 거절된 주문을 다시 승인 |
+| `PURCHASE_PAYMENT_FAILED` | — | 삭제 |
+
+### 테스트
+
+- `StockTest` +2: 복구, 0 이하 복구 거부
+- `PaymentTest`(신규 4): 대상별 금액·접두사, 대상 정확히 하나, 승인 중 재시작
+- `PurchasePaymentServiceTest`(신규 6): T1 → 토스 → T2 순서, 승인 직전 품절 시 토스 미호출, 거절 시 복구, 복구 실패해도 거절 응답, 결과 불명 시 복구 안 함
+- `PurchaseControllerTest`: 주문과 승인으로 나눠 다시 썼다(15 → 20). 주문 뒤 품절, 금액 조작, 거절 후 재승인 불가, 결과 불명 시 재고 유지, 남의 주문, 내역에 `PAID`만
+- `PurchaseRollbackTest`(실제 커밋): 승인 직전 한 상품이라도 모자라면 다른 상품도 차감 안 됨 + 결제 `READY` 유지, 거절 시 커밋된 차감이 되돌아옴, 결제 CHECK 제약
+- `PurchaseConcurrencyTest`(MySQL): 기존 두 테스트를 "주문은 미리, 승인만 동시에"로 바꿨다. 토스 대기 중 같은 상품의 다른 주문이 막히지 않는지 추가
+
+`@Transactional` 컨트롤러 테스트에서는 T1이 롤백되지 않아(바깥 테스트 트랜잭션이 쥐고 있다) 승인 직전 품절 시 결제가 `IN_PROGRESS`로 보인다. 그 단언은 실제 커밋하는 `PurchaseRollbackTest`에 두었다.
+
+변형 실험: `PurchasePaymentService`에 `@Transactional`을 붙이면 "토스 대기 중 다른 주문" 테스트가 `STOCK_LOCK_CONFLICT`로 실패한다(되돌림 완료).
+
+전체 319 → 338개 통과.
+
+### 한계 — 다음 세션으로
+
+- 결과 불명 결제와, 거절 후 재고 복구에 실패한 결제는 `IN_PROGRESS`로 남고 재고는 차감된 채다. 세션 3의 결제 조회로 정리한다
+- 결제된 구매의 취소(환불 + 재고 복구)는 세션 4
+- 버려진 `PENDING` 주문은 잡고 있는 자원이 없어 정리하지 않는다. 행만 쌓인다
+- 예매 쪽 `failPayment`는 실패 시 예외가 그대로 나간다(매점처럼 거절 응답으로 바꾸지 않았다). 예매의 T2 거절은 예매 행 갱신뿐이라 락 대기에 걸릴 일이 드물어 이번 세션에서는 건드리지 않았다
+
+### 변경 파일
+
+| 파일 | 내용 |
+|---|---|
+| `domain/store/entity/PurchaseStatus.java` | 신설 |
+| `domain/store/entity/Purchase.java` | `status`, `purchasedAt` nullable, `verifyPayable`·`complete`·`fail`, 빌더에서 `now` 제거 |
+| `domain/store/entity/Stock.java` | `restore` |
+| `domain/payment/entity/Payment.java` | `purchase`(@OneToOne), `reservation` nullable, CHECK, 접두사, `startApproval`의 진행 중 응답 |
+| `domain/payment/repository/PaymentRepository.java` | `findByOrderIdAndPurchaseId` |
+| `domain/store/repository/PurchaseRepository.java` | `findOwnedForUpdate`, `findWithDetails`, 내역은 `PAID`만 |
+| `domain/store/repository/StockRepository.java` | `findByBranchIdAndProductIdIn`(사전 검사) |
+| `domain/store/dto/PurchaseCreateRequest.java` | `paymentResult` 제거 |
+| `domain/store/dto/PurchaseOrderResponse.java`, `PurchasePaymentAttempt.java` | 신설 |
+| `domain/store/service/PurchaseService.java` | `purchase` → `createOrder`, `startPayment`, `completePayment`, `failPayment` |
+| `domain/store/service/PurchasePaymentService.java` | 신설. T1 → 토스 → T2 |
+| `domain/store/controller/PurchaseController.java` | `POST /api/purchases`가 주문 생성, `POST /{id}/payments/confirm` 추가 |
+| `global/client/TossPayment.java` | `approvedAtIn` |
+| `domain/reservation/service/ReservationService.java` | 승인 시각 변환을 `approvedAtIn`으로 |
+| `global/exception/ErrorCode.java` | `PURCHASE_NOT_FOUND`, `PURCHASE_NOT_PENDING` 추가, `PURCHASE_PAYMENT_FAILED` 삭제 |
+| `global/common/PaymentResult.java` | 삭제 |

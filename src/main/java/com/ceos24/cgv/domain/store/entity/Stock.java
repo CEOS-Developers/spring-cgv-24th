@@ -60,6 +60,14 @@ public class Stock extends BaseTimeEntity {
         this.quantity -= amount;
     }
 
+    // 승인이 거절된 주문이 차감했던 수량을 되돌린다. 음수는 재고를 줄이는 버그라 막는다.
+    public void restore(int amount) {
+        if (amount < 1) {
+            throw new CustomException(ErrorCode.INVALID_INPUT_VALUE);
+        }
+        this.quantity += amount;
+    }
+
     // 최소 재고를 남겨야 하므로 재고 N 중 팔 수 있는 건 N-1이다.
     public int availableQuantity() {
         return quantity - MIN_QUANTITY;

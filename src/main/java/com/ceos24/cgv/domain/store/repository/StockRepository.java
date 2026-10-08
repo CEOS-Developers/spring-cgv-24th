@@ -13,6 +13,9 @@ import java.util.Optional;
 public interface StockRepository extends JpaRepository<Stock, Long> {
     Optional<Stock> findByBranchIdAndProductId(Long branchId, Long productId);
 
+    // 주문 생성 시의 사전 검사용이라 잠그지 않는다. 확정 차감은 승인 직전에 잠그고 다시 확인한다.
+    List<Stock> findByBranchIdAndProductIdIn(Long branchId, List<Long> productIds);
+
     // product를 조인하지 않는다. MySQL의 FOR UPDATE는 조인된 행까지 잠가서,
     // 모든 지점이 공유하는 product 행 때문에 지점이 달라도 같은 상품 구매가 줄을 서게 된다.
     @Lock(LockModeType.PESSIMISTIC_WRITE)

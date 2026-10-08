@@ -31,7 +31,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.LocalDateTime;
-import java.time.OffsetDateTime;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
@@ -114,7 +113,7 @@ public class ReservationService {
                 .orElseThrow(() -> new CustomException(ErrorCode.PAYMENT_NOT_FOUND));
         Reservation reservation = findOwnedWithDetails(attempt.reservationId(), attempt.userId());
 
-        payment.approve(approved.paymentKey(), approved.method(), toLocal(approved.approvedAt(), now));
+        payment.approve(approved.paymentKey(), approved.method(), approved.approvedAtIn(clock.getZone(), now));
         reservation.confirm(now);
         return ReservationResponse.from(reservation, now);
     }
@@ -178,14 +177,6 @@ public class ReservationService {
     // 결제위젯과 토스 결제 내역에 보이는 이름이다.
     private String orderNameOf(Reservation reservation) {
         return reservation.getScreening().getMovie().getTitle() + " " + reservation.getSeats().size() + "매";
-    }
-
-    // 토스 승인 시각을 기록한다. 응답에 없으면 우리 시각으로 대신한다.
-    private LocalDateTime toLocal(OffsetDateTime approvedAt, LocalDateTime now) {
-        if (approvedAt == null) {
-            return now;
-        }
-        return approvedAt.atZoneSameInstant(clock.getZone()).toLocalDateTime();
     }
 
     // 중복은 좌석 키로 비교하므로 범위 검사가 먼저다. 키는 열이 범위 안일 때만 좌표마다 유일하다.

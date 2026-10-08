@@ -20,6 +20,7 @@ public enum ErrorCode {
     RESERVATION_NOT_FOUND(HttpStatus.NOT_FOUND, "예매 정보를 찾을 수 없습니다."),
     BRANCH_NOT_FOUND(HttpStatus.NOT_FOUND, "지점을 찾을 수 없습니다."),
     PRODUCT_NOT_FOUND(HttpStatus.NOT_FOUND, "상품을 찾을 수 없습니다."),
+    PURCHASE_NOT_FOUND(HttpStatus.NOT_FOUND, "구매 정보를 찾을 수 없습니다."),
 
     // 인증
     DUPLICATE_LOGIN_ID(HttpStatus.CONFLICT, "이미 사용 중인 아이디입니다."),
@@ -62,7 +63,7 @@ public enum ErrorCode {
     BRANCH_NOT_OPERATING(HttpStatus.CONFLICT, "운영 중인 지점이 아닙니다."),
     OUT_OF_STOCK(HttpStatus.CONFLICT, "재고가 부족합니다."),
     STOCK_LOCK_CONFLICT(HttpStatus.CONFLICT, "주문이 몰려 처리하지 못했습니다. 다시 시도해 주세요."),
-    PURCHASE_PAYMENT_FAILED(HttpStatus.PAYMENT_REQUIRED, "결제에 실패했습니다.");
+    PURCHASE_NOT_PENDING(HttpStatus.CONFLICT, "결제 대기 상태인 주문이 아닙니다. 다시 결제하려면 새로 주문해 주세요.");
 
     private final HttpStatus httpStatus;
     private final String message;
