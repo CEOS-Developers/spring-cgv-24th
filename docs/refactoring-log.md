@@ -2458,3 +2458,93 @@ POST /api/purchases/{id}/payments/confirm   T1: 재고 차감 → 토스 승인 
 | `domain/reservation/service/ReservationService.java` | 승인 시각 변환을 `approvedAtIn`으로 |
 | `global/exception/ErrorCode.java` | `PURCHASE_NOT_FOUND`, `PURCHASE_NOT_PENDING` 추가, `PURCHASE_PAYMENT_FAILED` 삭제 |
 | `global/common/PaymentResult.java` | 삭제 |
+
+---
+
+## 결제 세션 3: 테스트용 결제위젯 페이지 + 실제 토스 연동 확인
+
+세션 1·2의 테스트는 모두 토스 응답을 흉내 냈다. 실제 토스로 결제위젯 → 승인까지 해 보려고 브라우저 페이지와 로컬 샘플 데이터를 만들었다.
+세션 계획도 바꿨다. 결과 불명 정리는 조회·취소가 모두 있어야 제대로 할 수 있어 마지막(세션 5)으로 옮겼다(CLAUDE.md).
+
+### 결정 1 — 테스트 페이지는 정적 HTML 한 장 (`/payment-test.html`)
+
+- 프런트엔드가 없는 프로젝트라 `src/main/resources/static`에 둔다. 로그인 → 좌석 선택(좌석 배치도) 또는 매점 주문 → 결제위젯 → 승인까지 한 화면에서 한다
+- successUrl·failUrl을 모두 이 페이지로 둔다. 돌아온 쿼리에 `paymentKey`가 있으면 성공, `code`가 있으면 실패다. 어떤 대상(예매/구매, id)의 결제였는지는
+  결제창으로 가기 전에 `sessionStorage`에 적어 두고 돌아와서 읽는다. 액세스 토큰도 같은 곳에 둔다. 테스트 도구라 저장 위치의 보안은 따지지 않았다(인증은 여전히 Authorization 헤더)
+- 돌아오자마자 `history.replaceState`로 쿼리를 지운다. 새로고침으로 같은 승인 요청을 다시 보내지 않게 한다
+- "승인 요청 금액을 100원으로 조작" 체크박스로 서버의 금액 대조를 브라우저에서 확인할 수 있다
+- 결제위젯은 `customerKey: ANONYMOUS`. 회원별 결제수단 저장(브랜드페이)을 쓰지 않는다
+- 결제 어드민(결제수단 노출 설정)은 사업자 정보가 있어야 써서 쓰지 않는다. 기본 UI(`variantKey: DEFAULT`)로 띄우고, 가상계좌는 고르지 않는다
+
+### 결정 2 — 클라이언트 키는 서버가 내려준다 (`GET /api/payments/widget-config`, 공개)
+
+- 클라이언트 키는 브라우저 소스에 어차피 들어가는 값이라 공개해도 된다. 페이지에 키를 심지 않고 `.env` 한 곳에서 시크릿 키와 짝으로 관리한다
+- 응답에는 클라이언트 키만 담는다. 테스트가 시크릿 키 접두사(`test_gsk_`)가 섞이지 않는지 본다
+
+### 결정 3 — 보안 규칙: 페이지와 설정 API만 연다
+
+- `GET /payment-test.html`: 토스가 successUrl로 되돌려 보내는 요청은 브라우저 이동이라 Authorization 헤더가 없다. 화면만 열고, 그 안의 API 호출은 각각 토큰을 싣는다
+- `GET /api/payments/widget-config`: 로그인 전에도 결제위젯 SDK를 초기화할 수 있어야 한다
+
+### 결정 4 — 샘플 데이터는 local 프로필 전용 SQL
+
+- `ddl-auto: create`라 부팅마다 DB가 비고, 회차·상품을 만드는 API가 없다. 지점 1, 상영관 1, 영화 1, 내일 회차 2, 상품 3(나초는 품절 확인용으로 재고 1), 재고를 넣는다
+- `application.yaml`의 local 프로필 문서에서만 `spring.sql.init.mode: always` + `data-locations`. 다른 프로필(테스트 포함)에는 부팅 부수효과가 없다
+- 관리자 계정은 SQL로 넣지 않았다(해시가 Git에 남는다). 샘플 데이터에는 비밀값이 없어 SQL로 둔다
+- 회차는 `CURDATE() + 1일`. 지난 회차는 선점할 수 없고, 오늘 회차는 실행 시각에 따라 이미 지났을 수 있다
+- SQL은 엔티티가 바뀌어도 컴파일 오류가 나지 않는다. `LocalSampleDataTest`가 MySQL 컨테이너의 실제 스키마에 넣어 본다
+
+### 실제 서버 + 실제 토스로 확인한 것 (브라우저 없이)
+
+local 프로필로 앱을 띄우고 HTTP로 직접 호출했다.
+
+| 확인 | 결과 |
+|---|---|
+| 샘플 데이터 적재, 페이지·설정 API 공개 | 200. 클라이언트 키는 `test_gck_`, 시크릿 키 미노출 |
+| 금액을 100원으로 바꿔 승인 | 400 `PAYMENT_AMOUNT_MISMATCH`, 토스 미호출 |
+| 가짜 `paymentKey`로 승인 (예매) | **실제 토스가 404 `NOT_FOUND_PAYMENT_SESSION`** → 우리 402 `PAYMENT_REJECTED`, 예매 `PENDING` 유지 |
+| 가짜 `paymentKey`로 승인 (매점) | 같은 거절 → 차감했던 재고가 49로 되돌아옴 |
+
+시크릿 키 Basic 인증(콜론 포함), 토스 오류 본문 해석, 거절 분류가 실제 토스 응답으로 맞는 것을 확인했다.
+
+로컬 MySQL 8에서 `Public Key Retrieval is not allowed`로 처음 접속이 거절됐다. 서버 재시작 직후 `caching_sha2_password` 첫 인증에서 생긴다.
+이번 실행에만 `SPRING_DATASOURCE_URL`로 `allowPublicKeyRetrieval=true`를 붙였다. 프로젝트 설정은 바꾸지 않았다.
+
+### 브라우저 결제 확인 (사용자가 직접 진행)
+
+| 항목 | 결과 |
+|---|---|
+| 예매 3석 42,000원 → 결제위젯 → 인증 → 승인 | **성공.** T1(`IN_PROGRESS`) → 토스 승인 약 1.3초 → T2(`DONE`, 결제수단 "간편결제", 토스 승인 시각 저장) → `RESERVED` |
+| 금액 조작 체크 상태로 승인 | 돌아온 `amount=42000`인데 100원으로 보내 400 `PAYMENT_AMOUNT_MISMATCH`, 토스 미호출. 결제는 `READY` 그대로 |
+| 카드사 미선택 / 결제창 닫기 | SDK가 `NEED_CARD_PAYMENT_DETAIL` / `USER_CANCEL`로 거부. 리다이렉트 없이 `requestPayment()`의 예외로 온다 |
+| 매점 팝콘 5개 32,500원 → 카드 → 승인 | **성공.** T1(`IN_PROGRESS` + 재고 50 → 45) → T2(`DONE`, 구매 `PAID`). 앞서 결제창을 닫고 떠난 주문 2건(콜라 포함)은 `PENDING`으로 남고 재고를 붙잡지 않았다(콜라 판매 가능 49 그대로) |
+
+확인하면서 고친 것
+
+- 첫 시도에서 아이디·비밀번호가 빈 값으로 나갔다. 원인은 확정하지 못했고(자동완성 미리보기 추정) 자동완성을 끄고 빈 값이면 요청을 막았다
+- 결제창에서 돌아오면 페이지가 새로 열려 화면 로그가 지워졌다. 로그를 `sessionStorage`에 두고, 페이지가 열릴 때와 승인 요청 본문을 기록하게 했다
+- "로그 지우기" 버튼에 핸들러가 빠져 있었다
+
+알게 된 것
+
+- `.env`의 토스 키가 본인 키가 아니라 **문서 공용 키**(`test_gck_docs_` / `test_gsk_docs_`)였다. 짝이 맞아 결제는 되지만 결제 내역이 본인 개발자센터에 보이지 않고 웹훅도 등록할 수 없다. 세션 0 결정 1(본인 키)대로 바꿔야 한다
+- 국민카드 인증은 실제 KB 스타뱅킹 앱 푸시로 왔다. 출금은 없었다
+- 공용 키로는 카카오페이도 진행된다. 카카오페이 머니 **자동충전이 걸려 있어 국민 계좌 → 머니 42,000원 충전이 실제로 일어났고**, 결제는 가상이라 머니로 남았다.
+  `docs/toss-payments-guide.md`의 테스트 환경 설명(카드사 화면, 간편결제)을 고치고 페이지에 경고를 넣었다
+
+### 테스트
+
+- `PaymentWidgetControllerTest`(신규 3): 설정 API 공개 + 시크릿 키 미포함, 페이지 공개, successUrl 쿼리가 붙어도 공개
+- `LocalSampleDataTest`(신규 1, MySQL): 샘플 SQL이 현재 스키마에 들어가고 회차가 미래, 나초만 품절
+
+전체 338 → 342개 통과.
+
+### 변경 파일
+
+| 파일 | 내용 |
+|---|---|
+| `src/main/resources/static/payment-test.html` | 신설. 테스트 결제 페이지 |
+| `src/main/resources/db/local-sample-data.sql` | 신설. local 샘플 데이터 |
+| `src/main/resources/application.yaml` | local 프로필에서만 샘플 SQL 실행 |
+| `domain/payment/controller/PaymentWidgetController.java`, `dto/PaymentWidgetConfigResponse.java` | 신설. 클라이언트 키 공개 API |
+| `global/config/SecurityConfig.java` | 페이지·설정 API 공개 |

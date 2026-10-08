@@ -68,7 +68,11 @@ public class SecurityConfig {
                                 "/api/movies", "/api/movies/{id}",
                                 "/api/branches", "/api/branches/regions", "/api/branches/{id}",
                                 "/api/branches/{branchId}/products",
-                                "/api/screenings", "/api/screenings/{id}/seats").permitAll()
+                                "/api/screenings", "/api/screenings/{id}/seats",
+                                "/api/payments/widget-config").permitAll()
+                        // 결제 테스트 페이지. 토스가 successUrl·failUrl로 되돌려 보내는 요청은 브라우저 이동이라
+                        // Authorization 헤더가 실리지 않는다. 화면만 열고, 그 안의 API 호출은 각각 토큰을 싣는다.
+                        .requestMatchers(HttpMethod.GET, "/payment-test.html").permitAll()
                         .requestMatchers("/swagger-ui.html", "/swagger-ui/**", "/v3/api-docs/**").permitAll()
                         // 컨테이너가 오류를 /error로 포워드할 때도 인가를 다시 거친다. 막으면 원래 오류가 401로 덮인다.
                         .requestMatchers("/error").permitAll()

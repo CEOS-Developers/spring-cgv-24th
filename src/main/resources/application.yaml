@@ -61,3 +61,14 @@ springdoc:
   swagger-ui:
     path: /swagger-ui.html
     operations-sorter: method
+---
+# 결제 테스트 페이지에서 고를 지점·회차·상품을 local 프로필에서만 넣는다. 다른 프로필에는 부팅 부수효과가 없다.
+# MySQL은 내장 DB가 아니라 mode: always가 있어야 실행된다. 실행 시점은 위의 defer-datasource-initialization 덕에 테이블 생성 뒤다.
+spring:
+  config:
+    activate:
+      on-profile: local
+  sql:
+    init:
+      mode: always
+      data-locations: classpath:db/local-sample-data.sql

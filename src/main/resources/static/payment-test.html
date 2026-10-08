@@ -1,0 +1,432 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CGV 결제 테스트</title>
+  <!-- 결제위젯 SDK v2. 클라이언트 키는 서버(/api/payments/widget-config)에서 받는다. -->
+  <script src="https://js.tosspayments.com/v2/standard"></script>
+  <style>
+    :root {
+      --bg: #f6f6f4; --panel: #ffffff; --text: #1d1d1f; --muted: #6b6b70; --line: #dcdcd8;
+      --accent: #e71a0f; --accent-text: #ffffff; --ok: #1f7a3a; --err: #b3261e;
+      --seat: #ececea; --seat-picked: #e71a0f; --seat-taken: #b9b9b5;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #161618; --panel: #202023; --text: #ececec; --muted: #a0a0a6; --line: #3a3a3f;
+        --seat: #2e2e33; --seat-taken: #55555b;
+      }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text);
+      font: 15px/1.5 system-ui, -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; }
+    header { display: flex; justify-content: space-between; align-items: center; gap: 12px;
+      padding: 14px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
+    header h1 { margin: 0; font-size: 17px; }
+    main { max-width: 760px; margin: 0 auto; padding: 16px; display: grid; gap: 14px; }
+    section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+    h2 { margin: 0 0 12px; font-size: 15px; }
+    .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    input[type=text], input[type=password], input[type=number] {
+      padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; }
+    input[type=number] { width: 80px; }
+    button { padding: 7px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg);
+      color: var(--text); font: inherit; cursor: pointer; }
+    button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    .muted { color: var(--muted); font-size: 13px; }
+    .tabs { display: flex; gap: 6px; margin-bottom: 12px; }
+    .tabs button[aria-selected=true] { border-color: var(--text); font-weight: 600; }
+    .screen { text-align: center; font-size: 12px; color: var(--muted); border-top: 3px solid var(--line);
+      margin: 12px 0 8px; padding-top: 4px; }
+    .seats { display: grid; gap: 4px; justify-content: center; overflow-x: auto; }
+    .seat { width: 30px; height: 26px; padding: 0; font-size: 11px; background: var(--seat); border: none; }
+    .seat.picked { background: var(--seat-picked); color: var(--accent-text); }
+    .seat:disabled { background: var(--seat-taken); opacity: 1; }
+    table { width: 100%; border-collapse: collapse; }
+    td, th { padding: 6px 4px; border-bottom: 1px solid var(--line); text-align: left; }
+    .order { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; margin-bottom: 10px; }
+    .order dt { color: var(--muted); }
+    .order dd { margin: 0; word-break: break-all; }
+    #result { padding: 10px 12px; border-radius: 6px; margin-bottom: 10px; display: none; }
+    #result.ok { display: block; border: 1px solid var(--ok); color: var(--ok); }
+    #result.err { display: block; border: 1px solid var(--err); color: var(--err); }
+    pre { margin: 0; max-height: 360px; overflow: auto; font-size: 12px; white-space: pre-wrap; word-break: break-all; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+<header>
+  <h1>CGV 결제 테스트</h1>
+  <span id="login-state" class="muted">로그인 전</span>
+</header>
+
+<main>
+  <section>
+    <h2>1. 로그인</h2>
+    <div class="row">
+      <!-- 브라우저 자동완성 미리보기는 칸에 글자만 보이고 값은 비어 있어 빈 요청이 나간다. 자동완성을 끈다 -->
+      <input id="login-id" type="text" placeholder="아이디 (영문 소문자·숫자 4~20자)" autocomplete="off">
+      <input id="password" type="password" placeholder="비밀번호 (공백 없이 8자 이상)" autocomplete="new-password">
+      <button id="login-btn" class="primary">로그인</button>
+      <button id="signup-btn">회원가입 후 로그인</button>
+      <button id="logout-btn">로그아웃</button>
+    </div>
+    <p class="muted">회원가입은 이름·생년월일·연락처를 테스트 값으로 채워 보낸다.</p>
+  </section>
+
+  <section>
+    <h2>2. 결제할 대상</h2>
+    <div class="tabs" role="tablist">
+      <button id="tab-reservation" role="tab" aria-selected="true">영화 예매</button>
+      <button id="tab-purchase" role="tab" aria-selected="false">매점</button>
+    </div>
+
+    <div id="panel-reservation">
+      <div class="row">
+        <label>회차 ID <input id="screening-id" type="number" value="1" min="1"></label>
+        <button id="load-seats-btn">좌석 불러오기</button>
+        <span class="muted">샘플: 1 = 내일 10:00 (14,000원), 2 = 내일 19:00 (15,000원)</span>
+      </div>
+      <div class="screen">SCREEN</div>
+      <div id="seats" class="seats"></div>
+      <div class="row" style="margin-top: 12px">
+        <span id="picked-seats" class="muted">고른 좌석 없음</span>
+        <button id="hold-btn" class="primary" disabled>좌석 선점 → 결제 주문 만들기</button>
+      </div>
+    </div>
+
+    <div id="panel-purchase" hidden>
+      <div class="row">
+        <label>지점 ID <input id="branch-id" type="number" value="1" min="1"></label>
+        <button id="load-menu-btn">메뉴 불러오기</button>
+      </div>
+      <table id="menu" style="margin-top: 10px"></table>
+      <div class="row" style="margin-top: 12px">
+        <button id="order-btn" class="primary" disabled>주문 만들기</button>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>3. 결제</h2>
+    <div id="result"></div>
+    <p id="no-order" class="muted">2에서 결제 주문을 만들면 결제위젯이 열린다.</p>
+    <div id="order-box" hidden>
+      <dl class="order">
+        <dt>대상</dt><dd id="order-target"></dd>
+        <dt>주문명</dt><dd id="order-name"></dd>
+        <dt>금액</dt><dd id="order-amount"></dd>
+        <dt>주문번호</dt><dd id="order-id"></dd>
+      </dl>
+      <div id="payment-method"></div>
+      <div id="agreement"></div>
+      <p class="muted">
+        결제수단은 <b>카드</b>로 고른다. 테스트 환경에서는 카드사 화면이 실제처럼 뜨지만 출금되지 않는다(토스 문서).
+        카카오페이 등 간편결제는 자동충전이 걸려 있으면 테스트여도 <b>계좌 → 머니 충전이 실제로 일어난다</b>(결제는 가상이라 머니로 남는다).
+        가상계좌는 입금 전까지 결과가 정해지지 않아 서버가 결과 불명으로 처리한다.
+      </p>
+      <label class="row muted" style="margin: 8px 0">
+        <input id="tamper" type="checkbox">
+        승인 요청의 금액을 100원으로 바꿔 보낸다 (서버의 금액 위변조 검증 확인용)
+      </label>
+      <div class="row">
+        <button id="pay-btn" class="primary" disabled>결제하기</button>
+      </div>
+    </div>
+    <div id="retry-box" class="row" style="margin-top: 10px" hidden>
+      <span class="muted">예매는 거절돼도 선점이 남아 있다. 새 결제 주문으로 다시 결제할 수 있다.</span>
+      <button id="retry-btn">같은 예매로 결제 주문 다시 만들기</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>4. 확인</h2>
+    <div class="row" style="margin-bottom: 10px">
+      <button id="my-reservations-btn">내 예매 내역</button>
+      <button id="my-purchases-btn">내 구매 내역</button>
+      <button id="clear-log-btn">로그 지우기</button>
+    </div>
+    <pre id="log"></pre>
+  </section>
+</main>
+
+<script>
+  // ─── 세션 저장소 ──────────────────────────────────────────────────────────
+  // 결제창은 다른 페이지로 갔다가 successUrl로 돌아온다. 같은 탭에서 이어지도록 sessionStorage에 둔다.
+  // 비공개 창 등에서 막히면 저장 없이 동작하되, 돌아온 뒤 승인은 할 수 없다.
+  const store = {
+    get(key) { try { return JSON.parse(sessionStorage.getItem(key)); } catch { return null; } },
+    set(key, value) { try { sessionStorage.setItem(key, JSON.stringify(value)); } catch { /* 무시 */ } },
+    remove(key) { try { sessionStorage.removeItem(key); } catch { /* 무시 */ } },
+  };
+
+  const $ = (id) => document.getElementById(id);
+
+  // 결제창에 다녀오면 페이지가 새로 열린다. 그 전후를 이어 보려고 로그도 세션 저장소에 둔다.
+  function log(title, body) {
+    const time = new Date().toLocaleTimeString();
+    const text = body === undefined ? '' : '\n' + JSON.stringify(body, null, 2);
+    $('log').textContent = `[${time}] ${title}${text}\n\n` + $('log').textContent;
+    store.set('log', $('log').textContent);
+  }
+
+  function showResult(ok, message) {
+    $('result').className = ok ? 'ok' : 'err';
+    $('result').textContent = message;
+  }
+
+  class ApiError extends Error {
+    constructor(status, body) {
+      super(body?.message ?? `HTTP ${status}`);
+      this.status = status;
+      this.code = body?.code;
+    }
+  }
+
+  async function api(method, path, body) {
+    const headers = { 'Content-Type': 'application/json' };
+    const token = store.get('accessToken');
+    if (token) headers.Authorization = 'Bearer ' + token;
+    const res = await fetch(path, { method, headers, body: body ? JSON.stringify(body) : undefined });
+    const json = await res.json().catch(() => null);
+    log(`${method} ${path} → ${res.status}`, json);
+    if (!res.ok || !json?.success) throw new ApiError(res.status, json);
+    return json.data;
+  }
+
+  // 버튼 핸들러 공통: 실패를 화면에 보여주고 로그에 남긴다
+  function handler(fn) {
+    return async (event) => {
+      try { await fn(event); }
+      catch (e) { showResult(false, e.code ? `${e.code}: ${e.message}` : e.message); }
+    };
+  }
+
+  // ─── 로그인 ───────────────────────────────────────────────────────────────
+  function renderLoginState() {
+    const loginId = store.get('loginId');
+    $('login-state').textContent = loginId ? `${loginId} 로그인됨` : '로그인 전';
+  }
+
+  // 빈 값이면 서버까지 보내지 않는다. 칸에 글자가 보이는데 여기서 막히면 자동완성 미리보기 상태다
+  function credentials() {
+    const loginId = $('login-id').value.trim();
+    const password = $('password').value;
+    if (!loginId || !password) {
+      throw new Error('아이디와 비밀번호를 직접 입력한다. 칸에 글자가 보이는데도 이 안내가 뜨면 자동완성 미리보기라 값이 비어 있는 것이다.');
+    }
+    return { loginId, password };
+  }
+
+  async function login() {
+    const { loginId, password } = credentials();
+    const data = await api('POST', '/api/auth/login', { loginId, password });
+    store.set('accessToken', data.accessToken);
+    store.set('loginId', loginId);
+    renderLoginState();
+    showResult(true, '로그인했다.');
+  }
+
+  $('login-btn').onclick = handler(login);
+  $('signup-btn').onclick = handler(async () => {
+    const { loginId, password } = credentials();
+    await api('POST', '/api/auth/signup', {
+      loginId, password, name: '결제테스트', birthDate: '2000-01-01',
+      email: `${loginId}@test.com`, phoneNumber: '01012345678',
+    });
+    await login();
+  });
+  $('logout-btn').onclick = () => {
+    store.remove('accessToken');
+    store.remove('loginId');
+    renderLoginState();
+    log('로그아웃 (브라우저의 액세스 토큰만 지웠다)');
+  };
+
+  // ─── 탭 ───────────────────────────────────────────────────────────────────
+  function selectTab(name) {
+    for (const tab of ['reservation', 'purchase']) {
+      $('tab-' + tab).setAttribute('aria-selected', String(tab === name));
+      $('panel-' + tab).hidden = tab !== name;
+    }
+  }
+  $('tab-reservation').onclick = () => selectTab('reservation');
+  $('tab-purchase').onclick = () => selectTab('purchase');
+
+  // ─── 예매 ─────────────────────────────────────────────────────────────────
+  const pickedSeats = new Map();   // "A1" → { rowNum, colNum }
+
+  function renderPicked() {
+    const labels = [...pickedSeats.keys()];
+    $('picked-seats').textContent = labels.length ? `고른 좌석: ${labels.join(', ')}` : '고른 좌석 없음';
+    $('hold-btn').disabled = labels.length === 0;
+  }
+
+  $('load-seats-btn').onclick = handler(async () => {
+    const data = await api('GET', `/api/screenings/${$('screening-id').value}/seats`);
+    const taken = new Set(data.reservedSeats);
+    const grid = $('seats');
+    grid.innerHTML = '';
+    grid.style.gridTemplateColumns = `repeat(${data.colCount}, 30px)`;
+    pickedSeats.clear();
+    for (let row = 1; row <= data.rowCount; row++) {
+      for (let col = 1; col <= data.colCount; col++) {
+        const label = String.fromCharCode(64 + row) + col;
+        const seat = document.createElement('button');
+        seat.className = 'seat';
+        seat.textContent = label;
+        seat.disabled = taken.has(label);
+        seat.onclick = () => {
+          if (pickedSeats.has(label)) pickedSeats.delete(label);
+          else pickedSeats.set(label, { rowNum: row, colNum: col });
+          seat.classList.toggle('picked', pickedSeats.has(label));
+          renderPicked();
+        };
+        grid.appendChild(seat);
+      }
+    }
+    renderPicked();
+  });
+
+  $('hold-btn').onclick = handler(async () => {
+    const seats = [...pickedSeats.values()].map(s => ({ ...s, audienceType: 'ADULT' }));
+    const reservation = await api('POST', '/api/reservations', {
+      screeningId: Number($('screening-id').value), seats,
+    });
+    await createReservationOrder(reservation.id);
+  });
+
+  async function createReservationOrder(reservationId) {
+    const order = await api('POST', `/api/reservations/${reservationId}/payments`);
+    await openWidget({ type: 'reservation', id: reservationId, ...order });
+  }
+
+  // ─── 매점 ─────────────────────────────────────────────────────────────────
+  $('load-menu-btn').onclick = handler(async () => {
+    const menu = await api('GET', `/api/branches/${$('branch-id').value}/products`);
+    $('menu').innerHTML = '<tr><th>상품</th><th>가격</th><th>판매 가능</th><th>수량</th></tr>' + menu.map(m => `
+      <tr>
+        <td>${m.name}</td><td>${m.price.toLocaleString()}원</td>
+        <td>${m.soldOut ? '품절' : m.availableQuantity}</td>
+        <td><input type="number" min="0" value="0" data-product-id="${m.productId}" ${m.soldOut ? 'disabled' : ''}></td>
+      </tr>`).join('');
+    $('order-btn').disabled = false;
+  });
+
+  $('order-btn').onclick = handler(async () => {
+    const items = [...document.querySelectorAll('#menu input[data-product-id]')]
+      .map(input => ({ productId: Number(input.dataset.productId), quantity: Number(input.value) }))
+      .filter(item => item.quantity > 0);
+    const data = await api('POST', '/api/purchases', { branchId: Number($('branch-id').value), items });
+    await openWidget({ type: 'purchase', id: data.purchase.purchaseId, ...data.payment });
+  });
+
+  // ─── 결제위젯 ─────────────────────────────────────────────────────────────
+  let widgets = null;
+  let rendered = false;
+
+  // 결제 수단 UI는 한 번만 그린다. 주문이 바뀌면 금액만 다시 맞춘다.
+  async function openWidget(pending) {
+    store.set('pending', pending);
+    $('order-target').textContent = pending.type === 'reservation' ? `예매 #${pending.id}` : `매점 주문 #${pending.id}`;
+    $('order-name').textContent = pending.orderName;
+    $('order-amount').textContent = pending.amount.toLocaleString() + '원';
+    $('order-id').textContent = pending.orderId;
+    $('order-box').hidden = false;
+    $('no-order').hidden = true;
+    $('retry-box').hidden = true;
+
+    if (!widgets) {
+      const config = await api('GET', '/api/payments/widget-config');
+      // 회원별 결제수단 저장(브랜드페이)을 쓰지 않으므로 비회원 키로 연다
+      widgets = TossPayments(config.clientKey).widgets({ customerKey: TossPayments.ANONYMOUS });
+    }
+    await widgets.setAmount({ currency: 'KRW', value: pending.amount });
+    if (!rendered) {
+      await Promise.all([
+        widgets.renderPaymentMethods({ selector: '#payment-method', variantKey: 'DEFAULT' }),
+        widgets.renderAgreement({ selector: '#agreement', variantKey: 'AGREEMENT' }),
+      ]);
+      rendered = true;
+    }
+    $('pay-btn').disabled = false;
+    showResult(true, '결제 주문을 만들었다. 결제수단은 카드로 고르고 결제하기를 누른다.');
+  }
+
+  $('pay-btn').onclick = handler(async () => {
+    const pending = store.get('pending');
+    store.set('pending', { ...pending, tamper: $('tamper').checked });
+    // 성공·실패 모두 이 페이지로 돌아온다. 쿼리에 paymentKey가 있으면 성공, code가 있으면 실패다.
+    const returnUrl = location.origin + location.pathname;
+    try {
+      await widgets.requestPayment({
+        orderId: pending.orderId,
+        orderName: pending.orderName,
+        successUrl: returnUrl,
+        failUrl: returnUrl,
+      });
+    } catch (e) {
+      // 결제창을 열기 전 단계(약관 미동의 등)의 오류는 리다이렉트 없이 여기로 온다
+      log('requestPayment 오류', { code: e.code, message: e.message });
+      showResult(false, `${e.code ?? '오류'}: ${e.message}`);
+    }
+  });
+
+  $('retry-btn').onclick = handler(async () => {
+    await createReservationOrder(store.get('pending').id);
+  });
+
+  // ─── successUrl / failUrl 로 돌아왔을 때 ─────────────────────────────────
+  async function confirmPayment(params) {
+    const pending = store.get('pending');
+    const orderId = params.get('orderId');
+    if (!pending || pending.orderId !== orderId) {
+      showResult(false, `저장된 주문(${pending?.orderId})과 돌아온 주문(${orderId})이 다르다. 같은 탭에서 결제했는지 확인한다.`);
+      return;
+    }
+    // amount는 주소창 값이다. 서버는 이 값을 믿지 않고 주문 금액과 대조한다
+    const amount = pending.tamper ? 100 : Number(params.get('amount'));
+    const path = pending.type === 'reservation'
+      ? `/api/reservations/${pending.id}/payments/confirm`
+      : `/api/purchases/${pending.id}/payments/confirm`;
+    const body = { paymentKey: params.get('paymentKey'), orderId, amount };
+    log(pending.tamper ? '승인 요청 (금액 조작 체크됨 → 100원으로 보냄)' : '승인 요청', body);
+    try {
+      const data = await api('POST', path, body);
+      showResult(true, pending.type === 'reservation'
+        ? `예매 확정: ${data.screening.movieTitle} ${data.seats.map(s => s.label).join(', ')} / ${data.totalPrice.toLocaleString()}원`
+        : `구매 확정: ${data.items.map(i => `${i.name}×${i.quantity}`).join(', ')} / ${data.totalPrice.toLocaleString()}원`);
+      store.remove('pending');
+    } catch (e) {
+      showResult(false, `${e.code}: ${e.message}`);
+      $('retry-box').hidden = pending.type !== 'reservation' || e.code === 'PAYMENT_RESULT_UNKNOWN';
+    }
+  }
+
+  function handleFail(params) {
+    const pending = store.get('pending');
+    log('결제 실패로 돌아옴 (failUrl)', Object.fromEntries(params));
+    showResult(false, `${params.get('code')}: ${params.get('message')}`);
+    $('retry-box').hidden = pending?.type !== 'reservation';
+  }
+
+  $('log').textContent = store.get('log') ?? '';
+  $('clear-log-btn').onclick = () => {
+    $('log').textContent = '';
+    store.remove('log');
+  };
+  renderLoginState();
+  log('페이지 열림', { url: location.href });
+  const params = new URLSearchParams(location.search);
+  if (params.has('paymentKey') || params.has('code')) {
+    // 새로고침으로 같은 승인을 다시 보내지 않도록 주소창의 쿼리를 바로 지운다
+    history.replaceState(null, '', location.pathname);
+    log('결제창에서 돌아옴', Object.fromEntries(params));
+    if (params.has('paymentKey')) confirmPayment(params);
+    else handleFail(params);
+  }
+</script>
+</body>
+</html>
