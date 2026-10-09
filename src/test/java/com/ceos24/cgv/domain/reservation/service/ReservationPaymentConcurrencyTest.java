@@ -123,7 +123,7 @@ class ReservationPaymentConcurrencyTest {
             assertThatThrownBy(() -> reservationPaymentService.confirm(id, ownerId, confirmOf(second)))
                     .isInstanceOf(CustomException.class)
                     .extracting("errorCode").isEqualTo(ErrorCode.PAYMENT_IN_PROGRESS);
-            assertThatThrownBy(() -> reservationService.cancel(id, ownerId))
+            assertThatThrownBy(() -> reservationService.startCancel(id, ownerId, null))
                     .isInstanceOf(CustomException.class)
                     .extracting("errorCode").isEqualTo(ErrorCode.PAYMENT_IN_PROGRESS);
 

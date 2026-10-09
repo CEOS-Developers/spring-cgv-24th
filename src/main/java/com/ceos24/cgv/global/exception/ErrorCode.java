@@ -44,6 +44,9 @@ public enum ErrorCode {
     RESERVATION_NOT_PENDING(HttpStatus.CONFLICT, "결제 대기 상태인 예매가 아닙니다."),
     RESERVATION_EXPIRED(HttpStatus.CONFLICT, "선점 시간이 만료된 예매입니다."),
     CANCEL_DEADLINE_PASSED(HttpStatus.CONFLICT, "상영 20분 전까지만 취소할 수 있습니다."),
+    RESERVATION_NOT_RESERVED(HttpStatus.CONFLICT, "결제된 예매만 일부 좌석을 취소할 수 있습니다."),
+    SEAT_NOT_IN_RESERVATION(HttpStatus.BAD_REQUEST, "이 예매의 좌석이 아닙니다."),
+    SEAT_ALREADY_CANCELLED(HttpStatus.CONFLICT, "이미 취소된 좌석입니다."),
 
     // 결제
     PAYMENT_NOT_FOUND(HttpStatus.NOT_FOUND, "결제 정보를 찾을 수 없습니다."),
@@ -53,6 +56,19 @@ public enum ErrorCode {
     PAYMENT_REJECTED(HttpStatus.PAYMENT_REQUIRED, "결제가 승인되지 않았습니다. 다른 결제수단으로 다시 시도해 주세요."),
     // 토스가 승인했는지 모르는 상태다. 실패로 안내하면 이미 돈이 빠진 회원이 다시 결제할 수 있다.
     PAYMENT_RESULT_UNKNOWN(HttpStatus.GATEWAY_TIMEOUT, "결제 결과를 확인하지 못했습니다. 잠시 후 내역에서 결제 여부를 확인해 주세요."),
+
+    // 결제 취소
+    PAYMENT_NOT_CANCELABLE(HttpStatus.CONFLICT, "승인된 결제만 취소할 수 있습니다."),
+    PAYMENT_ALREADY_CANCELED(HttpStatus.CONFLICT, "이미 전액 취소된 결제입니다."),
+    CANCEL_AMOUNT_EXCEEDS_BALANCE(HttpStatus.CONFLICT, "취소 금액이 남은 결제 금액보다 큽니다."),
+    PAYMENT_CANCEL_IN_PROGRESS(HttpStatus.CONFLICT, "이미 진행 중인 취소가 있습니다. 잠시 후 결제 내역을 확인해 주세요."),
+    // 토스 쪽 결제 상태 때문에 취소할 수 없다는 뜻이다. 토스는 정상 응답을 줬으므로 502가 아니다.
+    PAYMENT_CANCEL_REJECTED(HttpStatus.CONFLICT, "결제 취소가 거절되었습니다. 고객센터로 문의해 주세요."),
+    // 환불됐는지 모르는 상태다. 좌석·재고는 놓지 않고, 같은 취소를 다시 보내 결과를 맞춘다.
+    PAYMENT_CANCEL_RESULT_UNKNOWN(HttpStatus.GATEWAY_TIMEOUT, "취소 결과를 확인하지 못했습니다. 잠시 후 취소를 다시 시도해 주세요."),
+    PAYMENT_CANCEL_NOT_FOUND(HttpStatus.NOT_FOUND, "취소 요청을 찾을 수 없습니다."),
+    PAYMENT_CANCEL_NOT_RETRYABLE(HttpStatus.CONFLICT, "이미 결과가 정해진 취소 요청입니다."),
+    PAYMENT_CANCEL_RETRY_EXPIRED(HttpStatus.CONFLICT, "재시도 기한이 지난 취소 요청입니다. 고객센터로 문의해 주세요."),
 
     // 찜
     LIKE_REQUEST_CONFLICT(HttpStatus.CONFLICT, "찜 요청이 동시에 처리되었습니다. 다시 시도해 주세요."),

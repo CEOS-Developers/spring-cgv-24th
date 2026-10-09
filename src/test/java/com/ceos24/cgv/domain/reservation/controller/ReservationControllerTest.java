@@ -10,6 +10,7 @@ import com.ceos24.cgv.domain.reservation.entity.AudienceType;
 import com.ceos24.cgv.domain.reservation.entity.Reservation;
 import com.ceos24.cgv.domain.screening.entity.Screening;
 import com.ceos24.cgv.domain.user.entity.User;
+import com.ceos24.cgv.global.client.TossCancelResult;
 import com.ceos24.cgv.global.client.TossConfirmResult.Approved;
 import com.ceos24.cgv.global.client.TossConfirmResult.Rejected;
 import com.ceos24.cgv.global.client.TossConfirmResult.Unknown;
@@ -20,6 +21,7 @@ import com.jayway.jsonpath.JsonPath;
 import org.hamcrest.Matchers;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.ResultActions;
 
@@ -28,6 +30,7 @@ import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.stream.IntStream;
 
 import static com.ceos24.cgv.domain.reservation.entity.AudienceType.ADULT;
@@ -35,6 +38,7 @@ import static com.ceos24.cgv.domain.reservation.entity.AudienceType.YOUTH;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -417,6 +421,7 @@ class ReservationControllerTest extends ControllerIntegrationTest {
     void 취소해도_어느_좌석을_얼마에_잡았는지가_남는다() throws Exception {
         Long id = 선점(1, 1, 1, 2);
         결제완료(id);
+        토스가_취소한다(28000);
 
         취소요청(id, user).andExpect(status().isOk());
         flushAndClear();
@@ -470,9 +475,284 @@ class ReservationControllerTest extends ControllerIntegrationTest {
         Long id = 선점(1, 1);
         결제완료(id);
         setNow(START.minusMinutes(21));
+        토스가_취소한다(14000);
 
         취소요청(id, user)
                 .andExpect(status().isOk());
+    }
+
+    // ─── 결제 취소·환불 ───────────────────────────────────────────────────────
+
+    @Test
+    void 결제된_예매를_전체_취소하면_토스로_전액_환불하고_좌석을_놓는다() throws Exception {
+        Long id = 선점(1, 1, 1, 2);
+        결제완료(id);
+        토스가_취소한다(28000);
+
+        취소요청(id, user).andExpect(status().isOk());
+        flushAndClear();
+
+        // 금액은 서버가 좌석 가격으로 계산하고, 사유도 서버가 만든다
+        verify(tossPaymentsClient).cancel(eq(PAYMENT_KEY), anyString(), eq(28000), eq("예매 전체 취소: A1, A2"));
+        조회요청(id, user)
+                .andExpect(jsonPath("$.data.status").value("CANCELLED"))
+                .andExpect(jsonPath("$.data.totalPrice").value(28000))
+                .andExpect(jsonPath("$.data.remainingPrice").value(0))
+                .andExpect(jsonPath("$.data.seats[0].cancelled").value(true))
+                .andExpect(jsonPath("$.data.seats[1].cancelled").value(true));
+        결제조회요청(id, user)
+                .andExpect(jsonPath("$.data[0].status").value("CANCELED"))
+                .andExpect(jsonPath("$.data[0].canceledAmount").value(28000))
+                .andExpect(jsonPath("$.data[0].balanceAmount").value(0))
+                .andExpect(jsonPath("$.data[0].cancels.length()").value(1))
+                .andExpect(jsonPath("$.data[0].cancels[0].status").value("DONE"))
+                .andExpect(jsonPath("$.data[0].cancels[0].amount").value(28000));
+        선점요청(other, screening.getId(), seat(1, 1, ADULT)).andExpect(status().isCreated());
+    }
+
+    @Test
+    void 좌석을_나눠_여러_번_취소하면_잔액이_줄고_마지막_좌석까지_취소하면_예매가_취소된다() throws Exception {
+        Long id = 선점(1, 1, 1, 2, 1, 3);
+        결제완료(id);
+        토스가_취소한다(42000);
+
+        좌석취소요청(id, user, seatPos(1, 2))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("RESERVED"))
+                .andExpect(jsonPath("$.data.totalPrice").value(42000))
+                .andExpect(jsonPath("$.data.remainingPrice").value(28000))
+                .andExpect(jsonPath("$.data.seats[1].label").value("A2"))
+                .andExpect(jsonPath("$.data.seats[1].cancelled").value(true))
+                .andExpect(jsonPath("$.data.seats[0].cancelled").value(false));
+        flushAndClear();
+        결제조회요청(id, user)
+                .andExpect(jsonPath("$.data[0].status").value("PARTIAL_CANCELED"))
+                .andExpect(jsonPath("$.data[0].canceledAmount").value(14000))
+                .andExpect(jsonPath("$.data[0].balanceAmount").value(28000));
+
+        좌석취소요청(id, user, seatPos(1, 1), seatPos(1, 3))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("CANCELLED"))
+                .andExpect(jsonPath("$.data.remainingPrice").value(0));
+        flushAndClear();
+        결제조회요청(id, user)
+                .andExpect(jsonPath("$.data[0].status").value("CANCELED"))
+                .andExpect(jsonPath("$.data[0].balanceAmount").value(0))
+                .andExpect(jsonPath("$.data[0].cancels.length()").value(2))
+                .andExpect(jsonPath("$.data[0].cancels[0].reason").value("예매 부분 취소: A2"))
+                .andExpect(jsonPath("$.data[0].cancels[1].reason").value("예매 부분 취소: A1, A3"));
+        verify(tossPaymentsClient).cancel(eq(PAYMENT_KEY), anyString(), eq(14000), anyString());
+        verify(tossPaymentsClient).cancel(eq(PAYMENT_KEY), anyString(), eq(28000), anyString());
+    }
+
+    @Test
+    void 부분_취소한_좌석은_다른_회원이_잡을_수_있고_예매율에서도_빠진다() throws Exception {
+        Long id = 선점(1, 1, 1, 2);
+        결제완료(id);
+        토스가_취소한다(28000);
+
+        좌석취소요청(id, user, seatPos(1, 1)).andExpect(status().isOk());
+        flushAndClear();
+
+        mockMvc.perform(get("/api/movies/{id}", screening.getMovie().getId()))
+                .andExpect(jsonPath("$.data.reservedSeatCount").value(1));
+        선점요청(other, screening.getId(), seat(1, 1, ADULT)).andExpect(status().isCreated());
+        선점요청(other, screening.getId(), seat(1, 2, ADULT))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("SEAT_ALREADY_RESERVED"));
+    }
+
+    @Test
+    void 이미_취소된_좌석을_다시_취소하면_409이고_토스를_부르지_않는다() throws Exception {
+        Long id = 선점(1, 1, 1, 2);
+        결제완료(id);
+        토스가_취소한다(28000);
+        좌석취소요청(id, user, seatPos(1, 1)).andExpect(status().isOk());
+        flushAndClear();
+
+        좌석취소요청(id, user, seatPos(1, 1))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("SEAT_ALREADY_CANCELLED"));
+        verify(tossPaymentsClient, times(1)).cancel(anyString(), anyString(), anyInt(), anyString());
+    }
+
+    @Test
+    void 전체_취소된_예매를_다시_취소하면_409이고_토스를_부르지_않는다() throws Exception {
+        Long id = 선점(1, 1);
+        결제완료(id);
+        토스가_취소한다(14000);
+        취소요청(id, user).andExpect(status().isOk());
+        flushAndClear();
+
+        취소요청(id, user)
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("ALREADY_CANCELLED"));
+        좌석취소요청(id, user, seatPos(1, 1))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("ALREADY_CANCELLED"));
+        verify(tossPaymentsClient, times(1)).cancel(anyString(), anyString(), anyInt(), anyString());
+    }
+
+    @Test
+    void 이_예매의_좌석이_아니거나_요청에_중복이_있으면_400() throws Exception {
+        Long id = 선점(1, 1);
+        결제완료(id);
+
+        좌석취소요청(id, user, seatPos(5, 5))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("SEAT_NOT_IN_RESERVATION"));
+        좌석취소요청(id, user, seatPos(1, 1), seatPos(1, 1))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("DUPLICATE_SEAT_IN_REQUEST"));
+        verify(tossPaymentsClient, never()).cancel(anyString(), anyString(), anyInt(), anyString());
+    }
+
+    @Test
+    void 결제_전_선점은_부분_취소할_수_없다() throws Exception {
+        Long id = 선점(1, 1, 1, 2);
+
+        좌석취소요청(id, user, seatPos(1, 1))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("RESERVATION_NOT_RESERVED"));
+    }
+
+    @Test
+    void 상영_20분_이내면_부분_취소도_할_수_없다() throws Exception {
+        Long id = 선점(1, 1, 1, 2);
+        결제완료(id);
+        setNow(START.minusMinutes(19));
+
+        좌석취소요청(id, user, seatPos(1, 1))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("CANCEL_DEADLINE_PASSED"));
+        verify(tossPaymentsClient, never()).cancel(anyString(), anyString(), anyInt(), anyString());
+    }
+
+    @Test
+    void 토스가_취소를_거절하면_좌석과_결제는_그대로이고_다시_취소할_수_있다() throws Exception {
+        Long id = 선점(1, 1, 1, 2);
+        결제완료(id);
+        given(tossPaymentsClient.cancel(anyString(), anyString(), anyInt(), anyString()))
+                .willReturn(new TossCancelResult.Rejected("NOT_CANCELABLE_PAYMENT", "취소 할 수 없는 결제 입니다."));
+
+        좌석취소요청(id, user, seatPos(1, 1))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("PAYMENT_CANCEL_REJECTED"));
+        flushAndClear();
+
+        조회요청(id, user)
+                .andExpect(jsonPath("$.data.status").value("RESERVED"))
+                .andExpect(jsonPath("$.data.remainingPrice").value(28000));
+        결제조회요청(id, user)
+                .andExpect(jsonPath("$.data[0].status").value("DONE"))
+                .andExpect(jsonPath("$.data[0].balanceAmount").value(28000))
+                .andExpect(jsonPath("$.data[0].cancels[0].status").value("FAILED"))
+                .andExpect(jsonPath("$.data[0].cancels[0].failureCode").value("NOT_CANCELABLE_PAYMENT"));
+        선점요청(other, screening.getId(), seat(1, 1, ADULT))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("SEAT_ALREADY_RESERVED"));
+
+        토스가_취소한다(28000);
+        좌석취소요청(id, user, seatPos(1, 1))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.remainingPrice").value(14000));
+    }
+
+    @Test
+    void 취소_결과를_모르면_504이고_좌석을_놓지_않으며_같은_멱등키로_재시도하면_반영된다() throws Exception {
+        Long id = 선점(1, 1, 1, 2);
+        결제완료(id);
+        given(tossPaymentsClient.cancel(anyString(), anyString(), anyInt(), anyString()))
+                .willReturn(new TossCancelResult.Unknown("Read timed out"));
+
+        좌석취소요청(id, user, seatPos(1, 1))
+                .andExpect(status().isGatewayTimeout())
+                .andExpect(jsonPath("$.code").value("PAYMENT_CANCEL_RESULT_UNKNOWN"));
+        flushAndClear();
+
+        // 토스에서는 환불됐을 수 있다. 그래도 좌석을 놓으면, 실제로는 환불되지 않았을 때 회원이 둘 다 잃는다
+        선점요청(other, screening.getId(), seat(1, 1, ADULT))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("SEAT_ALREADY_RESERVED"));
+        // 새 취소를 받으면 새 멱등키로 같은 금액이 한 번 더 환불될 수 있다
+        좌석취소요청(id, user, seatPos(1, 2))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("PAYMENT_CANCEL_IN_PROGRESS"));
+        Long cancelId = 취소요청Id(id);
+
+        given(tossPaymentsClient.cancel(anyString(), anyString(), anyInt(), anyString()))
+                .willReturn(TestFixtures.tossCanceled(PAYMENT_KEY, 28000, 14000, 14000));
+        재시도요청(id, cancelId, user)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.remainingPrice").value(14000))
+                .andExpect(jsonPath("$.data.seats[0].cancelled").value(true));
+
+        ArgumentCaptor<String> keys = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> reasons = ArgumentCaptor.forClass(String.class);
+        verify(tossPaymentsClient, times(2)).cancel(eq(PAYMENT_KEY), keys.capture(), eq(14000), reasons.capture());
+        assertThat(keys.getAllValues().get(1)).isEqualTo(keys.getAllValues().get(0));
+        assertThat(reasons.getAllValues().get(1)).isEqualTo(reasons.getAllValues().get(0));
+        flushAndClear();
+        결제조회요청(id, user)
+                .andExpect(jsonPath("$.data[0].status").value("PARTIAL_CANCELED"))
+                .andExpect(jsonPath("$.data[0].cancels.length()").value(1))
+                .andExpect(jsonPath("$.data[0].cancels[0].status").value("DONE"));
+    }
+
+    @Test
+    void 결과가_정해진_취소는_재시도할_수_없다() throws Exception {
+        Long id = 선점(1, 1, 1, 2);
+        결제완료(id);
+        토스가_취소한다(28000);
+        좌석취소요청(id, user, seatPos(1, 1)).andExpect(status().isOk());
+        flushAndClear();
+
+        재시도요청(id, 취소요청Id(id), user)
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("PAYMENT_CANCEL_NOT_RETRYABLE"));
+        verify(tossPaymentsClient, times(1)).cancel(anyString(), anyString(), anyInt(), anyString());
+    }
+
+    @Test
+    void 요청_후_14일이_지난_취소는_재시도하지_않는다() throws Exception {
+        // 토스 멱등키는 15일 유효하다. 그 뒤에 같은 키로 보내면 새 요청으로 처리되어 두 번 환불될 수 있다
+        Long id = 선점(1, 1, 1, 2);
+        결제완료(id);
+        given(tossPaymentsClient.cancel(anyString(), anyString(), anyInt(), anyString()))
+                .willReturn(new TossCancelResult.Unknown("Read timed out"));
+        좌석취소요청(id, user, seatPos(1, 1)).andExpect(status().isGatewayTimeout());
+        flushAndClear();
+        Long cancelId = 취소요청Id(id);
+
+        setNow(NOW.plusDays(14));
+        재시도요청(id, cancelId, user)
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("PAYMENT_CANCEL_RETRY_EXPIRED"));
+        verify(tossPaymentsClient, times(1)).cancel(anyString(), anyString(), anyInt(), anyString());
+    }
+
+    @Test
+    void 남의_예매는_부분_취소도_재시도도_404() throws Exception {
+        Long id = 선점(1, 1, 1, 2);
+        결제완료(id);
+        given(tossPaymentsClient.cancel(anyString(), anyString(), anyInt(), anyString()))
+                .willReturn(new TossCancelResult.Unknown("Read timed out"));
+        좌석취소요청(id, user, seatPos(1, 1)).andExpect(status().isGatewayTimeout());
+        flushAndClear();
+        Long cancelId = 취소요청Id(id);
+
+        좌석취소요청(id, other, seatPos(1, 2))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("RESERVATION_NOT_FOUND"));
+        재시도요청(id, cancelId, other)
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("RESERVATION_NOT_FOUND"));
+        // 내 예매 경로에 남의 취소 id를 넣어도 찾지 못한다
+        Long mine = 선점Of(other, 3, 3);
+        재시도요청(mine, cancelId, other)
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("PAYMENT_CANCEL_NOT_FOUND"));
+        verify(tossPaymentsClient, times(1)).cancel(anyString(), anyString(), anyInt(), anyString());
     }
 
     // ─── 내 예매 내역 ─────────────────────────────────────────────────────────
@@ -652,6 +932,33 @@ class ReservationControllerTest extends ControllerIntegrationTest {
         return em.createQuery("select p from Payment p where p.orderId = :orderId", Payment.class)
                 .setParameter("orderId", orderId)
                 .getSingleResult();
+    }
+
+    private void 토스가_취소한다(int paidAmount) {
+        given(tossPaymentsClient.cancel(anyString(), anyString(), anyInt(), anyString()))
+                .willAnswer(TestFixtures.tossCancelsFrom(paidAmount));
+    }
+
+    private String seatPos(int rowNum, int colNum) {
+        return "{\"rowNum\":%d,\"colNum\":%d}".formatted(rowNum, colNum);
+    }
+
+    private ResultActions 좌석취소요청(Long id, User requester, String... seats) throws Exception {
+        return mockMvc.perform(post("/api/reservations/{id}/cancellations", id).with(bearer(requester))
+                .contentType("application/json")
+                .content("{\"seats\":[%s]}".formatted(String.join(",", seats))));
+    }
+
+    private ResultActions 재시도요청(Long id, Long cancelId, User requester) throws Exception {
+        return mockMvc.perform(post("/api/reservations/{id}/cancellations/{cancelId}/retry", id, cancelId)
+                .with(bearer(requester)));
+    }
+
+    // 결제 조회 응답에서 가장 최근 취소 요청의 id를 꺼낸다. 회원이 재시도할 때 쓰는 값이다
+    private Long 취소요청Id(Long id) throws Exception {
+        String body = 결제조회요청(id, user).andReturn().getResponse().getContentAsString();
+        List<Integer> ids = JsonPath.read(body, "$.data[0].cancels[*].id");
+        return ids.getLast().longValue();
     }
 
     private ResultActions 결제조회요청(Long id, User requester) throws Exception {

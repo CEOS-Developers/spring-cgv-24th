@@ -40,7 +40,7 @@ public interface ReservationRepository extends JpaRepository<Reservation, Long> 
             SELECT new com.ceos24.cgv.domain.reservation.dto.ReservationDetailRow(
                 r.id, r.user.id, r.status, r.createdAt, r.expiresAt, r.confirmedAt, r.cancelledAt,
                 s.id, m.title, t.name, b.name, s.startAt, s.endAt,
-                seat.rowNum, seat.colNum, seat.audienceType, seat.paidPrice)
+                seat.rowNum, seat.colNum, seat.audienceType, seat.paidPrice, seat.cancelledAt)
             FROM Reservation r
             JOIN r.screening s
             JOIN s.movie m
@@ -59,7 +59,7 @@ public interface ReservationRepository extends JpaRepository<Reservation, Long> 
             SELECT new com.ceos24.cgv.domain.reservation.dto.ReservationDetailRow(
                 r.id, r.user.id, r.status, r.createdAt, r.expiresAt, r.confirmedAt, r.cancelledAt,
                 s.id, m.title, t.name, b.name, s.startAt, s.endAt,
-                seat.rowNum, seat.colNum, seat.audienceType, seat.paidPrice)
+                seat.rowNum, seat.colNum, seat.audienceType, seat.paidPrice, seat.cancelledAt)
             FROM Reservation r
             JOIN r.screening s
             JOIN s.movie m

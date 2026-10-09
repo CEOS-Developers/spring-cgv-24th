@@ -27,6 +27,8 @@ import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -99,6 +101,8 @@ class AuthorizationScenarioTest extends AuthScenarioTest {
         assertThat(reloaded.getSeats()).hasSize(2).allMatch(ReservationSeat::isOccupied);
 
         // 거부 이유가 소유권이었음을 확인한다. 기한·상태 때문이었다면 주인도 취소하지 못한다
+        given(tossPaymentsClient.cancel(anyString(), anyString(), anyInt(), anyString()))
+                .willAnswer(TestFixtures.tossCancelsFrom(reloaded.getTotalPrice()));
         mockMvc.perform(delete("/api/reservations/{id}", reservationId).with(bearer(ownerToken)))
                 .andExpect(status().isOk());
     }

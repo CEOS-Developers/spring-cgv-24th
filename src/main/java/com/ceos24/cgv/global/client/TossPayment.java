@@ -44,5 +44,8 @@ public record TossPayment(
             String cancelStatus,
             OffsetDateTime canceledAt
     ) {
+        public LocalDateTime canceledAtIn(ZoneId zone, LocalDateTime fallback) {
+            return canceledAt == null ? fallback : canceledAt.atZoneSameInstant(zone).toLocalDateTime();
+        }
     }
 }

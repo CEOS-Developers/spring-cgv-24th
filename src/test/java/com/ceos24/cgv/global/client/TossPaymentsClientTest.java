@@ -34,6 +34,8 @@ class TossPaymentsClientTest {
     private static final String CONFIRM_URL = BASE_URL + "/v1/payments/confirm";
     private static final String ORDER_ID = "cgv-r-0123456789abcdef0123456789abcdef";
     private static final String LOOKUP_URL = BASE_URL + "/v1/payments/orders/" + ORDER_ID;
+    private static final String CANCEL_URL = BASE_URL + "/v1/payments/tgen_test_key/cancel";
+    private static final String CANCEL_KEY = "0123456789abcdef0123456789abcdef";
 
     private MockRestServiceServer server;
     private TossPaymentsClient client;
@@ -187,6 +189,93 @@ class TossPaymentsClientTest {
         server.reset();
         server.expect(requestTo(LOOKUP_URL)).andRespond(withException(new SocketTimeoutException("Read timed out")));
         assertThat(client.findByOrderId(ORDER_ID)).isInstanceOf(Unavailable.class);
+    }
+
+    // ─── 취소 ─────────────────────────────────────────────────────────────────
+
+    @Test
+    void 취소되면_이번_취소_거래와_남은_잔액을_옮긴다() {
+        server.expect(requestTo(CANCEL_URL))
+                .andExpect(method(HttpMethod.POST))
+                // 취소 요청마다 다른 키다. orderId를 쓰면 두 번째 부분 취소에 첫 응답이 돌아온다
+                .andExpect(header("Idempotency-Key", CANCEL_KEY))
+                .andExpect(jsonPath("$.cancelAmount").value(14000))
+                .andExpect(jsonPath("$.cancelReason").value("예매 부분 취소: A2"))
+                .andRespond(withSuccess(cancelJson("PARTIAL_CANCELED", 28000, "DONE"), MediaType.APPLICATION_JSON));
+
+        TossCancelResult result = client.cancel("tgen_test_key", CANCEL_KEY, 14000, "예매 부분 취소: A2");
+
+        assertThat(result).isInstanceOf(TossCancelResult.Canceled.class);
+        TossCancelResult.Canceled canceled = (TossCancelResult.Canceled) result;
+        assertThat(canceled.payment().balanceAmount()).isEqualTo(28000);
+        // 앞선 취소가 cancels에 먼저 있다. 이번 요청의 거래는 마지막 항목이다
+        assertThat(canceled.cancel().transactionKey()).isEqualTo("tx_2");
+        assertThat(canceled.cancel().cancelAmount()).isEqualTo(14000);
+        server.verify();
+    }
+
+    @Test
+    void 취소_불가_응답은_거절이다() {
+        server.expect(requestTo(CANCEL_URL))
+                .andRespond(withStatus(HttpStatus.FORBIDDEN).contentType(MediaType.APPLICATION_JSON)
+                        .body(errorJson("NOT_CANCELABLE_AMOUNT", "취소 할 수 없는 금액 입니다.")));
+
+        assertThat(client.cancel("tgen_test_key", CANCEL_KEY, 14000, "사유"))
+                .isEqualTo(new TossCancelResult.Rejected("NOT_CANCELABLE_AMOUNT", "취소 할 수 없는 금액 입니다."));
+    }
+
+    @Test
+    void 이미_취소됐다는_응답은_거절이_아니라_결과_불명이다() {
+        // 앞선 취소가 성공했는데 그 응답만 놓쳤을 수 있다
+        assertCancelUnknownOn(HttpStatus.BAD_REQUEST, "ALREADY_CANCELED_PAYMENT", "이미 취소된 결제 입니다.");
+    }
+
+    @Test
+    void 같은_멱등키의_첫_요청이_처리_중이면_결과_불명이다() {
+        assertCancelUnknownOn(HttpStatus.CONFLICT, "IDEMPOTENT_REQUEST_PROCESSING", "이전 요청이 처리 중입니다.");
+    }
+
+    @Test
+    void 결제사_일시_오류는_400이어도_결과_불명이다() {
+        // 거절로 보면 회원이 다시 요청할 때 새 멱등키로 같은 금액이 한 번 더 환불될 수 있다
+        assertCancelUnknownOn(HttpStatus.BAD_REQUEST, "PROVIDER_ERROR", "일시적인 오류가 발생했습니다.");
+    }
+
+    @Test
+    void 취소_중_서버_오류나_타임아웃은_결과_불명이다() {
+        server.expect(requestTo(CANCEL_URL)).andRespond(withServerError());
+        assertThat(client.cancel("tgen_test_key", CANCEL_KEY, 14000, "사유")).isInstanceOf(TossCancelResult.Unknown.class);
+
+        server.reset();
+        server.expect(requestTo(CANCEL_URL)).andRespond(withException(new SocketTimeoutException("Read timed out")));
+        assertThat(client.cancel("tgen_test_key", CANCEL_KEY, 14000, "사유")).isInstanceOf(TossCancelResult.Unknown.class);
+    }
+
+    @Test
+    void 취소_거래가_DONE이_아니면_결과_불명이다() {
+        server.expect(requestTo(CANCEL_URL))
+                .andRespond(withSuccess(cancelJson("PARTIAL_CANCELED", 28000, "IN_PROGRESS"), MediaType.APPLICATION_JSON));
+
+        assertThat(client.cancel("tgen_test_key", CANCEL_KEY, 14000, "사유")).isInstanceOf(TossCancelResult.Unknown.class);
+    }
+
+    private void assertCancelUnknownOn(HttpStatus status, String code, String message) {
+        server.expect(requestTo(CANCEL_URL))
+                .andRespond(withStatus(status).contentType(MediaType.APPLICATION_JSON).body(errorJson(code, message)));
+
+        assertThat(client.cancel("tgen_test_key", CANCEL_KEY, 14000, "사유")).isInstanceOf(TossCancelResult.Unknown.class);
+    }
+
+    private String cancelJson(String status, int balanceAmount, String lastCancelStatus) {
+        return """
+                {"paymentKey":"tgen_test_key","orderId":"%s","status":"%s","method":"카드",
+                 "totalAmount":42000,"balanceAmount":%d,"approvedAt":"2024-06-01T09:05:00+09:00",
+                 "cancels":[
+                   {"transactionKey":"tx_1","cancelAmount":14000,"cancelReason":"예매 부분 취소: A1",
+                    "cancelStatus":"DONE","canceledAt":"2024-06-01T09:20:00+09:00"},
+                   {"transactionKey":"tx_2","cancelAmount":14000,"cancelReason":"예매 부분 취소: A2",
+                    "cancelStatus":"%s","canceledAt":"2024-06-01T09:30:00+09:00"}]}
+                """.formatted(ORDER_ID, status, balanceAmount, lastCancelStatus);
     }
 
     private String paymentJson(String status) {

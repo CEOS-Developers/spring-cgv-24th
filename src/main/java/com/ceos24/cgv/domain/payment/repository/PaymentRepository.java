@@ -4,6 +4,7 @@ import com.ceos24.cgv.domain.payment.entity.Payment;
 import com.ceos24.cgv.domain.payment.entity.PaymentStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -23,4 +24,6 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
     List<Payment> findByReservationIdAndStatusNotOrderByIdDesc(Long reservationId, PaymentStatus excluded);
 
     Optional<Payment> findByPurchaseId(Long purchaseId);
+
+    Optional<Payment> findFirstByReservationIdAndStatusIn(Long reservationId, Collection<PaymentStatus> statuses);
 }

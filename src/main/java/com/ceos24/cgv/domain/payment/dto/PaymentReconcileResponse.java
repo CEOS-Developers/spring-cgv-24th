@@ -1,11 +1,14 @@
 package com.ceos24.cgv.domain.payment.dto;
 
 import com.ceos24.cgv.domain.payment.entity.Payment;
+import com.ceos24.cgv.domain.payment.entity.PaymentCancel;
 import com.ceos24.cgv.global.client.TossLookupResult;
 import com.ceos24.cgv.global.client.TossLookupResult.Found;
 import com.ceos24.cgv.global.client.TossLookupResult.NotFound;
 import com.ceos24.cgv.global.client.TossLookupResult.Unavailable;
 import com.ceos24.cgv.global.client.TossPayment;
+
+import java.util.List;
 
 // 같은 주문을 우리 DB와 토스가 각각 어떻게 알고 있는지 나란히 놓는다. 어긋남을 판정하지는 않는다.
 // 판정(예: IN_PROGRESS인데 토스는 DONE)과 정리는 결과 불명 결제 세션에서 이 값을 바탕으로 한다.
@@ -23,9 +26,9 @@ public record PaymentReconcileResponse(
             Long reservationId,
             Long purchaseId
     ) {
-        static Ours from(Payment payment) {
+        static Ours from(Payment payment, List<PaymentCancel> cancels) {
             return new Ours(
-                    PaymentResponse.from(payment),
+                    PaymentResponse.of(payment, cancels),
                     payment.getPaymentKey(),
                     payment.getReservation() == null ? null : payment.getReservation().getId(),
                     payment.getPurchase() == null ? null : payment.getPurchase().getId()
@@ -33,8 +36,8 @@ public record PaymentReconcileResponse(
         }
     }
 
-    public static PaymentReconcileResponse of(Payment payment, TossLookupResult lookup) {
-        Ours ours = Ours.from(payment);
+    public static PaymentReconcileResponse of(Payment payment, List<PaymentCancel> cancels, TossLookupResult lookup) {
+        Ours ours = Ours.from(payment, cancels);
         return switch (lookup) {
             case Found found -> new PaymentReconcileResponse(payment.getOrderId(), ours, "FOUND", found.payment(), null);
             case NotFound notFound -> new PaymentReconcileResponse(payment.getOrderId(), ours, "NOT_FOUND", null,

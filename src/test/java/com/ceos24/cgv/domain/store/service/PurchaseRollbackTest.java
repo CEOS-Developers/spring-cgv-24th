@@ -159,8 +159,8 @@ class PurchaseRollbackTest {
     void 예매에도_구매에도_속하지_않는_결제_행은_DB_CHECK_제약이_막는다() {
         assertThatThrownBy(() -> transactionTemplate.executeWithoutResult(status ->
                 em.createNativeQuery("""
-                                INSERT INTO payment (order_id, amount, status, created_at, updated_at)
-                                VALUES ('cgv-x-orphan', 1000, 'READY', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                                INSERT INTO payment (order_id, amount, canceled_amount, status, created_at, updated_at)
+                                VALUES ('cgv-x-orphan', 1000, 0, 'READY', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                                 """)
                         .executeUpdate()))
                 .isInstanceOf(ConstraintViolationException.class)

@@ -19,7 +19,10 @@ public record ReservationResponse(
         ReservationStatus status,
         String statusName,
         List<SeatSummary> seats,
+        // 처음 잡은 좌석 전부의 금액이다. 취소해도 줄지 않아, 무엇을 얼마에 샀었는지가 남는다.
         int totalPrice,
+        // 취소되지 않은 좌석의 금액이다. 부분 취소 뒤에 남은 예매의 값이다.
+        int remainingPrice,
         LocalDateTime selectedAt,
         LocalDateTime expiresAt,
         LocalDateTime confirmedAt,
@@ -49,14 +52,17 @@ public record ReservationResponse(
             String label,
             AudienceType audienceType,
             String audienceTypeName,
-            int paidPrice
+            int paidPrice,
+            // 회원이 취소한 좌석이다. 선점 만료로 풀린 좌석은 false이고, 예매 상태(EXPIRED)가 그 사실을 말한다.
+            boolean cancelled
     ) {
         public static SeatSummary from(ReservationSeat seat) {
             return new SeatSummary(
                     seat.getLabel(),
                     seat.getAudienceType(),
                     seat.getAudienceType().getDisplayName(),
-                    seat.getPaidPrice()
+                    seat.getPaidPrice(),
+                    seat.getCancelledAt() != null
             );
         }
 
@@ -65,7 +71,8 @@ public record ReservationResponse(
                     ReservationSeat.label(row.rowNum(), row.colNum()),
                     row.audienceType(),
                     row.audienceType().getDisplayName(),
-                    row.paidPrice()
+                    row.paidPrice(),
+                    row.seatCancelledAt() != null
             );
         }
     }
@@ -87,6 +94,7 @@ public record ReservationResponse(
                 status.getDisplayName(),
                 seats,
                 r.getTotalPrice(),
+                remainingPriceOf(seats),
                 r.getCreatedAt(),
                 r.getExpiresAt(),
                 r.getConfirmedAt(),
@@ -123,11 +131,19 @@ public record ReservationResponse(
                 status.getDisplayName(),
                 seats,
                 totalPrice,
+                remainingPriceOf(seats),
                 head.selectedAt(),
                 head.expiresAt(),
                 head.confirmedAt(),
                 head.cancelledAt()
         );
+    }
+
+    private static int remainingPriceOf(List<SeatSummary> seats) {
+        return seats.stream()
+                .filter(seat -> !seat.cancelled())
+                .mapToInt(SeatSummary::paidPrice)
+                .sum();
     }
 
     // 행은 예매 id 내림차순으로 온다. LinkedHashMap이라 묶은 뒤에도 그 순서가 유지된다.

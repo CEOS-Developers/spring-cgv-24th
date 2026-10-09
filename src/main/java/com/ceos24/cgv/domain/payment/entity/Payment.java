@@ -63,6 +63,10 @@ public class Payment extends BaseTimeEntity {
 
     private LocalDateTime approvedAt;
 
+    // 확정된 취소의 합이다. 이력은 PaymentCancel에 있고, 이 값은 잔액 검사를 행 합산 없이 하려고 둔다.
+    @Column(nullable = false)
+    private int canceledAmount;
+
     @Column(length = 100)
     private String failureCode;
 
@@ -112,6 +116,31 @@ public class Payment extends BaseTimeEntity {
         this.status = PaymentStatus.FAILED;
         this.failureCode = failureCode;
         this.failureMessage = failureMessage;
+    }
+
+    public int getBalanceAmount() {
+        return this.amount - this.canceledAmount;
+    }
+
+    // 취소 금액은 서버가 좌석·상품에서 계산하므로 잔액을 넘을 수 없다. 넘는다면 계산 쪽 버그이고,
+    // 토스까지 보내면 엉뚱한 금액이 환불되거나 토스의 거절에 기대게 되어 여기서 먼저 막는다.
+    public void verifyCancelable(int cancelAmount) {
+        if (this.status == PaymentStatus.CANCELED) {
+            throw new CustomException(ErrorCode.PAYMENT_ALREADY_CANCELED);
+        }
+        if (this.status != PaymentStatus.DONE && this.status != PaymentStatus.PARTIAL_CANCELED) {
+            throw new CustomException(ErrorCode.PAYMENT_NOT_CANCELABLE);
+        }
+        if (cancelAmount < 1 || cancelAmount > getBalanceAmount()) {
+            throw new CustomException(ErrorCode.CANCEL_AMOUNT_EXCEEDS_BALANCE);
+        }
+    }
+
+    // PaymentCancel.complete만 부른다. 이력 없이 누적액만 바뀌는 일이 없게 한다.
+    void applyCancel(int cancelAmount) {
+        verifyCancelable(cancelAmount);
+        this.canceledAmount += cancelAmount;
+        this.status = getBalanceAmount() == 0 ? PaymentStatus.CANCELED : PaymentStatus.PARTIAL_CANCELED;
     }
 
     private void requireStatus(PaymentStatus expected) {

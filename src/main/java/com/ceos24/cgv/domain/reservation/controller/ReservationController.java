@@ -3,8 +3,10 @@ package com.ceos24.cgv.domain.reservation.controller;
 import com.ceos24.cgv.domain.payment.dto.PaymentConfirmRequest;
 import com.ceos24.cgv.domain.payment.dto.PaymentOrderResponse;
 import com.ceos24.cgv.domain.payment.dto.PaymentResponse;
+import com.ceos24.cgv.domain.reservation.dto.ReservationCancelRequest;
 import com.ceos24.cgv.domain.reservation.dto.ReservationCreateRequest;
 import com.ceos24.cgv.domain.reservation.dto.ReservationResponse;
+import com.ceos24.cgv.domain.reservation.service.ReservationCancelService;
 import com.ceos24.cgv.domain.reservation.service.ReservationPaymentService;
 import com.ceos24.cgv.domain.reservation.service.ReservationService;
 import com.ceos24.cgv.global.response.ApiResponse;
@@ -29,6 +31,7 @@ public class ReservationController {
 
     private final ReservationService reservationService;
     private final ReservationPaymentService reservationPaymentService;
+    private final ReservationCancelService reservationCancelService;
 
     @Operation(summary = "좌석 선점 (결제 대기 예매 생성)")
     @PostMapping
@@ -74,11 +77,27 @@ public class ReservationController {
         return ApiResponse.success(reservationService.getById(id, authUser.userId()));
     }
 
-    @Operation(summary = "예매 취소")
+    @Operation(summary = "예매 취소 — 결제 전 선점은 바로 취소, 결제된 예매는 남은 좌석 전부를 토스로 환불한 뒤 취소")
     @DeleteMapping("/{id}")
     public ApiResponse<Void> cancel(@AuthenticationPrincipal AuthUser authUser,
                                     @PathVariable Long id) {
-        reservationService.cancel(id, authUser.userId());
+        reservationCancelService.cancel(id, authUser.userId());
         return ApiResponse.success();
+    }
+
+    @Operation(summary = "좌석 부분 취소 — 고른 좌석의 결제 금액만큼 토스로 환불. 결제된 예매만")
+    @PostMapping("/{id}/cancellations")
+    public ApiResponse<ReservationResponse> cancelSeats(@AuthenticationPrincipal AuthUser authUser,
+                                                        @PathVariable Long id,
+                                                        @Valid @RequestBody ReservationCancelRequest req) {
+        return ApiResponse.success(reservationCancelService.cancelSeats(id, authUser.userId(), req));
+    }
+
+    @Operation(summary = "취소 재시도 — 결과를 모르는 취소를 같은 멱등키로 다시 보냄. 요청 후 14일까지")
+    @PostMapping("/{id}/cancellations/{cancelId}/retry")
+    public ApiResponse<ReservationResponse> retryCancel(@AuthenticationPrincipal AuthUser authUser,
+                                                        @PathVariable Long id,
+                                                        @PathVariable Long cancelId) {
+        return ApiResponse.success(reservationCancelService.retry(id, authUser.userId(), cancelId));
     }
 }

@@ -142,12 +142,23 @@
   </section>
 
   <section>
-    <h2>4. 결제 조회</h2>
-    <p class="muted">우리 DB 기준이다. 토스를 부르지 않는다. 승인이 끝나면 ID가 자동으로 채워진다.</p>
+    <h2>4. 결제 조회 / 취소</h2>
+    <p class="muted">조회는 우리 DB 기준이다. 토스를 부르지 않는다. 승인이 끝나면 ID가 자동으로 채워진다.</p>
     <div class="row" style="margin-bottom: 8px">
       <label>예매 ID <input id="reservation-id" type="number" min="1"></label>
       <button id="reservation-payments-btn">예매 결제 조회</button>
+      <button id="reservation-cancel-btn">예매 전체 취소</button>
     </div>
+    <div class="row" style="margin-bottom: 8px">
+      <input id="cancel-seats" type="text" placeholder="취소할 좌석 (예: A1, A2)" autocomplete="off">
+      <button id="reservation-cancel-seats-btn">좌석 부분 취소</button>
+      <input id="retry-cancel-id" type="number" min="1" placeholder="취소 ID">
+      <button id="reservation-cancel-retry-btn">취소 재시도</button>
+    </div>
+    <p class="muted">
+      취소 금액은 서버가 좌석의 결제 가격으로 계산한다. 결과를 모르는 취소(504)는 결제 조회에 나온 취소 ID로 재시도한다.
+      같은 멱등키로 다시 보내므로 이미 환불됐어도 두 번 환불되지 않는다.
+    </p>
     <div class="row">
       <label>구매 ID <input id="purchase-id" type="number" min="1"></label>
       <button id="purchase-payment-btn">구매 결제 조회</button>
@@ -459,16 +470,58 @@
     return value;
   }
 
+  function describePayment(p) {
+    const cancels = p.cancels.map(c => `#${c.id} ${c.statusName} ${c.amount.toLocaleString()}원`).join(', ');
+    return `${p.orderId} ${p.statusName} 결제 ${p.amount.toLocaleString()}원 · 잔액 ${p.balanceAmount.toLocaleString()}원`
+      + (cancels ? ` · 취소 [${cancels}]` : '');
+  }
+
+  function describeReservation(r) {
+    const seats = r.seats.map(s => s.cancelled ? `${s.label}(취소)` : s.label).join(', ');
+    return `예매 #${r.id} ${r.statusName} · 좌석 ${seats} · 남은 금액 ${r.remainingPrice.toLocaleString()}원`;
+  }
+
   $('reservation-payments-btn').onclick = handler(async () => {
     const data = await api('GET', `/api/reservations/${requireValue('reservation-id', '예매 ID')}/payments`);
     showResult(true, data.length
-      ? data.map(p => `${p.orderId} ${p.statusName} ${p.amount.toLocaleString()}원`).join(' / ')
+      ? data.map(describePayment).join(' / ')
       : '결제 시도가 없다 (결제창만 열고 떠난 주문은 보이지 않는다).');
+    // 가장 최근 취소를 재시도 칸에 채워 둔다. 결과 불명(취소중)일 때 바로 누를 수 있게
+    const lastCancel = data[0]?.cancels.at(-1);
+    if (lastCancel) $('retry-cancel-id').value = lastCancel.id;
+  });
+
+  $('reservation-cancel-btn').onclick = handler(async () => {
+    const id = requireValue('reservation-id', '예매 ID');
+    await api('DELETE', `/api/reservations/${id}`);
+    showResult(true, describeReservation(await api('GET', `/api/reservations/${id}`)));
+  });
+
+  // "A1, B3" → [{rowNum: 1, colNum: 1}, {rowNum: 2, colNum: 3}]
+  function parseSeats(text) {
+    return text.split(',').map(s => s.trim().toUpperCase()).filter(Boolean).map(label => {
+      const match = /^([A-Z])(\d+)$/.exec(label);
+      if (!match) throw new Error(`좌석 형식이 아니다: ${label}`);
+      return { rowNum: match[1].charCodeAt(0) - 64, colNum: Number(match[2]) };
+    });
+  }
+
+  $('reservation-cancel-seats-btn').onclick = handler(async () => {
+    const id = requireValue('reservation-id', '예매 ID');
+    const seats = parseSeats(requireValue('cancel-seats', '취소할 좌석'));
+    showResult(true, describeReservation(await api('POST', `/api/reservations/${id}/cancellations`, { seats })));
+  });
+
+  $('reservation-cancel-retry-btn').onclick = handler(async () => {
+    const id = requireValue('reservation-id', '예매 ID');
+    const cancelId = requireValue('retry-cancel-id', '취소 ID');
+    showResult(true, describeReservation(
+      await api('POST', `/api/reservations/${id}/cancellations/${cancelId}/retry`)));
   });
 
   $('purchase-payment-btn').onclick = handler(async () => {
     const p = await api('GET', `/api/purchases/${requireValue('purchase-id', '구매 ID')}/payment`);
-    showResult(true, `${p.orderId} ${p.statusName} ${p.amount.toLocaleString()}원`);
+    showResult(true, describePayment(p));
   });
 
   function renderAdminState() {
@@ -493,7 +546,8 @@
       store.get('adminToken'));
     const ours = data.ours.payment;
     const toss = data.toss;
-    showResult(true, `우리: ${ours.status} ${ours.amount.toLocaleString()}원 / 토스: ${data.tossLookup}`
+    showResult(true, `우리: ${ours.status} 결제 ${ours.amount.toLocaleString()}원 · 잔액 ${ours.balanceAmount.toLocaleString()}원`
+      + ` · 취소 ${ours.cancels.length}건 / 토스: ${data.tossLookup}`
       + (toss ? ` ${toss.status} 결제 ${toss.totalAmount.toLocaleString()}원 · 잔액 ${toss.balanceAmount.toLocaleString()}원 · 취소 ${toss.cancels.length}건` : '')
       + (data.tossError ? ` (${data.tossError})` : ''));
   });

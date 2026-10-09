@@ -6,7 +6,10 @@ import com.ceos24.cgv.domain.branch.entity.TheaterType;
 import com.ceos24.cgv.domain.payment.dto.PaymentConfirmRequest;
 import com.ceos24.cgv.domain.payment.dto.PaymentOrderResponse;
 import com.ceos24.cgv.domain.payment.entity.Payment;
+import com.ceos24.cgv.domain.payment.entity.PaymentCancel;
+import com.ceos24.cgv.domain.payment.entity.PaymentCancelStatus;
 import com.ceos24.cgv.domain.payment.entity.PaymentStatus;
+import com.ceos24.cgv.domain.payment.repository.PaymentCancelRepository;
 import com.ceos24.cgv.domain.payment.repository.PaymentRepository;
 import com.ceos24.cgv.global.client.TossPayment;
 import com.ceos24.cgv.global.exception.CustomException;
@@ -19,6 +22,7 @@ import com.ceos24.cgv.domain.reservation.repository.ReservationSeatRepository;
 import com.ceos24.cgv.domain.reservation.repository.ReservationSeatRepository.SeatPositionProjection;
 import com.ceos24.cgv.domain.reservation.entity.ReservationSeat;
 import com.ceos24.cgv.domain.reservation.entity.ReservationStatus;
+import com.ceos24.cgv.domain.reservation.dto.ReservationCancelAttempt;
 import com.ceos24.cgv.domain.reservation.dto.ReservationCreateRequest;
 import com.ceos24.cgv.domain.reservation.dto.ReservationDetailRow;
 import com.ceos24.cgv.domain.reservation.dto.ReservationPaymentAttempt;
@@ -74,6 +78,7 @@ class ReservationServiceTest {
     @Mock(answer = Answers.CALLS_REAL_METHODS) UserRepository userRepository;
     @Mock ReservationSeatRepository reservationSeatRepository;
     @Mock PaymentRepository paymentRepository;
+    @Mock PaymentCancelRepository paymentCancelRepository;
 
     ReservationService service;
 
@@ -81,7 +86,7 @@ class ReservationServiceTest {
     void setUp() {
         Clock clock = Clock.fixed(NOW.atZone(ZONE).toInstant(), ZONE);
         service = new ReservationService(reservationRepository, screeningRepository,
-                userRepository, reservationSeatRepository, paymentRepository, clock);
+                userRepository, reservationSeatRepository, paymentRepository, paymentCancelRepository, clock);
     }
 
     // ─── create ───────────────────────────────────────────────────────────────
@@ -496,7 +501,7 @@ class ReservationServiceTest {
     void 없는_예매_취소시_RESERVATION_NOT_FOUND() {
         given(reservationRepository.findOwnedForUpdate(99L, 2L)).willReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.cancel(99L, 2L))
+        assertThatThrownBy(() -> service.startCancel(99L, 2L, null))
                 .isInstanceOf(CustomException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.RESERVATION_NOT_FOUND);
     }
@@ -506,7 +511,7 @@ class ReservationServiceTest {
         Reservation hold = holdWithId(1L, NOW, 1, 1, 1, 2);
         given(reservationRepository.findOwnedForUpdate(1L, 2L)).willReturn(Optional.of(hold));
 
-        service.cancel(1L, 2L);
+        service.startCancel(1L, 2L, null);
 
         assertThat(hold.getStatus()).isEqualTo(ReservationStatus.CANCELLED);
         assertThat(hold.getCancelledAt()).isEqualTo(NOW);
@@ -521,7 +526,7 @@ class ReservationServiceTest {
         hold.cancel(NOW);
         given(reservationRepository.findOwnedForUpdate(1L, 2L)).willReturn(Optional.of(hold));
 
-        assertThatThrownBy(() -> service.cancel(1L, 2L))
+        assertThatThrownBy(() -> service.startCancel(1L, 2L, null))
                 .isInstanceOf(CustomException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.ALREADY_CANCELLED);
     }
@@ -532,7 +537,7 @@ class ReservationServiceTest {
         hold.confirm(NOW);
         given(reservationRepository.findOwnedForUpdate(1L, 2L)).willReturn(Optional.of(hold));
 
-        assertThatThrownBy(() -> service.cancel(1L, 2L))
+        assertThatThrownBy(() -> service.startCancel(1L, 2L, null))
                 .isInstanceOf(CustomException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.CANCEL_DEADLINE_PASSED);
         assertThat(hold.getSeats()).allMatch(ReservationSeat::isOccupied);
@@ -545,7 +550,7 @@ class ReservationServiceTest {
         given(reservationRepository.findOwnedForUpdate(1L, 2L)).willReturn(Optional.of(hold));
         given(paymentRepository.existsByReservationIdAndStatus(1L, PaymentStatus.IN_PROGRESS)).willReturn(true);
 
-        assertThatThrownBy(() -> service.cancel(1L, 2L))
+        assertThatThrownBy(() -> service.startCancel(1L, 2L, null))
                 .isInstanceOf(CustomException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.PAYMENT_IN_PROGRESS);
         assertThat(hold.getStatus()).isEqualTo(ReservationStatus.PENDING);
@@ -557,12 +562,90 @@ class ReservationServiceTest {
         Reservation hold = holdWithId(1L, NOW, NOW.plusMinutes(19), 1, 1);
         given(reservationRepository.findOwnedForUpdate(1L, 2L)).willReturn(Optional.of(hold));
 
-        service.cancel(1L, 2L);
+        service.startCancel(1L, 2L, null);
 
         assertThat(hold.getStatus()).isEqualTo(ReservationStatus.CANCELLED);
     }
 
+    // ─── 결제 취소 ────────────────────────────────────────────────────────────
+
+    @Test
+    void 취소를_시작해도_좌석은_점유된_채_취소_요청에_묶인다() {
+        Reservation reserved = paidReservation(1L, 1, 1, 1, 2);
+        Payment payment = givenPaidPayment(reserved);
+        given(paymentCancelRepository.save(any(PaymentCancel.class))).willAnswer(inv -> {
+            PaymentCancel cancel = inv.getArgument(0);
+            ReflectionTestUtils.setField(cancel, "id", 70L);
+            return cancel;
+        });
+
+        ReservationCancelAttempt attempt = service.startCancel(1L, 2L, List.of(ReservationSeat.key(1, 2))).orElseThrow();
+
+        assertThat(attempt.amount()).isEqualTo(14000);
+        assertThat(attempt.reason()).isEqualTo("예매 부분 취소: A2");
+        assertThat(attempt.paymentKey()).isEqualTo("tgen_test_key");
+        // 환불이 확인되기 전에 놓으면, 거절됐을 때 다른 회원이 이미 가져간 좌석을 되돌릴 수 없다
+        assertThat(reserved.getSeats()).allMatch(ReservationSeat::isOccupied);
+        assertThat(reserved.getSeats()).filteredOn(seat -> seat.getPaymentCancel() != null)
+                .extracting(ReservationSeat::getLabel).containsExactly("A2");
+        assertThat(payment.getBalanceAmount()).isEqualTo(28000);
+    }
+
+    @Test
+    void 같은_결제에_진행_중인_취소가_있으면_새_취소를_만들지_않는다() {
+        Reservation reserved = paidReservation(1L, 1, 1, 1, 2);
+        Payment payment = givenPaidPayment(reserved);
+        given(paymentCancelRepository.existsByPaymentIdAndStatus(payment.getId(), PaymentCancelStatus.IN_PROGRESS))
+                .willReturn(true);
+
+        assertThatThrownBy(() -> service.startCancel(1L, 2L, List.of(ReservationSeat.key(1, 2))))
+                .isInstanceOf(CustomException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.PAYMENT_CANCEL_IN_PROGRESS);
+        verify(paymentCancelRepository, never()).save(any());
+        assertThat(reserved.getSeats()).allMatch(seat -> seat.getPaymentCancel() == null);
+    }
+
+    @Test
+    void 이미_반영된_취소의_완료가_다시_와도_두_번_반영하지_않는다() {
+        // 결과 불명 취소의 재시도가 첫 요청과 겹치면 둘 다 토스의 성공 응답을 받는다
+        Reservation reserved = paidReservation(1L, 1, 1, 1, 2);
+        Payment payment = paymentWithId(reserved, 50L);
+        payment.startApproval();
+        payment.approve("tgen_test_key", "카드", NOW);
+        PaymentCancel cancel = PaymentCancel.builder().payment(payment).amount(14000).reason("예매 부분 취소: A1").now(NOW).build();
+        ReflectionTestUtils.setField(cancel, "id", 70L);
+        reserved.requestRefund(List.of(reserved.getSeats().getFirst()), cancel);
+        given(reservationRepository.findOwnedForUpdate(1L, 2L)).willReturn(Optional.of(reserved));
+        given(paymentCancelRepository.findById(70L)).willReturn(Optional.of(cancel));
+        ReservationCancelAttempt attempt = new ReservationCancelAttempt(70L, 1L, 2L, "tgen_test_key",
+                cancel.getIdempotencyKey(), 14000, cancel.getReason());
+        TossPayment.Cancel canceled = TestFixtures.tossCanceled("tgen_test_key", 28000, 14000, 14000).cancel();
+
+        service.completeCancel(attempt, canceled, 14000);
+        ReservationResponse again = service.completeCancel(attempt, canceled, 14000);
+
+        assertThat(payment.getCanceledAmount()).isEqualTo(14000);
+        assertThat(again.remainingPrice()).isEqualTo(14000);
+        assertThat(again.status()).isEqualTo(ReservationStatus.RESERVED);
+    }
+
     // ─── 픽스처 헬퍼 ──────────────────────────────────────────────────────────
+
+    private Reservation paidReservation(long id, int... rowCols) {
+        Reservation reservation = holdWithId(id, NOW, rowCols);
+        reservation.confirm(NOW);
+        return reservation;
+    }
+
+    private Payment givenPaidPayment(Reservation reservation) {
+        Payment payment = paymentWithId(reservation, 50L);
+        payment.startApproval();
+        payment.approve("tgen_test_key", "카드", NOW);
+        given(reservationRepository.findOwnedForUpdate(reservation.getId(), 2L)).willReturn(Optional.of(reservation));
+        given(paymentRepository.findFirstByReservationIdAndStatusIn(eq(reservation.getId()), any()))
+                .willReturn(Optional.of(payment));
+        return payment;
+    }
 
     private void givenScreeningAndUser(long screeningId, long userId) {
         given(screeningRepository.findByIdWithDetails(screeningId))
@@ -623,7 +706,7 @@ class ReservationServiceTest {
         return new ReservationDetailRow(
                 id, 2L, status, NOW, expiresAt, null, null,
                 1L, "범죄도시4", "1관", "강남점", START, START.plusMinutes(120),
-                rowNum, colNum, AudienceType.ADULT, 14000);
+                rowNum, colNum, AudienceType.ADULT, 14000, null);
     }
 
     private Screening screeningWith(long id, int price, LocalDateTime startAt) {

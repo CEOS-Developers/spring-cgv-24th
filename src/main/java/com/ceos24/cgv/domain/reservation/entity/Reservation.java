@@ -1,5 +1,6 @@
 package com.ceos24.cgv.domain.reservation.entity;
 
+import com.ceos24.cgv.domain.payment.entity.PaymentCancel;
 import com.ceos24.cgv.global.entity.BaseTimeEntity;
 import com.ceos24.cgv.global.exception.CustomException;
 import com.ceos24.cgv.global.exception.ErrorCode;
@@ -13,7 +14,11 @@ import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Getter
 @Entity
@@ -112,7 +117,8 @@ public class Reservation extends BaseTimeEntity {
         this.confirmedAt = now;
     }
 
-    public void cancel(LocalDateTime now) {
+    // 결제 전 선점 취소와 결제된 예매의 환불 취소(전체·부분)가 같은 검사를 거친다.
+    public void verifyCancellable(LocalDateTime now) {
         if (this.status == ReservationStatus.CANCELLED) {
             throw new CustomException(ErrorCode.ALREADY_CANCELLED);
         }
@@ -123,11 +129,72 @@ public class Reservation extends BaseTimeEntity {
         if (this.status == ReservationStatus.RESERVED && !isCancellableAt(now)) {
             throw new CustomException(ErrorCode.CANCEL_DEADLINE_PASSED);
         }
-        this.status = ReservationStatus.CANCELLED;
-        this.cancelledAt = now;
-        releaseSeats();
     }
 
+    public boolean isReserved() {
+        return this.status == ReservationStatus.RESERVED;
+    }
+
+    // 결제 전 선점 취소. 돌려줄 돈이 없어 바로 놓는다. 결제된 예매는 환불이 확인된 뒤 completeRefund로만 취소된다.
+    public void cancel(LocalDateTime now) {
+        verifyCancellable(now);
+        requirePending();
+        this.status = ReservationStatus.CANCELLED;
+        this.cancelledAt = now;
+        // 좌석 행은 남기고 점유만 푼다. 유니크 제약에서 빠지므로 같은 좌석을 다시 팔 수 있다.
+        this.seats.forEach(seat -> seat.cancel(this.id, now));
+    }
+
+    // 환불할 좌석을 고른다. seatKeys가 null이면 남은 좌석 전부(전체 취소)다.
+    // 좌석은 아직 놓지 않는다. 환불이 확인되기 전에 놓으면 거절됐을 때 되돌릴 수 없다.
+    public List<ReservationSeat> selectSeatsToRefund(Collection<Integer> seatKeys, LocalDateTime now) {
+        verifyCancellable(now);
+        if (!isReserved()) {
+            throw new CustomException(ErrorCode.RESERVATION_NOT_RESERVED);
+        }
+        if (seatKeys == null) {
+            return this.seats.stream().filter(ReservationSeat::isOccupied).toList();
+        }
+        Map<Integer, ReservationSeat> byKey = this.seats.stream()
+                .collect(Collectors.toMap(seat -> ReservationSeat.key(seat.getRowNum(), seat.getColNum()),
+                        Function.identity()));
+        return seatKeys.stream()
+                .map(key -> {
+                    ReservationSeat seat = byKey.get(key);
+                    if (seat == null) {
+                        throw new CustomException(ErrorCode.SEAT_NOT_IN_RESERVATION);
+                    }
+                    if (!seat.isOccupied()) {
+                        throw new CustomException(ErrorCode.SEAT_ALREADY_CANCELLED);
+                    }
+                    return seat;
+                })
+                .toList();
+    }
+
+    public void requestRefund(List<ReservationSeat> targets, PaymentCancel paymentCancel) {
+        targets.forEach(seat -> seat.attachCancel(paymentCancel));
+    }
+
+    // 환불이 확인된 좌석을 놓는다. 남은 좌석이 없으면 예매 전체가 취소된 것이다.
+    public void completeRefund(Long paymentCancelId, LocalDateTime now) {
+        this.seats.stream()
+                .filter(seat -> seat.belongsTo(paymentCancelId) && seat.isOccupied())
+                .forEach(seat -> seat.cancel(this.id, now));
+        if (this.seats.stream().noneMatch(ReservationSeat::isOccupied)) {
+            this.status = ReservationStatus.CANCELLED;
+            this.cancelledAt = now;
+        }
+    }
+
+    // 환불이 거절됐다. 좌석은 그대로 회원의 것이고, 다시 취소를 요청할 수 있다.
+    public void withdrawRefund(Long paymentCancelId) {
+        this.seats.stream()
+                .filter(seat -> seat.belongsTo(paymentCancelId))
+                .forEach(ReservationSeat::detachCancel);
+    }
+
+    // 결제 주문의 금액이다. 결제 전에는 취소된 좌석이 없어 모든 좌석의 합이다.
     public int getTotalPrice() {
         return seats.stream()
                 .mapToInt(ReservationSeat::getPaidPrice)
@@ -136,11 +203,6 @@ public class Reservation extends BaseTimeEntity {
 
     private boolean isCancellableAt(LocalDateTime now) {
         return now.isBefore(screening.getStartAt().minusMinutes(CANCEL_DEADLINE_MINUTES));
-    }
-
-    // 좌석 행은 남기고 점유만 푼다. 유니크 제약에서 빠지므로 같은 좌석을 다시 팔 수 있다.
-    private void releaseSeats() {
-        this.seats.forEach(seat -> seat.release(this.id));
     }
 
     private void requirePending() {

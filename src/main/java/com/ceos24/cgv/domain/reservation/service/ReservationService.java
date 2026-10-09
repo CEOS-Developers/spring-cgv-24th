@@ -5,11 +5,15 @@ import com.ceos24.cgv.domain.payment.dto.PaymentConfirmRequest;
 import com.ceos24.cgv.domain.payment.dto.PaymentOrderResponse;
 import com.ceos24.cgv.domain.payment.dto.PaymentResponse;
 import com.ceos24.cgv.domain.payment.entity.Payment;
+import com.ceos24.cgv.domain.payment.entity.PaymentCancel;
+import com.ceos24.cgv.domain.payment.entity.PaymentCancelStatus;
 import com.ceos24.cgv.domain.payment.entity.PaymentStatus;
+import com.ceos24.cgv.domain.payment.repository.PaymentCancelRepository;
 import com.ceos24.cgv.domain.payment.repository.PaymentRepository;
 import com.ceos24.cgv.global.client.TossPayment;
 import com.ceos24.cgv.global.exception.CustomException;
 import com.ceos24.cgv.global.exception.ErrorCode;
+import com.ceos24.cgv.domain.reservation.dto.ReservationCancelAttempt;
 import com.ceos24.cgv.domain.reservation.dto.ReservationCreateRequest;
 import com.ceos24.cgv.domain.reservation.dto.ReservationCreateRequest.SeatRequest;
 import com.ceos24.cgv.domain.reservation.dto.ReservationDetailRow;
@@ -25,6 +29,7 @@ import com.ceos24.cgv.domain.screening.repository.ScreeningRepository;
 import com.ceos24.cgv.domain.user.entity.User;
 import com.ceos24.cgv.domain.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.ConcurrencyFailureException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
@@ -34,19 +39,27 @@ import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class ReservationService {
+
+    // 예매 하나에 승인된 결제는 많아야 하나다. 승인 시작이 같은 예매의 다른 승인 중 시도를 막는다.
+    private static final List<PaymentStatus> PAID_STATUSES =
+            List.of(PaymentStatus.DONE, PaymentStatus.PARTIAL_CANCELED);
 
     private final ReservationRepository reservationRepository;
     private final ScreeningRepository screeningRepository;
     private final UserRepository userRepository;
     private final ReservationSeatRepository reservationSeatRepository;
     private final PaymentRepository paymentRepository;
+    private final PaymentCancelRepository paymentCancelRepository;
     private final Clock clock;
 
     @Transactional
@@ -153,17 +166,94 @@ public class ReservationService {
         if (!reservationRepository.existsByIdAndUserId(id, userId)) {
             throw new CustomException(ErrorCode.RESERVATION_NOT_FOUND);
         }
-        return paymentRepository.findByReservationIdAndStatusNotOrderByIdDesc(id, PaymentStatus.READY).stream()
-                .map(PaymentResponse::from)
+        List<Payment> payments = paymentRepository.findByReservationIdAndStatusNotOrderByIdDesc(id, PaymentStatus.READY);
+        if (payments.isEmpty()) {
+            return List.of();
+        }
+        Map<Long, List<PaymentCancel>> cancels = paymentCancelRepository
+                .findByPaymentIdInOrderByIdAsc(payments.stream().map(Payment::getId).toList()).stream()
+                .collect(Collectors.groupingBy(cancel -> cancel.getPayment().getId()));
+        return payments.stream()
+                .map(payment -> PaymentResponse.of(payment, cancels.getOrDefault(payment.getId(), List.of())))
                 .toList();
     }
 
+    // 취소 T1. seatKeys가 null이면 전체 취소, 아니면 그 좌석만 취소한다.
+    // 결제 전 선점은 돌려줄 돈이 없어 여기서 바로 취소하고 빈 값을 돌려준다.
+    // 결제된 예매는 취소 요청을 저장하고 좌석을 그 요청에 묶어 둔다. 좌석은 환불이 확인된 T2에서 놓는다.
     // 승인 중인 선점을 취소하면 토스가 승인한 뒤 확정할 예매가 없다. 승인 시작과 같은 예매 행 잠금으로 순서를 정한다.
     @Transactional
-    public void cancel(Long id, Long userId) {
+    public Optional<ReservationCancelAttempt> startCancel(Long id, Long userId, List<Integer> seatKeys) {
+        LocalDateTime now = LocalDateTime.now(clock);
         Reservation reservation = findOwnedForUpdate(id, userId);
         ensureNoPaymentInProgress(id);
-        reservation.cancel(LocalDateTime.now(clock));
+        if (seatKeys != null && seatKeys.stream().distinct().count() != seatKeys.size()) {
+            throw new CustomException(ErrorCode.DUPLICATE_SEAT_IN_REQUEST);
+        }
+        if (seatKeys == null && !reservation.isReserved()) {
+            reservation.cancel(now);
+            return Optional.empty();
+        }
+
+        List<ReservationSeat> targets = reservation.selectSeatsToRefund(seatKeys, now);
+        Payment payment = paymentRepository.findFirstByReservationIdAndStatusIn(id, PAID_STATUSES)
+                .orElseThrow(() -> new CustomException(ErrorCode.PAYMENT_NOT_FOUND));
+        // 같은 결제의 취소는 한 번에 하나다. 두 요청이 각자 잔액을 보고 토스를 부르면 둘 다 통과할 수 있다.
+        if (paymentCancelRepository.existsByPaymentIdAndStatus(payment.getId(), PaymentCancelStatus.IN_PROGRESS)) {
+            throw new CustomException(ErrorCode.PAYMENT_CANCEL_IN_PROGRESS);
+        }
+
+        PaymentCancel cancel = paymentCancelRepository.save(PaymentCancel.builder()
+                .payment(payment)
+                .amount(targets.stream().mapToInt(ReservationSeat::getPaidPrice).sum())
+                .reason(cancelReasonOf(targets, seatKeys == null))
+                .now(now)
+                .build());
+        reservation.requestRefund(targets, cancel);
+        return Optional.of(attemptOf(cancel, id, userId));
+    }
+
+    // 결과를 모르는 취소를 처음과 같은 멱등키·금액·사유로 다시 보낸다. 토스가 이미 처리했으면 첫 응답을 그대로 돌려줘
+    // 두 번 환불되지 않는다. 취소 기한은 다시 보지 않는다. 기한 안에 요청한 취소의 결과를 맞추는 것이다.
+    @Transactional
+    public ReservationCancelAttempt startCancelRetry(Long id, Long userId, Long paymentCancelId) {
+        findOwnedForUpdate(id, userId);
+        PaymentCancel cancel = paymentCancelRepository.findByIdAndPaymentReservationId(paymentCancelId, id)
+                .orElseThrow(() -> new CustomException(ErrorCode.PAYMENT_CANCEL_NOT_FOUND));
+        cancel.verifyRetryable(LocalDateTime.now(clock));
+        return attemptOf(cancel, id, userId);
+    }
+
+    // 취소 T2 (성공). 토스는 이미 환불했다. 여기서 실패하면 취소가 IN_PROGRESS로 남아 같은 취소의 재시도로 맞춘다.
+    // 재시도가 겹쳐 이미 반영된 취소면 바꾸지 않고 현재 상태만 돌려준다.
+    @Transactional
+    public ReservationResponse completeCancel(ReservationCancelAttempt attempt, TossPayment.Cancel canceled,
+                                              int tossBalanceAmount) {
+        LocalDateTime now = LocalDateTime.now(clock);
+        Reservation reservation = findOwnedForUpdate(attempt.reservationId(), attempt.userId());
+        PaymentCancel cancel = findCancel(attempt.paymentCancelId());
+
+        if (!cancel.isDone()) {
+            cancel.complete(canceled.transactionKey(), canceled.canceledAtIn(clock.getZone(), now));
+            reservation.completeRefund(cancel.getId(), now);
+            int ourBalance = cancel.getPayment().getBalanceAmount();
+            if (ourBalance != tossBalanceAmount) {
+                // 환불은 이미 끝났다. 실패로 돌리지 않고, 대조할 수 있게 남긴다.
+                log.error("[Payment] 취소 후 잔액 불일치 orderId={} ours={} toss={}",
+                        cancel.getPayment().getOrderId(), ourBalance, tossBalanceAmount);
+            }
+        }
+        return ReservationResponse.from(reservation, now);
+    }
+
+    // 취소 T2 (거절). 좌석과 결제는 그대로다. 묶어 둔 좌석을 풀어 다시 취소를 요청할 수 있게 한다.
+    @Transactional
+    public void failCancel(ReservationCancelAttempt attempt, String failureCode, String failureMessage) {
+        Reservation reservation = findOwnedForUpdate(attempt.reservationId(), attempt.userId());
+        PaymentCancel cancel = findCancel(attempt.paymentCancelId());
+
+        cancel.fail(failureCode, failureMessage);
+        reservation.withdrawRefund(cancel.getId());
     }
 
     // 승인 확정은 상태를 바꾸고 응답까지 만든다. 응답까지 한 쿼리로 만들려고 영화·지점을 함께 가져온다.
@@ -177,6 +267,25 @@ public class ReservationService {
     private Reservation findOwnedForUpdate(Long id, Long userId) {
         return reservationRepository.findOwnedForUpdate(id, userId)
                 .orElseThrow(() -> new CustomException(ErrorCode.RESERVATION_NOT_FOUND));
+    }
+
+    private PaymentCancel findCancel(Long paymentCancelId) {
+        return paymentCancelRepository.findById(paymentCancelId)
+                .orElseThrow(() -> new CustomException(ErrorCode.PAYMENT_CANCEL_NOT_FOUND));
+    }
+
+    private ReservationCancelAttempt attemptOf(PaymentCancel cancel, Long reservationId, Long userId) {
+        return new ReservationCancelAttempt(cancel.getId(), reservationId, userId,
+                cancel.getPayment().getPaymentKey(), cancel.getIdempotencyKey(), cancel.getAmount(), cancel.getReason());
+    }
+
+    // 토스 결제 내역에 남는 사유다. 회원이 쓴 문구를 그대로 토스에 남기지 않도록 서버가 만든다.
+    private String cancelReasonOf(List<ReservationSeat> seats, boolean all) {
+        String labels = seats.stream()
+                .sorted(Comparator.comparingInt(ReservationSeat::getRowNum).thenComparingInt(ReservationSeat::getColNum))
+                .map(ReservationSeat::getLabel)
+                .collect(Collectors.joining(", "));
+        return (all ? "예매 전체 취소: " : "예매 부분 취소: ") + labels;
     }
 
     private void ensureNoPaymentInProgress(Long reservationId) {

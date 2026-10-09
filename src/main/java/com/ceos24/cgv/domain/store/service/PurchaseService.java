@@ -6,6 +6,7 @@ import com.ceos24.cgv.domain.payment.dto.PaymentConfirmRequest;
 import com.ceos24.cgv.domain.payment.dto.PaymentOrderResponse;
 import com.ceos24.cgv.domain.payment.dto.PaymentResponse;
 import com.ceos24.cgv.domain.payment.entity.Payment;
+import com.ceos24.cgv.domain.payment.repository.PaymentCancelRepository;
 import com.ceos24.cgv.domain.payment.repository.PaymentRepository;
 import com.ceos24.cgv.domain.store.dto.PurchaseCreateRequest;
 import com.ceos24.cgv.domain.store.dto.PurchaseCreateRequest.Item;
@@ -50,6 +51,7 @@ public class PurchaseService {
     private final BranchRepository branchRepository;
     private final UserRepository userRepository;
     private final PaymentRepository paymentRepository;
+    private final PaymentCancelRepository paymentCancelRepository;
     private final Clock clock;
 
     // 주문과 결제 주문을 함께 만든다. 재고는 차감하지 않는다. 결제창을 닫고 떠난 주문이 재고를 붙잡지 않게
@@ -127,9 +129,9 @@ public class PurchaseService {
         if (!purchaseRepository.existsByIdAndUserId(id, userId)) {
             throw new CustomException(ErrorCode.PURCHASE_NOT_FOUND);
         }
-        return paymentRepository.findByPurchaseId(id)
-                .map(PaymentResponse::from)
+        Payment payment = paymentRepository.findByPurchaseId(id)
                 .orElseThrow(() -> new CustomException(ErrorCode.PAYMENT_NOT_FOUND));
+        return PaymentResponse.of(payment, paymentCancelRepository.findByPaymentIdInOrderByIdAsc(List.of(payment.getId())));
     }
 
     // 없는 사용자를 빈 목록으로 돌려주면 잘못된 id가 "구매 내역 없음"으로 숨는다.
