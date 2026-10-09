@@ -11,7 +11,7 @@
 | 5 | [Webhook 연결하기](https://docs.tosspayments.com/guides/v2/webhook) | [5. 웹훅](#5-웹훅) |
 
 - 키는 **결제위젯 테스트 키**(`test_gck_` / `test_gsk_`)를 쓴다. 전자결제 신청 전이라 문서 공용 키(`test_gck_docs_` / `test_gsk_docs_`)다.
-- 이번 과제 범위는 **결제 승인**까지다. 결제 조회·취소는 이후 작업이다.
+- 결제 승인은 결제 세션 1~3, 결제 조회·취소(전체·부분)는 결제 세션 4에서 붙였다. 조회·취소 API 정리는 [3장](#결제-조회취소)에 있다.
 - 마지막 [6. 과제 요구사항과 연결](#6-과제-요구사항과-연결)에 다음 세션에서 풀 설계 질문을 모았다.
 
 ---
@@ -126,16 +126,20 @@
 
 ### 키가 맞는지 확인하는 법
 
-결제를 만들지 않고도 확인할 수 있다. 없는 주문번호로 조회 API를 불러 **인증 단계를 통과하는지**만 본다.
+결제를 만들지 않고도 확인할 수 있다. 없는 paymentKey로 조회 API를 불러 **인증 단계를 통과하는지**만 본다.
 
 ```bash
-curl -s -u "$TOSS_SECRET_KEY:" https://api.tosspayments.com/v1/payments/orders/cgv-setup-check-0001
+curl -s -u "$TOSS_SECRET_KEY:" https://api.tosspayments.com/v1/payments/tgen_setup_check_0000
 ```
 
 | 응답 | 뜻 |
 |---|---|
-| 404 `NOT_FOUND_MERCHANT` (존재하지 않는 상점 정보) | **키 정상.** 인증은 통과했고 그 주문만 없다. 결제위젯 테스트 키는 없는 주문을 이 코드로 돌려준다(문서 공용 키도 같다) |
+| 404 `NOT_FOUND_PAYMENT` (존재하지 않는 결제 정보) | **키 정상.** 인증은 통과했고 그 결제만 없다 |
 | 401 `UNAUTHORIZED_KEY` | 키가 틀렸거나 콜론(`:`)이 빠졌다 |
+
+처음에는 주문번호 조회(`/v1/payments/orders/{orderId}`)로 확인하고 404 `NOT_FOUND_MERCHANT`를 "키 정상, 그 주문만 없음"으로 적었다.
+결제 세션 4에서 다시 보니 **문서 공용 키는 실제로 있는 결제도 주문번호로 조회하면 `NOT_FOUND_MERCHANT`를 준다.**
+인증은 통과했다는 뜻은 맞지만 "주문 없음"으로 읽으면 안 된다. 공용 키로는 paymentKey 조회만 쓴다.
 
 ### 테스트 환경의 특징
 
@@ -221,11 +225,12 @@ Content-Type: application/json
 | `WAITING_FOR_DEPOSIT` | 가상계좌 입금 대기 |
 | `DONE` | **승인 완료** |
 | `CANCELED` | 전액 취소 |
-| `PARTIAL_CANCELED` | 부분 취소 |
+| `PARTIAL_CANCELED` | 부분 취소. **부분 취소를 거듭해 잔액이 0원이 돼도 이 상태로 남는다**(결제 세션 4에서 확인). 한 번에 전액을 취소해야 `CANCELED`가 된다 |
 | `ABORTED` | 승인 실패 |
 | `EXPIRED` | 10분 안에 승인하지 않아 만료 |
 
-이 상태값은 **토스의 결제 상태**다. 우리 예매 상태(`PENDING`/`RESERVED`/…)와 1:1로 대응하지 않는다. 우리 DB에 무엇을 어떻게 옮길지는 다음 세션에서 정한다.
+이 상태값은 **토스의 결제 상태**다. 우리 예매 상태(`PENDING`/`RESERVED`/…)와 1:1로 대응하지 않는다.
+우리 `Payment`는 잔액이 0이면 `CANCELED`로 둔다. 그래서 우리 상태와 토스 상태를 맞춰 볼 때는 상태 이름이 아니라 `balanceAmount`와 `cancels`로 비교한다.
 
 **승인 때 볼 만한 에러 코드**
 
@@ -237,13 +242,59 @@ Content-Type: application/json
 | `INVALID_API_KEY` | 키 종류·환경이 맞지 않음 |
 | `UNAUTHORIZED_KEY` | 시크릿 키가 틀렸거나 콜론 누락 |
 
-### 결제 조회·취소 — 이후 작업
+### 결제 조회·취소
+
+출처: [Core API 결제 취소·조회](https://docs.tosspayments.com/reference#결제-취소), [Payment 객체](https://docs.tosspayments.com/reference#payment-객체),
+[취소 가이드](https://docs.tosspayments.com/guides/v2/cancel-payment), [멱등키](https://docs.tosspayments.com/reference/using-api/idempotency-key),
+[에러 코드](https://docs.tosspayments.com/reference/error-codes)
+
+**조회**
 
 | API | 용도 |
 |---|---|
-| `GET /v1/payments/{paymentKey}` | paymentKey로 조회 |
-| `GET /v1/payments/orders/{orderId}` | 우리 주문번호로 조회. 승인 응답을 놓쳤을 때 실제 상태를 확인하는 수단 |
-| `POST /v1/payments/{paymentKey}/cancel` | 취소. 본문 `cancelReason` 필수, `cancelAmount`를 주면 부분 취소 |
+| `GET /v1/payments/{paymentKey}` | paymentKey로 조회. 우리 관리자 대조 API는 paymentKey가 있으면 이것을 쓴다 |
+| `GET /v1/payments/orders/{orderId}` | 주문번호로 조회. 승인 응답을 놓쳐 paymentKey가 없을 때의 수단이지만 **문서 공용 키에서는 늘 404 `NOT_FOUND_MERCHANT`** |
+
+조회 에러 중 "그 결제가 토스에 없다"고 확신할 수 있는 것은 404 `NOT_FOUND_PAYMENT`뿐이다. 우리 클라이언트는 그 밖의 4xx·5xx·타임아웃을 "물어보지 못함"으로 분류한다.
+
+**취소** — `POST /v1/payments/{paymentKey}/cancel`
+
+| 필드 | 규칙 |
+|---|---|
+| `cancelReason` | 필수, 200자까지. 토스 결제 내역에 남는다. 우리는 서버가 만든다(`예매 부분 취소: A1, A2`) |
+| `cancelAmount` | 빼면 남은 잔액 전부를 취소한다. 넣으면 그 금액만 부분 취소. 우리는 **전액 취소도 늘 넣는다**(잔액이 어긋났을 때 엉뚱한 금액이 환불되지 않게) |
+| `refundReceiveAccount` | 가상계좌 환불용. 범위 밖 |
+
+응답은 Payment 객체다. `status`가 `PARTIAL_CANCELED`/`CANCELED`로, `balanceAmount`(취소할 수 있는 잔액)가 줄고, `cancels[]`에 취소 거래가 쌓인다.
+
+| `cancels[]` 필드 | 뜻 |
+|---|---|
+| `transactionKey` | 취소 거래 식별자 |
+| `cancelAmount`, `cancelReason` | 이번 취소의 금액·사유 |
+| `cancelStatus` | `DONE`이면 성공 |
+| `canceledAt` | 취소 시각 |
+| `refundableAmount` | 이 취소 뒤 남은 환불 가능 금액 |
+
+**멱등키** — 모든 POST에 `Idempotency-Key` 헤더를 쓸 수 있다.
+
+- 같은 키로 다시 보내면 다시 처리하지 않고 **첫 응답을 그대로** 준다. 첫 요청이 아직 처리 중이면 409 `IDEMPOTENT_REQUEST_PROCESSING`
+- 키는 처음 쓴 날부터 **15일** 유효, 300자까지. GET에는 무시된다
+- 같은 결제에 부분 취소를 여러 번 하면 주소·메서드가 같다. 그래서 키를 orderId로 두면 두 번째 취소에 첫 응답이 돌아온다. **취소 요청마다 새 키**를 쓴다
+
+**취소 에러 중 기억할 것**
+
+| 코드 | 우리 분류 | 이유 |
+|---|---|---|
+| 403 `NOT_CANCELABLE_AMOUNT`, `NOT_CANCELABLE_PAYMENT` 등 그 밖의 4xx | 거절 | |
+| 400 `ALREADY_CANCELED_PAYMENT` | 결과 모름 | 앞선 취소가 성공하고 응답만 놓쳤을 수 있다 |
+| 409 `IDEMPOTENT_REQUEST_PROCESSING` | 결과 모름 | 같은 키의 첫 요청이 처리 중 |
+| 400 `PROVIDER_ERROR` | 결과 모름 | 400이지만 "일시적인 오류"라 처리됐는지 알 수 없다 |
+| 500대(`FAILED_INTERNAL_SYSTEM_PROCESSING`, `FAILED_REFUND_PROCESS` 등) | 결과 모름 | |
+
+결과를 모르는 취소를 거절로 처리하면, 다시 요청할 때 새 키로 같은 금액이 한 번 더 환불될 수 있다. 부분 취소는 잔액이 남아 있어 토스도 막지 않는다.
+
+**취소 기한** — 카드는 제한이 없다(1년이 넘으면 카드사 사정으로 안 될 수 있음). 계좌이체 180일, 가상계좌 365일, 휴대폰은 당월.
+가상계좌는 입금 전 전액 취소만 되고, 에스크로·현금 카드 결제는 부분 취소가 안 된다.
 
 ---
 
@@ -320,7 +371,7 @@ document.getElementById("pay").addEventListener("click", () =>
 - 가상계좌 — 구매자가 은행에서 입금할 때까지 결과를 모른다
 - 승인 요청은 보냈지만 타임아웃으로 응답을 못 받은 경우 — 토스에서는 승인됐을 수 있다
 
-두 번째 경우는 웹훅 대신 `GET /v1/payments/orders/{orderId}` 조회로도 메울 수 있다. 결제 조회는 이후 작업 범위에 들어 있다.
+두 번째 경우는 웹훅 대신 조회 API로도 메울 수 있다. 다만 문서 공용 키는 주문번호 조회가 안 되므로, 승인을 시작할 때 paymentKey를 먼저 저장해 두어야 조회로 맞출 수 있다(결제 세션 5).
 
 ---
 

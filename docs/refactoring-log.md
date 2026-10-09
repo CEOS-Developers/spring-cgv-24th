@@ -2551,3 +2551,222 @@ local 프로필로 앱을 띄우고 HTTP로 직접 호출했다.
 | `src/main/resources/application.yaml` | local 프로필에서만 샘플 SQL 실행 |
 | `domain/payment/controller/PaymentWidgetController.java`, `dto/PaymentWidgetConfigResponse.java` | 신설. 클라이언트 키 공개 API |
 | `global/config/SecurityConfig.java` | 페이지·설정 API 공개 |
+
+---
+
+## 결제 세션 4: 결제 조회 / 전체 취소 / 부분 취소 + 결제된 예매·구매 취소 시 환불
+
+결제를 조회하고, 결제된 예매·구매를 취소하면 토스 결제 취소(환불)를 함께 하도록 만들었다. 승인과 같은 T1 → 토스 → T2 구조를 쓰지만 자원을 놓는 순서가 반대다.
+근거로 삼은 토스 문서는 [Core API 결제 취소·조회](https://docs.tosspayments.com/reference#결제-취소), [Payment 객체](https://docs.tosspayments.com/reference#payment-객체),
+[취소 가이드](https://docs.tosspayments.com/guides/v2/cancel-payment), [멱등키](https://docs.tosspayments.com/reference/using-api/idempotency-key),
+[에러 코드](https://docs.tosspayments.com/reference/error-codes)다. 정리는 `docs/toss-payments-guide.md` 3장에 옮겼다.
+
+### 흐름
+
+```
+GET    /api/reservations/{id}/payments                          예매 결제 조회 (결제창만 열고 떠난 READY 제외)
+GET    /api/purchases/{id}/payment                              구매 결제 조회
+GET    /api/admin/payments/{orderId}/toss                       관리자 토스 대조
+
+DELETE /api/reservations/{id}                                   결제 전 선점은 바로 취소, 결제된 예매는 남은 좌석 전부 환불
+POST   /api/reservations/{id}/cancellations                     좌석 부분 취소 {"seats":[{"rowNum":1,"colNum":2}]}
+POST   /api/reservations/{id}/cancellations/{cancelId}/retry    결과 불명 취소 재시도
+
+DELETE /api/admin/purchases/{id}                                매점 전체 환불 (관리자)
+POST   /api/admin/purchases/{id}/cancellations                  매점 수량 부분 환불 {"items":[{"productId":1,"quantity":2}]}
+POST   /api/admin/purchases/{id}/cancellations/{cancelId}/retry 결과 불명 환불 재시도
+```
+
+### 결정 1 — 회원 조회는 우리 DB만, 토스 조회는 관리자 대조에만 (A안)
+
+- 조회할 때마다 토스를 부르면 공용 키 상점 전체가 함께 쓰는 호출 한도(분당 100건)를 회원의 새로고침이 쓴다. 응답도 느려진다
+- 우리 DB는 "이 좌석·상품이 유효한가"를 판단하는 기준이고, 토스는 "돈이 실제로 어떻게 움직였나"의 기준이다.
+  카드 번호·할부·영수증·정산 같은 결제수단 상세는 토스가 관리하므로 저장하지 않는다.
+  저장하는 것은 paymentKey, orderId, 상태, 금액, 결제수단, 승인 시각, 누적 취소액, 취소 요청마다의 금액·사유·시각·transactionKey·멱등키다
+- 공용 키라 개발자센터에서 결제 내역을 볼 수 없다. 토스 쪽 상태를 보는 수단으로 관리자 대조 API를 뒀다.
+  우리 주문이 아닌 orderId는 토스에 묻지 않는다(관리자 API가 아무 주문이나 조회하는 통로가 되지 않게)
+- 대조 서비스(`PaymentAdminService`)에는 `@Transactional`을 붙이지 않는다. 토스를 기다리는 동안 커넥션을 쥐지 않기 위해서다
+
+### 결정 2 — 취소도 T1 → 토스 → T2. 자원은 환불이 확인된 뒤에 놓는다
+
+| 승인 | 취소 |
+|---|---|
+| 피할 일: 돈은 빠졌는데 좌석이 없음 | 피할 일: 좌석은 풀렸는데 환불이 안 됨 |
+| 좌석·재고를 **먼저** 확보하고 토스를 부른다 | 토스 환불이 **확인된 뒤에** 좌석을 놓는다 |
+
+- T1: 예매·구매 행 잠금(첫 쿼리) → 상태·기한·대상 검사 → 서버가 금액 계산 → `PaymentCancel(IN_PROGRESS)` 저장 → 대상(좌석/수량)을 그 요청에 묶음
+- 토스 호출은 트랜잭션 밖이다. 순서를 잇는 `ReservationCancelService` / `PurchaseRefundService`에는 `@Transactional`을 붙이지 않는다(CLAUDE.md 예외 규칙)
+- T2 성공: 예매·구매 행을 다시 잠그고 취소 `DONE` → 결제 누적액 → 좌석 해제 / 수량 반영 → 남은 것이 없으면 예매·구매 `CANCELLED`
+- T2 거절: 취소 `FAILED`. 좌석·결제는 그대로이고 다시 요청할 수 있다
+- 결과 불명 / 환불 후 T2 실패: 취소를 `IN_PROGRESS`로 두고 504. 좌석은 점유된 채다. 같은 결제의 새 취소를 막는다
+- 좌석을 T1에서 놓지 않는 이유: 놓으면 다른 회원이 가져가고, 환불이 거절됐을 때 되돌릴 수 없다
+
+### 결정 3 — 취소 이력은 `PaymentCancel`(요청 1건 = 행 1개), 결제에는 누적액
+
+- 누적액만 두면 진행 중인 취소, 멱등키, 어느 좌석·수량의 취소였는지를 담을 곳이 없어 결과 불명을 정리할 수 없다
+- `Payment.canceledAmount`는 잔액 검사를 행 합산 없이 하려는 캐시다. `applyCancel`은 `PaymentCancel.complete`만 부른다(이력 없이 누적액만 바뀌지 않게)
+- 잔액 검사(`verifyCancelable`)는 요청 생성과 확정 두 번 한다. 두 요청이 같은 잔액을 보고 함께 통과하는 일을 확정에서 한 번 더 막는다
+- `requestedAt`을 따로 둔다. 재시도 기한의 기준인데, `createdAt`은 JPA Auditing이 시스템 시계로 채워 테스트 `Clock`과 다르다
+- 예매: `ReservationSeat.paymentCancel`(FK). 좌석은 한 번만 취소되므로 FK 하나면 된다. `cancelledAt`으로 "회원이 취소해 풀린 좌석"과 "선점 만료로 풀린 좌석"을 구분한다
+- 매점: `PurchaseProductCancel`(취소 요청 × 상품 라인 × 수량) 상세 엔티티. 한 라인이 여러 번 나눠 환불될 수 있어서다. `PurchaseProduct.canceledQuantity`는 확정된 수량의 누적이다
+
+### 결정 4 — 멱등키는 취소 요청마다 새 UUID. 재시도는 같은 키로, 14일까지
+
+- orderId를 쓰지 않는다. 같은 결제에 부분 취소를 두 번 하면 주소·메서드·키가 같아져, 두 번째 취소에 첫 응답이 캐시에서 돌아오고 실제로는 취소되지 않은 채 성공으로 기록된다
+- 재시도(`…/cancellations/{cancelId}/retry`)는 저장해 둔 멱등키·금액·사유를 그대로 보낸다. 첫 요청이 토스에 닿았으면 첫 응답이, 안 닿았으면 이번 처리 결과가 온다. 어느 쪽이든 두 번 환불되지 않는다
+- 재시도가 첫 요청과 겹쳐도 안전하다. 토스는 같은 키에 `IDEMPOTENT_REQUEST_PROCESSING`이나 첫 응답을 주고, T2는 이미 `DONE`인 취소면 아무것도 바꾸지 않는다
+- 토스 멱등키는 15일 유효하다. 그 뒤 같은 키로 보내면 새 요청이 되어 이중 환불이 될 수 있어 재시도는 요청 후 14일까지만 받는다
+
+### 결정 5 — 애매한 취소 응답은 거절이 아니라 결과 불명
+
+결과 불명을 거절로 처리하면 회원이 다시 요청할 때 새 멱등키로 같은 금액이 한 번 더 환불된다. 부분 취소는 잔액이 남아 있어 토스도 그 요청을 거절하지 않는다.
+
+| 토스 응답 | 분류 |
+|---|---|
+| 2xx + 상태 `CANCELED`/`PARTIAL_CANCELED` + `cancels` 마지막 항목 `DONE` | Canceled (그 항목의 transactionKey·canceledAt 저장) |
+| 그 밖의 4xx | Rejected |
+| `ALREADY_CANCELED_PAYMENT` | Unknown — 앞선 취소가 성공했는데 응답만 놓쳤을 수 있다 |
+| 409 `IDEMPOTENT_REQUEST_PROCESSING` | Unknown — 같은 키의 첫 요청이 처리 중 |
+| 400 `PROVIDER_ERROR` | Unknown — "일시적인 오류"라 처리됐는지 알 수 없다 |
+| 5xx, 타임아웃, 응답 해석 실패, 2xx인데 위 조건 불충족 | Unknown |
+
+조회 결과도 셋(`Found` / `NotFound` / `Unavailable`)으로 나눈다. `NotFound`는 `NOT_FOUND_PAYMENT`일 때만이다. `NOT_FOUND_MERCHANT` 등 나머지 404는 "물어보지 못함"이다(결정 11).
+
+### 결정 6 — 금액과 사유는 서버가 만든다. `cancelAmount`는 늘 명시한다
+
+- 금액을 클라이언트에게서 받지 않는다. 좌석 `paidPrice` 합 / 상품 `unitPrice` × 수량으로 계산한다. "결제 금액보다 많은 금액 취소"는 구조상 생길 수 없고, 엔티티 검사가 마지막으로 막는다
+- 전액 취소도 `cancelAmount`를 넣는다. 빼면 토스가 남은 잔액 전부를 취소해, 우리와 토스의 잔액이 어긋났을 때 엉뚱한 금액이 조용히 환불된다. 넣으면 그때는 토스가 `NOT_CANCELABLE_AMOUNT`로 거절한다
+- 성공 응답의 `balanceAmount`가 우리 잔액과 다르면 error 로그만 남긴다. 환불은 이미 끝났다
+- 사유(`cancelReason`, 200자 제한)는 `예매 부분 취소: A1, A2`, `매장 전체 환불: 팝콘×2` 처럼 서버가 만든다. 200자를 넘으면 자른다
+
+### 결정 7 — 상태
+
+| 대상 | 상태 |
+|---|---|
+| `Payment` | `DONE` → `PARTIAL_CANCELED` → `CANCELED`. **잔액이 0이면 `CANCELED`**. 취소 진행 중은 `Payment`가 아니라 `PaymentCancel.status`가 갖는다(`IN_PROGRESS`를 함께 쓰면 "승인 결과 모름"과 구분할 수 없다) |
+| `PaymentCancel` | `IN_PROGRESS`(토스 호출 중이거나 결과 모름) / `DONE` / `FAILED` |
+| 예매 | 부분 취소 후에도 `RESERVED`, 남은 좌석이 없으면 `CANCELLED` |
+| 구매 | 부분 환불 후에도 `PAID`, 남은 수량이 없으면 `CANCELLED`(신설). 구매 내역에 `PAID` + `CANCELLED`가 보인다 |
+| 응답 | `totalPrice`는 처음 금액 그대로(무엇을 얼마에 샀었는지 남김), `remainingPrice`를 새로 둔다. 좌석은 `cancelled`, 상품은 `canceledQuantity` |
+
+토스는 부분 취소를 거듭해 잔액이 0이 돼도 `PARTIAL_CANCELED`로 둔다(결정 11). 우리는 잔액 기준이라 `CANCELED`다. 회원에게 의미 있는 사실은 "더 돌려받을 돈이 남았나"이고 그것은 잔액이 정한다.
+
+### 결정 8 — 예매 부분 취소는 좌석 단위, 기한은 전체 취소와 같다
+
+- 좌석 하나는 한 번만 취소된다. 결제 전 선점(`PENDING`)의 부분 취소는 막는다(`RESERVATION_NOT_RESERVED`). 결제 주문 금액이 이미 정해져 있다
+- 기한(상영 20분 전)은 T1 시각으로 판단한다. 토스를 기다리는 사이 기한이 지나도 T2에서 다시 거절하지 않는다. 재시도도 기한을 보지 않는다(기한 안에 요청한 취소의 결과를 맞추는 것)
+- 남은 좌석을 모두 고르면 결과적으로 전체 취소가 된다
+
+### 결정 9 — 매점: 회원 취소 불가, 매장(관리자)이 수량 단위로 환불, 재고는 되돌리지 않는다 (C안)
+
+- CGV 매점(패스트오더·키오스크)은 제조가 시작됐거나 수령 대기 중이면 취소·환불이 안 된다. 우리 모델에는 제조·수령 상태가 없어 "결제 = 제조 접수"로 본다. 회원이 결제한 구매를 취소하는 API는 두지 않는다
+- 고려한 안: A 매점 취소 제거 / B 제조 상태(`PREPARING`) 도입 후 제조 전까지 회원 취소 / **C 매장이 제공하지 못한 수량만큼 관리자 환불**.
+  수량 단위 부분 환불이 실제로 생기는 곳은 매장 쪽 사정(품절·기계 고장)이라 C를 택했다. B는 결제 세션 범위를 넘는 주문 처리 기능이고 "환불 중 제조 시작" 경합이 새로 생긴다
+- 재고를 되돌리지 않는다. 환불 사유가 "만들 수 없음"이라 재고로 돌리면 다른 회원이 못 만드는 상품을 산다. 재고 조정은 매장의 몫이다
+- 관리자 잠금 조회 `PurchaseRepository.findByIdForUpdate`(소유자 조건 없음, 조인 없음, 첫 쿼리)
+- 거절되면 상세 행은 거절된 요청의 기록으로 남는다. 남은 수량은 확정된 환불만 세므로 다시 요청하는 데 걸리지 않는다
+- 환불 기한은 두지 않았다(수령 개념이 없음)
+
+### 결정 10 — 동시성: 행 잠금 + 결제당 진행 중 취소 1건
+
+| 상황 | 처리 |
+|---|---|
+| 같은 결제의 취소 두 건이 동시에 | 예매·구매 행 잠금으로 줄을 세우고, 뒤 요청은 진행 중 취소를 보고 409 `PAYMENT_CANCEL_IN_PROGRESS`. 토스는 한 번만 불린다 |
+| 승인 중(`IN_PROGRESS`)인 결제를 취소 | 기존 `ensureNoPaymentInProgress`로 409 `PAYMENT_IN_PROGRESS` |
+| 토스 환불 대기 중 다른 회원이 그 좌석 선택 | 아직 점유 중이라 `SEAT_ALREADY_RESERVED`. 환불이 확인돼야 풀린다 |
+| 토스 대기 중 같은 예매·구매의 다른 요청 | T1이 커밋돼 락이 없으므로 락 대기가 아니라 409로 바로 끝난다 |
+
+잠금 조회가 트랜잭션의 첫 쿼리여야 하는 이유는 결제 세션 1 결정 4와 같다(REPEATABLE READ 스냅샷).
+
+### 결정 11 — 실제 토스로 알게 된 것
+
+| 확인 | 결과 |
+|---|---|
+| 공용 키로 `GET /v1/payments/orders/{orderId}` | **실제로 있는 결제도** 404 `NOT_FOUND_MERCHANT`. 세션 0에서 이 응답을 "키 정상, 그 주문만 없음"으로 적었는데 공용 키에서는 orderId 조회 자체가 동작하지 않는다 |
+| `GET /v1/payments/{paymentKey}` | 정상. 우리 DB와 상태·금액·잔액·취소 이력이 일치 |
+| 없는 paymentKey | 404 `NOT_FOUND_PAYMENT` |
+| 한 번에 전액 취소 | 토스 상태 `CANCELED` |
+| 부분 취소를 두 번 해 잔액 0 | 토스 상태 **`PARTIAL_CANCELED`**, `balanceAmount` 0 |
+
+그래서 고친 것(fix 커밋 `e1f7fa1`): 대조 API는 paymentKey가 있으면 paymentKey로 묻고, 없을 때만 orderId로 묻는다. 응답에 `tossLookupBy`를 싣는다. `NOT_FOUND_MERCHANT`는 `Unavailable`로 분류한다.
+대조·정리는 토스 상태 이름이 아니라 **잔액과 취소 이력**으로 비교해야 한다.
+
+### 브라우저 확인 (사용자가 직접 진행, 매점 환불은 생략)
+
+| 항목 | 결과 |
+|---|---|
+| 예매 3석 42,000원 → A1 부분 취소 | 토스 `PARTIAL_CANCELED` · 잔액 28,000원 · 취소 1건, 우리와 일치 |
+| 다른 계정 3석 → 전체 취소 | 토스 `CANCELED` · 잔액 0원 · 사유 "예매 전체 취소: B1, B2, B3". 좌석 해제 시각 = 토스 취소 시각 |
+| 새 DB에서 A1 → A1 재취소 → A2·A3 → 전체 취소 재요청 → 대조 | `SEAT_ALREADY_CANCELLED`, 예매 `CANCELLED`, `ALREADY_CANCELLED`, 대조 `PAYMENT_KEY · FOUND` (토스 `PARTIAL_CANCELED` 잔액 0 / 우리 `CANCELED`) |
+
+결과 불명과 재시도는 실제 토스로 일부러 만들 수 없어 테스트로만 확인했다.
+
+### 기타
+
+- 영화 예매율 집계(`countConfirmedByMovie(Id)`)가 부분 취소된 좌석까지 셌다. `RESERVED`만 보고 `release_key`를 보지 않아서다. `releaseKey = 0` 조건을 더했다
+- 테스트 페이지의 "내 예매 내역" / "내 구매 내역" 버튼에 핸들러가 없었다(세션 3). 연결했다
+- `TossPayment`에 `balanceAmount`, `cancels`를 더하면서 테스트 9곳의 생성자 호출을 `TestFixtures.approvedToss(...)` 하나로 모았다. 토스 취소 목은 `TestFixtures.tossCancelsFrom(결제액)`(잔액을 이어서 줄임)
+- 결제 세션 3까지 문서 공용 키를 개발자센터 본인 키로 착각했던 정정은 이 세션 첫 커밋에 함께 들어갔다
+
+### 오류 코드
+
+| 코드 | 상태 | 경우 |
+|---|---|---|
+| `PAYMENT_NOT_CANCELABLE` | 409 | 승인되지 않은 결제 |
+| `PAYMENT_ALREADY_CANCELED` | 409 | 이미 전액 취소된 결제 |
+| `CANCEL_AMOUNT_EXCEEDS_BALANCE` | 409 | 취소 금액 > 잔액(계산 쪽 버그를 막는 마지막 검사) |
+| `PAYMENT_CANCEL_IN_PROGRESS` | 409 | 같은 결제에 진행 중인 취소가 있음 |
+| `PAYMENT_CANCEL_REJECTED` | 409 | 토스가 취소를 거절. 토스는 정상 응답을 줬으므로 502가 아니다 |
+| `PAYMENT_CANCEL_RESULT_UNKNOWN` | 504 | 취소 결과 불명, 또는 환불 후 우리 반영 실패 |
+| `PAYMENT_CANCEL_NOT_FOUND` | 404 | 재시도할 취소가 없음(다른 예매·구매의 취소 id 포함) |
+| `PAYMENT_CANCEL_NOT_RETRYABLE` | 409 | 이미 결과가 정해진 취소를 재시도 |
+| `PAYMENT_CANCEL_RETRY_EXPIRED` | 409 | 요청 후 14일이 지난 취소 |
+| `RESERVATION_NOT_RESERVED` | 409 | 결제 전 선점의 부분 취소 |
+| `SEAT_NOT_IN_RESERVATION` | 400 | 이 예매의 좌석이 아님 |
+| `SEAT_ALREADY_CANCELLED` | 409 | 이미 취소된 좌석 |
+| `PURCHASE_NOT_PAID` | 409 | 결제가 끝나지 않았거나 이미 모두 환불된 구매 |
+| `PRODUCT_NOT_IN_PURCHASE` | 400 | 이 구매에 없는 상품 |
+| `CANCEL_QUANTITY_EXCEEDED` | 409 | 남은 수량보다 많이 환불 |
+
+남의 예매는 지금처럼 `RESERVATION_NOT_FOUND`(404). 매점 환불은 관리자 전용이라 회원은 403.
+
+### 테스트
+
+| 커밋 | 내용 | 전체 |
+|---|---|---|
+| 조회 + 대조 | 클라이언트 조회 분류, 관리자 대조(권한·우리 주문 아님 404), 회원 조회·소유권 | 342 → 358 |
+| 예매 취소 | `PaymentCancelTest`, 클라이언트 취소 분류 7, `ReservationCancelServiceTest`, 서비스 T1·T2 멱등, 컨트롤러 13(여러 번 부분 취소 잔액, 이미 취소된 좌석, 거절, 결과 불명 + 같은 멱등키 재시도, 14일, 남의 예매), `ReservationCancelConcurrencyTest` 3 | → 399 |
+| 대조 fix | `NOT_FOUND_MERCHANT` → 조회 불가, paymentKey 조회, 승인된 결제는 paymentKey로 | → 402 |
+| 매점 환불 | `PurchaseRefundTest`, `PurchaseRefundServiceTest`, `PurchaseAdminControllerTest` 12(재고 그대로, 수량 초과, 회원 403, 내역 표시 등), `PurchaseRefundConcurrencyTest` 2 | → 425 |
+
+변형 실험(MySQL, 되돌림 완료)
+
+| 변형 | 깨지는 테스트 |
+|---|---|
+| `ReservationCancelService`에 `@Transactional` | 토스 대기 중 같은 예매의 다른 취소가 락 대기 예외 / 동시 부분 취소 둘 다 성공 |
+| T1에서 좌석 해제 | 환불 대기 중 다른 회원이 좌석을 가져감 / 남은 금액 틀림 |
+| 진행 중 취소 확인 제거(예매) | 토스 대기 중 다른 취소가 막히지 않음 / 동시 부분 취소에 토스 2번 호출 |
+| `PurchaseRefundService`에 `@Transactional` | 토스 대기 중 다른 환불이 락 대기 예외 / 동시 부분 환불 둘 다 성공 |
+| 진행 중 취소 확인 제거(매점) | 위 두 테스트 모두 실패 |
+
+`PurchaseRollbackTest`의 결제 CHECK 제약 테스트는 원시 INSERT에 새 NOT NULL 컬럼(`canceled_amount`)을 넣도록 고쳤다.
+
+### 한계 — 다음 세션으로
+
+- **결과 불명 승인 결제는 paymentKey가 없다.** 승인이 성공해야 저장하는데, 공용 키는 orderId 조회가 안 되므로 그런 결제는 조회로 맞출 방법이 없다. 세션 5에서 T1(승인 시작)에 paymentKey를 먼저 저장해야 한다
+- 결과 불명 결제·취소를 토스 조회로 맞출 때는 상태 이름이 아니라 잔액·취소 이력으로 비교한다(결정 11)
+- 14일이 지난 결과 불명 취소는 재시도할 수 없다. 관리자 대조로 확인해 수동으로 맞춰야 한다(세션 5)
+- 좌석을 잃은 승인 결제의 환불은 세션 5
+- 매점에는 제조·수령 상태가 없어 환불 기한이 없고, 환불하지 못한 재고를 조정하는 API도 없다
+- 가상계좌 환불(`refundReceiveAccount`), 결제수단별 취소 제약, 웹훅은 범위 밖
+- README의 동시성 표 6번("예매 결제·취소·만료 — 미적용")은 결제 세션 1에서 이미 적용됐다. 결제·취소 동시성 지점도 표에 없다. 동시성 세션에서 갱신한다
+- CLAUDE.md "설계 배경"의 "예매 취소 시 `seats.clear()`로 좌석 행을 삭제한다" 문단은 낡았다. 지금은 `release_key`로 행을 남기고 점유만 푼다
+
+### 변경 파일
+
+| 커밋 | 파일 |
+|---|---|
+| 조회 + 대조 (`143b145`) | `global/client/TossPayment`(잔액·취소 이력), `TossLookupResult`(신설), `TossPaymentsClient`(조회), `domain/payment/dto/PaymentResponse`·`PaymentReconcileResponse`, `service/PaymentAdminService`, `controller/PaymentAdminController`(신설), `PaymentRepository`, 예매·구매 컨트롤러·서비스·저장소(결제 조회), `payment-test.html`, `TestFixtures.approvedToss` |
+| 예매 취소 (`d832804`) | `Payment`(누적액·잔액·취소 검사), `PaymentStatus`, `PaymentCancel`·`PaymentCancelStatus`·`PaymentCancelRepository`(신설), `TossCancelResult`(신설), `TossPaymentsClient.cancel`, `Reservation`·`ReservationSeat`, `ReservationService`(취소 T1·재시도·T2), `ReservationCancelService`(신설), `ReservationCancelRequest`·`ReservationCancelAttempt`(신설), `ReservationResponse`·`ReservationDetailRow`·`ReservationRepository`(좌석 취소 표시), `ReservationSeatRepository`(예매율 집계), `ErrorCode`, `payment-test.html` |
+| 대조 fix (`e1f7fa1`) | `TossPaymentsClient`(paymentKey 조회·분류), `TossLookupResult`, `PaymentAdminService`, `PaymentReconcileResponse` |
+| 매점 환불 (`a8df2b5`) | `PurchaseProductCancel`·`PurchaseProductCancelRepository`(신설), `PurchaseProduct`(취소 수량), `Purchase`(환불·`cancelledAt`), `PurchaseStatus`(`CANCELLED`), `PurchaseService`(환불 T1·재시도·T2, 내역), `PurchaseRefundService`·`PurchaseAdminController`(신설), `PurchaseRefundRequest`·`PurchaseRefundAttempt`(신설), `PurchaseResponse`·`PurchaseHistoryRow`, `PurchaseRepository`, `PaymentCancel`(사유 200자), `PaymentCancelRepository`, `ErrorCode`, `payment-test.html` |
