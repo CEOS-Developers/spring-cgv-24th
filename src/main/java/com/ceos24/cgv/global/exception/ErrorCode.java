@@ -79,7 +79,10 @@ public enum ErrorCode {
     BRANCH_NOT_OPERATING(HttpStatus.CONFLICT, "운영 중인 지점이 아닙니다."),
     OUT_OF_STOCK(HttpStatus.CONFLICT, "재고가 부족합니다."),
     STOCK_LOCK_CONFLICT(HttpStatus.CONFLICT, "주문이 몰려 처리하지 못했습니다. 다시 시도해 주세요."),
-    PURCHASE_NOT_PENDING(HttpStatus.CONFLICT, "결제 대기 상태인 주문이 아닙니다. 다시 결제하려면 새로 주문해 주세요.");
+    PURCHASE_NOT_PENDING(HttpStatus.CONFLICT, "결제 대기 상태인 주문이 아닙니다. 다시 결제하려면 새로 주문해 주세요."),
+    PURCHASE_NOT_PAID(HttpStatus.CONFLICT, "결제가 완료된 구매만 환불할 수 있습니다."),
+    PRODUCT_NOT_IN_PURCHASE(HttpStatus.BAD_REQUEST, "이 구매에 없는 상품입니다."),
+    CANCEL_QUANTITY_EXCEEDED(HttpStatus.CONFLICT, "환불할 수 있는 수량보다 많습니다.");
 
     private final HttpStatus httpStatus;
     private final String message;

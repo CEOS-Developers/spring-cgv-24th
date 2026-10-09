@@ -181,6 +181,21 @@
       <input id="reconcile-order-id" type="text" placeholder="주문번호 (cgv-r-… / cgv-p-…)" style="flex: 1; min-width: 0">
       <button id="reconcile-btn">토스 대조</button>
     </div>
+    <h2 style="margin-top: 16px">매점 환불 (매장이 제공하지 못한 수량)</h2>
+    <p class="muted">
+      회원은 결제한 매점 구매를 취소할 수 없다(결제 = 제조 접수). 재고는 되돌리지 않는다.
+      부분 환불은 <b>상품ID:수량</b>을 쉼표로 적는다. 상품 ID는 2의 매점 메뉴 순서와 같다(샘플: 1 팝콘, 2 콜라, 3 나초).
+    </p>
+    <div class="row" style="margin-bottom: 8px">
+      <label>구매 ID <input id="refund-purchase-id" type="number" min="1"></label>
+      <button id="refund-all-btn">전체 환불</button>
+      <input id="refund-items" type="text" placeholder="예: 1:2, 2:1" autocomplete="off">
+      <button id="refund-items-btn">부분 환불</button>
+    </div>
+    <div class="row">
+      <input id="refund-retry-cancel-id" type="number" min="1" placeholder="취소 ID">
+      <button id="refund-retry-btn">환불 재시도</button>
+    </div>
   </section>
 
   <section>
@@ -461,6 +476,7 @@
     const last = store.get('lastPaid');
     if (!last) return;
     $(last.type === 'reservation' ? 'reservation-id' : 'purchase-id').value = last.id;
+    if (last.type === 'purchase') $('refund-purchase-id').value = last.id;
     $('reconcile-order-id').value = last.orderId;
   }
 
@@ -550,6 +566,43 @@
       + ` · 취소 ${ours.cancels.length}건 / 토스: ${data.tossLookup}`
       + (toss ? ` ${toss.status} 결제 ${toss.totalAmount.toLocaleString()}원 · 잔액 ${toss.balanceAmount.toLocaleString()}원 · 취소 ${toss.cancels.length}건` : '')
       + (data.tossError ? ` (${data.tossError})` : ''));
+  });
+
+  // ─── 매점 환불 (관리자) ───────────────────────────────────────────────────
+  function describePurchase(p) {
+    const items = p.items.map(i => `${i.name} ${i.quantity - i.canceledQuantity}/${i.quantity}`).join(', ');
+    return `구매 #${p.purchaseId} ${p.statusName} · ${items} · 남은 금액 ${p.remainingPrice.toLocaleString()}원`;
+  }
+
+  // "1:2, 2:1" → [{productId: 1, quantity: 2}, {productId: 2, quantity: 1}]
+  function parseRefundItems(text) {
+    return text.split(',').map(s => s.trim()).filter(Boolean).map(pair => {
+      const match = /^(\d+)\s*:\s*(\d+)$/.exec(pair);
+      if (!match) throw new Error(`상품ID:수량 형식이 아니다: ${pair}`);
+      return { productId: Number(match[1]), quantity: Number(match[2]) };
+    });
+  }
+
+  function adminApi(method, path, body) {
+    return api(method, path, body, store.get('adminToken'));
+  }
+
+  $('refund-all-btn').onclick = handler(async () => {
+    const id = requireValue('refund-purchase-id', '구매 ID');
+    showResult(true, describePurchase(await adminApi('DELETE', `/api/admin/purchases/${id}`)));
+  });
+
+  $('refund-items-btn').onclick = handler(async () => {
+    const id = requireValue('refund-purchase-id', '구매 ID');
+    const items = parseRefundItems(requireValue('refund-items', '상품ID:수량'));
+    showResult(true, describePurchase(await adminApi('POST', `/api/admin/purchases/${id}/cancellations`, { items })));
+  });
+
+  $('refund-retry-btn').onclick = handler(async () => {
+    const id = requireValue('refund-purchase-id', '구매 ID');
+    const cancelId = requireValue('refund-retry-cancel-id', '취소 ID');
+    showResult(true, describePurchase(
+      await adminApi('POST', `/api/admin/purchases/${id}/cancellations/${cancelId}/retry`)));
   });
 
   // 결과는 로그에 전문으로 남는다. 화면에는 건수만 보여준다

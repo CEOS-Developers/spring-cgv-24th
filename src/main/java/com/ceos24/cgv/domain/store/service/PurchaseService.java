@@ -6,19 +6,25 @@ import com.ceos24.cgv.domain.payment.dto.PaymentConfirmRequest;
 import com.ceos24.cgv.domain.payment.dto.PaymentOrderResponse;
 import com.ceos24.cgv.domain.payment.dto.PaymentResponse;
 import com.ceos24.cgv.domain.payment.entity.Payment;
+import com.ceos24.cgv.domain.payment.entity.PaymentCancel;
+import com.ceos24.cgv.domain.payment.entity.PaymentCancelStatus;
 import com.ceos24.cgv.domain.payment.repository.PaymentCancelRepository;
 import com.ceos24.cgv.domain.payment.repository.PaymentRepository;
 import com.ceos24.cgv.domain.store.dto.PurchaseCreateRequest;
 import com.ceos24.cgv.domain.store.dto.PurchaseCreateRequest.Item;
 import com.ceos24.cgv.domain.store.dto.PurchaseOrderResponse;
 import com.ceos24.cgv.domain.store.dto.PurchasePaymentAttempt;
+import com.ceos24.cgv.domain.store.dto.PurchaseRefundAttempt;
+import com.ceos24.cgv.domain.store.dto.PurchaseRefundRequest;
 import com.ceos24.cgv.domain.store.dto.PurchaseResponse;
 import com.ceos24.cgv.domain.store.entity.Product;
 import com.ceos24.cgv.domain.store.entity.Purchase;
 import com.ceos24.cgv.domain.store.entity.PurchaseProduct;
+import com.ceos24.cgv.domain.store.entity.PurchaseProductCancel;
 import com.ceos24.cgv.domain.store.entity.PurchaseStatus;
 import com.ceos24.cgv.domain.store.entity.Stock;
 import com.ceos24.cgv.domain.store.repository.ProductRepository;
+import com.ceos24.cgv.domain.store.repository.PurchaseProductCancelRepository;
 import com.ceos24.cgv.domain.store.repository.PurchaseRepository;
 import com.ceos24.cgv.domain.store.repository.StockRepository;
 import com.ceos24.cgv.domain.user.entity.User;
@@ -27,6 +33,7 @@ import com.ceos24.cgv.global.client.TossPayment;
 import com.ceos24.cgv.global.exception.CustomException;
 import com.ceos24.cgv.global.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.ConcurrencyFailureException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -36,14 +43,18 @@ import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class PurchaseService {
+
+    private static final List<PurchaseStatus> HISTORY_STATUSES = List.of(PurchaseStatus.PAID, PurchaseStatus.CANCELLED);
 
     private final PurchaseRepository purchaseRepository;
     private final StockRepository stockRepository;
@@ -52,6 +63,7 @@ public class PurchaseService {
     private final UserRepository userRepository;
     private final PaymentRepository paymentRepository;
     private final PaymentCancelRepository paymentCancelRepository;
+    private final PurchaseProductCancelRepository purchaseProductCancelRepository;
     private final Clock clock;
 
     // 주문과 결제 주문을 함께 만든다. 재고는 차감하지 않는다. 결제창을 닫고 떠난 주문이 재고를 붙잡지 않게
@@ -137,7 +149,121 @@ public class PurchaseService {
     // 없는 사용자를 빈 목록으로 돌려주면 잘못된 id가 "구매 내역 없음"으로 숨는다.
     public List<PurchaseResponse> findHistory(Long userId) {
         userRepository.validateExists(userId);
-        return PurchaseResponse.listOf(purchaseRepository.findHistoryRowsByUserId(userId, PurchaseStatus.PAID));
+        return PurchaseResponse.listOf(purchaseRepository.findHistoryRowsByUserId(userId, HISTORY_STATUSES));
+    }
+
+    // 환불 T1. items가 null이면 남은 수량 전부(전체 환불)다. 회원이 아니라 매장(관리자)이 부른다.
+    // 결제가 곧 제조 접수라 회원은 결제한 구매를 취소할 수 없고, 매장이 제공하지 못한 수량만 돌려준다.
+    // 재고는 되돌리지 않는다. 환불 사유가 "만들 수 없음"이라 재고로 돌리면 다른 회원이 못 만드는 상품을 산다.
+    @Transactional
+    public PurchaseRefundAttempt startRefund(Long id, List<PurchaseRefundRequest.Item> items) {
+        LocalDateTime now = LocalDateTime.now(clock);
+        Purchase purchase = purchaseRepository.findByIdForUpdate(id)
+                .orElseThrow(() -> new CustomException(ErrorCode.PURCHASE_NOT_FOUND));
+        purchase.verifyRefundable();
+        if (items != null && items.stream().map(PurchaseRefundRequest.Item::productId).distinct().count() != items.size()) {
+            throw new CustomException(ErrorCode.DUPLICATE_PRODUCT_IN_REQUEST);
+        }
+        Payment payment = paymentRepository.findByPurchaseId(id)
+                .orElseThrow(() -> new CustomException(ErrorCode.PAYMENT_NOT_FOUND));
+        // 같은 결제의 환불은 한 번에 하나다. 두 요청이 각자 남은 수량을 보고 토스를 부르면 둘 다 통과할 수 있다.
+        if (paymentCancelRepository.existsByPaymentIdAndStatus(payment.getId(), PaymentCancelStatus.IN_PROGRESS)) {
+            throw new CustomException(ErrorCode.PAYMENT_CANCEL_IN_PROGRESS);
+        }
+
+        Map<PurchaseProduct, Integer> targets = refundTargetsOf(purchase, items);
+        PaymentCancel cancel = paymentCancelRepository.save(PaymentCancel.builder()
+                .payment(payment)
+                .amount(targets.entrySet().stream().mapToInt(e -> e.getKey().getUnitPrice() * e.getValue()).sum())
+                .reason(refundReasonOf(targets, items == null))
+                .now(now)
+                .build());
+        targets.forEach((item, quantity) -> purchaseProductCancelRepository.save(PurchaseProductCancel.builder()
+                .paymentCancel(cancel).purchaseProduct(item).quantity(quantity).build()));
+        return refundAttemptOf(cancel, id);
+    }
+
+    // 결과를 모르는 환불을 처음과 같은 멱등키·금액·사유로 다시 보낸다. 이미 처리됐으면 토스가 첫 응답을 돌려준다.
+    @Transactional
+    public PurchaseRefundAttempt startRefundRetry(Long id, Long paymentCancelId) {
+        purchaseRepository.findByIdForUpdate(id)
+                .orElseThrow(() -> new CustomException(ErrorCode.PURCHASE_NOT_FOUND));
+        PaymentCancel cancel = paymentCancelRepository.findByIdAndPaymentPurchaseId(paymentCancelId, id)
+                .orElseThrow(() -> new CustomException(ErrorCode.PAYMENT_CANCEL_NOT_FOUND));
+        cancel.verifyRetryable(LocalDateTime.now(clock));
+        return refundAttemptOf(cancel, id);
+    }
+
+    // 환불 T2 (성공). 토스는 이미 환불했다. 여기서 실패하면 취소가 IN_PROGRESS로 남아 같은 환불의 재시도로 맞춘다.
+    // 재시도가 겹쳐 이미 반영된 환불이면 바꾸지 않고 현재 상태만 돌려준다.
+    @Transactional
+    public PurchaseResponse completeRefund(PurchaseRefundAttempt attempt, TossPayment.Cancel canceled,
+                                           int tossBalanceAmount) {
+        LocalDateTime now = LocalDateTime.now(clock);
+        Purchase purchase = purchaseRepository.findByIdForUpdate(attempt.purchaseId())
+                .orElseThrow(() -> new CustomException(ErrorCode.PURCHASE_NOT_FOUND));
+        PaymentCancel cancel = findCancel(attempt.paymentCancelId());
+
+        if (!cancel.isDone()) {
+            cancel.complete(canceled.transactionKey(), canceled.canceledAtIn(clock.getZone(), now));
+            purchase.completeRefund(purchaseProductCancelRepository.findByPaymentCancelId(cancel.getId()), now);
+            int ourBalance = cancel.getPayment().getBalanceAmount();
+            if (ourBalance != tossBalanceAmount) {
+                // 환불은 이미 끝났다. 실패로 돌리지 않고, 대조할 수 있게 남긴다.
+                log.error("[Payment] 환불 후 잔액 불일치 orderId={} ours={} toss={}",
+                        cancel.getPayment().getOrderId(), ourBalance, tossBalanceAmount);
+            }
+        }
+        return PurchaseResponse.from(purchase);
+    }
+
+    // 환불 T2 (거절). 상품 수량과 결제는 그대로다. 상세 행은 거절된 요청의 기록으로 남는다.
+    // 남은 수량은 확정된 환불만 세므로 다시 환불을 요청하는 데 걸리지 않는다.
+    @Transactional
+    public void failRefund(PurchaseRefundAttempt attempt, String failureCode, String failureMessage) {
+        purchaseRepository.findByIdForUpdate(attempt.purchaseId())
+                .orElseThrow(() -> new CustomException(ErrorCode.PURCHASE_NOT_FOUND));
+        findCancel(attempt.paymentCancelId()).fail(failureCode, failureMessage);
+    }
+
+    // 상품 id 순으로 담는다. 사유 문구와 상세 행 순서가 요청 순서에 따라 달라지지 않게 한다.
+    private Map<PurchaseProduct, Integer> refundTargetsOf(Purchase purchase, List<PurchaseRefundRequest.Item> items) {
+        Map<PurchaseProduct, Integer> targets = new TreeMap<>(Comparator.comparing(item -> item.getProduct().getId()));
+        if (items == null) {
+            purchase.getItems().stream()
+                    .filter(item -> item.getRemainingQuantity() > 0)
+                    .forEach(item -> targets.put(item, item.getRemainingQuantity()));
+            return targets;
+        }
+        Map<Long, PurchaseProduct> byProductId = purchase.getItems().stream()
+                .collect(Collectors.toMap(item -> item.getProduct().getId(), Function.identity()));
+        for (PurchaseRefundRequest.Item requested : items) {
+            PurchaseProduct item = byProductId.get(requested.productId());
+            if (item == null) {
+                throw new CustomException(ErrorCode.PRODUCT_NOT_IN_PURCHASE);
+            }
+            item.verifyCancelable(requested.quantity());
+            targets.put(item, requested.quantity());
+        }
+        return targets;
+    }
+
+    // 토스 결제 내역에 남는 사유다. 관리자가 쓴 문구를 그대로 토스에 남기지 않도록 서버가 만든다.
+    private String refundReasonOf(Map<PurchaseProduct, Integer> targets, boolean all) {
+        String detail = targets.entrySet().stream()
+                .map(e -> e.getKey().getProduct().getName() + "×" + e.getValue())
+                .collect(Collectors.joining(", "));
+        return (all ? "매장 전체 환불: " : "매장 부분 환불: ") + detail;
+    }
+
+    private PurchaseRefundAttempt refundAttemptOf(PaymentCancel cancel, Long purchaseId) {
+        return new PurchaseRefundAttempt(cancel.getId(), purchaseId, cancel.getPayment().getPaymentKey(),
+                cancel.getIdempotencyKey(), cancel.getAmount(), cancel.getReason());
+    }
+
+    private PaymentCancel findCancel(Long paymentCancelId) {
+        return paymentCancelRepository.findById(paymentCancelId)
+                .orElseThrow(() -> new CustomException(ErrorCode.PAYMENT_CANCEL_NOT_FOUND));
     }
 
     private void validateNoDuplicateProducts(List<Item> items) {

@@ -5,7 +5,9 @@ public enum PurchaseStatus {
 
     PENDING("결제대기"),
     PAID("결제완료"),
-    FAILED("결제실패");
+    FAILED("결제실패"),
+    // 모든 수량이 환불된 구매. 산 기록은 남아야 하므로 내역에 보인다.
+    CANCELLED("취소");
 
     private final String displayName;
 

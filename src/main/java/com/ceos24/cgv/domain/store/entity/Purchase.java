@@ -43,6 +43,9 @@ public class Purchase extends BaseTimeEntity {
     // 결제가 승인된 시각. 주문을 만든 시각은 createdAt이 갖는다.
     private LocalDateTime purchasedAt;
 
+    // 모든 수량이 환불된 시각.
+    private LocalDateTime cancelledAt;
+
     @OneToMany(mappedBy = "purchase", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<PurchaseProduct> items = new ArrayList<>();
 
@@ -85,5 +88,28 @@ public class Purchase extends BaseTimeEntity {
     public void fail() {
         verifyPayable();
         this.status = PurchaseStatus.FAILED;
+    }
+
+    // 결제가 끝난 구매만 환불한다. 모두 환불된 구매도 여기서 걸린다.
+    public void verifyRefundable() {
+        if (this.status != PurchaseStatus.PAID) {
+            throw new CustomException(ErrorCode.PURCHASE_NOT_PAID);
+        }
+    }
+
+    // 환불이 확인된 수량을 반영한다. 남은 수량이 없으면 구매 전체가 취소된 것이다.
+    public void completeRefund(List<PurchaseProductCancel> details, LocalDateTime now) {
+        details.forEach(detail -> detail.getPurchaseProduct().applyCancel(detail.getQuantity()));
+        if (this.items.stream().allMatch(item -> item.getRemainingQuantity() == 0)) {
+            this.status = PurchaseStatus.CANCELLED;
+            this.cancelledAt = now;
+        }
+    }
+
+    // 환불되지 않은 수량의 금액이다. totalPrice는 처음 산 금액 그대로 둔다.
+    public int getRemainingPrice() {
+        return this.items.stream()
+                .mapToInt(item -> item.getUnitPrice() * item.getRemainingQuantity())
+                .sum();
     }
 }

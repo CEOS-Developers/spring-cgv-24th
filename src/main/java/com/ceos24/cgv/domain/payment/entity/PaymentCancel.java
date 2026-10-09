@@ -21,6 +21,7 @@ public class PaymentCancel extends BaseTimeEntity {
 
     // 토스 멱등키는 15일간 유효하다. 그 뒤 같은 키로 보내면 새 요청으로 처리되어 두 번 환불될 수 있다.
     private static final int RETRY_DAYS = 14;
+    private static final int REASON_MAX_LENGTH = 200;
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -68,7 +69,8 @@ public class PaymentCancel extends BaseTimeEntity {
         this.payment = payment;
         this.idempotencyKey = UUID.randomUUID().toString().replace("-", "");
         this.amount = amount;
-        this.reason = reason;
+        // 토스 cancelReason은 200자까지다. 상품이 많으면 사유가 길어질 수 있어 잘라서 둔다.
+        this.reason = reason.length() <= REASON_MAX_LENGTH ? reason : reason.substring(0, REASON_MAX_LENGTH - 1) + "…";
         this.status = PaymentCancelStatus.IN_PROGRESS;
         this.requestedAt = now;
     }
