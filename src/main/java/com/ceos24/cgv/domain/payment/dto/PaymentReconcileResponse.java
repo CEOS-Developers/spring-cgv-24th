@@ -15,6 +15,8 @@ import java.util.List;
 public record PaymentReconcileResponse(
         String orderId,
         Ours ours,
+        // 토스에 무엇으로 물었는지. PAYMENT_KEY / ORDER_ID
+        String tossLookupBy,
         String tossLookup,
         TossPayment toss,
         String tossError
@@ -36,13 +38,15 @@ public record PaymentReconcileResponse(
         }
     }
 
-    public static PaymentReconcileResponse of(Payment payment, List<PaymentCancel> cancels, TossLookupResult lookup) {
+    public static PaymentReconcileResponse of(Payment payment, List<PaymentCancel> cancels, String lookupBy,
+                                              TossLookupResult lookup) {
         Ours ours = Ours.from(payment, cancels);
+        String orderId = payment.getOrderId();
         return switch (lookup) {
-            case Found found -> new PaymentReconcileResponse(payment.getOrderId(), ours, "FOUND", found.payment(), null);
-            case NotFound notFound -> new PaymentReconcileResponse(payment.getOrderId(), ours, "NOT_FOUND", null,
+            case Found found -> new PaymentReconcileResponse(orderId, ours, lookupBy, "FOUND", found.payment(), null);
+            case NotFound notFound -> new PaymentReconcileResponse(orderId, ours, lookupBy, "NOT_FOUND", null,
                     notFound.code() + ": " + notFound.message());
-            case Unavailable unavailable -> new PaymentReconcileResponse(payment.getOrderId(), ours, "UNAVAILABLE",
+            case Unavailable unavailable -> new PaymentReconcileResponse(orderId, ours, lookupBy, "UNAVAILABLE",
                     null, unavailable.reason());
         };
     }

@@ -7,11 +7,12 @@ public sealed interface TossLookupResult {
     record Found(TossPayment payment) implements TossLookupResult {
     }
 
-    // 토스가 404로 답했다. 인증을 마치지 않았거나 승인 요청이 토스에 닿지 않은 주문이다.
+    // 토스가 NOT_FOUND_PAYMENT로 답했다. 인증을 마치지 않았거나 승인 요청이 토스에 닿지 않은 결제다.
     record NotFound(String code, String message) implements TossLookupResult {
     }
 
-    // 5xx·타임아웃·인증 오류 등. 토스 쪽 상태에 대해 아무것도 알 수 없다.
+    // 5xx·타임아웃·인증 오류, 그리고 결제가 없다는 뜻이 아닌 404(NOT_FOUND_MERCHANT 등).
+    // 토스 쪽 상태에 대해 아무것도 알 수 없다.
     record Unavailable(String reason) implements TossLookupResult {
     }
 }

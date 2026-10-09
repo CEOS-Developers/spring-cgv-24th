@@ -9,7 +9,6 @@ import com.ceos24.cgv.global.client.TossLookupResult.Unavailable;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
@@ -26,6 +25,9 @@ public class TossPaymentsClient {
 
     private static final String CONFIRM_URI = "/v1/payments/confirm";
     private static final String ORDER_LOOKUP_URI = "/v1/payments/orders/{orderId}";
+    private static final String PAYMENT_KEY_LOOKUP_URI = "/v1/payments/{paymentKey}";
+    // 조회에서 "토스에 그 결제가 없다"고 확신할 수 있는 유일한 응답이다.
+    private static final String NOT_FOUND_PAYMENT = "NOT_FOUND_PAYMENT";
     private static final String IDEMPOTENCY_KEY_HEADER = "Idempotency-Key";
     // 앞선 승인 요청이 이미 성공했다는 뜻이다. 그 응답만 놓친 경우라 거절로 처리하면 돈은 빠졌는데 실패로 기록된다.
     private static final String ALREADY_PROCESSED_PAYMENT = "ALREADY_PROCESSED_PAYMENT";
@@ -106,11 +108,20 @@ public class TossPaymentsClient {
         return new TossCancelResult.Unknown(reason);
     }
 
-    // paymentKey가 아니라 orderId로 찾는다. 승인 응답을 놓친 결제는 우리 DB에 paymentKey가 없다.
+    public TossLookupResult findByPaymentKey(String paymentKey) {
+        return lookup(PAYMENT_KEY_LOOKUP_URI, paymentKey);
+    }
+
+    // 승인 응답을 놓친 결제는 우리 DB에 paymentKey가 없어 orderId로 찾는다.
+    // 문서 공용 테스트 키는 실제로 있는 결제도 orderId로는 404 NOT_FOUND_MERCHANT를 준다(결제 세션 4에서 확인).
     public TossLookupResult findByOrderId(String orderId) {
+        return lookup(ORDER_LOOKUP_URI, orderId);
+    }
+
+    private TossLookupResult lookup(String uri, String key) {
         try {
             TossPayment payment = tossPaymentsRestClient.get()
-                    .uri(ORDER_LOOKUP_URI, orderId)
+                    .uri(uri, key)
                     .retrieve()
                     .body(TossPayment.class);
             if (payment == null) {
@@ -119,13 +130,13 @@ public class TossPaymentsClient {
             return new Found(payment);
         } catch (HttpClientErrorException e) {
             ErrorResponse error = parseError(e);
-            if (e.getStatusCode().value() == HttpStatus.NOT_FOUND.value()) {
+            if (NOT_FOUND_PAYMENT.equals(error.code())) {
                 return new NotFound(error.code(), error.message());
             }
-            // 401·403 등은 결제가 없다는 뜻이 아니라 물어보지 못했다는 뜻이다
+            // 404여도 NOT_FOUND_MERCHANT처럼 결제가 없다는 뜻이 아닌 응답이 있다. 401·403도 물어보지 못했다는 뜻이다
             return new Unavailable(error.code() + ": " + error.message());
         } catch (RestClientException e) {
-            log.warn("[Toss] 결제 조회 실패 orderId={} reason={}", orderId, e.getMessage());
+            log.warn("[Toss] 결제 조회 실패 key={} reason={}", key, e.getMessage());
             return new Unavailable(e.getClass().getSimpleName() + ": " + e.getMessage());
         }
     }

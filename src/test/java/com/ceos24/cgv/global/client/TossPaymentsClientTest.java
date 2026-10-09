@@ -173,6 +173,27 @@ class TossPaymentsClientTest {
     }
 
     @Test
+    void 상점을_찾지_못했다는_404는_결제_없음이_아니라_조회_불가다() {
+        // 문서 공용 테스트 키는 실제로 있는 결제도 orderId로 조회하면 이 응답을 준다(결제 세션 4에서 확인).
+        // 결제 없음으로 읽으면 승인된 결제를 실패로 확정하게 된다
+        server.expect(requestTo(LOOKUP_URL))
+                .andRespond(withStatus(HttpStatus.NOT_FOUND).contentType(MediaType.APPLICATION_JSON)
+                        .body(errorJson("NOT_FOUND_MERCHANT", "존재하지 않는 상점 정보 입니다.")));
+
+        assertThat(client.findByOrderId(ORDER_ID)).isInstanceOf(Unavailable.class);
+    }
+
+    @Test
+    void paymentKey로_조회한다() {
+        server.expect(requestTo(BASE_URL + "/v1/payments/tgen_test_key"))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withSuccess(paymentJson("DONE"), MediaType.APPLICATION_JSON));
+
+        assertThat(client.findByPaymentKey("tgen_test_key")).isInstanceOf(Found.class);
+        server.verify();
+    }
+
+    @Test
     void 인증_오류는_결제가_없다는_뜻이_아니라_조회_불가다() {
         server.expect(requestTo(LOOKUP_URL))
                 .andRespond(withStatus(HttpStatus.UNAUTHORIZED).contentType(MediaType.APPLICATION_JSON)

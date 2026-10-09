@@ -5,6 +5,7 @@ import com.ceos24.cgv.domain.payment.entity.Payment;
 import com.ceos24.cgv.domain.payment.entity.PaymentCancel;
 import com.ceos24.cgv.domain.payment.repository.PaymentCancelRepository;
 import com.ceos24.cgv.domain.payment.repository.PaymentRepository;
+import com.ceos24.cgv.global.client.TossLookupResult;
 import com.ceos24.cgv.global.client.TossPaymentsClient;
 import com.ceos24.cgv.global.exception.CustomException;
 import com.ceos24.cgv.global.exception.ErrorCode;
@@ -24,10 +25,15 @@ public class PaymentAdminService {
     private final TossPaymentsClient tossPaymentsClient;
 
     // 우리 주문이 아닌 orderId는 토스에 묻지 않는다. 관리자 API가 아무 주문이나 조회하는 통로가 되지 않게 한다.
+    // paymentKey가 있으면 그것으로 묻는다. 문서 공용 테스트 키는 orderId 조회에 늘 NOT_FOUND_MERCHANT를 준다.
     public PaymentReconcileResponse reconcile(String orderId) {
         Payment payment = paymentRepository.findByOrderId(orderId)
                 .orElseThrow(() -> new CustomException(ErrorCode.PAYMENT_NOT_FOUND));
         List<PaymentCancel> cancels = paymentCancelRepository.findByPaymentIdInOrderByIdAsc(List.of(payment.getId()));
-        return PaymentReconcileResponse.of(payment, cancels, tossPaymentsClient.findByOrderId(orderId));
+        boolean byPaymentKey = payment.getPaymentKey() != null;
+        TossLookupResult lookup = byPaymentKey
+                ? tossPaymentsClient.findByPaymentKey(payment.getPaymentKey())
+                : tossPaymentsClient.findByOrderId(orderId);
+        return PaymentReconcileResponse.of(payment, cancels, byPaymentKey ? "PAYMENT_KEY" : "ORDER_ID", lookup);
     }
 }

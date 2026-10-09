@@ -15,6 +15,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
+import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 
 import static org.mockito.ArgumentMatchers.anyString;
@@ -57,9 +58,26 @@ class PaymentAdminControllerTest extends ControllerIntegrationTest {
                 .andExpect(jsonPath("$.data.ours.payment.status").value("READY"))
                 .andExpect(jsonPath("$.data.ours.purchaseId").value(payment.getPurchase().getId()))
                 .andExpect(jsonPath("$.data.ours.reservationId").doesNotExist())
+                // 승인 전이라 paymentKey가 없어 주문번호로 묻는다
+                .andExpect(jsonPath("$.data.tossLookupBy").value("ORDER_ID"))
                 .andExpect(jsonPath("$.data.tossLookup").value("FOUND"))
                 .andExpect(jsonPath("$.data.toss.status").value("DONE"))
                 .andExpect(jsonPath("$.data.toss.balanceAmount").value(10000));
+    }
+
+    @Test
+    void 승인된_결제는_paymentKey로_묻는다() throws Exception {
+        // 문서 공용 테스트 키는 orderId 조회에 늘 NOT_FOUND_MERCHANT를 준다
+        Payment approved = approvedPayment("tgen_approved_key");
+        given(tossPaymentsClient.findByPaymentKey("tgen_approved_key")).willReturn(new Found(
+                TestFixtures.approvedToss("tgen_approved_key", approved.getOrderId(), 10000, OffsetDateTime.now())));
+
+        mockMvc.perform(get("/api/admin/payments/{orderId}/toss", approved.getOrderId()).with(bearer(admin)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.tossLookupBy").value("PAYMENT_KEY"))
+                .andExpect(jsonPath("$.data.tossLookup").value("FOUND"))
+                .andExpect(jsonPath("$.data.ours.paymentKey").value("tgen_approved_key"));
+        verify(tossPaymentsClient, never()).findByOrderId(anyString());
     }
 
     @Test
@@ -91,6 +109,20 @@ class PaymentAdminControllerTest extends ControllerIntegrationTest {
                 .andExpect(jsonPath("$.code").value("PAYMENT_NOT_FOUND"));
 
         verify(tossPaymentsClient, never()).findByOrderId(anyString());
+    }
+
+    private Payment approvedPayment(String paymentKey) {
+        Branch branch = persist(TestFixtures.branch("강변점"));
+        Product cola = persist(TestFixtures.product("콜라", 5000));
+        Purchase purchase = Purchase.builder().user(em.find(User.class, user.getId())).branch(branch).build();
+        purchase.addItem(cola, 2);
+        persist(purchase);
+        Payment approved = Payment.builder().purchase(purchase).build();
+        approved.startApproval();
+        approved.approve(paymentKey, "카드", LocalDateTime.now());
+        persist(approved);
+        flushAndClear();
+        return approved;
     }
 
     @Test
