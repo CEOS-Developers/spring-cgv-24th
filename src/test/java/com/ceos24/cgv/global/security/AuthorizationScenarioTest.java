@@ -13,7 +13,6 @@ import com.ceos24.cgv.domain.user.entity.Role;
 import com.ceos24.cgv.domain.user.entity.User;
 import com.ceos24.cgv.domain.user.repository.UserRepository;
 import com.ceos24.cgv.global.client.TossConfirmResult.Approved;
-import com.ceos24.cgv.global.client.TossPayment;
 import com.ceos24.cgv.global.client.TossPaymentsClient;
 import com.ceos24.cgv.global.security.jwt.JwtProvider;
 import com.ceos24.cgv.support.AuthScenarioTest;
@@ -148,7 +147,7 @@ class AuthorizationScenarioTest extends AuthScenarioTest {
         String orderId = JsonPath.read(order, "$.data.orderId");
         int amount = JsonPath.read(order, "$.data.amount");
         given(tossPaymentsClient.confirm("tgen_test_key", orderId, amount)).willReturn(new Approved(
-                new TossPayment("tgen_test_key", orderId, "DONE", "카드", amount, OffsetDateTime.now())));
+                TestFixtures.approvedToss("tgen_test_key", orderId, amount, OffsetDateTime.now())));
 
         mockMvc.perform(post("/api/reservations/{id}/payments/confirm", id).with(bearer(token))
                         .contentType("application/json")

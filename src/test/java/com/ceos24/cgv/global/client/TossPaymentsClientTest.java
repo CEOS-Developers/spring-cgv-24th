@@ -3,6 +3,9 @@ package com.ceos24.cgv.global.client;
 import com.ceos24.cgv.global.client.TossConfirmResult.Approved;
 import com.ceos24.cgv.global.client.TossConfirmResult.Rejected;
 import com.ceos24.cgv.global.client.TossConfirmResult.Unknown;
+import com.ceos24.cgv.global.client.TossLookupResult.Found;
+import com.ceos24.cgv.global.client.TossLookupResult.NotFound;
+import com.ceos24.cgv.global.client.TossLookupResult.Unavailable;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpMethod;
@@ -30,6 +33,7 @@ class TossPaymentsClientTest {
     private static final String BASE_URL = "https://api.tosspayments.com";
     private static final String CONFIRM_URL = BASE_URL + "/v1/payments/confirm";
     private static final String ORDER_ID = "cgv-r-0123456789abcdef0123456789abcdef";
+    private static final String LOOKUP_URL = BASE_URL + "/v1/payments/orders/" + ORDER_ID;
 
     private MockRestServiceServer server;
     private TossPaymentsClient client;
@@ -116,6 +120,73 @@ class TossPaymentsClientTest {
                 .andRespond(withSuccess(paymentJson("WAITING_FOR_DEPOSIT"), MediaType.APPLICATION_JSON));
 
         assertThat(client.confirm("tgen_test_key", ORDER_ID, 14000)).isInstanceOf(Unknown.class);
+    }
+
+    // ─── 조회 ─────────────────────────────────────────────────────────────────
+
+    @Test
+    void 조회되면_잔액과_취소_이력까지_옮긴다() {
+        server.expect(requestTo(LOOKUP_URL))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withSuccess("""
+                        {"paymentKey":"tgen_test_key","orderId":"%s","status":"PARTIAL_CANCELED","method":"카드",
+                         "totalAmount":28000,"balanceAmount":14000,"approvedAt":"2024-06-01T09:05:00+09:00",
+                         "cancels":[{"transactionKey":"tx_1","cancelAmount":14000,"cancelReason":"좌석 취소",
+                                     "cancelStatus":"DONE","canceledAt":"2024-06-01T09:30:00+09:00",
+                                     "refundableAmount":14000}]}
+                        """.formatted(ORDER_ID), MediaType.APPLICATION_JSON));
+
+        TossLookupResult result = client.findByOrderId(ORDER_ID);
+
+        assertThat(result).isInstanceOf(Found.class);
+        TossPayment payment = ((Found) result).payment();
+        assertThat(payment.status()).isEqualTo("PARTIAL_CANCELED");
+        assertThat(payment.balanceAmount()).isEqualTo(14000);
+        assertThat(payment.cancels()).singleElement().satisfies(cancel -> {
+            assertThat(cancel.transactionKey()).isEqualTo("tx_1");
+            assertThat(cancel.cancelAmount()).isEqualTo(14000);
+            assertThat(cancel.cancelStatus()).isEqualTo("DONE");
+        });
+    }
+
+    @Test
+    void 취소_이력이_없으면_빈_목록이다() {
+        // 토스는 취소가 없으면 cancels를 null로 준다
+        server.expect(requestTo(LOOKUP_URL)).andRespond(withSuccess(paymentJson("DONE"), MediaType.APPLICATION_JSON));
+
+        TossPayment payment = ((Found) client.findByOrderId(ORDER_ID)).payment();
+
+        assertThat(payment.cancels()).isEmpty();
+        assertThat(payment.balanceAmount()).isEqualTo(14000);
+    }
+
+    @Test
+    void 토스가_404면_NotFound다() {
+        server.expect(requestTo(LOOKUP_URL))
+                .andRespond(withStatus(HttpStatus.NOT_FOUND).contentType(MediaType.APPLICATION_JSON)
+                        .body(errorJson("NOT_FOUND_PAYMENT", "존재하지 않는 결제 정보 입니다.")));
+
+        assertThat(client.findByOrderId(ORDER_ID))
+                .isEqualTo(new NotFound("NOT_FOUND_PAYMENT", "존재하지 않는 결제 정보 입니다."));
+    }
+
+    @Test
+    void 인증_오류는_결제가_없다는_뜻이_아니라_조회_불가다() {
+        server.expect(requestTo(LOOKUP_URL))
+                .andRespond(withStatus(HttpStatus.UNAUTHORIZED).contentType(MediaType.APPLICATION_JSON)
+                        .body(errorJson("UNAUTHORIZED_KEY", "인증되지 않은 시크릿 키 혹은 클라이언트 키 입니다.")));
+
+        assertThat(client.findByOrderId(ORDER_ID)).isInstanceOf(Unavailable.class);
+    }
+
+    @Test
+    void 조회_중_서버_오류나_타임아웃은_조회_불가다() {
+        server.expect(requestTo(LOOKUP_URL)).andRespond(withServerError());
+        assertThat(client.findByOrderId(ORDER_ID)).isInstanceOf(Unavailable.class);
+
+        server.reset();
+        server.expect(requestTo(LOOKUP_URL)).andRespond(withException(new SocketTimeoutException("Read timed out")));
+        assertThat(client.findByOrderId(ORDER_ID)).isInstanceOf(Unavailable.class);
     }
 
     private String paymentJson(String status) {

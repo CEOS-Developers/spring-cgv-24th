@@ -13,7 +13,6 @@ import com.ceos24.cgv.domain.store.entity.Stock;
 import com.ceos24.cgv.domain.user.entity.User;
 import com.ceos24.cgv.global.client.TossConfirmResult.Approved;
 import com.ceos24.cgv.global.client.TossConfirmResult.Rejected;
-import com.ceos24.cgv.global.client.TossPayment;
 import com.ceos24.cgv.global.client.TossPaymentsClient;
 import com.ceos24.cgv.global.exception.CustomException;
 import com.ceos24.cgv.global.exception.ErrorCode;
@@ -102,7 +101,7 @@ class PurchaseRollbackTest {
         PurchaseOrderResponse other = purchaseService.createOrder(userId, request(
                 new PurchaseCreateRequest.Item(colaId, 2)));
         given(tossPaymentsClient.confirm(anyString(), anyString(), anyInt())).willAnswer(inv -> new Approved(
-                new TossPayment(inv.getArgument(0), inv.getArgument(1), "DONE", "카드", inv.<Integer>getArgument(2),
+                TestFixtures.approvedToss(inv.getArgument(0), inv.getArgument(1), inv.<Integer>getArgument(2),
                         OffsetDateTime.now())));
         purchasePaymentService.confirm(other.purchase().purchaseId(), userId, confirmOf(other));
 

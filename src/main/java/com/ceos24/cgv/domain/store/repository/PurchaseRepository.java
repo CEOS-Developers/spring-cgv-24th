@@ -14,6 +14,8 @@ import java.util.Optional;
 
 public interface PurchaseRepository extends JpaRepository<Purchase, Long> {
 
+    boolean existsByIdAndUserId(Long id, Long userId);
+
     // 같은 주문의 승인 요청이 겹치지 않도록 구매 행을 잠근다. 소유자 조건을 걸어 남의 주문은 없는 주문과 같다.
     // 조인하지 않는다. FOR UPDATE는 조인한 행까지 잠가, 지점을 붙이면 같은 지점의 결제가 전부 줄을 선다.
     // 이 조회가 트랜잭션의 첫 쿼리여야 한다(ReservationRepository.findOwnedForUpdate와 같은 이유).

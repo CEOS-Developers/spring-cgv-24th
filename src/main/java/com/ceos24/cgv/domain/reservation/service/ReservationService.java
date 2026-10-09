@@ -3,6 +3,7 @@ package com.ceos24.cgv.domain.reservation.service;
 import com.ceos24.cgv.domain.branch.entity.TheaterType;
 import com.ceos24.cgv.domain.payment.dto.PaymentConfirmRequest;
 import com.ceos24.cgv.domain.payment.dto.PaymentOrderResponse;
+import com.ceos24.cgv.domain.payment.dto.PaymentResponse;
 import com.ceos24.cgv.domain.payment.entity.Payment;
 import com.ceos24.cgv.domain.payment.entity.PaymentStatus;
 import com.ceos24.cgv.domain.payment.repository.PaymentRepository;
@@ -145,6 +146,16 @@ public class ReservationService {
         userRepository.validateExists(userId);
         return ReservationResponse.listOf(
                 reservationRepository.findDetailRowsByUserId(userId), LocalDateTime.now(clock));
+    }
+
+    // 거절된 시도도 보여준다. 회원이 "왜 결제가 안 됐나"를 확인할 곳이 여기뿐이다.
+    public List<PaymentResponse> findPayments(Long id, Long userId) {
+        if (!reservationRepository.existsByIdAndUserId(id, userId)) {
+            throw new CustomException(ErrorCode.RESERVATION_NOT_FOUND);
+        }
+        return paymentRepository.findByReservationIdAndStatusNotOrderByIdDesc(id, PaymentStatus.READY).stream()
+                .map(PaymentResponse::from)
+                .toList();
     }
 
     // 승인 중인 선점을 취소하면 토스가 승인한 뒤 확정할 예매가 없다. 승인 시작과 같은 예매 행 잠금으로 순서를 정한다.

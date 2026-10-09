@@ -27,6 +27,7 @@ import com.ceos24.cgv.domain.screening.entity.Screening;
 import com.ceos24.cgv.domain.screening.repository.ScreeningRepository;
 import com.ceos24.cgv.domain.user.entity.User;
 import com.ceos24.cgv.domain.user.repository.UserRepository;
+import com.ceos24.cgv.support.TestFixtures;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -419,7 +420,7 @@ class ReservationServiceTest {
         given(paymentRepository.findById(50L)).willReturn(Optional.of(payment));
         given(reservationRepository.findOwnedWithDetails(1L, 2L)).willReturn(Optional.of(hold));
         // 토스는 +09:00으로 준다. 우리 시각대로 바꿔 저장한다
-        TossPayment approved = new TossPayment("tgen_test_key", payment.getOrderId(), "DONE", "카드", 14000,
+        TossPayment approved = TestFixtures.approvedToss("tgen_test_key", payment.getOrderId(), 14000,
                 NOW.atZone(ZONE).toOffsetDateTime().withOffsetSameInstant(ZoneOffset.ofHours(9)));
 
         ReservationResponse response = service.completePayment(attemptOf(payment, hold, NOW.plusMinutes(10)), approved);

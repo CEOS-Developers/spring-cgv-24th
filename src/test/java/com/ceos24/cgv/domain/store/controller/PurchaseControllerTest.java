@@ -11,7 +11,6 @@ import com.ceos24.cgv.domain.user.entity.User;
 import com.ceos24.cgv.global.client.TossConfirmResult.Approved;
 import com.ceos24.cgv.global.client.TossConfirmResult.Rejected;
 import com.ceos24.cgv.global.client.TossConfirmResult.Unknown;
-import com.ceos24.cgv.global.client.TossPayment;
 import com.ceos24.cgv.global.client.TossPaymentsClient;
 import com.ceos24.cgv.support.ControllerIntegrationTest;
 import com.ceos24.cgv.support.TestFixtures;
@@ -324,7 +323,50 @@ class PurchaseControllerTest extends ControllerIntegrationTest {
                 .andExpect(jsonPath("$.code").value("USER_NOT_FOUND"));
     }
 
+    // ─── 결제 조회 ────────────────────────────────────────────────────────────
+
+    @Test
+    void 승인된_구매의_결제를_조회한다() throws Exception {
+        Order order = 주문(item(popcorn.getId(), 2));
+        토스가_승인한다();
+        승인요청(order, user).andExpect(status().isOk());
+        flushAndClear();
+
+        결제조회요청(order.purchaseId(), user)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.orderId").value(order.orderId()))
+                .andExpect(jsonPath("$.data.status").value("DONE"))
+                .andExpect(jsonPath("$.data.statusName").value("결제완료"))
+                .andExpect(jsonPath("$.data.amount").value(10000))
+                .andExpect(jsonPath("$.data.approvedAt").exists());
+        verify(tossPaymentsClient, never()).findByOrderId(anyString());
+    }
+
+    @Test
+    void 결제창만_열고_떠난_주문은_결제대기로_보인다() throws Exception {
+        Order order = 주문(item(popcorn.getId(), 1));
+
+        결제조회요청(order.purchaseId(), user)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("READY"))
+                .andExpect(jsonPath("$.data.approvedAt").doesNotExist());
+    }
+
+    @Test
+    void 남의_구매의_결제는_조회되지_않는다() throws Exception {
+        User other = persist(TestFixtures.user("other"));
+        Order order = 주문(item(popcorn.getId(), 1));
+
+        결제조회요청(order.purchaseId(), other)
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("PURCHASE_NOT_FOUND"));
+    }
+
     // ─── 헬퍼 ─────────────────────────────────────────────────────────────────
+
+    private ResultActions 결제조회요청(Long purchaseId, User requester) throws Exception {
+        return mockMvc.perform(get("/api/purchases/{id}/payment", purchaseId).with(bearer(requester)));
+    }
 
     private record Order(Long purchaseId, String orderId, int amount) {
     }
@@ -377,7 +419,7 @@ class PurchaseControllerTest extends ControllerIntegrationTest {
 
     private void 토스가_승인한다() {
         given(tossPaymentsClient.confirm(anyString(), anyString(), anyInt())).willAnswer(inv -> new Approved(
-                new TossPayment(inv.getArgument(0), inv.getArgument(1), "DONE", "카드", inv.<Integer>getArgument(2),
+                TestFixtures.approvedToss(inv.getArgument(0), inv.getArgument(1), inv.<Integer>getArgument(2),
                         OffsetDateTime.now())));
     }
 

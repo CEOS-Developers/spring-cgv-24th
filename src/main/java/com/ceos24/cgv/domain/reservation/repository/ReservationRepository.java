@@ -71,6 +71,8 @@ public interface ReservationRepository extends JpaRepository<Reservation, Long> 
             """)
     List<ReservationDetailRow> findDetailRowsByUserId(@Param("userId") Long userId);
 
+    boolean existsByIdAndUserId(Long id, Long userId);
+
     // 결제 주문 생성·승인 시작·취소가 같은 예매에서 겹치지 않도록 예매 행을 잠근다.
     // 조인하지 않는다. FOR UPDATE는 조인한 행까지 잠가, 회차·영화를 붙이면 같은 영화의 결제가 전부 줄을 선다.
     // 이 조회가 트랜잭션의 첫 쿼리여야 한다. InnoDB는 첫 일반 SELECT 시점의 스냅샷을 끝까지 쓰므로, 잠금보다 먼저

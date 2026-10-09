@@ -2,6 +2,7 @@ package com.ceos24.cgv.domain.reservation.controller;
 
 import com.ceos24.cgv.domain.payment.dto.PaymentConfirmRequest;
 import com.ceos24.cgv.domain.payment.dto.PaymentOrderResponse;
+import com.ceos24.cgv.domain.payment.dto.PaymentResponse;
 import com.ceos24.cgv.domain.reservation.dto.ReservationCreateRequest;
 import com.ceos24.cgv.domain.reservation.dto.ReservationResponse;
 import com.ceos24.cgv.domain.reservation.service.ReservationPaymentService;
@@ -51,6 +52,13 @@ public class ReservationController {
                                                            @PathVariable Long id,
                                                            @Valid @RequestBody PaymentConfirmRequest req) {
         return ApiResponse.success(reservationPaymentService.confirm(id, authUser.userId(), req));
+    }
+
+    @Operation(summary = "예매 결제 조회 — 결제 시도 목록(최근 순). 결제창만 열고 떠난 주문은 제외")
+    @GetMapping("/{id}/payments")
+    public ApiResponse<List<PaymentResponse>> payments(@AuthenticationPrincipal AuthUser authUser,
+                                                      @PathVariable Long id) {
+        return ApiResponse.success(reservationService.findPayments(id, authUser.userId()));
     }
 
     @Operation(summary = "내 예매 내역 (최근 예매 순, 취소·만료 포함)")

@@ -10,6 +10,7 @@ import com.ceos24.cgv.global.client.TossPayment;
 import com.ceos24.cgv.global.client.TossPaymentsClient;
 import com.ceos24.cgv.global.exception.CustomException;
 import com.ceos24.cgv.global.exception.ErrorCode;
+import com.ceos24.cgv.support.TestFixtures;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -40,8 +41,8 @@ class ReservationPaymentServiceTest {
             new PaymentConfirmRequest("tgen_test_key", "cgv-r-0123456789abcdef0123456789abcdef", 14000);
     private static final ReservationPaymentAttempt ATTEMPT = new ReservationPaymentAttempt(
             50L, 1L, 2L, REQUEST.paymentKey(), REQUEST.orderId(), 14000, LocalDateTime.of(2024, 6, 1, 9, 10));
-    private static final TossPayment APPROVED = new TossPayment(
-            REQUEST.paymentKey(), REQUEST.orderId(), "DONE", "카드", 14000, OffsetDateTime.now());
+    private static final TossPayment APPROVED = TestFixtures.approvedToss(
+            REQUEST.paymentKey(), REQUEST.orderId(), 14000, OffsetDateTime.now());
 
     @Mock ReservationService reservationService;
     @Mock TossPaymentsClient tossPaymentsClient;

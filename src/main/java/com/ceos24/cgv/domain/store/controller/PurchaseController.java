@@ -1,6 +1,7 @@
 package com.ceos24.cgv.domain.store.controller;
 
 import com.ceos24.cgv.domain.payment.dto.PaymentConfirmRequest;
+import com.ceos24.cgv.domain.payment.dto.PaymentResponse;
 import com.ceos24.cgv.domain.store.dto.PurchaseCreateRequest;
 import com.ceos24.cgv.domain.store.dto.PurchaseOrderResponse;
 import com.ceos24.cgv.domain.store.dto.PurchaseResponse;
@@ -41,6 +42,13 @@ public class PurchaseController {
                                                         @PathVariable Long id,
                                                         @Valid @RequestBody PaymentConfirmRequest req) {
         return ApiResponse.success(purchasePaymentService.confirm(id, authUser.userId(), req));
+    }
+
+    @Operation(summary = "구매 결제 조회")
+    @GetMapping("/{id}/payment")
+    public ApiResponse<PaymentResponse> payment(@AuthenticationPrincipal AuthUser authUser,
+                                                @PathVariable Long id) {
+        return ApiResponse.success(purchaseService.findPayment(id, authUser.userId()));
     }
 
     @Operation(summary = "내 구매 내역 (최근 구매 순)")

@@ -13,7 +13,6 @@ import com.ceos24.cgv.domain.user.entity.User;
 import com.ceos24.cgv.global.client.TossConfirmResult.Approved;
 import com.ceos24.cgv.global.client.TossConfirmResult.Rejected;
 import com.ceos24.cgv.global.client.TossConfirmResult.Unknown;
-import com.ceos24.cgv.global.client.TossPayment;
 import com.ceos24.cgv.global.client.TossPaymentsClient;
 import com.ceos24.cgv.support.ControllerIntegrationTest;
 import com.ceos24.cgv.support.TestFixtures;
@@ -294,6 +293,54 @@ class ReservationControllerTest extends ControllerIntegrationTest {
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("RESERVATION_NOT_PENDING"));
         verify(tossPaymentsClient, times(1)).confirm(anyString(), anyString(), anyInt());
+    }
+
+    // ─── 결제 조회 ────────────────────────────────────────────────────────────
+
+    @Test
+    void 결제_조회는_거절과_승인_시도를_최근_순으로_보여주고_떠난_주문은_뺀다() throws Exception {
+        Long id = 선점(1, 1);
+        주문(id);   // 결제창만 열고 떠난 주문
+        Order rejected = 주문(id);
+        given(tossPaymentsClient.confirm(anyString(), anyString(), anyInt()))
+                .willReturn(new Rejected("REJECT_CARD_COMPANY", "카드사 거절"));
+        승인요청(id, user, rejected.orderId(), rejected.amount()).andExpect(status().isPaymentRequired());
+        Order approved = 주문(id);
+        토스가_승인한다();
+        승인요청(id, user, approved.orderId(), approved.amount()).andExpect(status().isOk());
+        flushAndClear();
+
+        결제조회요청(id, user)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(2))
+                .andExpect(jsonPath("$.data[0].orderId").value(approved.orderId()))
+                .andExpect(jsonPath("$.data[0].status").value("DONE"))
+                .andExpect(jsonPath("$.data[0].amount").value(14000))
+                .andExpect(jsonPath("$.data[0].method").value("카드"))
+                .andExpect(jsonPath("$.data[0].approvedAt").value("2024-06-01T09:00:00"))
+                .andExpect(jsonPath("$.data[1].orderId").value(rejected.orderId()))
+                .andExpect(jsonPath("$.data[1].status").value("FAILED"))
+                .andExpect(jsonPath("$.data[1].failureCode").value("REJECT_CARD_COMPANY"));
+    }
+
+    @Test
+    void 결제_조회는_토스를_부르지_않는다() throws Exception {
+        Long id = 선점(1, 1);
+        결제완료(id);
+
+        결제조회요청(id, user).andExpect(status().isOk());
+
+        verify(tossPaymentsClient, never()).findByOrderId(anyString());
+    }
+
+    @Test
+    void 남의_예매의_결제는_조회되지_않는다() throws Exception {
+        Long id = 선점(1, 1);
+        결제완료(id);
+
+        결제조회요청(id, other)
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("RESERVATION_NOT_FOUND"));
     }
 
     // ─── 선점 만료 ────────────────────────────────────────────────────────────
@@ -590,7 +637,7 @@ class ReservationControllerTest extends ControllerIntegrationTest {
 
     private void 토스가_승인한다() {
         given(tossPaymentsClient.confirm(anyString(), anyString(), anyInt())).willAnswer(inv -> new Approved(
-                new TossPayment(inv.getArgument(0), inv.getArgument(1), "DONE", "카드", inv.<Integer>getArgument(2),
+                TestFixtures.approvedToss(inv.getArgument(0), inv.getArgument(1), inv.<Integer>getArgument(2),
                         OffsetDateTime.of(2024, 6, 1, 9, 0, 0, 0, ZoneOffset.ofHours(9)))));
     }
 
@@ -605,6 +652,10 @@ class ReservationControllerTest extends ControllerIntegrationTest {
         return em.createQuery("select p from Payment p where p.orderId = :orderId", Payment.class)
                 .setParameter("orderId", orderId)
                 .getSingleResult();
+    }
+
+    private ResultActions 결제조회요청(Long id, User requester) throws Exception {
+        return mockMvc.perform(get("/api/reservations/{id}/payments", id).with(bearer(requester)));
     }
 
     private ResultActions 조회요청(Long id, User requester) throws Exception {

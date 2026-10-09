@@ -16,7 +16,6 @@ import com.ceos24.cgv.domain.screening.entity.Screening;
 import com.ceos24.cgv.domain.user.entity.User;
 import com.ceos24.cgv.global.client.TossConfirmResult;
 import com.ceos24.cgv.global.client.TossConfirmResult.Approved;
-import com.ceos24.cgv.global.client.TossPayment;
 import com.ceos24.cgv.global.client.TossPaymentsClient;
 import com.ceos24.cgv.global.exception.CustomException;
 import com.ceos24.cgv.global.exception.ErrorCode;
@@ -252,7 +251,7 @@ class ReservationPaymentConcurrencyTest {
     }
 
     private static TossConfirmResult approved(InvocationOnMock inv) {
-        return new Approved(new TossPayment(inv.getArgument(0), inv.getArgument(1), "DONE", "카드",
+        return new Approved(TestFixtures.approvedToss(inv.getArgument(0), inv.getArgument(1),
                 inv.<Integer>getArgument(2), OffsetDateTime.now()));
     }
 }

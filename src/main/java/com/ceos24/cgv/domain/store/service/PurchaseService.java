@@ -4,6 +4,7 @@ import com.ceos24.cgv.domain.branch.entity.Branch;
 import com.ceos24.cgv.domain.branch.repository.BranchRepository;
 import com.ceos24.cgv.domain.payment.dto.PaymentConfirmRequest;
 import com.ceos24.cgv.domain.payment.dto.PaymentOrderResponse;
+import com.ceos24.cgv.domain.payment.dto.PaymentResponse;
 import com.ceos24.cgv.domain.payment.entity.Payment;
 import com.ceos24.cgv.domain.payment.repository.PaymentRepository;
 import com.ceos24.cgv.domain.store.dto.PurchaseCreateRequest;
@@ -119,6 +120,16 @@ public class PurchaseService {
         payment.fail(failureCode, failureMessage);
         purchase.fail();
         restoreStocks(purchase);
+    }
+
+    // 구매 하나에 결제 하나라 결제창만 열고 떠난 주문(READY)도 그대로 보여준다. 그 주문의 현재 상태가 그것이다.
+    public PaymentResponse findPayment(Long id, Long userId) {
+        if (!purchaseRepository.existsByIdAndUserId(id, userId)) {
+            throw new CustomException(ErrorCode.PURCHASE_NOT_FOUND);
+        }
+        return paymentRepository.findByPurchaseId(id)
+                .map(PaymentResponse::from)
+                .orElseThrow(() -> new CustomException(ErrorCode.PAYMENT_NOT_FOUND));
     }
 
     // 없는 사용자를 빈 목록으로 돌려주면 잘못된 id가 "구매 내역 없음"으로 숨는다.

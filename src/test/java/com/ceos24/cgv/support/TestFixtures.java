@@ -11,9 +11,12 @@ import com.ceos24.cgv.domain.screening.entity.Screening;
 import com.ceos24.cgv.domain.store.entity.Product;
 import com.ceos24.cgv.domain.store.entity.Stock;
 import com.ceos24.cgv.domain.user.entity.User;
+import com.ceos24.cgv.global.client.TossPayment;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.util.List;
 
 public class TestFixtures {
 
@@ -107,5 +110,10 @@ public class TestFixtures {
     public static User admin(String loginId) {
         return User.createAdmin(loginId, "pw", "관리자", LocalDate.of(2000, 1, 1),
                 loginId + "@test.com", "01012345678");
+    }
+
+    // 승인 직후의 토스 결제. 잔액은 결제 금액 그대로이고 취소 이력이 없다.
+    public static TossPayment approvedToss(String paymentKey, String orderId, int amount, OffsetDateTime approvedAt) {
+        return new TossPayment(paymentKey, orderId, "DONE", "카드", amount, amount, approvedAt, List.of());
     }
 }

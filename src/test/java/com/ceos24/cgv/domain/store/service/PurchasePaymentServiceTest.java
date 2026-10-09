@@ -10,6 +10,7 @@ import com.ceos24.cgv.global.client.TossPayment;
 import com.ceos24.cgv.global.client.TossPaymentsClient;
 import com.ceos24.cgv.global.exception.CustomException;
 import com.ceos24.cgv.global.exception.ErrorCode;
+import com.ceos24.cgv.support.TestFixtures;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -40,8 +41,8 @@ class PurchasePaymentServiceTest {
             new PaymentConfirmRequest("tgen_test_key", "cgv-p-0123456789abcdef0123456789abcdef", 13000);
     private static final PurchasePaymentAttempt ATTEMPT =
             new PurchasePaymentAttempt(50L, 1L, REQUEST.paymentKey(), REQUEST.orderId(), 13000);
-    private static final TossPayment APPROVED = new TossPayment(
-            REQUEST.paymentKey(), REQUEST.orderId(), "DONE", "카드", 13000, OffsetDateTime.now());
+    private static final TossPayment APPROVED = TestFixtures.approvedToss(
+            REQUEST.paymentKey(), REQUEST.orderId(), 13000, OffsetDateTime.now());
 
     @Mock PurchaseService purchaseService;
     @Mock TossPaymentsClient tossPaymentsClient;
