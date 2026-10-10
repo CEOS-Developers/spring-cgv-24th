@@ -2770,3 +2770,93 @@ POST   /api/admin/purchases/{id}/cancellations/{cancelId}/retry 결과 불명 �
 | 예매 취소 (`d832804`) | `Payment`(누적액·잔액·취소 검사), `PaymentStatus`, `PaymentCancel`·`PaymentCancelStatus`·`PaymentCancelRepository`(신설), `TossCancelResult`(신설), `TossPaymentsClient.cancel`, `Reservation`·`ReservationSeat`, `ReservationService`(취소 T1·재시도·T2), `ReservationCancelService`(신설), `ReservationCancelRequest`·`ReservationCancelAttempt`(신설), `ReservationResponse`·`ReservationDetailRow`·`ReservationRepository`(좌석 취소 표시), `ReservationSeatRepository`(예매율 집계), `ErrorCode`, `payment-test.html` |
 | 대조 fix (`e1f7fa1`) | `TossPaymentsClient`(paymentKey 조회·분류), `TossLookupResult`, `PaymentAdminService`, `PaymentReconcileResponse` |
 | 매점 환불 (`a8df2b5`) | `PurchaseProductCancel`·`PurchaseProductCancelRepository`(신설), `PurchaseProduct`(취소 수량), `Purchase`(환불·`cancelledAt`), `PurchaseStatus`(`CANCELLED`), `PurchaseService`(환불 T1·재시도·T2, 내역), `PurchaseRefundService`·`PurchaseAdminController`(신설), `PurchaseRefundRequest`·`PurchaseRefundAttempt`(신설), `PurchaseResponse`·`PurchaseHistoryRow`, `PurchaseRepository`, `PaymentCancel`(사유 200자), `PaymentCancelRepository`, `ErrorCode`, `payment-test.html` |
+
+---
+
+## 동시성 세션: 동시성 문제 재현과 해결 (과제 4번)
+
+README 「동시성 문제」의 지점마다 "적용 전에 실제로 문제가 난다"를 다시 낼 수 있는 형태로 남겼다. 운영 코드는 바꾸지 않았다.
+README 6번("예매 결제·취소·만료 — 미적용")은 결제 세션 1에서 이미 적용된 상태라 낡아 있었고, 결제 세션 1~4의 지점은 표에 없었다. 표를 1~10번으로 다시 썼다.
+
+### 결정 1 — "적용 전"은 변형 실험 + README에 diff (작성자 선택)
+
+- git 이력: 재고 락·좌석 유니크 제약은 기능의 첫 커밋부터 있어 "제어 없는 커밋"이 없다. 예전 커밋은 mock 결제·H2라 지금 테스트가 돌지 않는다
+- 운영 코드 스위치: 테스트용 분기가 운영 코드에 남는다
+- 유니크 제약은 엔티티 대신 테스트 시작 시 `ALTER TABLE ... DROP INDEX`로 지웠다(엔티티 변경 없이 같은 스키마). 외래 키가 유니크 인덱스를 쓰는 경우(`reservation_seat.screening_id`, `branch_like.user_id`)는 대신할 인덱스를 먼저 만들어야 지워진다
+- 실험할 때만 `@Test`를 `@RepeatedTest(5)`로 바꿨다. 끝날 때마다 백업으로 되돌리고 SHA-256 일치를 확인했다. git은 쓰지 않았다
+
+### 결정 2 — 순서는 게이트로 고정한다 (`support/RaceGate`, `RaceGateConfig`)
+
+- 동시에 출발만 시키는 테스트는 한쪽이 쓰기까지 끝낸 뒤 다른 쪽이 읽으면 경합 없이 통과한다. 이런 우연한 통과는 재현으로 치지 않았다
+- 게이트는 지정한 저장소 메서드가 반환된 직후("읽었고 아직 쓰지 않음")에 요청들을 서로 기다리게 한다. `RaceGateConfig`가 저장소 프록시(`Advised`) 맨 앞에 인터셉터를 붙인다
+  - `@MockitoSpyBean`을 쓰지 않은 이유: 빈 오버라이드가 컨텍스트 캐시 키를 바꿔 컨테이너가 더 뜬다. `MySqlContainerConfig`가 `RaceGateConfig`를 가져오게 해 기존 컨텍스트 수를 유지했다
+- 제어가 있으면 늦은 요청은 DB 락에 막혀 게이트에 오지 못한다. JVM 대기와 DB 대기가 서로를 무는 교착을 피하려고 **1초 뒤 혼자 지나간다.** 1초 < 락 대기 한도 3초라 늦은 요청은 락 예외 없이 앞선 커밋을 기다린다. 결과는 바뀌지 않고 시간만 든다
+- 단언은 타이밍에 흔들리지 않는 불변식으로 한다(줄어든 재고 = 판매 수량, 계정 수, 토스 호출 수). `gate.aloneCount()`로 경합이 실제로 겹쳤는지 본다. 유니크 제약 지점은 0, 락 지점은 1이다
+- 기존 다중 스레드 테스트는 부하 회귀용으로 남겼다
+
+### 결정 3 — 전부 다루되 깊이를 둘로 (작성자 선택)
+
+| 깊이 | 지점 | 한 일 |
+|---|---|---|
+| 깊게 | 1 좌석, 3 재고, 7 같은 예매 두 결제, 4 회원가입 | 게이트 테스트 신설(7은 sleep 200ms로 겹침을 기대하던 기존 테스트를 교체) + 변형 실험 |
+| 얕게 | 1′ 좌석 정렬, 4 찜, 5 리프레시 토큰, 6 선점 연장, 8 트랜잭션 분리, 9 예매 취소, 10 매점 환불 | 기존 테스트로 변형 실험만 다시 |
+| 고정 불가 | 2 만료 선점 회수 | 이전 기록(간헐 실패 4회 중 2회, JDBC 순서 고정 실험)으로 대신. `updated_at` 시각 충돌은 Auditing이 시스템 시계로 채워 운영 코드를 바꾸지 않고는 고정할 수 없다 |
+
+### 결정 4 — README는 기존 절을 고친다 (작성자 선택)
+
+새 절을 따로 두면 "왜 문제인가 / 방법 / 근거"가 두 곳에 생겨 한쪽만 낡는다(이번의 6번이 그 예). 조사 부분은 그대로 두고, 지점마다 문제 / 재현 / 고려한 방법 / 선택과 이유 / 결과(변형 diff + 실패 메시지 + 5회 반복)로 정리했다. 「재현 방법」 「실행 결과」 소절을 더했다.
+「테스트 실행 환경」도 현행화했다(컨테이너 테스트 9개 클래스, 전체 실행에서 컨테이너 2번 기동: 일반 / 토스 목 컨텍스트).
+
+### 실험 결과
+
+| 실험 | 변형 | 결과 |
+|---|---|---|
+| 깊게, 적용 전 | 좌석·회원가입 유니크 인덱스 삭제, `StockRepository`·`ReservationRepository.findOwnedForUpdate`의 `@Lock` 제거 | 게이트 테스트 4개 × 5 = **20/20 실패** |
+| 얕게, 적용 전 | 좌석 정렬 제거, 승인 중 확인 제거, 선점 연장 제거, 찜 유니크 인덱스 삭제, 리프레시 `@Lock` 제거, 예매·매점의 진행 중 취소 확인 제거 | 9개 × 5 = **40/45 실패** |
+| 8, 적용 전 | `ReservationPaymentService`에 `@Transactional` | **5/5 실패** (토스 대기 중 두 번째 결제가 `CannotAcquireLockException`) |
+| 적용 후 | 반복 하네스만 | **69/69 통과** |
+
+지점별 실패 메시지는 README에 있다. 눈여겨볼 것:
+
+- 7번은 락과 승인 중 상태 **둘 다** 필요하다. 락만 빼도, 확인만 빼도 둘 다 승인된다. 락은 T1끼리 줄을 세우고, 커밋해 둔 `IN_PROGRESS`가 락이 풀린 뒤의 토스 호출 구간을 덮는다. 9·10번도 같은 구조라 행 잠금이 있어도 진행 중 취소 확인을 빼면 환불이 두 번 나간다
+- 3번 적용 전에서 DB `CHECK (quantity >= 1)`은 아무것도 막지 못했다. 두 요청이 모두 1을 썼기 때문이다. CHECK는 범위 위반을 막지 갱신 손실을 막지 않는다
+- 5번은 3주차 세션 6에서 10건 중 7건 성공이었는데 MySQL에서는 매번 10건 모두 성공했다
+
+### 발견 — 좌석 정렬 테스트는 MySQL에서 정렬이 빠진 것을 잡지 못한다
+
+`좌석_순서가_엇갈린_요청이_겹쳐도_매핑되지_않은_예외가_나오지_않는다`는 정렬을 빼도 5/5 통과했다. 로그를 세어 보니 정렬이 없으면 30요청 중 **21건이 교착(1213)으로 롤백**됐고, 정렬이 있으면 0건이었다.
+InnoDB가 교착을 즉시 감지해 한쪽만 롤백하고, 그 요청이 409 `SEAT_RESERVATION_CONFLICT`로 매핑되어 "1건 성공 + 매핑된 실패" 단언이 그대로 맞는다.
+캡처를 위해 다시 돌렸을 때는 21건이 아니라 7건이었다(정렬이 있으면 다시 0건). 교착 횟수는 실행마다 다르다.
+좌석 경합 세션의 "정렬을 빼면 성공 0건"은 당시 테스트 DB인 H2의 값이었다. README에 사실대로 적었고 테스트는 고치지 않았다. "실패는 모두 `SEAT_ALREADY_RESERVED`"로 단언을 강화하면 잡을 수 있지만, 교착 발생이 타이밍에 달려 있어 확률적인 회귀 테스트가 된다.
+
+### 결정 5 — 실행 결과는 Gradle HTML 리포트 캡처로 남긴다 (작성자 선택)
+
+- 실험 시점의 JUnit XML·HTML 리포트는 다음 실행이 덮어써서 남아 있지 않았다. 캡처를 위해 실험을 모두 다시 돌렸고 결과는 같았다(20/20, 40/45, 5/5 실패, 69/69 통과)
+- 실험마다 `build/reports/tests/test`를 복사해 두고 헤드리스 Chrome(`--headless=new --screenshot`)으로 요약 화면과 1회차 상세 화면(실패 메시지)을 찍었다. 22장, `docs/images/concurrency/`
+  - 상세 페이지는 경로가 Windows 260자 한도를 넘어 Chrome이 열지 못했다. 리포트를 짧은 경로로 옮겨 찍었다. 메서드 이름이 긴 테스트는 Gradle이 파일명을 해시로 줄여, 내용에 `repetition 1 of 5`가 있는 파일을 골랐다
+- README에는 요약 화면 4장을 「실행 결과」에 바로 보이게, 지점별 화면은 각 「결과」 아래 접는 블록에 두었다
+
+### 결정 6 — 그림 두 장은 README에 SVG 파일로, 4·10번은 다섯 항목을 채운다 (작성자 선택)
+
+- 문장만으로는 조립하기 어려운 두 가지를 그렸다. 게이트가 순서를 고정하는 원리(3번 재고 예시, 적용 전·후 타임라인)와, 락은 T1만 덮고 토스 호출 구간은 `IN_PROGRESS`가 덮는다는 것(지금 / 확인 제거 / 한 트랜잭션)이다. 각각 「재현 방법」과 7번에 넣었다
+- `docs/images/concurrency/concurrency-gate.svg`, `concurrency-lock-vs-in-progress.svg`. GitHub는 SVG를 `<img>`로 보여 줘 페이지 색 설정을 따르지 않으므로 흰 배경과 고정 색을 파일 안에 넣었다. 같은 그림을 담은 Artifact 페이지도 만들었지만 비공개라 README에서 링크하지 않았다
+- 다른 지점을 참조하던 4번(회원가입·찜)과 10번(매점 환불)에 「고려한 방법」 표와 「선택과 이유」를 따로 두었다. 10번은 남은 수량이 확정된 환불만 센다는 점(진행 중 환불이 다른 요청의 계산에 드러나지 않음)과, 재고를 되돌리지 않아 막을 것이 이중 환불뿐이라는 점이 9번과 다르다
+
+### 테스트
+
+| 클래스 | 변경 |
+|---|---|
+| `support/RaceGate`, `RaceGateConfig` | 신설 |
+| `support/MySqlContainerConfig` | `RaceGateConfig` 가져오기 |
+| `ReservationConcurrencyTest` | +1 `두_요청이_모두_빈_좌석을_확인한_뒤_INSERT해도_한_건만_성공한다` |
+| `PurchaseConcurrencyTest` | +1 `두_승인이_같은_재고를_읽은_뒤_차감해도_판매_가능_수량을_넘지_않는다` |
+| `ReservationPaymentConcurrencyTest` | `같은_예매의_두_주문을_동시에_승인해도_토스는_한_번만_불린다`를 게이트 방식으로 교체 |
+| `SignupConcurrencyTest` | 신설 1 (회원가입 동시성 테스트가 없었다) |
+
+전체 425 → 428개 통과.
+
+### 남은 것
+
+- 영화 찜은 극장 찜과 코드 모양이 같아 동시성 테스트를 따로 두지 않았다
+- 2번(만료 선점 회수)은 앱 수준에서 매번 재현할 수 없다
+- 결과 불명 결제가 3분 선점 연장을 넘기는 경우는 결제 세션 5
