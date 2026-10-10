@@ -242,6 +242,19 @@ Content-Type: application/json
 | `INVALID_API_KEY` | 키 종류·환경이 맞지 않음 |
 | `UNAUTHORIZED_KEY` | 시크릿 키가 틀렸거나 콜론 누락 |
 
+**승인 에러의 우리 분류** (결제 세션 5)
+
+| 응답 | 우리 분류 | 이유 |
+|---|---|---|
+| 카드사 거절 등 그 밖의 4xx | 거절 → 402 | 토스가 승인하지 않았다 |
+| 400 `ALREADY_PROCESSED_PAYMENT` | 결과 모름 | 앞선 승인이 성공했고 응답만 놓쳤다 |
+| 400 `PROVIDER_ERROR` | 결과 모름 | 승인 API에도 "일시적인 오류"로 있다. 카드사에서 처리됐는지 알 수 없다 |
+| 401 `UNAUTHORIZED_KEY`, 400 `INVALID_API_KEY`, 429 | 거절(`serviceError`) → 503 | 토스가 판단하지 않았다. 돈은 안 빠졌지만 카드를 바꿔도 소용없다 |
+| 연결 실패 | 같은 멱등키로 1번 다시 → 또 실패면 거절(`serviceError`) → 503 | 승인은 주문마다 한 번만 보내므로 토스에 한 번도 닿지 않은 것이 확실하다 |
+| 500대(`FAILED_PAYMENT_INTERNAL_SYSTEM_PROCESSING`, `UNKNOWN_PAYMENT_ERROR` 등), 읽기 타임아웃 | 결과 모름 → 504 | |
+
+취소에서는 401과 연결 실패도 결과 모름이다. 취소는 같은 멱등키의 재시도일 수 있어, 이번 요청이 막혔다고 첫 요청이 환불되지 않았다는 뜻이 아니다.
+
 ### 결제 조회·취소
 
 출처: [Core API 결제 취소·조회](https://docs.tosspayments.com/reference#결제-취소), [Payment 객체](https://docs.tosspayments.com/reference#payment-객체),
@@ -371,7 +384,7 @@ document.getElementById("pay").addEventListener("click", () =>
 - 가상계좌 — 구매자가 은행에서 입금할 때까지 결과를 모른다
 - 승인 요청은 보냈지만 타임아웃으로 응답을 못 받은 경우 — 토스에서는 승인됐을 수 있다
 
-두 번째 경우는 웹훅 대신 조회 API로도 메울 수 있다. 다만 문서 공용 키는 주문번호 조회가 안 되므로, 승인을 시작할 때 paymentKey를 먼저 저장해 두어야 조회로 맞출 수 있다(결제 세션 5).
+두 번째 경우는 웹훅 대신 조회 API로도 메울 수 있다. 다만 문서 공용 키는 주문번호 조회가 안 되므로, 승인을 시작할 때 paymentKey를 먼저 저장해 두어야 조회로 맞출 수 있다. 결제 세션 5에서 그렇게 바꾸고, 승인 시작 2분 뒤에도 승인 중인 결제를 스케줄러가 paymentKey 조회로 정리한다.
 
 ---
 
