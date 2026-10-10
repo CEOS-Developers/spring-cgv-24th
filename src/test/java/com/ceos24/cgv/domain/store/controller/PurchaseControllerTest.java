@@ -220,7 +220,7 @@ class PurchaseControllerTest extends ControllerIntegrationTest {
     void 거절되면_402이고_재고가_돌아오며_같은_주문으로는_다시_결제할_수_없다() throws Exception {
         Order order = 주문(item(popcorn.getId(), 2));
         given(tossPaymentsClient.confirm(anyString(), anyString(), anyInt()))
-                .willReturn(new Rejected("REJECT_CARD_COMPANY", "카드사 거절"));
+                .willReturn(new Rejected("REJECT_CARD_COMPANY", "카드사 거절", false));
 
         승인요청(order, user)
                 .andExpect(status().isPaymentRequired())
@@ -299,7 +299,7 @@ class PurchaseControllerTest extends ControllerIntegrationTest {
         주문(item(cola.getId(), 3));
         Order rejected = 주문(item(cola.getId(), 4));
         given(tossPaymentsClient.confirm(anyString(), anyString(), anyInt()))
-                .willReturn(new Rejected("REJECT_CARD_COMPANY", "카드사 거절"));
+                .willReturn(new Rejected("REJECT_CARD_COMPANY", "카드사 거절", false));
         승인요청(rejected, user);
         flushAndClear();
 

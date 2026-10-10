@@ -98,13 +98,26 @@ class ReservationPaymentServiceTest {
     void 거절되면_실패를_커밋한_뒤_PAYMENT_REJECTED() {
         given(reservationService.startPayment(1L, 2L, REQUEST)).willReturn(ATTEMPT);
         given(tossPaymentsClient.confirm(anyString(), anyString(), anyInt()))
-                .willReturn(new Rejected("REJECT_CARD_COMPANY", "카드사 거절"));
+                .willReturn(new Rejected("REJECT_CARD_COMPANY", "카드사 거절", false));
 
         assertThatThrownBy(() -> service.confirm(1L, 2L, REQUEST))
                 .isInstanceOf(CustomException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.PAYMENT_REJECTED);
         verify(reservationService).failPayment(ATTEMPT, "REJECT_CARD_COMPANY", "카드사 거절");
         verify(reservationService, never()).completePayment(any(), any());
+    }
+
+    @Test
+    void 토스가_판단하지_않은_거절은_실패로_확정하고_결제_서비스_장애로_알린다() {
+        // 키 오류·연결 실패는 돈이 빠지지 않았지만 카드를 바꿔도 소용없다. "다른 결제수단으로"라고 안내하면 안 된다
+        given(reservationService.startPayment(1L, 2L, REQUEST)).willReturn(ATTEMPT);
+        given(tossPaymentsClient.confirm(anyString(), anyString(), anyInt()))
+                .willReturn(new Rejected("UNAUTHORIZED_KEY", "인증되지 않은 시크릿 키", true));
+
+        assertThatThrownBy(() -> service.confirm(1L, 2L, REQUEST))
+                .isInstanceOf(CustomException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.PAYMENT_SERVICE_UNAVAILABLE);
+        verify(reservationService).failPayment(ATTEMPT, "UNAUTHORIZED_KEY", "인증되지 않은 시크릿 키");
     }
 
     @Test

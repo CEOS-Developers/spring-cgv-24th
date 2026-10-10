@@ -31,7 +31,8 @@ public class PurchasePaymentService {
             case Approved approved -> complete(attempt, approved);
             case Rejected rejected -> {
                 fail(attempt, rejected);
-                throw new CustomException(ErrorCode.PAYMENT_REJECTED);
+                throw new CustomException(rejected.serviceError()
+                        ? ErrorCode.PAYMENT_SERVICE_UNAVAILABLE : ErrorCode.PAYMENT_REJECTED);
             }
             // 재고는 차감된 채로 둔다. 실패로 보고 되돌렸는데 토스에서는 승인됐다면 판 수량보다 재고가 많아진다.
             case Unknown unknown -> throw new CustomException(ErrorCode.PAYMENT_RESULT_UNKNOWN);

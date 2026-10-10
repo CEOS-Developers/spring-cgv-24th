@@ -84,7 +84,7 @@ class PurchasePaymentServiceTest {
     void 거절되면_재고를_되돌린_뒤_PAYMENT_REJECTED() {
         given(purchaseService.startPayment(1L, 2L, REQUEST)).willReturn(ATTEMPT);
         given(tossPaymentsClient.confirm(anyString(), anyString(), anyInt()))
-                .willReturn(new Rejected("REJECT_CARD_COMPANY", "카드사 거절"));
+                .willReturn(new Rejected("REJECT_CARD_COMPANY", "카드사 거절", false));
 
         assertThatThrownBy(() -> service.confirm(1L, 2L, REQUEST))
                 .isInstanceOf(CustomException.class)
@@ -94,11 +94,23 @@ class PurchasePaymentServiceTest {
     }
 
     @Test
+    void 토스가_판단하지_않은_거절도_재고를_되돌리고_결제_서비스_장애로_알린다() {
+        given(purchaseService.startPayment(1L, 2L, REQUEST)).willReturn(ATTEMPT);
+        given(tossPaymentsClient.confirm(anyString(), anyString(), anyInt()))
+                .willReturn(new Rejected("CONNECTION_FAILED", "Connection refused", true));
+
+        assertThatThrownBy(() -> service.confirm(1L, 2L, REQUEST))
+                .isInstanceOf(CustomException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.PAYMENT_SERVICE_UNAVAILABLE);
+        verify(purchaseService).failPayment(ATTEMPT, "CONNECTION_FAILED", "Connection refused");
+    }
+
+    @Test
     void 거절_후_재고_복구가_실패해도_회원에게는_거절로_알린다() {
         // 돈은 빠지지 않았다. 락 대기 같은 복구 실패를 500이나 "주문이 몰림"으로 알리면 결제 결과를 오해한다
         given(purchaseService.startPayment(1L, 2L, REQUEST)).willReturn(ATTEMPT);
         given(tossPaymentsClient.confirm(anyString(), anyString(), anyInt()))
-                .willReturn(new Rejected("REJECT_CARD_COMPANY", "카드사 거절"));
+                .willReturn(new Rejected("REJECT_CARD_COMPANY", "카드사 거절", false));
         willThrow(new CustomException(ErrorCode.STOCK_LOCK_CONFLICT))
                 .given(purchaseService).failPayment(any(), any(), any());
 

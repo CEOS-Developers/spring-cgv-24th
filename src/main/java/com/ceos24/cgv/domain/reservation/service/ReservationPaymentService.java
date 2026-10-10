@@ -31,7 +31,8 @@ public class ReservationPaymentService {
             case Approved approved -> complete(attempt, approved);
             case Rejected rejected -> {
                 reservationService.failPayment(attempt, rejected.code(), rejected.message());
-                throw new CustomException(ErrorCode.PAYMENT_REJECTED);
+                throw new CustomException(rejected.serviceError()
+                        ? ErrorCode.PAYMENT_SERVICE_UNAVAILABLE : ErrorCode.PAYMENT_REJECTED);
             }
             // 결제를 IN_PROGRESS로 둔다. 실패로 확정하면 돈이 빠진 회원이 다시 결제할 수 있다.
             case Unknown unknown -> throw new CustomException(ErrorCode.PAYMENT_RESULT_UNKNOWN);

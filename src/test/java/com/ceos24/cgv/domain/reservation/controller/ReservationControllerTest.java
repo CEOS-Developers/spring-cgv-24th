@@ -240,7 +240,7 @@ class ReservationControllerTest extends ControllerIntegrationTest {
         Long id = 선점(1, 1);
         Order first = 주문(id);
         given(tossPaymentsClient.confirm(anyString(), anyString(), anyInt()))
-                .willReturn(new Rejected("REJECT_CARD_COMPANY", "카드사 거절"));
+                .willReturn(new Rejected("REJECT_CARD_COMPANY", "카드사 거절", false));
 
         승인요청(id, user, first.orderId(), first.amount())
                 .andExpect(status().isPaymentRequired())
@@ -257,6 +257,27 @@ class ReservationControllerTest extends ControllerIntegrationTest {
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("INVALID_PAYMENT_STATUS"));
 
+        Order second = 주문(id);
+        토스가_승인한다();
+        승인요청(id, user, second.orderId(), second.amount())
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("RESERVED"));
+    }
+
+    @Test
+    void 토스에_닿지_못한_승인은_503이고_결제는_실패로_끝나_새_주문으로_다시_결제할_수_있다() throws Exception {
+        Long id = 선점(1, 1);
+        Order first = 주문(id);
+        given(tossPaymentsClient.confirm(anyString(), anyString(), anyInt()))
+                .willReturn(new Rejected("CONNECTION_FAILED", "Connection refused", true));
+
+        승인요청(id, user, first.orderId(), first.amount())
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.code").value("PAYMENT_SERVICE_UNAVAILABLE"));
+        flushAndClear();
+
+        // 돈이 빠지지 않았음이 확실하므로 승인 중으로 남기지 않는다. 남기면 정리될 때까지 새 결제가 막힌다
+        assertThat(결제조회(first.orderId()).getStatus()).isEqualTo(PaymentStatus.FAILED);
         Order second = 주문(id);
         토스가_승인한다();
         승인요청(id, user, second.orderId(), second.amount())
@@ -307,7 +328,7 @@ class ReservationControllerTest extends ControllerIntegrationTest {
         주문(id);   // 결제창만 열고 떠난 주문
         Order rejected = 주문(id);
         given(tossPaymentsClient.confirm(anyString(), anyString(), anyInt()))
-                .willReturn(new Rejected("REJECT_CARD_COMPANY", "카드사 거절"));
+                .willReturn(new Rejected("REJECT_CARD_COMPANY", "카드사 거절", false));
         승인요청(id, user, rejected.orderId(), rejected.amount()).andExpect(status().isPaymentRequired());
         Order approved = 주문(id);
         토스가_승인한다();

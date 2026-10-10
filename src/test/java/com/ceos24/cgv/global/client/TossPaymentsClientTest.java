@@ -11,9 +11,11 @@ import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.test.web.client.ExpectedCount;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
 
+import java.net.ConnectException;
 import java.net.SocketTimeoutException;
 import java.time.OffsetDateTime;
 
@@ -77,7 +79,7 @@ class TossPaymentsClientTest {
 
         TossConfirmResult result = client.confirm("tgen_test_key", ORDER_ID, 14000);
 
-        assertThat(result).isEqualTo(new Rejected("REJECT_CARD_COMPANY", "결제 승인이 거절되었습니다"));
+        assertThat(result).isEqualTo(new Rejected("REJECT_CARD_COMPANY", "결제 승인이 거절되었습니다", false));
     }
 
     @Test
@@ -124,7 +126,126 @@ class TossPaymentsClientTest {
         assertThat(client.confirm("tgen_test_key", ORDER_ID, 14000)).isInstanceOf(Unknown.class);
     }
 
+    @Test
+    void 결제사_일시_오류는_승인에서도_결과_불명이다() {
+        // 카드사에서 처리됐는지 알 수 없다. 거절로 확정하면 회원이 새 주문으로 다시 결제해 두 번 빠질 수 있다
+        server.expect(requestTo(CONFIRM_URL))
+                .andRespond(withStatus(HttpStatus.BAD_REQUEST).contentType(MediaType.APPLICATION_JSON)
+                        .body(errorJson("PROVIDER_ERROR", "일시적인 오류가 발생했습니다. 잠시 후 다시 시도해주세요.")));
+
+        assertThat(client.confirm("tgen_test_key", ORDER_ID, 14000)).isInstanceOf(Unknown.class);
+    }
+
+    @Test
+    void 키_오류는_토스가_판단하지_않은_거절이다() {
+        server.expect(requestTo(CONFIRM_URL))
+                .andRespond(withStatus(HttpStatus.UNAUTHORIZED).contentType(MediaType.APPLICATION_JSON)
+                        .body(errorJson("UNAUTHORIZED_KEY", "인증되지 않은 시크릿 키 혹은 클라이언트 키 입니다.")));
+
+        assertThat(client.confirm("tgen_test_key", ORDER_ID, 14000))
+                .isEqualTo(new Rejected("UNAUTHORIZED_KEY", "인증되지 않은 시크릿 키 혹은 클라이언트 키 입니다.", true));
+    }
+
+    @Test
+    void 호출_한도_초과는_토스가_판단하지_않은_거절이다() {
+        server.expect(requestTo(CONFIRM_URL))
+                .andRespond(withStatus(HttpStatus.TOO_MANY_REQUESTS).contentType(MediaType.TEXT_PLAIN).body("slow down"));
+
+        TossConfirmResult result = client.confirm("tgen_test_key", ORDER_ID, 14000);
+
+        assertThat(result).isInstanceOf(Rejected.class);
+        assertThat(((Rejected) result).serviceError()).isTrue();
+    }
+
+    @Test
+    void 연결에_실패하면_같은_멱등키로_한_번만_다시_보낸다() {
+        server.expect(requestTo(CONFIRM_URL)).andRespond(withException(new ConnectException("Connection refused")));
+        server.expect(requestTo(CONFIRM_URL))
+                .andExpect(header("Idempotency-Key", ORDER_ID))
+                .andRespond(withSuccess(paymentJson("DONE"), MediaType.APPLICATION_JSON));
+
+        assertThat(client.confirm("tgen_test_key", ORDER_ID, 14000)).isInstanceOf(Approved.class);
+        server.verify();
+    }
+
+    @Test
+    void 두_번_모두_연결하지_못한_승인은_토스에_닿지_않았으므로_거절이다() {
+        // 승인은 주문마다 한 번만 보낸다. 연결조차 못 했으면 이 주문의 승인은 토스에 한 번도 닿지 않았다
+        server.expect(ExpectedCount.times(2), requestTo(CONFIRM_URL))
+                .andRespond(withException(new ConnectException("Connection refused")));
+
+        TossConfirmResult result = client.confirm("tgen_test_key", ORDER_ID, 14000);
+
+        assertThat(result).isInstanceOf(Rejected.class);
+        assertThat(((Rejected) result).code()).isEqualTo("CONNECTION_FAILED");
+        assertThat(((Rejected) result).serviceError()).isTrue();
+        server.verify();
+    }
+
+    @Test
+    void 연결_후_재시도에서_읽기_타임아웃이면_결과_불명이다() {
+        server.expect(requestTo(CONFIRM_URL)).andRespond(withException(new ConnectException("Connection refused")));
+        server.expect(requestTo(CONFIRM_URL)).andRespond(withException(new SocketTimeoutException("Read timed out")));
+
+        assertThat(client.confirm("tgen_test_key", ORDER_ID, 14000)).isInstanceOf(Unknown.class);
+        server.verify();
+    }
+
+    @Test
+    void 읽기_타임아웃은_다시_보내지_않는다() {
+        // 이미 최대 60초를 기다렸다. 두 번째 요청이 오면 MockRestServiceServer가 실패시킨다
+        server.expect(ExpectedCount.once(), requestTo(CONFIRM_URL))
+                .andRespond(withException(new SocketTimeoutException("Read timed out")));
+
+        assertThat(client.confirm("tgen_test_key", ORDER_ID, 14000)).isInstanceOf(Unknown.class);
+        server.verify();
+    }
+
+    @Test
+    void 승인_응답의_금액이나_주문이_요청과_다르면_결과_불명이다() {
+        // 2xx라도 다른 결제의 응답으로 확정할 수 없다. 돈은 움직였을 수 있으므로 거절도 아니다
+        server.expect(requestTo(CONFIRM_URL))
+                .andRespond(withSuccess(paymentJson("DONE"), MediaType.APPLICATION_JSON));
+        assertThat(client.confirm("tgen_test_key", ORDER_ID, 28000)).isInstanceOf(Unknown.class);
+
+        server.reset();
+        server.expect(requestTo(CONFIRM_URL))
+                .andRespond(withSuccess(paymentJson("DONE").replace(ORDER_ID, "cgv-r-other"), MediaType.APPLICATION_JSON));
+        assertThat(client.confirm("tgen_test_key", ORDER_ID, 14000)).isInstanceOf(Unknown.class);
+
+        server.reset();
+        server.expect(requestTo(CONFIRM_URL))
+                .andRespond(withSuccess(paymentJson("DONE"), MediaType.APPLICATION_JSON));
+        assertThat(client.confirm("tgen_other_key", ORDER_ID, 14000)).isInstanceOf(Unknown.class);
+    }
+
+    @Test
+    void 성공_응답이지만_JSON이_아니면_결과_불명이다() {
+        // 프록시가 끼어 HTML을 돌려주는 경우 등. 토스가 승인했는지 알 수 없다
+        server.expect(requestTo(CONFIRM_URL))
+                .andRespond(withSuccess("<html>gateway</html>", MediaType.TEXT_HTML));
+
+        assertThat(client.confirm("tgen_test_key", ORDER_ID, 14000)).isInstanceOf(Unknown.class);
+    }
+
     // ─── 조회 ─────────────────────────────────────────────────────────────────
+
+    @Test
+    void 다른_결제의_조회_응답은_조회_불가다() {
+        server.expect(requestTo(BASE_URL + "/v1/payments/tgen_other_key"))
+                .andRespond(withSuccess(paymentJson("DONE"), MediaType.APPLICATION_JSON));
+
+        assertThat(client.findByPaymentKey("tgen_other_key")).isInstanceOf(Unavailable.class);
+    }
+
+    @Test
+    void 조회는_연결에_실패하면_한_번_다시_보내고_그래도_실패하면_조회_불가다() {
+        server.expect(ExpectedCount.times(2), requestTo(LOOKUP_URL))
+                .andRespond(withException(new ConnectException("Connection refused")));
+
+        assertThat(client.findByOrderId(ORDER_ID)).isInstanceOf(Unavailable.class);
+        server.verify();
+    }
 
     @Test
     void 조회되면_잔액과_취소_이력까지_옮긴다() {
@@ -278,6 +399,31 @@ class TossPaymentsClientTest {
                 .andRespond(withSuccess(cancelJson("PARTIAL_CANCELED", 28000, "IN_PROGRESS"), MediaType.APPLICATION_JSON));
 
         assertThat(client.cancel("tgen_test_key", CANCEL_KEY, 14000, "사유")).isInstanceOf(TossCancelResult.Unknown.class);
+    }
+
+    @Test
+    void 취소_응답의_금액이_요청과_다르면_결과_불명이다() {
+        // 마지막 거래가 14,000원인데 7,000원을 요청했다. 이 거래로 확정하면 누적 취소액과 실제 환불이 어긋난다
+        server.expect(requestTo(CANCEL_URL))
+                .andRespond(withSuccess(cancelJson("PARTIAL_CANCELED", 28000, "DONE"), MediaType.APPLICATION_JSON));
+
+        assertThat(client.cancel("tgen_test_key", CANCEL_KEY, 7000, "사유")).isInstanceOf(TossCancelResult.Unknown.class);
+    }
+
+    @Test
+    void 취소에서는_키_오류도_결과_불명이다() {
+        // 취소는 같은 멱등키의 재시도일 수 있다. 이번 요청이 막혔다고 첫 요청이 환불되지 않았다는 뜻은 아니다
+        assertCancelUnknownOn(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED_KEY", "인증되지 않은 시크릿 키 혹은 클라이언트 키 입니다.");
+    }
+
+    @Test
+    void 취소에서는_두_번_모두_연결하지_못해도_결과_불명이다() {
+        server.expect(ExpectedCount.times(2), requestTo(CANCEL_URL))
+                .andExpect(header("Idempotency-Key", CANCEL_KEY))
+                .andRespond(withException(new ConnectException("Connection refused")));
+
+        assertThat(client.cancel("tgen_test_key", CANCEL_KEY, 14000, "사유")).isInstanceOf(TossCancelResult.Unknown.class);
+        server.verify();
     }
 
     private void assertCancelUnknownOn(HttpStatus status, String code, String message) {

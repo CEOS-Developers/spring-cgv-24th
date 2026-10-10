@@ -126,7 +126,7 @@ class PurchaseRollbackTest {
         // 토스가 거절할 때는 차감이 이미 커밋된 상태다
         given(tossPaymentsClient.confirm(anyString(), anyString(), anyInt())).willAnswer(inv -> {
             assertThat(quantityOf(popcornId)).isEqualTo(8);
-            return new Rejected("REJECT_CARD_COMPANY", "카드사 거절");
+            return new Rejected("REJECT_CARD_COMPANY", "카드사 거절", false);
         });
 
         assertThatThrownBy(() -> purchasePaymentService.confirm(order.purchase().purchaseId(), userId, confirmOf(order)))
