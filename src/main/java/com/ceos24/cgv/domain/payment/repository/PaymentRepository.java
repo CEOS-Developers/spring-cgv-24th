@@ -39,4 +39,13 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
             """)
     List<String> findReservationOrderIdsByStatusStartedBefore(@Param("status") PaymentStatus status,
                                                               @Param("startedBefore") LocalDateTime startedBefore);
+
+    // 매점도 같은 이유로 주문번호만 읽는다. 정리는 건마다 구매 행을 먼저 잠근다.
+    @Query("""
+            SELECT p.orderId FROM Payment p
+            WHERE p.status = :status AND p.purchase IS NOT NULL AND p.approvalStartedAt <= :startedBefore
+            ORDER BY p.id
+            """)
+    List<String> findPurchaseOrderIdsByStatusStartedBefore(@Param("status") PaymentStatus status,
+                                                           @Param("startedBefore") LocalDateTime startedBefore);
 }

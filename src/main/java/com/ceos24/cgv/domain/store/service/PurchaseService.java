@@ -8,14 +8,17 @@ import com.ceos24.cgv.domain.payment.dto.PaymentResponse;
 import com.ceos24.cgv.domain.payment.entity.Payment;
 import com.ceos24.cgv.domain.payment.entity.PaymentCancel;
 import com.ceos24.cgv.domain.payment.entity.PaymentCancelStatus;
+import com.ceos24.cgv.domain.payment.entity.PaymentStatus;
 import com.ceos24.cgv.domain.payment.repository.PaymentCancelRepository;
 import com.ceos24.cgv.domain.payment.repository.PaymentRepository;
 import com.ceos24.cgv.domain.store.dto.PurchaseCreateRequest;
 import com.ceos24.cgv.domain.store.dto.PurchaseCreateRequest.Item;
 import com.ceos24.cgv.domain.store.dto.PurchaseOrderResponse;
 import com.ceos24.cgv.domain.store.dto.PurchasePaymentAttempt;
+import com.ceos24.cgv.domain.store.dto.PurchaseRecoveryTarget;
 import com.ceos24.cgv.domain.store.dto.PurchaseRefundAttempt;
 import com.ceos24.cgv.domain.store.dto.PurchaseRefundRequest;
+import com.ceos24.cgv.domain.store.dto.PurchaseRefundRetryTarget;
 import com.ceos24.cgv.domain.store.dto.PurchaseResponse;
 import com.ceos24.cgv.domain.store.entity.Product;
 import com.ceos24.cgv.domain.store.entity.Purchase;
@@ -134,6 +137,57 @@ public class PurchaseService {
         payment.fail(failureCode, failureMessage);
         purchase.fail();
         restoreStocks(purchase);
+    }
+
+    // 승인을 시작한 지 RECOVERY_DELAY가 지났는데 아직 승인 중인 결제. 원래 요청의 T2가 실패했거나 서버가 그 사이 죽었다.
+    public List<String> findStaleApprovalOrderIds() {
+        return paymentRepository.findPurchaseOrderIdsByStatusStartedBefore(
+                PaymentStatus.IN_PROGRESS, LocalDateTime.now(clock).minus(Payment.RECOVERY_DELAY));
+    }
+
+    // 토스에 묻기 전에 정리해도 되는 결제인지 확인한다. 관리자 요청도 이 검사를 거친다.
+    public PurchaseRecoveryTarget findRecoveryTarget(String orderId) {
+        Payment payment = paymentRepository.findByOrderId(orderId)
+                .filter(p -> p.getPurchase() != null)
+                .orElseThrow(() -> new CustomException(ErrorCode.PAYMENT_NOT_FOUND));
+        payment.verifyRecoverable(LocalDateTime.now(clock));
+        return new PurchaseRecoveryTarget(payment.getId(), payment.getPurchase().getId(),
+                payment.getOrderId(), payment.getPaymentKey(), payment.getAmount());
+    }
+
+    // 토스가 승인한 것으로 확인됐다. 재고는 T1에서 이미 차감했으므로 예매와 달리 잃은 자원이 없어 늘 확정한다.
+    // 구매 잠금이 첫 쿼리다. 원래 요청의 T2나 다른 정리와 겹쳐도 결제 상태를 다시 확인해 한 번만 반영한다.
+    @Transactional
+    public void applyRecoveredApproval(PurchaseRecoveryTarget target, TossPayment approved) {
+        LocalDateTime now = LocalDateTime.now(clock);
+        Purchase purchase = findForUpdate(target.purchaseId());
+        Payment payment = findPayment(target.paymentId());
+        payment.verifyRecoverable(now);
+
+        payment.approve(approved.method(), approved.approvedAtIn(clock.getZone(), now));
+        purchase.complete(now);
+    }
+
+    // 토스가 승인하지 않은 것이 확정됐다. T1이 차감한 재고를 되돌린다(승인 거절과 같다).
+    // 결과를 모르는 동안 되돌리지 않았던 것은, 되돌린 뒤 승인된 것으로 밝혀지면 판 수량보다 재고가 많아지기 때문이다.
+    @Transactional
+    public void failRecoveredPayment(PurchaseRecoveryTarget target, String failureCode, String failureMessage) {
+        Purchase purchase = findForUpdate(target.purchaseId());
+        Payment payment = findPayment(target.paymentId());
+        payment.verifyRecoverable(LocalDateTime.now(clock));
+
+        payment.fail(failureCode, failureMessage);
+        purchase.fail();
+        restoreStocks(purchase);
+    }
+
+    // 요청한 지 RECOVERY_DELAY가 지났는데 결과를 모르는 환불. 관리자가 재시도하지 않아도 같은 멱등키로 다시 보낸다.
+    public List<PurchaseRefundRetryTarget> findStaleRefundTargets() {
+        LocalDateTime now = LocalDateTime.now(clock);
+        return paymentCancelRepository.findPurchaseCancelsByStatusRequestedBetween(PaymentCancelStatus.IN_PROGRESS,
+                        now.minus(PaymentCancelRepository.AUTO_RETRY_PERIOD), now.minus(Payment.RECOVERY_DELAY)).stream()
+                .map(cancel -> new PurchaseRefundRetryTarget(cancel.getPayment().getPurchase().getId(), cancel.getId()))
+                .toList();
     }
 
     // 구매 하나에 결제 하나라 결제창만 열고 떠난 주문(READY)도 그대로 보여준다. 그 주문의 현재 상태가 그것이다.
@@ -307,6 +361,11 @@ public class PurchaseService {
     // 남의 주문도 PURCHASE_NOT_FOUND다. 예매와 같이 순차 id로 다른 회원의 주문이 있는지 알아낼 수 없게 한다.
     private Purchase findOwnedForUpdate(Long id, Long userId) {
         return purchaseRepository.findOwnedForUpdate(id, userId)
+                .orElseThrow(() -> new CustomException(ErrorCode.PURCHASE_NOT_FOUND));
+    }
+
+    private Purchase findForUpdate(Long id) {
+        return purchaseRepository.findByIdForUpdate(id)
                 .orElseThrow(() -> new CustomException(ErrorCode.PURCHASE_NOT_FOUND));
     }
 

@@ -38,4 +38,15 @@ public interface PaymentCancelRepository extends JpaRepository<PaymentCancel, Lo
             @Param("status") PaymentCancelStatus status,
             @Param("retryableAfter") LocalDateTime retryableAfter,
             @Param("requestedBefore") LocalDateTime requestedBefore);
+
+    // 매점 환불의 자동 재시도 대상. 기한은 위와 같다. 매장 환불이라 소유자 id는 필요 없다.
+    @Query("""
+            SELECT c FROM PaymentCancel c JOIN FETCH c.payment p JOIN FETCH p.purchase
+            WHERE c.status = :status AND c.requestedAt <= :requestedBefore AND c.requestedAt > :retryableAfter
+            ORDER BY c.id
+            """)
+    List<PaymentCancel> findPurchaseCancelsByStatusRequestedBetween(
+            @Param("status") PaymentCancelStatus status,
+            @Param("retryableAfter") LocalDateTime retryableAfter,
+            @Param("requestedBefore") LocalDateTime requestedBefore);
 }
