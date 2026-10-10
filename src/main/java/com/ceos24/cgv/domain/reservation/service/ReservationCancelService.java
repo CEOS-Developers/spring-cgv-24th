@@ -40,7 +40,8 @@ public class ReservationCancelService {
         return refund(reservationService.startCancelRetry(id, userId, paymentCancelId));
     }
 
-    private ReservationResponse refund(ReservationCancelAttempt attempt) {
+    // 좌석을 잃은 승인 결제의 자동 환불(ReservationPaymentRecoveryService)도 같은 경로로 보낸다.
+    ReservationResponse refund(ReservationCancelAttempt attempt) {
         return switch (tossPaymentsClient.cancel(attempt.paymentKey(), attempt.idempotencyKey(),
                 attempt.amount(), attempt.reason())) {
             case Canceled canceled -> complete(attempt, canceled);

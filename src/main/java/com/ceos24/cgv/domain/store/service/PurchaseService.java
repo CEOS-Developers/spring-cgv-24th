@@ -103,7 +103,7 @@ public class PurchaseService {
         getOperatingBranch(purchase.getBranch().getId());
         // 차감보다 먼저 한다. 이미 승인 중인 주문의 중복 요청이 재고 행을 잠갔다가 롤백하는 일이 없다.
         // 차감이 실패하면 이 상태 변경도 함께 롤백된다.
-        payment.startApproval();
+        payment.startApproval(req.paymentKey(), LocalDateTime.now(clock));
 
         deductStocks(purchase);
 
@@ -120,7 +120,7 @@ public class PurchaseService {
         Purchase purchase = purchaseRepository.findWithDetails(attempt.purchaseId())
                 .orElseThrow(() -> new CustomException(ErrorCode.PURCHASE_NOT_FOUND));
 
-        payment.approve(approved.paymentKey(), approved.method(), approved.approvedAtIn(clock.getZone(), now));
+        payment.approve(approved.method(), approved.approvedAtIn(clock.getZone(), now));
         purchase.complete(now);
         return PurchaseResponse.from(purchase);
     }

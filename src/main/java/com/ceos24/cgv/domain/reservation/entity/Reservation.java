@@ -117,6 +117,20 @@ public class Reservation extends BaseTimeEntity {
         this.confirmedAt = now;
     }
 
+    // 결과를 몰랐던 결제가 토스에서 승인된 것으로 확인됐을 때만 부른다. 만료 시각은 보지 않는다.
+    // 만료된 선점의 좌석은 다른 요청이 PENDING → EXPIRED로 바꿀 때 함께 풀린다. 그래서 아직 PENDING이면 좌석은
+    // 이 예매의 것이고, 회원은 이미 돈을 냈으므로 환불보다 확정이 맞다. 호출하는 쪽이 예매 행을 잠가 두므로
+    // 확정하는 사이에 다른 요청이 선점을 만료시킬 수 없다.
+    public void confirmAfterRecovery(LocalDateTime now) {
+        requirePending();
+        this.status = ReservationStatus.RESERVED;
+        this.confirmedAt = now;
+    }
+
+    public boolean isPending() {
+        return this.status == ReservationStatus.PENDING;
+    }
+
     // 결제 전 선점 취소와 결제된 예매의 환불 취소(전체·부분)가 같은 검사를 거친다.
     public void verifyCancellable(LocalDateTime now) {
         if (this.status == ReservationStatus.CANCELLED) {
@@ -177,11 +191,13 @@ public class Reservation extends BaseTimeEntity {
     }
 
     // 환불이 확인된 좌석을 놓는다. 남은 좌석이 없으면 예매 전체가 취소된 것이다.
+    // 확정된 예매만 CANCELLED로 바꾼다. 선점이 만료되어 좌석을 잃은 뒤 자동 환불한 예매는 EXPIRED로 둔다.
+    // 회원이 취소한 것이 아니어서, CANCELLED로 바꾸면 좌석이 왜 풀렸는지 되짚을 수 없다.
     public void completeRefund(Long paymentCancelId, LocalDateTime now) {
         this.seats.stream()
                 .filter(seat -> seat.belongsTo(paymentCancelId) && seat.isOccupied())
                 .forEach(seat -> seat.cancel(this.id, now));
-        if (this.seats.stream().noneMatch(ReservationSeat::isOccupied)) {
+        if (isReserved() && this.seats.stream().noneMatch(ReservationSeat::isOccupied)) {
             this.status = ReservationStatus.CANCELLED;
             this.cancelledAt = now;
         }

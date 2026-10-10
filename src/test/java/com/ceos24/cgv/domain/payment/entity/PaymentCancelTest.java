@@ -109,8 +109,8 @@ class PaymentCancelTest {
 
     private Payment approvedPayment(int seatCount) {
         Payment payment = Payment.builder().reservation(reservationOf(seatCount)).build();
-        payment.startApproval();
-        payment.approve("tgen_test_key", "카드", NOW);
+        payment.startApproval("tgen_test_key", NOW);
+        payment.approve("카드", NOW);
         return payment;
     }
 

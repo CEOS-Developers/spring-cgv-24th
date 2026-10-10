@@ -11,6 +11,7 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
@@ -26,6 +27,8 @@ public class Payment extends BaseTimeEntity {
     // 토스 orderId 규칙: 6~64자, 영문·숫자·-·_. 접두사 6자 + UUID 32자 = 38자.
     private static final String RESERVATION_ORDER_PREFIX = "cgv-r-";
     private static final String PURCHASE_ORDER_PREFIX = "cgv-p-";
+    // 토스 승인 호출이 끝나는 데 걸리는 최대 시간(연결 5초 × 2번 + 읽기 60초)보다 넉넉하게 둔다.
+    public static final Duration RECOVERY_DELAY = Duration.ofMinutes(2);
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -54,12 +57,17 @@ public class Payment extends BaseTimeEntity {
     @Column(nullable = false, length = 20)
     private PaymentStatus status;
 
-    // 승인된 결제만 갖는다. 이후 조회·취소에 쓴다.
+    // 승인을 시작할 때(T1) 저장한다. 승인 결과를 모르는 결제를 토스에 물어볼 수 있는 유일한 키다.
+    // 문서 공용 테스트 키는 orderId 조회가 동작하지 않아, 승인 성공 뒤에 저장하면 결과 불명 결제는 조회할 방법이 없다.
     @Column(unique = true, length = 200)
     private String paymentKey;
 
     @Column(length = 50)
     private String method;
+
+    // 결과 불명 정리가 원래 요청의 토스 호출과 겹치지 않게 하는 기준이다.
+    // updatedAt은 JPA Auditing이 시스템 시계로 채워 서비스의 Clock과 다르다.
+    private LocalDateTime approvalStartedAt;
 
     private LocalDateTime approvedAt;
 
@@ -95,25 +103,39 @@ public class Payment extends BaseTimeEntity {
     }
 
     // 거절·결과 불명으로 끝난 시도를 다시 승인하지 않는다. 다시 결제하려면 새 주문을 만든다.
-    public void startApproval() {
+    public void startApproval(String paymentKey, LocalDateTime now) {
         if (this.status == PaymentStatus.IN_PROGRESS) {
             throw new CustomException(ErrorCode.PAYMENT_IN_PROGRESS);
         }
         requireStatus(PaymentStatus.READY);
         this.status = PaymentStatus.IN_PROGRESS;
+        this.paymentKey = paymentKey;
+        this.approvalStartedAt = now;
     }
 
-    public void approve(String paymentKey, String method, LocalDateTime approvedAt) {
+    // paymentKey는 승인 시작에서 이미 저장했다. 토스 응답의 paymentKey가 요청과 같은지는 클라이언트가 확인한다.
+    public void approve(String method, LocalDateTime approvedAt) {
         requireStatus(PaymentStatus.IN_PROGRESS);
         this.status = PaymentStatus.DONE;
-        this.paymentKey = paymentKey;
         this.method = method;
         this.approvedAt = approvedAt;
     }
 
+    // 결과 불명 결제를 정리해도 되는지 본다. 승인을 시작한 지 RECOVERY_DELAY가 지나지 않았으면 원래 요청이
+    // 아직 토스를 기다리고 있을 수 있다. 그 요청의 T2와 정리가 함께 결제를 확정하지 않게 한다.
+    public void verifyRecoverable(LocalDateTime now) {
+        requireStatus(PaymentStatus.IN_PROGRESS);
+        if (this.approvalStartedAt == null || now.isBefore(this.approvalStartedAt.plus(RECOVERY_DELAY))) {
+            throw new CustomException(ErrorCode.PAYMENT_IN_PROGRESS);
+        }
+    }
+
+    // paymentKey를 지운다. 승인 요청의 paymentKey는 토스가 확인하기 전의 값이라, 남의 키나 잘못된 키가 거절된 시도에
+    // 남아 있으면 유니크 제약 때문에 그 키의 진짜 주문이 승인을 시작하지 못한다.
     public void fail(String failureCode, String failureMessage) {
         requireStatus(PaymentStatus.IN_PROGRESS);
         this.status = PaymentStatus.FAILED;
+        this.paymentKey = null;
         this.failureCode = failureCode;
         this.failureMessage = failureMessage;
     }

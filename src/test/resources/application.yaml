@@ -28,3 +28,7 @@ toss-payments:
   base-url: https://api.tosspayments.com
   client-key: test_gck_dummy-for-test-only
   secret-key: test_gsk_dummy-for-test-only
+
+# 결과 불명 결제 정리 스케줄러를 끈다. 테스트는 정리 메서드를 직접 부른다(SchedulingConfig).
+scheduling:
+  enabled: false

@@ -21,6 +21,8 @@ public record TossPayment(
         List<Cancel> cancels
 ) {
     private static final String DONE = "DONE";
+    private static final String ABORTED = "ABORTED";
+    private static final String EXPIRED = "EXPIRED";
 
     // 취소가 한 번도 없으면 토스는 cancels를 null로 준다. 호출하는 쪽이 null을 신경 쓰지 않게 빈 목록으로 맞춘다.
     public TossPayment {
@@ -29,6 +31,12 @@ public record TossPayment(
 
     public boolean isDone() {
         return DONE.equals(status);
+    }
+
+    // 승인 실패(ABORTED)나 인증 후 10분 안에 승인되지 않은 만료(EXPIRED)는 더 바뀌지 않는다.
+    // READY·IN_PROGRESS는 아직 승인될 수 있어 여기에 넣지 않는다.
+    public boolean isNeverApproved() {
+        return ABORTED.equals(status) || EXPIRED.equals(status);
     }
 
     // 토스는 +09:00 오프셋을 붙여 준다. 우리 LocalDateTime은 서버 시계의 시간대 기준이라 그 시간대로 맞춘다.

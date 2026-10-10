@@ -14,10 +14,12 @@ import com.ceos24.cgv.global.client.TossPayment;
 import com.ceos24.cgv.global.exception.CustomException;
 import com.ceos24.cgv.global.exception.ErrorCode;
 import com.ceos24.cgv.domain.reservation.dto.ReservationCancelAttempt;
+import com.ceos24.cgv.domain.reservation.dto.ReservationCancelRetryTarget;
 import com.ceos24.cgv.domain.reservation.dto.ReservationCreateRequest;
 import com.ceos24.cgv.domain.reservation.dto.ReservationCreateRequest.SeatRequest;
 import com.ceos24.cgv.domain.reservation.dto.ReservationDetailRow;
 import com.ceos24.cgv.domain.reservation.dto.ReservationPaymentAttempt;
+import com.ceos24.cgv.domain.reservation.dto.ReservationRecoveryTarget;
 import com.ceos24.cgv.domain.reservation.dto.ReservationResponse;
 import com.ceos24.cgv.domain.reservation.entity.Reservation;
 import com.ceos24.cgv.domain.reservation.entity.ReservationSeat;
@@ -53,6 +55,8 @@ public class ReservationService {
     // 예매 하나에 승인된 결제는 많아야 하나다. 승인 시작이 같은 예매의 다른 승인 중 시도를 막는다.
     private static final List<PaymentStatus> PAID_STATUSES =
             List.of(PaymentStatus.DONE, PaymentStatus.PARTIAL_CANCELED);
+    // 토스 결제 내역에 남는 사유다. 회원이 취소한 것이 아니라는 점이 드러나야 한다.
+    private static final String LOST_HOLD_REFUND_REASON = "좌석 선점 만료로 자동 환불";
 
     private final ReservationRepository reservationRepository;
     private final ScreeningRepository screeningRepository;
@@ -110,9 +114,10 @@ public class ReservationService {
         // 토스 멱등키로는 걸러지지 않고 두 번 결제된다.
         ensureNoPaymentInProgress(id);
 
+        LocalDateTime now = LocalDateTime.now(clock);
         LocalDateTime expiresAtBeforePayment = reservation.getExpiresAt();
-        reservation.holdForPayment(LocalDateTime.now(clock));
-        payment.startApproval();
+        reservation.holdForPayment(now);
+        payment.startApproval(req.paymentKey(), now);
 
         return new ReservationPaymentAttempt(payment.getId(), id, userId, req.paymentKey(),
                 payment.getOrderId(), payment.getAmount(), expiresAtBeforePayment);
@@ -127,7 +132,7 @@ public class ReservationService {
                 .orElseThrow(() -> new CustomException(ErrorCode.PAYMENT_NOT_FOUND));
         Reservation reservation = findOwnedWithDetails(attempt.reservationId(), attempt.userId());
 
-        payment.approve(approved.paymentKey(), approved.method(), approved.approvedAtIn(clock.getZone(), now));
+        payment.approve(approved.method(), approved.approvedAtIn(clock.getZone(), now));
         reservation.confirm(now);
         return ReservationResponse.from(reservation, now);
     }
@@ -141,6 +146,71 @@ public class ReservationService {
 
         payment.fail(failureCode, failureMessage);
         payment.getReservation().endPaymentHold(attempt.expiresAtBeforePayment());
+    }
+
+    // 승인을 시작한 지 RECOVERY_DELAY가 지났는데 아직 승인 중인 결제. 원래 요청의 T2가 실패했거나 서버가 그 사이 죽었다.
+    public List<String> findStaleApprovalOrderIds() {
+        return paymentRepository.findReservationOrderIdsByStatusStartedBefore(
+                PaymentStatus.IN_PROGRESS, LocalDateTime.now(clock).minus(Payment.RECOVERY_DELAY));
+    }
+
+    // 토스에 묻기 전에 정리해도 되는 결제인지 확인한다. 관리자 요청도 이 검사를 거친다.
+    public ReservationRecoveryTarget findRecoveryTarget(String orderId) {
+        Payment payment = paymentRepository.findByOrderId(orderId)
+                .filter(p -> p.getReservation() != null)
+                .orElseThrow(() -> new CustomException(ErrorCode.PAYMENT_NOT_FOUND));
+        payment.verifyRecoverable(LocalDateTime.now(clock));
+        Reservation reservation = payment.getReservation();
+        return new ReservationRecoveryTarget(payment.getId(), reservation.getId(), reservation.getUser().getId(),
+                payment.getOrderId(), payment.getPaymentKey(), payment.getAmount());
+    }
+
+    // 토스가 승인한 것으로 확인됐다. 결제를 확정하고, 좌석이 남아 있으면 예매를 확정한다.
+    // 좌석을 잃었으면(선점 만료 후 다른 요청이 EXPIRED로 바꿈) 전액 환불 요청을 같은 트랜잭션에서 저장해 돌려준다.
+    // 승인 확정과 환불 요청을 함께 커밋해야, 토스 취소 전에 서버가 죽어도 남은 취소 요청을 재시도로 마칠 수 있다.
+    // 예매 잠금이 첫 쿼리다. 원래 요청의 T2나 다른 정리와 겹쳐도 결제 상태를 다시 확인해 한 번만 반영한다.
+    @Transactional
+    public Optional<ReservationCancelAttempt> applyRecoveredApproval(ReservationRecoveryTarget target,
+                                                                     TossPayment approved) {
+        LocalDateTime now = LocalDateTime.now(clock);
+        Reservation reservation = findOwnedForUpdate(target.reservationId(), target.userId());
+        Payment payment = findPayment(target.paymentId());
+        payment.verifyRecoverable(now);
+
+        payment.approve(approved.method(), approved.approvedAtIn(clock.getZone(), now));
+        if (reservation.isPending()) {
+            reservation.confirmAfterRecovery(now);
+            return Optional.empty();
+        }
+        PaymentCancel cancel = paymentCancelRepository.save(PaymentCancel.builder()
+                .payment(payment)
+                .amount(payment.getAmount())
+                .reason(LOST_HOLD_REFUND_REASON)
+                .now(now)
+                .build());
+        return Optional.of(attemptOf(cancel, reservation.getId(), target.userId()));
+    }
+
+    // 토스가 승인하지 않은 것이 확정됐다. 늘린 선점 시간은 되돌리지 않는다. 정리는 승인 시작 후
+    // RECOVERY_DELAY가 지난 뒤라 늘린 3분도 대부분 지났고, 되돌릴 기준 시각은 원래 요청의 메모리에만 있었다.
+    @Transactional
+    public void failRecoveredPayment(ReservationRecoveryTarget target, String failureCode, String failureMessage) {
+        findOwnedForUpdate(target.reservationId(), target.userId());
+        Payment payment = findPayment(target.paymentId());
+        payment.verifyRecoverable(LocalDateTime.now(clock));
+        payment.fail(failureCode, failureMessage);
+    }
+
+    // 요청한 지 RECOVERY_DELAY가 지났는데 결과를 모르는 취소. 회원이 재시도하지 않아도 같은 멱등키로 다시 보낸다.
+    public List<ReservationCancelRetryTarget> findStaleCancelTargets() {
+        LocalDateTime now = LocalDateTime.now(clock);
+        return paymentCancelRepository.findReservationCancelsByStatusRequestedBetween(PaymentCancelStatus.IN_PROGRESS,
+                        now.minus(PaymentCancelRepository.AUTO_RETRY_PERIOD), now.minus(Payment.RECOVERY_DELAY)).stream()
+                .map(cancel -> {
+                    Reservation reservation = cancel.getPayment().getReservation();
+                    return new ReservationCancelRetryTarget(reservation.getId(), reservation.getUser().getId(), cancel.getId());
+                })
+                .toList();
     }
 
     // 조회는 상태를 바꾸지 않으므로 엔티티가 필요 없다. 프로젝션으로 받으면 응답이 쓰는
@@ -267,6 +337,11 @@ public class ReservationService {
     private Reservation findOwnedForUpdate(Long id, Long userId) {
         return reservationRepository.findOwnedForUpdate(id, userId)
                 .orElseThrow(() -> new CustomException(ErrorCode.RESERVATION_NOT_FOUND));
+    }
+
+    private Payment findPayment(Long paymentId) {
+        return paymentRepository.findById(paymentId)
+                .orElseThrow(() -> new CustomException(ErrorCode.PAYMENT_NOT_FOUND));
     }
 
     private PaymentCancel findCancel(Long paymentCancelId) {

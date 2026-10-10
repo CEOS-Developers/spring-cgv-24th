@@ -407,7 +407,7 @@ class ReservationServiceTest {
     void 거절된_결제를_다시_승인하면_INVALID_PAYMENT_STATUS() {
         Reservation hold = holdWithId(1L, NOW, 1, 1);
         Payment payment = givenPayment(hold, 50L);
-        payment.startApproval();
+        payment.startApproval("tgen_test_key", NOW);
         payment.fail("REJECT_CARD_COMPANY", "카드사 거절");
 
         assertThatThrownBy(() -> service.startPayment(1L, 2L, confirmReq(payment, 14000)))
@@ -421,7 +421,7 @@ class ReservationServiceTest {
     void 승인되면_결제는_DONE_예매는_RESERVED가_된다() {
         Reservation hold = holdWithId(1L, NOW, 1, 1);
         Payment payment = paymentWithId(hold, 50L);
-        payment.startApproval();
+        payment.startApproval("tgen_test_key", NOW);
         given(paymentRepository.findById(50L)).willReturn(Optional.of(payment));
         given(reservationRepository.findOwnedWithDetails(1L, 2L)).willReturn(Optional.of(hold));
         // 토스는 +09:00으로 준다. 우리 시각대로 바꿔 저장한다
@@ -444,7 +444,7 @@ class ReservationServiceTest {
         Payment payment = paymentWithId(hold, 50L);
         LocalDateTime before = hold.getExpiresAt();
         hold.holdForPayment(NOW);
-        payment.startApproval();
+        payment.startApproval("tgen_test_key", NOW);
         given(paymentRepository.findById(50L)).willReturn(Optional.of(payment));
 
         service.failPayment(attemptOf(payment, hold, before), "REJECT_CARD_COMPANY", "카드사 거절");
@@ -610,8 +610,8 @@ class ReservationServiceTest {
         // 결과 불명 취소의 재시도가 첫 요청과 겹치면 둘 다 토스의 성공 응답을 받는다
         Reservation reserved = paidReservation(1L, 1, 1, 1, 2);
         Payment payment = paymentWithId(reserved, 50L);
-        payment.startApproval();
-        payment.approve("tgen_test_key", "카드", NOW);
+        payment.startApproval("tgen_test_key", NOW);
+        payment.approve("카드", NOW);
         PaymentCancel cancel = PaymentCancel.builder().payment(payment).amount(14000).reason("예매 부분 취소: A1").now(NOW).build();
         ReflectionTestUtils.setField(cancel, "id", 70L);
         reserved.requestRefund(List.of(reserved.getSeats().getFirst()), cancel);
@@ -639,8 +639,8 @@ class ReservationServiceTest {
 
     private Payment givenPaidPayment(Reservation reservation) {
         Payment payment = paymentWithId(reservation, 50L);
-        payment.startApproval();
-        payment.approve("tgen_test_key", "카드", NOW);
+        payment.startApproval("tgen_test_key", NOW);
+        payment.approve("카드", NOW);
         given(reservationRepository.findOwnedForUpdate(reservation.getId(), 2L)).willReturn(Optional.of(reservation));
         given(paymentRepository.findFirstByReservationIdAndStatusIn(eq(reservation.getId()), any()))
                 .willReturn(Optional.of(payment));

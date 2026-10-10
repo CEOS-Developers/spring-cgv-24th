@@ -118,8 +118,8 @@ class PaymentAdminControllerTest extends ControllerIntegrationTest {
         purchase.addItem(cola, 2);
         persist(purchase);
         Payment approved = Payment.builder().purchase(purchase).build();
-        approved.startApproval();
-        approved.approve(paymentKey, "카드", LocalDateTime.now());
+        approved.startApproval(paymentKey, LocalDateTime.now());
+        approved.approve("카드", LocalDateTime.now());
         persist(approved);
         flushAndClear();
         return approved;
