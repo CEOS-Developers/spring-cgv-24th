@@ -9,11 +9,13 @@ import com.ceos24.cgv.domain.reservation.entity.AudienceType;
 import com.ceos24.cgv.domain.reservation.entity.Reservation;
 import com.ceos24.cgv.domain.reservation.entity.ReservationSeat;
 import com.ceos24.cgv.domain.reservation.entity.ReservationStatus;
+import com.ceos24.cgv.domain.reservation.repository.ReservationSeatRepository;
 import com.ceos24.cgv.domain.screening.entity.Screening;
 import com.ceos24.cgv.domain.user.entity.User;
 import com.ceos24.cgv.global.exception.CustomException;
 import com.ceos24.cgv.global.exception.ErrorCode;
 import com.ceos24.cgv.support.MySqlContainerConfig;
+import com.ceos24.cgv.support.RaceGate;
 import com.ceos24.cgv.support.TestFixtures;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
@@ -82,6 +84,7 @@ class ReservationConcurrencyTest {
     // 커밋하는 테스트라 롤백에 기댈 수 없다. 남기면 다른 테스트의 목록 단언이 깨진다.
     @AfterEach
     void tearDown() {
+        RaceGate.disarmAll();
         transactionTemplate.executeWithoutResult(status -> {
             em.createQuery("delete from ReservationSeat").executeUpdate();
             em.createQuery("delete from Reservation").executeUpdate();
@@ -101,6 +104,22 @@ class ReservationConcurrencyTest {
         assertThat(successCount(outcomes)).isEqualTo(1);
         assertThatFailuresAreMapped(outcomes);
         assertThat(occupiedSeatCount()).isEqualTo(1);
+    }
+
+    // 위 테스트는 동시에 출발만 시켜서, 한 요청이 INSERT를 마친 뒤 다른 요청이 사전 검사를 하면 경합 없이 통과한다.
+    // 여기서는 두 요청을 사전 검사 직후에 세워 둘 다 "빈 좌석"을 본 뒤 INSERT하게 한다.
+    // 이 틈은 애플리케이션 코드로 닫을 수 없고, 유니크 제약이 없으면 두 요청이 모두 성공한다.
+    @Test
+    void 두_요청이_모두_빈_좌석을_확인한_뒤_INSERT해도_한_건만_성공한다() throws Exception {
+        RaceGate gate = RaceGate.arm(ReservationSeatRepository.class, "findOccupiedPositionsByScreeningId", 2);
+
+        List<Outcome> outcomes = runConcurrently(2, i -> request(userIds.get(i), seat(4, 4)));
+
+        assertThat(successCount(outcomes)).isEqualTo(1);
+        assertThatFailuresAreMapped(outcomes);
+        assertThat(occupiedSeatCount()).isEqualTo(1);
+        // 둘 다 사전 검사를 통과했다. 경합이 실제로 겹쳤으므로 우연히 통과한 결과가 아니다.
+        assertThat(gate.aloneCount()).isZero();
     }
 
     @Test

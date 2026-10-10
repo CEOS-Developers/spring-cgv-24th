@@ -12,6 +12,7 @@ import com.ceos24.cgv.domain.reservation.dto.ReservationResponse;
 import com.ceos24.cgv.domain.reservation.entity.AudienceType;
 import com.ceos24.cgv.domain.reservation.entity.Reservation;
 import com.ceos24.cgv.domain.reservation.entity.ReservationStatus;
+import com.ceos24.cgv.domain.reservation.repository.ReservationRepository;
 import com.ceos24.cgv.domain.screening.entity.Screening;
 import com.ceos24.cgv.domain.user.entity.User;
 import com.ceos24.cgv.global.client.TossConfirmResult;
@@ -20,6 +21,7 @@ import com.ceos24.cgv.global.client.TossPaymentsClient;
 import com.ceos24.cgv.global.exception.CustomException;
 import com.ceos24.cgv.global.exception.ErrorCode;
 import com.ceos24.cgv.support.MySqlContainerConfig;
+import com.ceos24.cgv.support.RaceGate;
 import com.ceos24.cgv.support.TestFixtures;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
@@ -94,6 +96,7 @@ class ReservationPaymentConcurrencyTest {
     // 커밋하는 테스트라 롤백에 기댈 수 없다. 결제가 예매를 참조하므로 먼저 지운다.
     @AfterEach
     void tearDown() {
+        RaceGate.disarmAll();
         transactionTemplate.executeWithoutResult(status -> {
             em.createQuery("delete from Payment").executeUpdate();
             em.createQuery("delete from ReservationSeat").executeUpdate();
@@ -161,17 +164,17 @@ class ReservationPaymentConcurrencyTest {
         }
     }
 
+    // 두 탭에서 각각 결제위젯 인증을 마친 경우다. 주문번호가 달라 토스 멱등키로는 걸러지지 않는다.
+    // 두 승인을 예매 행을 읽은 직후에 세운다. 잠금 없이 읽으면 둘 다 "승인 중인 다른 시도 없음"을 보고 토스를 부른다.
     @Test
     void 같은_예매의_두_주문을_동시에_승인해도_토스는_한_번만_불린다() throws Exception {
         Long id = hold(LocalDateTime.now());
         List<PaymentOrderResponse> orders = List.of(
                 reservationService.createPaymentOrder(id, ownerId),
                 reservationService.createPaymentOrder(id, ownerId));
-        // 토스 호출이 순식간에 끝나면 두 요청이 겹치지 않는다. 겹칠 틈을 둔다
-        given(tossPaymentsClient.confirm(anyString(), anyString(), anyInt())).willAnswer(inv -> {
-            Thread.sleep(200);
-            return approved(inv);
-        });
+        given(tossPaymentsClient.confirm(anyString(), anyString(), anyInt()))
+                .willAnswer(ReservationPaymentConcurrencyTest::approved);
+        RaceGate gate = RaceGate.arm(ReservationRepository.class, "findOwnedForUpdate", 2);
 
         ExecutorService pool = Executors.newFixedThreadPool(2);
         CountDownLatch ready = new CountDownLatch(2);
@@ -201,6 +204,8 @@ class ReservationPaymentConcurrencyTest {
             assertThat(outcomes).filteredOn(ErrorCode.class::isInstance)
                     .singleElement()
                     .isIn(ErrorCode.PAYMENT_IN_PROGRESS, ErrorCode.RESERVATION_NOT_PENDING);
+            // 늦은 승인은 예매 행 잠금에 막혀 게이트에 오지 못했다. 앞선 T1이 커밋한 뒤에야 예매를 읽었다.
+            assertThat(gate.aloneCount()).isEqualTo(1);
         } finally {
             pool.shutdownNow();
         }

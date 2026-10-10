@@ -7,6 +7,7 @@ import com.ceos24.cgv.domain.store.dto.PurchaseOrderResponse;
 import com.ceos24.cgv.domain.store.entity.Product;
 import com.ceos24.cgv.domain.store.entity.PurchaseStatus;
 import com.ceos24.cgv.domain.store.entity.Stock;
+import com.ceos24.cgv.domain.store.repository.StockRepository;
 import com.ceos24.cgv.domain.user.entity.User;
 import com.ceos24.cgv.global.client.TossConfirmResult;
 import com.ceos24.cgv.global.client.TossConfirmResult.Approved;
@@ -14,6 +15,7 @@ import com.ceos24.cgv.global.client.TossPaymentsClient;
 import com.ceos24.cgv.global.exception.CustomException;
 import com.ceos24.cgv.global.exception.ErrorCode;
 import com.ceos24.cgv.support.MySqlContainerConfig;
+import com.ceos24.cgv.support.RaceGate;
 import com.ceos24.cgv.support.TestFixtures;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
@@ -63,6 +65,7 @@ class PurchaseConcurrencyTest {
     // 커밋하는 테스트라 롤백에 기댈 수 없다. 남기면 다른 테스트의 목록 단언이 깨진다.
     @AfterEach
     void tearDown() {
+        RaceGate.disarmAll();
         transactionTemplate.executeWithoutResult(status -> {
             em.createQuery("delete from Payment").executeUpdate();
             em.createQuery("delete from PurchaseProduct").executeUpdate();
@@ -90,6 +93,29 @@ class PurchaseConcurrencyTest {
         });
         assertThat(quantityOf(popcornId)).isEqualTo(1);
         assertThat(paidCount()).isEqualTo(10);
+    }
+
+    // 위 테스트는 동시에 출발만 시켜서 두 승인이 재고를 읽는 시점이 겹친다는 보장이 없다.
+    // 여기서는 두 승인을 재고를 읽은 직후에 세워 둘 다 같은 수량을 본 뒤 차감하게 한다.
+    // 잠금 없이 읽으면 둘 다 3을 보고 1로 저장한다. 4개가 팔렸는데 재고는 2만 준다(갱신 손실).
+    @Test
+    void 두_승인이_같은_재고를_읽은_뒤_차감해도_판매_가능_수량을_넘지_않는다() throws Exception {
+        Long popcornId = setUp(2, 3).get(0);   // 재고 3 → 판매 가능 2
+        tossApprovesImmediately();
+        List<Attempt> attempts = List.of(
+                order(userIds.get(0), new PurchaseCreateRequest.Item(popcornId, 2)),
+                order(userIds.get(1), new PurchaseCreateRequest.Item(popcornId, 2)));
+        RaceGate gate = RaceGate.arm(StockRepository.class, "findByBranchIdAndProductIdForUpdate", 2);
+
+        List<Outcome> outcomes = runConcurrently(2, attempts::get);
+
+        int sold = 2 * (int) successCount(outcomes);
+        assertThat(3 - quantityOf(popcornId)).as("줄어든 재고 = 판매 수량").isEqualTo(sold);
+        assertThat(successCount(outcomes)).isEqualTo(1);
+        assertThat(outcomes).filteredOn(o -> !o.success()).singleElement()
+                .satisfies(o -> assertThat(((CustomException) o.error()).getErrorCode()).isEqualTo(ErrorCode.OUT_OF_STOCK));
+        // 늦은 승인은 재고 행 잠금에 막혀 게이트에 오지 못했다. 앞선 승인이 혼자 지나가 커밋한 뒤에야 최신 재고를 읽었다.
+        assertThat(gate.aloneCount()).isEqualTo(1);
     }
 
     @Test
