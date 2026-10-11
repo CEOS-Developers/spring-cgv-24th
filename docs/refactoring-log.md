@@ -2979,3 +2979,93 @@ RestTemplate / RestClient / WebClient / OpenFeign / HTTP Interface를 비교해 
 | 예매 정리 | `Payment`, `Reservation`, `TossPayment`, `PaymentRepository`, `PaymentCancelRepository`, `PaymentRecoveryResponse`(신설), `ReservationRecoveryTarget`·`ReservationCancelRetryTarget`(신설), `ReservationService`, `ReservationCancelService`, `ReservationPaymentRecoveryService`·`ReservationAdminController`·`SchedulingConfig`(신설), `PurchaseService`(호출부), 테스트 yaml, 테스트 |
 | 매점 정리 | `PaymentRepository`, `PaymentCancelRepository`, `PurchaseRecoveryTarget`·`PurchaseRefundRetryTarget`·`PurchasePaymentRecoveryService`(신설), `PurchaseService`, `PurchaseAdminController`, 테스트 |
 | 문서 | `README.md`(새 절 + 낡은 문장 3곳), `docs/refactoring-log.md`, `docs/toss-payments-guide.md`, `CLAUDE.md` |
+
+---
+
+## 과제 7: Webhook 조사와 설계 (구현 안 함)
+
+과제 7번(Webhook 알아보기). 과제 명세대로 구현하지 않고 조사와 설계만 했다. 설계 문서를 아티팩트로 먼저 보여 주고, 작성자가 A안을 고른 뒤
+README에 「Webhook」 절로 옮겼다. 코드 변경은 없다.
+
+### 조사에서 설계에 영향을 준 것
+
+- **`PAYMENT_STATUS_CHANGED`에는 서명도 secret도 없다.** 서명(`tosspayments-webhook-signature`, HMAC-SHA256)은 `payout.changed`·`seller.changed`만,
+  `DEPOSIT_CALLBACK`은 본문 `secret`을 승인 응답의 `secret`과 비교한다. 이 서비스가 쓸 이벤트는 검증 수단이 없어 재조회가 필수다
+- 10초 안에 200을 줘야 한다. 못 하면 최대 7번 재전송(1·4·16·64·256·1024·4096분, 최초 전송부터 약 3일 19시간)
+- 본문은 `{ eventType, createdAt, data }`이고 `data`는 승인·조회 응답과 같은 Payment 객체라 기존 `TossPayment`를 그대로 쓸 수 있다
+- `CANCEL_STATUS_CHANGED`는 해외 간편결제 전용이다. 국내 결제의 취소는 `PAYMENT_STATUS_CHANGED`로 온다
+- 웹훅은 상점아이디(MID)별로 등록되고 그 상점의 결제만 받는다. 작성자가 개발자센터에서 확인한 키 구성은 다음과 같다:
+  결제위젯 연동 키는 문서 공용 키(`test_gck_docs_` / `test_gsk_docs_`)뿐이고, 내 상점 키는 API 개별 연동 키(`test_ck_` / `test_sk_`)와 보안 키다.
+  우리 테스트 결제는 문서용 상점에서 일어나므로 내 상점에 웹훅을 등록해도 오지 않는다. API 개별 연동 키는 결제창용이라 결제위젯과 섞을 수 없다
+  (`TossPaymentsProperties`가 `test_gck_`·`test_gsk_`만 받는 이유). 실제 수신은 전자결제 신청(내 결제위젯 키) 또는 결제창 연동 전환이 있어야 확인할 수 있다
+- 정정: 결제 세션 3의 "개발자센터는 전자결제 신청 전에는 본인 키를 주지 않는다"는 결제위젯 연동 키에 한한 이야기였다. API 개별 연동 키는 가입만으로 나온다.
+  `.env`는 그대로 문서 공용 키를 쓴다
+- 보안 키는 `payout.changed`·`seller.changed` 서명 검증용이라 `PAYMENT_STATUS_CHANGED`만 쓰는 이 설계에는 필요 없다. `.env`에 넣지 않는다
+
+### 결정 1 — 웹훅은 세 번째 정리 계기. 판단은 기존 정리 서비스가 한다
+
+- 작성자는 결제 완료·예매 확정을 웹훅 몫으로 예상했다. 정상 경로에서는 승인 응답을 받은 T2가 이미 확정하므로 웹훅은 "이미 반영됨"으로 넘긴다.
+  웹훅이 확정을 맡는 것은 T2가 일어나지 못한 경우(결과 불명, T2 전 서버 다운)다. README 역할 절의 첫머리에 이 구분을 적었다
+- 스케줄러가 볼 수 없던 두 경우가 웹훅으로만 새로 잡힌다: 상점관리자에서 직접 한 취소(스케줄러는 `IN_PROGRESS`만 본다),
+  `FAILED`로 확정했는데 토스는 `DONE`인 결제(`fail()`이 `paymentKey`를 지워 조회할 키도 없다)
+- 웹훅 전용 판단을 따로 만들지 않는다. `ReservationPaymentRecoveryService`·`PurchasePaymentRecoveryService`의 토스 상태별 분기를 "조회한 결과를 받아 반영"하는
+  메서드로 떼어 스케줄러·관리자 API·웹훅이 함께 쓴다. 세 계기가 같은 행 잠금 + 상태 재확인을 거치므로 동시에 와도 한 번만 반영된다
+- 스케줄러는 남긴다. 웹훅은 유실될 수 있고 로컬 개발 중에는 오지 않는다
+
+### 결정 2 — 본문은 단서, 상태는 토스 조회 결과로 판단한다
+
+- 본문에서 `orderId`·`paymentKey`만 꺼내고 `GET /v1/payments/{paymentKey}`로 다시 조회한다. 조회는 우리 시크릿 키로 하므로 위조된 본문으로는 상태를 바꿀 수 없다
+- 같은 장치로 중복과 순서 뒤바뀜도 해결된다. 몇 번째로 도착한 웹훅이든 항상 지금 토스 상태로 맞춘다
+- 우리 결제가 `READY`·`FAILED`면 저장된 `paymentKey`가 없으므로 본문의 키로 조회하고, 응답의 주문번호가 우리 주문과 같을 때만 반영한다
+
+### 결정 3 — 받기와 처리를 나눈다. 받은 이벤트는 `WebhookEvent`로 남긴다
+
+- 토스 조회는 읽기 타임아웃이 60초라 요청 안에서 처리하면 10초 규칙을 지킬 수 없다. 저장 → 200 → 커밋 후 `@Async` 처리
+- 200을 준 뒤 처리 전에 서버가 죽으면 토스는 다시 보내지 않는다. `processedAt`이 비어 있고 받은 지 1분 지난 행을 기존 스케줄러가 다시 처리한다
+- `transmissionId`(헤더) 유니크로 중복 저장을 막되, 정확성은 처리의 멱등성에 기댄다. 재전송의 transmission-id가 같은지 문서에서 확인하지 못했다
+- 엔티티 신설이라 구현할 때 다시 확인받는다
+
+### 결정 4 — 웹훅은 2분을 기다리지 않는다 (A안, 작성자 선택)
+
+토스는 상태가 바뀐 직후 웹훅을 보내므로 웹훅은 거의 항상 `RECOVERY_DELAY`(2분) 안에 도착한다. 규칙을 그대로 두면(B안) 결과 불명 정리가 스케줄러보다
+빠르지 않고, 웹훅이 새로 하는 일은 결정 1의 두 경우를 감지하는 것뿐이다.
+
+A안은 바로 처리한다. 원래 요청의 T2와 겹쳐도 행 잠금 + `IN_PROGRESS` 재확인으로 한 번만 반영되지만, 먼저 반영된 결제를 원래 요청이 만나면 지금 코드는 잘못 응답한다.
+
+| 경로 | 지금 코드 | 웹훅이 먼저 반영했을 때 |
+|---|---|---|
+| 승인 → T2 | `Payment.approve()`의 `requireStatus(IN_PROGRESS)` | `INVALID_PAYMENT_STATUS` → `ReservationPaymentService.complete()`의 `catch (RuntimeException)` → **성공한 결제가 504** |
+| 거절 → 보상 | `failPayment()` → `Payment.fail()`의 `requireStatus(IN_PROGRESS)` | 잡는 곳이 없어 **402 대신 409** `INVALID_PAYMENT_STATUS` |
+
+- 구현할 때 바꿀 것: `approve()`는 같은 `paymentKey`로 이미 `DONE`이면, `fail()`은 이미 `FAILED`면 그대로 두고 T2가 성공(거절)으로 응답한다. `Payment` 엔티티 변경이라 그때 다시 확인받는다
+- 매점 재고 복구는 지금처럼 `IN_PROGRESS → FAILED` 전이에 성공한 쪽만 한다. 웹훅의 실패 확정과 원래 요청의 거절 처리가 겹쳐도 한 번만 되돌린다
+- 선택: 읽기 타임아웃으로 504를 주기 직전에 우리 결제를 다시 읽어 `DONE`이면 성공 응답
+
+### 결정 5 — 도메인 사이 전달은 스프링 이벤트
+
+- "service는 같은 도메인 것만 쓴다" 때문에 결제 도메인 처리기가 예매·매점 서비스를 부르지 않는다. 처리기가 조회한 `TossPayment`를 이벤트로 발행하고,
+  예매·매점 리스너가 주문번호 접두사(`cgv-r-`·`cgv-p-`)로 자기 주문만 골라 정리 서비스를 부른다
+- 토스 조회는 처리기에서 한 번만 한다
+
+### 결정 6 — 200이 아닌 응답은 저장 실패 때만
+
+- 토스는 200이 아닐 때만 다시 보낸다. 모르는 이벤트·우리 주문 아님·본문 해석 불가는 다시 받아도 결과가 같아 200 + 로그
+- 엔드포인트 `POST /api/payments/webhook/toss`, `permitAll`. 토스는 Bearer 토큰을 보낼 수 없다. 위조 요청이 할 수 있는 일은 토스 조회 한 번을 일으키는 것뿐이다
+
+### 결정 7 — 외부 취소는 자동 반영하지 않는다
+
+- 상점관리자에서 한 부분 취소가 어느 좌석·상품인지 알 수 없다. 불일치를 기록하고 error 로그 → 관리자
+- 웹훅을 받고 승인 API를 다시 부르지 않는다. 결제 세션 5 결정 5와 같은 이유
+
+### 한계
+
+- 실제 웹훅 수신은 내 상점의 결제위젯 키(전자결제 신청 필요) + ngrok이 있어야 확인할 수 있다
+- 서버가 여러 대면 같은 이벤트를 동시에 처리해 토스 조회가 중복된다. 반영은 한 번(스케줄러와 같은 한계)
+- 가상계좌(`DEPOSIT_CALLBACK`)는 다루지 않았다. 도입하면 선점 10분과 입금 기한의 충돌을 따로 설계해야 한다
+
+### 변경 파일
+
+| 커밋 | 파일 |
+|---|---|
+| README | `README.md`(「Webhook」 절 신설, 「고려했지만 넣지 않은 것」의 웹훅 행에 새 절 안내) |
+| 세션 기록 | `docs/refactoring-log.md`, `README.md`(실제 웹훅 수신 제약 문단을 개발자센터 확인 결과로 수정) |
