@@ -55,6 +55,12 @@ function boot({ screen = 'demo', state = {}, search = '', fetchHandler = () => (
     fetch: async (url, options = {}) => {
       calls.push({ url, ...options });
       const body = await fetchHandler(url, options);
+      if (body?.$httpStatus) {
+        return { ok: body.$httpStatus < 400, status: body.$httpStatus, json: async () => {
+          if (body.$invalidJson) throw new SyntaxError('invalid JSON');
+          return body.payload;
+        } };
+      }
       return { ok: true, status: 200, json: async () => ({ data: body }) };
     },
     TossPayments: key => { sdkCalls.push({ key }); return { payment: params => ({
@@ -226,4 +232,204 @@ test('failed approval clears the completed hold so the same seats get a fresh ho
   assert.ok(request);
   assert.notEqual(request.headers['Idempotency-Key'], 'old-hold-key');
   assert.equal(app.state().hold.reservationId, 8);
+});
+
+const holdBody = { screeningId: 3, seats: [
+  { seatRow: 'A', seatNumber: 1 }, { seatRow: 'A', seatNumber: 2 }
+] };
+const heldSession = { token: 'owner-a-token', loginId: 'owner-a', customerKey: 'owner-a-customer',
+  hold: { reservationId: 4 }, holdRequest: { signature: JSON.stringify(holdBody), key: 'old-hold-key' },
+  order, paymentId: 2, operation: { operationId: 7, status: 'SUCCEEDED' },
+  confirmation: { orderId: order.orderId, paymentKey: 'fixture', amount: 24000, key: 'approval-key', complete: true },
+  approvalKeys: { order_fixture: 'approval-key' } };
+const httpError = (status, code) => ({ $httpStatus: status, payload: { code, message: code } });
+
+function selectHeldSeats(app) {
+  app.elements.get('screening-id').value = '3';
+  app.elements.get('seats').value = 'A1,A2';
+}
+
+function assertCheckoutCleared(app) {
+  const state = app.state();
+  for (const key of ['hold', 'holdRequest', 'order', 'confirmation', 'paymentId', 'operation', 'approvalKeys']) {
+    assert.equal(state[key], undefined, `${key} should be cleared`);
+  }
+  assert.equal(app.elements.get('payment-id').value, '');
+  assert.equal(app.elements.get('payment-seats').children.length, 0);
+  assert.equal(app.elements.get('hold-seats').disabled, false);
+  for (const id of ['create-order', 'release-hold', 'open-payment', 'cancel-selected', 'cancel-remaining']) {
+    assert.equal(app.elements.get(id).disabled, true, `${id} should be disabled`);
+  }
+  assert.doesNotMatch(app.elements.get('order-summary').textContent, /order_fixture/);
+  assert.doesNotMatch(app.elements.get('payment-summary').textContent, /결제 번호 2/);
+  assert.doesNotMatch(app.elements.get('operation-summary').textContent, /요청 7/);
+}
+
+for (const code of ['HOLD_EXPIRED', 'HOLD_NOT_ACTIVE']) {
+  test(`${code} from hold creation clears stale checkout and lets the next same-seat attempt use a fresh key`, async () => {
+    let holdAttempts = 0;
+    const fetchHandler = url => {
+      if (url === '/api/v1/seat-holds') return ++holdAttempts === 1 ? httpError(409, code) : { reservationId: 8 };
+      return url === '/api/v1/payments/2' ? approved : [];
+    };
+    const app = boot({ state: heldSession, fetchHandler });
+    await app.ready();
+    selectHeldSeats(app);
+    await app.elements.get('hold-seats').fire();
+    assert.equal(holdAttempts, 1, 'a terminal response must not silently retry the POST');
+    assertCheckoutCleared(app);
+    assert.equal(app.state().token, 'owner-a-token');
+    assert.equal(app.state().customerKey, 'owner-a-customer');
+    assert.match(app.elements.get('notice').textContent, new RegExp(code));
+
+    const reloaded = boot({ state: app.state(), fetchHandler });
+    await reloaded.ready();
+    selectHeldSeats(reloaded);
+    await reloaded.elements.get('hold-seats').fire();
+    const request = reloaded.calls.find(call => call.url === '/api/v1/seat-holds');
+    assert.notEqual(request.headers['Idempotency-Key'], 'old-hold-key');
+    assert.deepEqual(JSON.parse(request.body), holdBody);
+    assert.equal(reloaded.state().hold.reservationId, 8);
+  });
+
+  test(`${code} from hold release clears stale checkout and permits a fresh same-seat hold`, async () => {
+    const app = boot({ state: heldSession, fetchHandler: url => {
+      if (url === '/api/v1/seat-holds/4') return httpError(409, code);
+      if (url === '/api/v1/seat-holds') return { reservationId: 8 };
+      return url === '/api/v1/payments/2' ? approved : [];
+    } });
+    await app.ready();
+    await app.elements.get('release-hold').fire();
+    assertCheckoutCleared(app);
+    assert.equal(app.calls.filter(call => call.url === '/api/v1/seat-holds/4').length, 1);
+    assert.equal(app.calls.some(call => call.url === '/api/v1/seat-holds'), false);
+    selectHeldSeats(app);
+    await app.elements.get('hold-seats').fire();
+    const request = app.calls.find(call => call.url === '/api/v1/seat-holds');
+    assert.notEqual(request.headers['Idempotency-Key'], 'old-hold-key');
+    assert.equal(app.state().hold.reservationId, 8);
+  });
+}
+
+const holdFailures = [
+  ['network failure', () => { throw new Error('network'); }],
+  ['server failure carrying a hold code', () => httpError(503, 'HOLD_EXPIRED')],
+  ['unreadable response', () => ({ $httpStatus: 409, $invalidJson: true })],
+  ['other business rejection', () => httpError(409, 'SEAT_ALREADY_RESERVED')],
+  ['payment still processing', () => httpError(409, 'PAYMENT_ALREADY_PROCESSING')]
+];
+for (const [failureName, fail] of holdFailures) {
+  for (const action of ['hold-seats', 'release-hold']) {
+    test(`${action} preserves checkout and the hold key after ${failureName}`, async () => {
+      let attempts = 0;
+      const requestPath = action === 'hold-seats' ? '/api/v1/seat-holds' : '/api/v1/seat-holds/4';
+      const app = boot({ state: heldSession, fetchHandler: url => {
+        if (url === requestPath) { attempts++; return fail(); }
+        return url === '/api/v1/payments/2' ? approved : [];
+      } });
+      await app.ready();
+      const before = app.state();
+      selectHeldSeats(app);
+      await app.elements.get(action).fire();
+      assert.deepEqual(app.state(), before);
+      assert.equal(attempts, 1);
+      await app.elements.get(action).fire();
+      assert.deepEqual(app.state(), before);
+      assert.equal(attempts, 2);
+      if (action === 'hold-seats') {
+        assert.deepEqual(app.calls.filter(call => call.url === requestPath)
+          .map(call => call.headers['Idempotency-Key']), ['old-hold-key', 'old-hold-key']);
+      }
+    });
+  }
+}
+
+test('same-account reauthentication preserves an unresolved cancellation and renews its recovery token', async () => {
+  const pendingCancel = { paymentId: 2, key: 'pending-cancel-key', body: { reservedSeatIds: [11], reason: '취소' } };
+  const app = boot({ state: { ...heldSession, operation: { operationId: 7, status: 'UNKNOWN' }, pendingCancel },
+    fetchHandler: url => {
+      if (url === '/api/v1/auth/login') return { accessToken: 'owner-a-new-token' };
+      if (url === '/api/v1/payment-operations/7') return { operationId: 7, status: 'UNKNOWN', paymentId: 2 };
+      return url === '/api/v1/payments/2' ? { ...approved, activeOperationId: 7 } : [];
+    } });
+  await app.ready();
+  const before = app.state();
+  app.elements.get('login-id').value = 'owner-a';
+  app.elements.get('password').value = 'fixture-password';
+  await app.elements.get('login-form').fire('submit');
+  assert.deepEqual(app.state(), { ...before, token: 'owner-a-new-token' });
+  assert.equal(app.elements.get('password').value, '');
+  assert.equal(app.elements.get('hold-seats').disabled, true);
+  assert.equal(app.elements.get('logout').disabled, true);
+  await app.elements.get('refresh-operation').fire();
+  const request = app.calls.find(call => call.url === '/api/v1/payment-operations/7');
+  assert.equal(request.headers.Authorization, 'Bearer owner-a-new-token');
+  assert.deepEqual(app.state().pendingCancel, pendingCancel);
+  assert.equal(app.state().operation.operationId, 7);
+});
+
+for (const pending of [
+  { name: 'unknown operation', operation: { operationId: 7, status: 'UNKNOWN' } },
+  { name: 'pending cancellation', operation: undefined,
+    pendingCancel: { paymentId: 2, key: 'pending-cancel-key', body: { reservedSeatIds: [11], reason: '취소' } } },
+  { name: 'processing payment', operation: undefined, paymentStatus: 'PROCESSING' }
+]) {
+  test(`another-account login is rejected before authentication while ${pending.name} is unresolved`, async () => {
+    const app = boot({ state: { ...heldSession, operation: pending.operation, pendingCancel: pending.pendingCancel },
+      fetchHandler: url => {
+        if (url === '/api/v1/auth/login') return { accessToken: 'owner-b-token' };
+        return url === '/api/v1/payments/2' ? { ...approved, status: pending.paymentStatus || 'DONE' } : [];
+      } });
+    await app.ready();
+    const before = app.state();
+    app.elements.get('login-id').value = 'owner-b';
+    app.elements.get('password').value = 'fixture-password';
+    await app.elements.get('login-form').fire('submit');
+    assert.equal(app.calls.some(call => call.url === '/api/v1/auth/login'), false);
+    assert.deepEqual(app.state(), before);
+    assert.match(app.elements.get('auth-state').textContent, /owner-a/);
+    assert.match(app.elements.get('notice').textContent, /다른 계정/);
+    assert.equal(app.elements.get('hold-seats').disabled, true);
+    assert.equal(app.elements.get('logout').disabled, true);
+  });
+}
+
+for (const status of [undefined, 'SUCCEEDED', 'FAILED']) {
+  test(`successful account change clears the previous account checkout after ${status || 'ordinary state'}`, async () => {
+    const app = boot({ state: { ...heldSession, operation: status ? { operationId: 7, status } : undefined },
+      fetchHandler: url => {
+        if (url === '/api/v1/auth/login') return { accessToken: 'owner-b-token' };
+        return url === '/api/v1/payments/2' ? approved : [];
+      } });
+    await app.ready();
+    app.elements.get('login-id').value = 'owner-b';
+    app.elements.get('password').value = 'fixture-password';
+    await app.elements.get('login-form').fire('submit');
+    assertCheckoutCleared(app);
+    assert.equal(app.state().token, 'owner-b-token');
+    assert.equal(app.state().loginId, 'owner-b');
+    assert.notEqual(app.state().customerKey, 'owner-a-customer');
+    assert.equal(app.elements.get('logout').disabled, false);
+    assert.match(app.elements.get('auth-state').textContent, /owner-b/);
+    assert.equal(app.calls.some(call => call.url === '/api/v1/payments/2'
+      && call.headers.Authorization === 'Bearer owner-b-token'), false);
+  });
+}
+
+test('failed account change keeps the previous account session and rendered checkout', async () => {
+  const app = boot({ state: heldSession, fetchHandler: url => {
+    if (url === '/api/v1/auth/login') return httpError(401, 'LOGIN_FAILED');
+    return url === '/api/v1/payments/2' ? approved : [];
+  } });
+  await app.ready();
+  const before = app.state();
+  const summaries = ['auth-state', 'order-summary', 'payment-summary', 'operation-summary'];
+  const beforeText = summaries.map(id => app.elements.get(id).textContent);
+  app.elements.get('login-id').value = 'owner-b';
+  app.elements.get('password').value = 'wrong-password';
+  await app.elements.get('login-form').fire('submit');
+  assert.deepEqual(app.state(), before);
+  assert.deepEqual(summaries.map(id => app.elements.get(id).textContent), beforeText);
+  assert.equal(app.elements.get('payment-seats').children.length, 2);
+  assert.match(app.elements.get('notice').textContent, /LOGIN_FAILED/);
 });

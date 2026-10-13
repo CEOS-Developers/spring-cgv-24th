@@ -6,6 +6,7 @@ import com.ceos.cgv.domain.payment.infrastructure.toss.config.TossPaymentPropert
 import com.ceos.cgv.global.common.dto.ApiResponse;
 import com.ceos.cgv.global.exception.BusinessException;
 import com.ceos.cgv.global.exception.ErrorCode;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.CacheControl;
 import org.springframework.http.ResponseEntity;
@@ -16,6 +17,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/v1/payment-config")
 @RequiredArgsConstructor
+@SecurityRequirement(name = "bearerAuth")
 public class PaymentClientConfigController {
     private final TossPaymentProperties properties;
 

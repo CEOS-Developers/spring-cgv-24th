@@ -37,6 +37,8 @@ CEOS 24기 백엔드 스터디 - CGV 클론 코딩 프로젝트
 
 사용자는 먼저 좌석을 선점합니다. 서버가 선점을 기준으로 주문을 만든 뒤, 브라우저가 통합결제창에서 결제수단을 인증합니다. 인증 성공 redirect는 예매 확정 결과가 아니므로, 서버가 저장 주문과 요청을 검증한 뒤 토스 승인 API를 호출합니다. [통합결제창 연동 가이드](https://docs.tosspayments.com/guides/v2/payment-window/integration)
 
+주문명 `orderName`은 ` N석` 문구를 포함해 UTF-16 길이 100 이하로 만듭니다. 짧은 영화 제목은 그대로 사용하고, 긴 제목은 Unicode 서로게이트 쌍을 나누지 않도록 줄입니다.
+
 ```mermaid
 sequenceDiagram
     participant U as 사용자·브라우저
@@ -76,6 +78,8 @@ sequenceDiagram
 | `DELETE /api/v1/reservations/{reservationId}` | 유료 예매의 잔여 전체 취소. `Idempotency-Key` 필요, 성공 시 204 |
 
 주문·결제·작업 API는 JWT 인증과 본인 소유권 검증을 거칩니다. 성공 JSON은 `ApiResponse`로 반환합니다. 승인·취소·복구에서 `PROCESSING`, `UNKNOWN`, `COMPENSATING`은 **HTTP 202**와 작업 조회 `Location`을 반환하고, 완료 작업은 200으로 반환합니다. 200 작업 응답도 `status=FAILED`일 수 있으므로 HTTP 성공만으로 결제 성공을 판단하지 않습니다. 일반 작업 GET은 상태 조회가 성공한 것이므로 200입니다. 204는 본문이 없습니다. 결제 정보가 없는 기존 `RESERVED` 예매에만 이전 취소 동작을 허용합니다.
+
+기존 무결제 예매를 새로 취소할 때도 좌석별 취소 시각을 기록합니다. 과거 `CANCELED` 예매에 취소 시각이 없는 좌석은 응답의 `canceled=true`로 표시하되, 알 수 없는 과거 시각을 임의로 저장하지 않습니다.
 
 ### 저장 정보와 상태 전이
 
@@ -122,11 +126,13 @@ claim 전에 만료됐거나 영화가 비공개라면 PG 호출 없이 롤백�
 | 상황 | 처리 |
 | --- | --- |
 | 공식 오류 의미와 HTTP 상태가 일치하는 확정 승인 거절 | 작업 `FAILED`, 결제 `FAILED`, pending 선점 해제 |
-| 확정 취소 거절 | 작업 `FAILED`, 마지막 확정 잔액과 좌석 점유 유지 |
+| 확정 취소 거절 | 작업 `FAILED`, `activeOperationId` 해제. 마지막 확정 잔액과 좌석 점유 유지 |
 | 네트워크·타임아웃·5xx·처리 중 응답·예상 밖 데이터 | 작업 `UNKNOWN`, 진행 작업과 점유 유지. DB 전체 장애면 먼저 커밋한 `PROCESSING` 작업 ID 반환 |
 | PG 승인·취소 성공 뒤 DB finalize 일시 실패 | `UNKNOWN`으로 보존. PG 조회 결과로 같은 finalize를 다시 실행 |
 | 승인 성공 뒤 좌석 소유권 상실 등 영구 확정 실패 | 별도 고정 멱등키로 전체 보상취소. 확인 전에는 `COMPENSATING`과 pending 유지 |
 | 보상취소 완료 확인 | 결제를 `CANCELED`, 승인 작업을 `FAILED`로 끝내고 본인이 아직 점유한 좌석만 해제. 타인 점유는 보존 |
+
+취소 오류 `EXCEED_CANCEL_AMOUNT_DISCOUNT_AMOUNT`는 HTTP 400과 일치할 때 확정 `REJECTED`로 분류합니다. 부분취소 작업이 `FAILED`로 끝나면 새 UUID로 잔여 전체취소를 요청할 수 있습니다. 같은 코드라도 다른 HTTP 상태이거나 승인 경로에서 받은 경우에는 `UNKNOWN`을 유지합니다.
 
 복구에서도 주문·금액·취소 이력을 검증합니다. 조회 결과가 없거나 아직 승인 전이라면 실패로 단정하지 않습니다. 이미 끝난 작업은 PG 조회와 좌석 변경을 반복하지 않습니다. DB 상태를 수동으로 훼손해 예매 정리 자체가 불가능한 경우에는 보상 확인 후에도 처리 상태가 남을 수 있습니다.
 
@@ -215,24 +221,28 @@ node --test src/test/js/payment-demo.test.js
 ./gradlew bootRun --args='--spring.profiles.active=payment-demo --server.port=8088'
 ```
 
-`TOSS_CLIENT_KEY`, `TOSS_SECRET_KEY`에 개발자센터의 API 개별 연동 테스트 키를 등록합니다. 키값은 소스·README에 적지 않습니다. 브라우저용 설정 API는 인증된 사용자에게 client key와 통화만 제공하고 secret은 반환하지 않습니다. 키가 없거나 라이브·다른 연동 방식의 키라면 외부 호출 전에 차단합니다.
+`TOSS_CLIENT_KEY`, `TOSS_SECRET_KEY`에 개발자센터의 API 개별 연동 테스트 키를 등록합니다. 키값은 소스·README에 적지 않습니다. 브라우저용 설정 API `GET /api/v1/payment-config`는 인증된 사용자에게 client key와 통화만 제공하고 secret은 반환하지 않습니다. Swagger에도 `bearerAuth`와 401 응답을 표시해 실제 인증 정책과 맞췄습니다. 키가 없거나 라이브·다른 연동 방식의 키라면 외부 호출 전에 차단합니다.
 
 브라우저에서 [결제 데모](http://localhost:8088/payment-demo.html)를 열고 가짜 계정 `paymentdemo` / `DemoPayment123!`로 로그인합니다. `A1,A2` 선점 → 주문 생성 → 통합결제창 인증 → 서버 승인 → A1 부분취소 → 잔여 전체취소 순서로 확인할 수 있습니다. 인증에 실제 결제 앱이나 본인 인증 화면이 나타날 수 있지만, 테스트 키 환경에서 승인된 결제는 실제 출금되지 않습니다. [토스 테스트 환경](https://docs.tosspayments.com/guides/v2/get-started/environment)
 
 데모는 전용 H2 메모리 DB를 사용하고 서버 종료 시 데이터가 삭제됩니다. 다른 DB URL을 넣으면 JPA 초기화 전에 차단합니다. MySQL Testcontainers는 별도의 일회용 DB로 검증하며 기존 개발 DB를 초기화하지 않습니다. 서버 재시작 후 이전 브라우저 상태가 남아 있으면 데모 로그아웃 후 다시 시작합니다.
 
+선점 생성·해제에서 HTTP 409의 `HOLD_EXPIRED`·`HOLD_NOT_ACTIVE`를 받으면 오래된 선점·주문 상태와 요청 키를 정리하고, 다음 시도에서 같은 좌석을 새 UUID로 선점할 수 있습니다. 네트워크·서버 오류 등 결과가 불명확한 실패에서는 기존 UUID를 유지합니다. 미확정 결제·취소 요청이 있으면 다른 계정 로그인을 차단하고 같은 계정의 재인증은 허용합니다. 정상 계정 전환은 로그인 성공 후 이전 계정의 주문·결제 상태와 화면을 초기화합니다.
+
 | 검증 대상 | 확인한 결과 |
 | --- | --- |
-| 기본 Java 테스트, H2 | 총 329건 중 328개 통과·skip 1, 실패·오류 0 |
-| 실제 MySQL 8.4.8, `mysql-test` | 예약·결제·동시성·스키마 61개 통과, 실패·오류·skip 0 |
-| JavaScript 데모 동작 | 11개 통과, 실패·skip 0 |
+| 기본 Java 테스트, H2 | 총 345건 중 344개 통과·skip 1, 실패·오류 0 |
+| 실제 MySQL 8.4.8, `mysql-test` | 예약·결제·동시성·스키마 66개 통과, 실패·오류·skip 0 |
+| JavaScript 데모 동작 | 33개 통과, 실패·skip 0 |
 | `assemble` | 빌드 성공 |
 
-최종 통합에서 `./gradlew test mysqlTest assemble`과 JavaScript 테스트를 실행한 결과입니다. 기본 Java 실행의 skip 1건은 MySQL 전용 `PaymentSchemaUpgradeIntegrationTest`를 분리한 것이며, 해당 스키마 검증의 실제 2개 경우는 `mysqlTest`에서 모두 실행했습니다.
+2026-10-13 최종 통합에서 `./gradlew --no-daemon test mysqlTest assemble`과 JavaScript 테스트를 실행한 결과입니다. 기본 Java 실행의 skip 1건은 MySQL 전용 `PaymentSchemaUpgradeIntegrationTest`를 분리한 것이며, 해당 스키마 검증의 실제 2개 경우는 `mysqlTest`에서 모두 실행했습니다.
+
+추가 회귀 테스트로 할인 제한의 공식 HTTP 모의응답과 새 전체취소, 긴 한글·Unicode 주문명, 데모의 만료 복구·계정 전환, 기존 예매의 좌석 취소 이력·응답, 설정 API의 Swagger 인증 표시를 확인했습니다. 이번 할인 제한 검증은 공식 HTTP 모의응답에 기반하며, 실제 토스 TEST 거래·결제창은 다시 실행하지 않았습니다.
 
 위 자동화 검증의 PG는 테스트 대역입니다. MySQL 테스트는 시작 시 JDBC DB 제품명·버전·profile을 확인하며 Docker 실패를 H2나 skip으로 대체하지 않습니다. 전체 부하·멀티서버·운영 성능을 검증한 것은 아닙니다.
 
-별도로 실제 토스 **TEST 환경**에서 통합결제창 카카오페이 인증 → 20,000원 승인 `DONE`·예매 2석 확정 → A1 10,000원 부분취소 → 잔여 10,000원 취소를 확인했습니다. PG의 완료 취소 이력 2개 합계는 20,000원, 잔액은 0원이었습니다.
+이전 검증에서는 실제 토스 **TEST 환경**에서 통합결제창 카카오페이 인증 → 20,000원 승인 `DONE`·예매 2석 확정 → A1 10,000원 부분취소 → 잔여 10,000원 취소를 확인했습니다. PG의 완료 취소 이력 2개 합계는 20,000원, 잔액은 0원이었습니다.
 
 마지막 취소에서 PG 상태는 `PARTIAL_CANCELED`로 남아 기존 검증이 작업을 `UNKNOWN`으로 보류했습니다. 금액·이력 검증을 유지하며 이 상태를 처리하도록 보완한 뒤, **기존 DB 데이터를 보존하고 reconcile 한 번의 PG 조회로** 작업 `SUCCEEDED`, 결제·예매 `CANCELED`, 잔액 0원과 두 좌석 `AVAILABLE`을 확인했습니다. 새 PG 취소 요청은 보내지 않았습니다. 전체 취소의 같은 UUID 재전송은 같은 완료 결과를 반환하고, 전체 취소 뒤 이전 부분취소 UUID를 재전송하면 당시 잔액 10,000원 응답이 보존되는 것도 확인했습니다.
 
