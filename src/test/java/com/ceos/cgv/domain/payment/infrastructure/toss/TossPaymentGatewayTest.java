@@ -114,6 +114,29 @@ class TossPaymentGatewayTest {
     }
 
     @Test
+    void 공식_할인_취소금액_제한은_확정_거절로_분류한다() {
+        expectError("/v1/payments/payment-key/cancel", HttpStatus.BAD_REQUEST,
+                "EXCEED_CANCEL_AMOUNT_DISCOUNT_AMOUNT");
+        assertFailure(() -> gateway.cancel(cancelCommand()), GatewayFailureType.REJECTED,
+                "EXCEED_CANCEL_AMOUNT_DISCOUNT_AMOUNT");
+    }
+
+    @ParameterizedTest
+    @CsvSource({"403", "404", "500"})
+    void 할인_취소금액_제한도_공식_HTTP_상태와_다르면_UNKNOWN이다(int status) {
+        expectError("/v1/payments/payment-key/cancel", HttpStatus.valueOf(status),
+                "EXCEED_CANCEL_AMOUNT_DISCOUNT_AMOUNT");
+        assertFailure(() -> gateway.cancel(cancelCommand()), GatewayFailureType.UNKNOWN, "UNKNOWN_HTTP_ERROR");
+    }
+
+    @Test
+    void 취소_전용_할인_제한은_승인에서_확정_거절로_추측하지_않는다() {
+        expectError("/v1/payments/confirm", HttpStatus.BAD_REQUEST,
+                "EXCEED_CANCEL_AMOUNT_DISCOUNT_AMOUNT");
+        assertFailure(() -> gateway.confirm(confirmCommand()), GatewayFailureType.UNKNOWN, "UNKNOWN_HTTP_ERROR");
+    }
+
+    @Test
     void 조회에서만_공식_결제_없음을_NOT_FOUND로_분류한다() {
         expectError("/v1/payments/payment-key", HttpStatus.NOT_FOUND, "NOT_FOUND_PAYMENT");
         assertFailure(() -> gateway.getPayment("payment-key"), GatewayFailureType.NOT_FOUND, "NOT_FOUND_PAYMENT");

@@ -50,6 +50,8 @@ import java.util.UUID;
 @RequiredArgsConstructor
 @Transactional(isolation = Isolation.READ_COMMITTED)
 public class PaymentTransactionService {
+    private static final int MAX_ORDER_NAME_LENGTH = 100;
+
     private final PaymentOrderRepository paymentOrderRepository;
     private final PaymentRepository paymentRepository;
     private final PaymentOperationRepository paymentOperationRepository;
@@ -96,7 +98,7 @@ public class PaymentTransactionService {
                                 .orderId(UUID.randomUUID().toString())
                                 .reservationId(snapshot.reservationId())
                                 .userId(userId)
-                                .orderName(snapshot.movieTitle() + " " + seats.size() + "석")
+                                .orderName(createOrderName(snapshot.movieTitle(), seats.size()))
                                 .seatPrice(pricingProperties.seatPrice())
                                 .expiresAt(snapshot.expiresAt())
                                 .seats(seats)
@@ -369,6 +371,19 @@ public class PaymentTransactionService {
         operation.startCompensation(code);
         operation.getPayment().compensate();
         return work(operation, true);
+    }
+
+    private static String createOrderName(String movieTitle, int seatCount) {
+        String suffix = " " + seatCount + "석";
+        int titleEnd = Math.min(movieTitle.length(), MAX_ORDER_NAME_LENGTH - suffix.length());
+        // Java와 JavaScript의 UTF-16 길이 한도를 지키면서 서로게이트 쌍을 보존한다.
+        if (titleEnd > 0
+                && titleEnd < movieTitle.length()
+                && Character.isHighSurrogate(movieTitle.charAt(titleEnd - 1))
+                && Character.isLowSurrogate(movieTitle.charAt(titleEnd))) {
+            titleEnd--;
+        }
+        return movieTitle.substring(0, titleEnd) + suffix;
     }
 
     private boolean matches(Payment payment, GatewayPayment result) {

@@ -74,6 +74,7 @@
       const error = userError(response.status === 401 && path !== '/api/v1/auth/login' ? '로그인이 만료되었습니다. 데모 화면에서 다시 로그인해주세요.'
         : payload.message || '요청을 처리할 수 없습니다.');
       error.httpStatus = response.status;
+      error.code = payload.code;
       throw error;
     }
     return payload.data;
@@ -86,6 +87,21 @@
       return;
     }
     show('order-summary', `${session.order.orderName}\n주문 ${session.order.orderId}\n결제 금액 ${money(session.order.totalAmount)}\n선점 만료 ${session.order.expiresAt}`);
+  }
+
+  function clearPaymentView() {
+    payment = null;
+    if (element('payment-id')) element('payment-id').value = '';
+    show('payment-summary', '결제 번호를 입력하면 상태를 조회할 수 있습니다.');
+    element('payment-seats')?.replaceChildren();
+  }
+
+  function clearInactiveHold(error) {
+    if (error.httpStatus !== 409 || !['HOLD_EXPIRED', 'HOLD_NOT_ACTIVE'].includes(error.code)) return;
+    delete session.hold; delete session.holdRequest; delete session.order; delete session.confirmation;
+    delete session.paymentId; delete session.operation; delete session.approvalKeys;
+    clearPaymentView();
+    save(); renderOrder();
   }
 
   function renderPayment(result) {
@@ -195,7 +211,12 @@
 
   on('login-form', 'submit', async () => {
     const loginId = value('login-id');
+    const switchingAccount = loginId !== session.loginId;
+    if (switchingAccount && unresolved()) {
+      throw userError('진행 중인 요청 결과를 먼저 확인한 뒤 다른 계정으로 로그인해주세요.');
+    }
     const result = await api('/api/v1/auth/login', 'POST', { loginId, password: element('password').value });
+    if (switchingAccount) { session = {}; clearPaymentView(); }
     session.token = result.accessToken;
     session.loginId = loginId;
     session.customerKey ||= crypto.randomUUID();
@@ -231,7 +252,9 @@
     const signature = JSON.stringify(body);
     if (session.holdRequest?.signature !== signature) session.holdRequest = { signature, key: crypto.randomUUID() };
     save();
-    session.hold = await api('/api/v1/seat-holds', 'POST', body, session.holdRequest.key);
+    try {
+      session.hold = await api('/api/v1/seat-holds', 'POST', body, session.holdRequest.key);
+    } catch (error) { clearInactiveHold(error); throw error; }
     delete session.order; delete session.operation; delete session.confirmation; delete session.paymentId;
     payment = null;
     show('payment-summary', '새 주문의 결제 완료 후 상태를 조회할 수 있습니다.');
@@ -246,7 +269,9 @@
 
   on('release-hold', 'click', async () => {
     if (unresolved()) throw userError('진행 중인 결제 결과를 먼저 확인해주세요.');
-    await api(`/api/v1/seat-holds/${session.hold.reservationId}`, 'DELETE');
+    try {
+      await api(`/api/v1/seat-holds/${session.hold.reservationId}`, 'DELETE');
+    } catch (error) { clearInactiveHold(error); throw error; }
     delete session.hold; delete session.holdRequest; delete session.order; delete session.confirmation;
     save(); renderOrder(); notice('좌석 선점을 해제했습니다.');
   });

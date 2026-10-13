@@ -8,6 +8,8 @@ import com.ceos.cgv.domain.payment.dto.request.*;
 import com.ceos.cgv.domain.payment.dto.response.*;
 import com.ceos.cgv.domain.payment.enums.*;
 import com.ceos.cgv.domain.payment.gateway.*;
+import com.ceos.cgv.domain.payment.infrastructure.toss.TossPaymentGateway;
+import com.ceos.cgv.domain.payment.infrastructure.toss.config.TossPaymentProperties;
 import com.ceos.cgv.domain.reservation.dto.*;
 import com.ceos.cgv.domain.reservation.service.hold.SeatHoldService;
 import com.ceos.cgv.domain.reservation.service.payment.ReservationPaymentService;
@@ -18,14 +20,23 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import org.springframework.test.json.JsonCompareMode;
+import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.web.client.RestClient;
 
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.*;
+
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.*;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.*;
 
 @SpringBootTest
 @org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
@@ -149,6 +160,30 @@ class PaymentWorkflowIntegrationTest extends com.ceos.cgv.support.DatabaseIntegr
                                 order.reservationId()))
                 .isEqualTo("RESERVED");
         verify(gateway, times(1)).confirm(any());
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.MethodSource("orderNames")
+    void 주문명은_좌석문구와_Unicode_문자를_보존하며_SDK_100자_한도를_지킨다(
+            String movieTitle, String expectedOrderName) {
+        jdbc.update("UPDATE movies SET title=? WHERE movie_id=8714", movieTitle);
+
+        PaymentOrderResponse order = order(2);
+
+        assertThat(order.orderName()).isEqualTo(expectedOrderName);
+        assertThat(order.orderName().length()).isLessThanOrEqualTo(100);
+        assertThat(queries.order(8711L, order.orderId()).orderName()).isEqualTo(expectedOrderName);
+        verifyNoInteractions(gateway);
+    }
+
+    static java.util.stream.Stream<org.junit.jupiter.params.provider.Arguments> orderNames() {
+        return java.util.stream.Stream.of(
+                org.junit.jupiter.params.provider.Arguments.of("영화", "영화 2석"),
+                org.junit.jupiter.params.provider.Arguments.of("가".repeat(200), "가".repeat(97) + " 2석"),
+                org.junit.jupiter.params.provider.Arguments.of(
+                        "가".repeat(96) + "🎬" + "나".repeat(102), "가".repeat(96) + " 2석"),
+                org.junit.jupiter.params.provider.Arguments.of(
+                        "가".repeat(95) + "🎬" + "나".repeat(103), "가".repeat(95) + "🎬 2석"));
     }
 
     @Test
@@ -706,6 +741,76 @@ class PaymentWorkflowIntegrationTest extends com.ceos.cgv.support.DatabaseIntegr
                                 order.reservationId()))
                 .isEqualTo(2);
         verify(gateway, times(1)).cancel(any());
+    }
+
+    @Test
+    void 공식_할인_부분취소_거절_후_새키로_전체취소할_수_있다() {
+        PaymentOrderResponse order = order(2);
+        confirm(order);
+        GatewayPayment payment = done(order);
+        String baseUrl = "https://api.tosspayments.com";
+        RestClient.Builder builder = RestClient.builder().baseUrl(baseUrl);
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        TossPaymentGateway adapter = new TossPaymentGateway(builder.build(),
+                new TossPaymentProperties("test_ck_fixture", "test_sk_fixture", null, null));
+        String cancelUrl = baseUrl + "/v1/payments/" + payment.paymentKey() + "/cancel";
+        // 공식 HTTP 모의 응답 계약이며 실제 PG 할인 거래의 검증은 아니다.
+        server.expect(requestTo(cancelUrl)).andExpect(method(HttpMethod.POST))
+                .andExpect(content().json("""
+                        {"cancelReason":"부분 취소","cancelAmount":10000,"refundableAmount":20000}
+                        """, JsonCompareMode.STRICT))
+                .andRespond(withStatus(HttpStatus.BAD_REQUEST).contentType(MediaType.APPLICATION_JSON)
+                        .body("""
+                                {"code":"EXCEED_CANCEL_AMOUNT_DISCOUNT_AMOUNT","message":"fixture rejection"}
+                                """));
+        server.expect(requestTo(cancelUrl)).andExpect(method(HttpMethod.POST))
+                .andExpect(content().json("""
+                        {"cancelReason":"전체 취소","cancelAmount":20000,"refundableAmount":20000}
+                        """, JsonCompareMode.STRICT))
+                .andRespond(withSuccess("""
+                        {"paymentKey":"%s","orderId":"%s","totalAmount":20000,
+                         "balanceAmount":0,"status":"CANCELED","method":"카드",
+                         "approvedAt":"2026-10-05T12:00:00+09:00","receipt":null,
+                         "cancels":[{"transactionKey":"full-cancel","cancelAmount":20000,
+                         "canceledAt":"2026-10-05T13:00:00+09:00","cancelStatus":"DONE"}]}
+                        """.formatted(payment.paymentKey(), payment.orderId()), MediaType.APPLICATION_JSON));
+        when(gateway.cancel(any())).thenAnswer(call -> adapter.cancel(call.getArgument(0)));
+        when(gateway.getPayment(payment.paymentKey())).thenReturn(payment);
+        UUID partialKey = UUID.randomUUID();
+        PaymentCancelRequest partialRequest = new PaymentCancelRequest(
+                List.of(order.seats().getFirst().reservedSeatId()), "부분 취소");
+
+        PaymentOperationResponse partial =
+                service.cancel(8711L, order.paymentId(), partialKey, partialRequest);
+
+        assertThat(partial.status()).isEqualTo(PaymentOperationStatus.FAILED);
+        assertThat(partial.failureCode()).isEqualTo("EXCEED_CANCEL_AMOUNT_DISCOUNT_AMOUNT");
+        assertThat(partial.result().balanceAmount()).isEqualTo(20000);
+        assertThat(partial.result().status()).isEqualTo(PaymentStatus.DONE);
+        assertThat(queries.payment(8711L, order.paymentId()).activeOperationId()).isNull();
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM screening_seats WHERE current_reservation_id=?",
+                Integer.class, order.reservationId())).isEqualTo(2);
+        assertThat(service.cancel(8711L, order.paymentId(), partialKey, partialRequest)).isEqualTo(partial);
+        assertThat(service.reconcile(8711L, partial.operationId())).isEqualTo(partial);
+
+        PaymentOperationResponse full = service.cancel(8711L, order.paymentId(), UUID.randomUUID(),
+                new PaymentCancelRequest(null, "전체 취소"));
+
+        assertThat(full.operationId()).isNotEqualTo(partial.operationId());
+        assertThat(full.status()).isEqualTo(PaymentOperationStatus.SUCCEEDED);
+        assertThat(full.result().status()).isEqualTo(PaymentStatus.CANCELED);
+        assertThat(full.result().balanceAmount()).isZero();
+        assertThat(full.result().seats()).allMatch(seat -> seat.canceledAt() != null);
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM screening_seats WHERE current_reservation_id=?",
+                Integer.class, order.reservationId())).isZero();
+        assertThat(jdbc.queryForObject(
+                "SELECT status FROM reservations WHERE reservation_id=?",
+                String.class, order.reservationId())).isEqualTo("CANCELED");
+        verify(gateway, times(2)).cancel(any());
+        verify(gateway, never()).getPayment(any());
+        server.verify();
     }
 
     @Test

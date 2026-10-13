@@ -66,10 +66,10 @@ public class ReservationService {
             if (current.status() != ReservationStatus.RESERVED) {
                 throw new BusinessException(ErrorCode.HOLD_NOT_ACTIVE);
             }
-            ReservationSeatLifecycle.cancel(reservation, locked);
+            ReservationSeatLifecycle.cancel(reservation, locked, seatHoldClock.instant());
             return;
         }
-        reservation.cancel();
+        ReservationSeatLifecycle.cancel(reservation, List.of(), seatHoldClock.instant());
     }
 
 }
