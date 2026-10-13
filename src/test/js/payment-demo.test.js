@@ -433,3 +433,130 @@ test('failed account change keeps the previous account session and rendered chec
   assert.equal(app.elements.get('payment-seats').children.length, 2);
   assert.match(app.elements.get('notice').textContent, /LOGIN_FAILED/);
 });
+
+const expiredOrder = { ...order, expiresAt: '2020-01-01T00:00:00Z' };
+const approvalSearch = '?orderId=order_fixture&paymentKey=payment_fixture&amount=24000';
+const unconfirmedSession = { token: 'owner-a-token', loginId: 'owner-a', customerKey: 'owner-a-customer',
+  hold: { reservationId: 4 }, holdRequest: { signature: JSON.stringify(holdBody), key: 'old-hold-key' }, order };
+
+async function assertFreshHoldKey(state, fetchHandler) {
+  const reloaded = boot({ state, fetchHandler });
+  await reloaded.ready();
+  selectHeldSeats(reloaded);
+  await reloaded.elements.get('hold-seats').fire();
+  const request = reloaded.calls.find(call => call.url === '/api/v1/seat-holds');
+  assert.notEqual(request.headers['Idempotency-Key'], 'old-hold-key');
+  assert.deepEqual(JSON.parse(request.body), holdBody);
+  assert.equal(reloaded.state().hold.reservationId, 8);
+}
+
+for (const code of ['HOLD_EXPIRED', 'HOLD_NOT_ACTIVE']) {
+  test(`${code} from approval clears the stale checkout and lets the next same-seat hold use a fresh key`, async () => {
+    let confirms = 0;
+    const fetchHandler = url => {
+      if (url === '/api/v1/payment-orders/order_fixture') return order;
+      if (url === '/api/v1/payments/confirm') { confirms++; return httpError(409, code); }
+      return url === '/api/v1/seat-holds' ? { reservationId: 8 } : [];
+    };
+    const app = boot({ screen: 'success', state: unconfirmedSession, search: approvalSearch, fetchHandler });
+    await app.ready();
+    assert.equal(confirms, 1, 'a terminal response must not silently retry the approval');
+    assertCheckoutCleared(app);
+    assert.equal(app.elements.get('retry-confirm').disabled, true);
+    assert.equal(app.elements.get('retry-request').disabled, true);
+    assert.equal(app.state().token, 'owner-a-token');
+    assert.equal(app.state().customerKey, 'owner-a-customer');
+    assert.match(app.elements.get('notice').textContent, new RegExp(code));
+    await assertFreshHoldKey(app.state(), fetchHandler);
+  });
+}
+
+const approvalFailures = [
+  ['other business rejection', () => httpError(409, 'PAYMENT_ALREADY_PROCESSING'), false],
+  ['invalid request', () => httpError(400, 'INVALID_REQUEST'), false],
+  ['server failure carrying a hold code', () => httpError(503, 'HOLD_EXPIRED'), true],
+  ['network failure', () => { throw new Error('network'); }, true]
+];
+for (const [failureName, fail, ambiguous] of approvalFailures) {
+  test(`approval keeps the checkout and the approval key after ${failureName}`, async () => {
+    const app = boot({ screen: 'success', state: unconfirmedSession, search: approvalSearch,
+      fetchHandler: url => {
+        if (url === '/api/v1/payment-orders/order_fixture') return order;
+        return url === '/api/v1/payments/confirm' ? fail() : [];
+      } });
+    await app.ready();
+    const state = app.state();
+    assert.deepEqual(state.hold, { reservationId: 4 });
+    assert.equal(state.holdRequest.key, 'old-hold-key');
+    assert.equal(state.order.orderId, order.orderId);
+    assert.equal(state.confirmation.key, state.approvalKeys[order.orderId]);
+    assert.equal(state.operation?.status, ambiguous ? 'UNKNOWN' : undefined);
+  });
+}
+
+for (const code of ['HOLD_EXPIRED', 'HOLD_NOT_ACTIVE']) {
+  test(`${code} from order creation clears the stale hold and lets the next same-seat hold use a fresh key`, async () => {
+    let orderAttempts = 0;
+    const { order: ignored, ...withoutOrder } = unconfirmedSession;
+    const fetchHandler = url => {
+      if (url === '/api/v1/payment-orders') { orderAttempts++; return httpError(409, code); }
+      return url === '/api/v1/seat-holds' ? { reservationId: 8 } : [];
+    };
+    const app = boot({ state: withoutOrder, fetchHandler });
+    await app.ready();
+    await app.elements.get('create-order').fire();
+    assert.equal(orderAttempts, 1, 'a terminal response must not silently retry the order');
+    assertCheckoutCleared(app);
+    assert.equal(app.state().token, 'owner-a-token');
+    assert.match(app.elements.get('notice').textContent, new RegExp(code));
+    await assertFreshHoldKey(app.state(), fetchHandler);
+  });
+}
+
+for (const [failureName, fail] of holdFailures) {
+  test(`order creation keeps the hold and its key after ${failureName}`, async () => {
+    const { order: ignored, ...withoutOrder } = unconfirmedSession;
+    const app = boot({ state: withoutOrder, fetchHandler: url => url === '/api/v1/payment-orders' ? fail() : [] });
+    await app.ready();
+    const before = app.state();
+    await app.elements.get('create-order').fire();
+    assert.deepEqual(app.state(), before);
+    assert.equal(app.elements.get('create-order').disabled, false);
+  });
+}
+
+test('an expired order is cleared before the payment window opens', async () => {
+  const fetchHandler = url => {
+    if (url === '/api/v1/payment-config') return { clientKey: 'test_ck_expired_fixture', currency: 'KRW' };
+    return url === '/api/v1/seat-holds' ? { reservationId: 8 } : [];
+  };
+  const app = boot({ state: { ...unconfirmedSession, order: expiredOrder }, fetchHandler });
+  await app.ready();
+  await app.elements.get('open-payment').fire();
+  assert.equal(app.sdkCalls.length, 0);
+  assert.equal(app.calls.some(call => call.url === '/api/v1/payment-config'), false);
+  assertCheckoutCleared(app);
+  assert.equal(app.state().token, 'owner-a-token');
+  assert.match(app.elements.get('notice').textContent, /다시 선점/);
+  await assertFreshHoldKey(app.state(), fetchHandler);
+});
+
+test('an unresolved operation blocks the expiry cleanup so recovery state is kept', async () => {
+  const app = boot({ state: { ...unconfirmedSession, order: expiredOrder, operation: { operationId: 7, status: 'UNKNOWN' } } });
+  await app.ready();
+  const before = app.state();
+  await app.elements.get('open-payment').fire();
+  assert.deepEqual(app.state(), before);
+  assert.equal(app.sdkCalls.length, 0);
+});
+
+test('an order without a readable expiry still opens the payment window', async () => {
+  for (const expiresAt of [undefined, 'not-a-date']) {
+    const app = boot({ state: { ...unconfirmedSession, order: { ...order, expiresAt } },
+      fetchHandler: url => url === '/api/v1/payment-config' ? { clientKey: 'test_ck_sdk_fixture', currency: 'KRW' } : [] });
+    await app.ready();
+    await app.elements.get('open-payment').fire();
+    assert.equal(app.sdkCalls[1].request.orderId, order.orderId);
+    assert.equal(app.state().hold.reservationId, 4);
+  }
+});
