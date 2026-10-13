@@ -218,6 +218,37 @@ class TossPaymentGatewayTest {
         noRequests.verify();
     }
 
+    @Test
+    void 준비_확인은_테스트_키가_있으면_외부_요청_없이_통과한다() {
+        assertThatCode(gateway::verifyReady).doesNotThrowAnyException();
+        server.verify();
+    }
+
+    @ParameterizedTest
+    @CsvSource({"'',test_sk_fixture,NOT_CONFIGURED", "test_ck_fixture,'',NOT_CONFIGURED",
+            "'   ',test_sk_fixture,NOT_CONFIGURED", "live_ck_fixture,test_sk_fixture,TEST_KEYS_REQUIRED",
+            "test_ck_fixture,live_sk_fixture,TEST_KEYS_REQUIRED", "test_ck_fixture,test_gsk_fixture,TEST_KEYS_REQUIRED"})
+    void 준비_확인은_키가_없거나_테스트_키가_아니면_외부_요청과_키_노출_없이_실패한다(String clientKey, String secretKey, String code) {
+        RestClient.Builder builder = RestClient.builder().baseUrl(BASE_URL);
+        MockRestServiceServer noRequests = MockRestServiceServer.bindTo(builder).build();
+        TossPaymentGateway guarded = new TossPaymentGateway(builder.build(), properties(clientKey, secretKey));
+        assertThatThrownBy(guarded::verifyReady).isInstanceOfSatisfying(PaymentGatewayException.class, exception -> {
+            assertThat(exception.failureType()).isEqualTo(GatewayFailureType.UNKNOWN);
+            assertThat(exception.code()).isEqualTo(code);
+            assertThat(exception.getMessage()).doesNotContain("_ck_", "_sk_", "_gsk_");
+            assertThat(exception.getCause()).isNull();
+        });
+        noRequests.verify();
+    }
+
+    @Test
+    void 준비_확인은_키가_설정되지_않은_null도_실패로_분류한다() {
+        TossPaymentGateway unconfigured = new TossPaymentGateway(RestClient.builder().baseUrl(BASE_URL).build(),
+                properties(null, null));
+        assertThatThrownBy(unconfigured::verifyReady).isInstanceOfSatisfying(PaymentGatewayException.class,
+                exception -> assertThat(exception.code()).isEqualTo("NOT_CONFIGURED"));
+    }
+
     private void expectError(String path, HttpStatus status, String code) {
         server.expect(requestTo(BASE_URL + path)).andRespond(withStatus(status).contentType(MediaType.APPLICATION_JSON)
                 .body("{\"code\":\"" + code + "\",\"message\":\"sensitive-provider-details\"}"));

@@ -4,5 +4,5 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Configuration;
 
 @Configuration
-@EnableConfigurationProperties(PaymentPricingProperties.class)
+@EnableConfigurationProperties({PaymentPricingProperties.class, PaymentRecoveryProperties.class})
 public class PaymentConfig {}

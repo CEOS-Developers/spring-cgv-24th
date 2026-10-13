@@ -53,6 +53,12 @@ public class TossPaymentGateway implements PaymentGateway {
     }
 
     @Override
+    public void verifyReady() {
+        // 외부 요청 없이 키 설정만 검증하며 키 값은 사용하지 않는다.
+        properties.requireTestSecretKey();
+    }
+
+    @Override
     public GatewayPayment confirm(ConfirmPaymentCommand command) {
         String authorization = authorization();
         return execute(client.post().uri("/v1/payments/confirm")

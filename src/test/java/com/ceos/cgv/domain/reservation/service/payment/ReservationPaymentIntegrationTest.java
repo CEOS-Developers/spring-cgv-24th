@@ -101,7 +101,7 @@ class ReservationPaymentIntegrationTest extends ReservationDatabaseIntegrationTe
         assertThatThrownBy(() -> payments.startPayment(reservationId, userId)).isInstanceOf(IllegalTransactionStateException.class);
         assertThatThrownBy(() -> payments.confirmPayment(reservationId, userId)).isInstanceOf(IllegalTransactionStateException.class);
         assertThatThrownBy(() -> payments.releaseFailedPayment(reservationId, userId)).isInstanceOf(IllegalTransactionStateException.class);
-        assertThatThrownBy(() -> payments.cancelPaidSeats(reservationId, userId, List.of(firstSeatId))).isInstanceOf(IllegalTransactionStateException.class);
+        assertThatThrownBy(() -> payments.cancelPaidSeats(reservationId, userId, List.of(firstSeatId), NOW)).isInstanceOf(IllegalTransactionStateException.class);
     }
 
     @Test
@@ -169,7 +169,7 @@ class ReservationPaymentIntegrationTest extends ReservationDatabaseIntegrationTe
     @Test
     void 부분_취소는_다른_좌석을_보존하고_취소_이력은_재선점과_backfill을_막지_않는다() {
         confirm();
-        tx.executeWithoutResult(ignored -> payments.cancelPaidSeats(reservationId, userId, List.of(firstSeatId)));
+        tx.executeWithoutResult(ignored -> payments.cancelPaidSeats(reservationId, userId, List.of(firstSeatId), NOW));
         assertThat(status()).isEqualTo("RESERVED");
         assertThat(occupant(1)).isNull();
         assertThat(occupant(2)).isEqualTo(reservationId);
@@ -190,8 +190,8 @@ class ReservationPaymentIntegrationTest extends ReservationDatabaseIntegrationTe
     @Test
     void 마지막_활성_좌석까지_취소하면_예약도_취소되지만_이력은_남는다() {
         confirm();
-        tx.executeWithoutResult(ignored -> payments.cancelPaidSeats(reservationId, userId, List.of(firstSeatId)));
-        tx.executeWithoutResult(ignored -> payments.cancelPaidSeats(reservationId, userId, List.of(secondSeatId)));
+        tx.executeWithoutResult(ignored -> payments.cancelPaidSeats(reservationId, userId, List.of(firstSeatId), NOW));
+        tx.executeWithoutResult(ignored -> payments.cancelPaidSeats(reservationId, userId, List.of(secondSeatId), NOW));
         assertThat(status()).isEqualTo("CANCELED");
         assertThat(occupant(2)).isNull();
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM reserved_seats WHERE reservation_id=? AND canceled_at IS NOT NULL", Integer.class, reservationId)).isEqualTo(2);
@@ -202,12 +202,26 @@ class ReservationPaymentIntegrationTest extends ReservationDatabaseIntegrationTe
         assertError(() -> tx.executeWithoutResult(ignored -> payments.lockOwned(reservationId, userId + 1)), ErrorCode.ACCESS_DENIED);
         assertError(() -> tx.executeWithoutResult(ignored -> payments.lockOwned(-1L, userId)), ErrorCode.RESERVATION_NOT_FOUND);
         confirm();
-        assertError(() -> tx.executeWithoutResult(ignored -> payments.cancelPaidSeats(reservationId, userId, List.of())), ErrorCode.INVALID_REQUEST);
-        assertError(() -> tx.executeWithoutResult(ignored -> payments.cancelPaidSeats(reservationId, userId, List.of(firstSeatId, firstSeatId))), ErrorCode.INVALID_REQUEST);
-        assertError(() -> tx.executeWithoutResult(ignored -> payments.cancelPaidSeats(reservationId, userId, List.of(-1L))), ErrorCode.INVALID_SEAT);
-        tx.executeWithoutResult(ignored -> payments.cancelPaidSeats(reservationId, userId, List.of(firstSeatId)));
-        assertError(() -> tx.executeWithoutResult(ignored -> payments.cancelPaidSeats(reservationId, userId, List.of(firstSeatId))), ErrorCode.RESERVATION_ALREADY_CANCELED);
+        assertError(() -> tx.executeWithoutResult(ignored -> payments.cancelPaidSeats(reservationId, userId, List.of(), NOW)), ErrorCode.INVALID_REQUEST);
+        assertError(() -> tx.executeWithoutResult(ignored -> payments.cancelPaidSeats(reservationId, userId, List.of(firstSeatId, firstSeatId), NOW)), ErrorCode.INVALID_REQUEST);
+        assertError(() -> tx.executeWithoutResult(ignored -> payments.cancelPaidSeats(reservationId, userId, List.of(-1L), NOW)), ErrorCode.INVALID_SEAT);
+        tx.executeWithoutResult(ignored -> payments.cancelPaidSeats(reservationId, userId, List.of(firstSeatId), NOW));
+        assertError(() -> tx.executeWithoutResult(ignored -> payments.cancelPaidSeats(reservationId, userId, List.of(firstSeatId), NOW)), ErrorCode.RESERVATION_ALREADY_CANCELED);
         assertThat(occupant(2)).isEqualTo(reservationId);
+    }
+
+    @Test
+    void 좌석_취소_시각은_호출자가_전달한_값으로만_저장하고_없으면_거절한다() {
+        confirm();
+        Instant canceledAt = NOW.plusSeconds(17);
+        assertError(() -> tx.executeWithoutResult(ignored -> payments.cancelPaidSeats(reservationId, userId, List.of(firstSeatId), null)), ErrorCode.INVALID_REQUEST);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM reserved_seats WHERE reservation_id=? AND canceled_at IS NOT NULL", Integer.class, reservationId)).isZero();
+
+        tx.executeWithoutResult(ignored -> payments.cancelPaidSeats(reservationId, userId, List.of(firstSeatId), canceledAt));
+
+        PaymentReservationSnapshot snapshot = tx.execute(ignored -> payments.lockOwned(reservationId, userId));
+        assertThat(snapshot.seats().stream().filter(seat -> seat.reservedSeatId().equals(firstSeatId)).findFirst().orElseThrow().canceledAt())
+                .isEqualTo(canceledAt);
     }
 
     @Test
@@ -243,7 +257,7 @@ class ReservationPaymentIntegrationTest extends ReservationDatabaseIntegrationTe
         tx.executeWithoutResult(ignored -> {
             payments.confirmPayment(reservationId, userId);
             assertThat(payments.lockOwned(reservationId, userId).status()).isEqualTo(ReservationStatus.RESERVED);
-            payments.cancelPaidSeats(reservationId, userId, List.of(firstSeatId));
+            payments.cancelPaidSeats(reservationId, userId, List.of(firstSeatId), NOW);
             PaymentReservationSnapshot current = payments.lockOwned(reservationId, userId);
             assertThat(current.status()).isEqualTo(ReservationStatus.RESERVED);
             assertThat(current.seats().stream().filter(seat -> seat.reservedSeatId().equals(firstSeatId))

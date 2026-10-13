@@ -26,6 +26,9 @@ class TossPaymentConfigTest {
                         assertThat(exception.failureType()).isEqualTo(GatewayFailureType.UNKNOWN);
                         assertThat(exception.code()).isEqualTo("NOT_CONFIGURED");
                     });
+            assertThatThrownBy(() -> context.getBean(TossPaymentGateway.class).verifyReady())
+                    .isInstanceOfSatisfying(PaymentGatewayException.class,
+                            exception -> assertThat(exception.code()).isEqualTo("NOT_CONFIGURED"));
         });
     }
 
