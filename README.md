@@ -77,7 +77,7 @@ sequenceDiagram
 | `POST /api/v1/payment-operations/{operationId}/reconcile` | PG 조회 결과를 검증해 미완료 작업 복구 |
 | `DELETE /api/v1/reservations/{reservationId}` | 유료 예매의 잔여 전체 취소. `Idempotency-Key` 필요, 성공 시 204 |
 
-주문·결제·작업 API는 JWT 인증과 본인 소유권 검증을 거칩니다. 성공 JSON은 `ApiResponse`로 반환합니다. 승인·취소·복구에서 `PROCESSING`, `UNKNOWN`, `COMPENSATING`은 **HTTP 202**와 작업 조회 `Location`을 반환하고, 완료 작업은 200으로 반환합니다. 200 작업 응답도 `status=FAILED`일 수 있으므로 HTTP 성공만으로 결제 성공을 판단하지 않습니다. 일반 작업 GET은 상태 조회가 성공한 것이므로 200입니다. 204는 본문이 없습니다. 결제 정보가 없는 기존 `RESERVED` 예매에만 이전 취소 동작을 허용합니다.
+주문·결제·작업 API는 JWT 인증과 본인 소유권 검증을 거칩니다. 성공 JSON은 `ApiResponse`로 반환합니다. 승인·취소·복구에서 `PROCESSING`, `UNKNOWN`, `COMPENSATING`은 **HTTP 202**와 작업 조회 `Location`을 반환하고, 완료 작업은 200으로 반환합니다. 200 작업 응답도 `status=FAILED`일 수 있으므로 HTTP 성공만으로 결제 성공을 판단하지 않습니다. 일반 작업 GET은 상태 조회가 성공한 것이므로 200입니다. 204는 본문이 없습니다. 결제 정보가 없는 기존 `RESERVED` 예매에만 이전 취소 동작을 허용합니다. 숫자 ID 경로에 형식이 맞지 않는 값을 보내면 서버 오류가 아닌 400 `INVALID_REQUEST`로 응답합니다.
 
 기존 무결제 예매를 새로 취소할 때도 좌석별 취소 시각을 기록합니다. 과거 `CANCELED` 예매에 취소 시각이 없는 좌석은 응답의 `canceled=true`로 표시하되, 알 수 없는 과거 시각을 임의로 저장하지 않습니다.
 
@@ -98,7 +98,7 @@ sequenceDiagram
 | `PaymentOperation` | `PROCESSING`: 처리 권한 확보 / `UNKNOWN`: 외부 결과 또는 DB 반영 불명확 / `COMPENSATING`: 승인 보상취소 확인 중 / `SUCCEEDED`, `FAILED`: 완료 |
 | `Reservation` | `HELD → PAYMENT_PENDING → RESERVED`. 확정 승인 실패·보상취소 확인 후 `RELEASED`. 유료 부분취소는 선택 좌석만 취소하며, 모두 취소했을 때 `CANCELED` |
 
-`PAYMENT_PENDING`은 선점 TTL 만료 대상에서 제외하고 회원의 활성 선점 한도에는 포함합니다. 느린 결제 중 좌석을 다른 사람이 다시 선점하는 문제를 막기 위해서입니다. 같은 선점 키 재시도도 기존 pending 결과를 재사용합니다. 대신 외부 결과가 오래 불명확하면 점유가 계속 유지되므로 명시적인 복구가 필요합니다.
+`PAYMENT_PENDING`은 선점 TTL 만료 대상에서 제외하고 회원의 활성 선점 한도에는 포함합니다. 느린 결제 중 좌석을 다른 사람이 다시 선점하는 문제를 막기 위해서입니다. 같은 선점 키 재시도도 기존 pending 결과를 재사용합니다. 대신 외부 결과가 오래 불명확하면 점유가 계속 유지되므로 명시적인 복구가 필요합니다. 복구 조회에서 PG가 결제를 끝내 찾지 못하면 유예 시간 뒤 실패로 정리해 점유와 한도를 풀어줍니다(아래 복구 표 참고).
 
 ### 승인 전에 서버가 검증하는 값
 
@@ -114,7 +114,7 @@ claim 전에 만료됐거나 영화가 비공개라면 PG 호출 없이 롤백�
 
 부분취소는 `reservedSeatIds`에 선택한 예매 좌석 ID를, 전체 취소는 `null`을 전달합니다. 전체 취소는 **그 시점에 남은 좌석과 잔액**을 대상으로 합니다. 클라이언트가 취소 금액을 정하지 않고, 서버가 주문 당시 단가 × 대상 좌석 수로 계산합니다.
 
-- 빈 목록, 중복 ID, 이미 취소된 좌석, 다른 주문의 좌석, 타인의 결제, 잔액을 초과하는 요청을 거부합니다. 같은 완료 요청의 재전송은 저장된 응답을 반환합니다.
+- 빈 목록, 중복 ID, 이미 취소된 좌석, 다른 주문의 좌석, 타인의 결제, 잔액을 초과하는 요청을 거부합니다. 같은 완료 요청의 재전송은 저장된 응답을 반환합니다. 남은 좌석이 없는 결제에 새 키로 전체 취소를 요청하면 PG 호출 없이 409 `RESERVATION_ALREADY_CANCELED`로 응답합니다.
 - PG 응답의 식별자·원금·예상 잔액을 확인하고, 이전 취소 이력이 보존됐는지 검증합니다. 취소 거래 키가 중복되지 않는지, 각 거래가 완료됐는지, 누적 취소 합계가 `원금 - 잔액`인지도 확인합니다.
 - 누적 부분취소로 잔액이 0원이 되어도 PG 상태가 `PARTIAL_CANCELED`로 남을 수 있습니다. 위 금액·이력 검증을 모두 통과하면 내부 상태는 잔액을 기준으로 `CANCELED`로 정리합니다. 상태 문자열만 보고 완료 처리하지 않습니다.
 - PG 취소 성공을 확인한 뒤에만 결제 잔액, 주문 좌석과 예매 좌석의 취소 시각, 실제 좌석 점유를 같은 트랜잭션에서 변경합니다. 취소가 불명확하면 기존 잔액과 점유를 유지합니다.
@@ -129,12 +129,15 @@ claim 전에 만료됐거나 영화가 비공개라면 PG 호출 없이 롤백�
 | 확정 취소 거절 | 작업 `FAILED`, `activeOperationId` 해제. 마지막 확정 잔액과 좌석 점유 유지 |
 | 네트워크·타임아웃·5xx·처리 중 응답·예상 밖 데이터 | 작업 `UNKNOWN`, 진행 작업과 점유 유지. DB 전체 장애면 먼저 커밋한 `PROCESSING` 작업 ID 반환 |
 | PG 승인·취소 성공 뒤 DB finalize 일시 실패 | `UNKNOWN`으로 보존. PG 조회 결과로 같은 finalize를 다시 실행 |
+| PG 처리 뒤 finalize가 다른 요청의 예매·좌석 잠금과 짧게 겹침(`SEAT_BUSY`) | 새 트랜잭션으로 최대 3회 시도. 계속 겹치면 `UNKNOWN`으로 보존하고 복구에서 다시 반영 |
+| 취소 `UNKNOWN` 뒤 PG 조회 결과가 claim 당시 잔액·취소 이력과 같음 | PG가 취소를 처리하지 않은 상태이므로 저장한 **같은 PG 멱등키**로 취소를 다시 보냄. 확정 거절이면 작업 `FAILED` |
+| 승인 `UNKNOWN` 뒤 PG 조회가 결제를 찾지 못함(`NOT_FOUND`) | 선점 기한 + 유예 시간(기본 30분, `cgv.payment.recovery.approval-not-found-grace`) 전에는 `UNKNOWN` 유지. 이후 작업·결제 `FAILED`, pending 선점 해제 |
 | 승인 성공 뒤 좌석 소유권 상실 등 영구 확정 실패 | 별도 고정 멱등키로 전체 보상취소. 확인 전에는 `COMPENSATING`과 pending 유지 |
 | 보상취소 완료 확인 | 결제를 `CANCELED`, 승인 작업을 `FAILED`로 끝내고 본인이 아직 점유한 좌석만 해제. 타인 점유는 보존 |
 
 취소 오류 `EXCEED_CANCEL_AMOUNT_DISCOUNT_AMOUNT`는 HTTP 400과 일치할 때 확정 `REJECTED`로 분류합니다. 부분취소 작업이 `FAILED`로 끝나면 새 UUID로 잔여 전체취소를 요청할 수 있습니다. 같은 코드라도 다른 HTTP 상태이거나 승인 경로에서 받은 경우에는 `UNKNOWN`을 유지합니다.
 
-복구에서도 주문·금액·취소 이력을 검증합니다. 조회 결과가 없거나 아직 승인 전이라면 실패로 단정하지 않습니다. 이미 끝난 작업은 PG 조회와 좌석 변경을 반복하지 않습니다. DB 상태를 수동으로 훼손해 예매 정리 자체가 불가능한 경우에는 보상 확인 후에도 처리 상태가 남을 수 있습니다.
+복구에서도 주문·금액·취소 이력을 검증합니다. 조회 결과가 없거나 아직 승인 전이라면 위 유예 시간이 지나기 전까지 실패로 단정하지 않습니다. 취소 재전송은 PG 상태가 claim 당시와 같을 때만 보내며, 원 요청이 늦게 처리됐더라도 같은 멱등키와 `refundableAmount` 검증 때문에 이중 환불되지 않습니다. 이미 끝난 작업은 PG 조회와 좌석 변경을 반복하지 않습니다. DB 상태를 수동으로 훼손해 예매 정리 자체가 불가능한 경우에는 보상 확인 후에도 처리 상태가 남을 수 있습니다.
 
 ### 동시성과 멱등성을 함께 처리한 이유
 
@@ -158,7 +161,7 @@ claim 전에 만료됐거나 영화가 비공개라면 PG 호출 없이 롤백�
 - 주문은 `reservationId` unique로 같은 선점당 한 개만 만듭니다.
 - 승인·취소 작업은 `(userId, type, requestUUID)` unique와 SHA-256 요청 지문을 저장합니다. 같은 키로 다른 금액·좌석·사유를 보내면 충돌로 거부합니다.
 - 전체 취소의 지문은 원본 의도인 `FULL + 사유`로 만들고, 실제 취소 좌석·금액은 claim 당시 snapshot으로 따로 저장합니다. 완료 뒤 남은 좌석이 달라져도 같은 전체 취소 요청을 재현할 수 있습니다.
-- 우리 요청 키와 별도로 PG용 UUID를 한 번 생성해 저장하고, 승인·취소 재확인에 같은 키를 사용합니다. 보상취소 키도 별도로 고정합니다. 어댑터는 키를 새로 만들거나 자동 재시도하지 않습니다.
+- 우리 요청 키와 별도로 PG용 UUID를 한 번 생성해 저장합니다. 승인 결과 확인은 PG 조회로 하고, PG에 반영되지 않은 취소를 복구에서 다시 보낼 때는 저장한 같은 키를 사용합니다. 보상취소 키도 별도로 고정합니다. 어댑터는 키를 새로 만들거나 자동 재시도하지 않습니다.
 - 같은 완료 키는 **당시 저장한 결과**를 반환합니다. 이후 부분취소가 있었더라도 예전 승인 응답은 당시 `DONE` 결과이며, 현재 잔액은 결제 GET으로 확인합니다. 이미 `DONE`인 주문의 다른 승인 키도 PG를 다시 호출하지 않고, 취소된 결제의 새 승인은 거부합니다.
 - 처리 중에는 다른 요청 키가 와도 진행 작업을 반환해 외부 중복 호출을 막습니다. 처리 중 응답을 받은 새 취소 의도는 완료 후 상태를 다시 확인해야 합니다.
 
@@ -221,24 +224,24 @@ node --test src/test/js/payment-demo.test.js
 ./gradlew bootRun --args='--spring.profiles.active=payment-demo --server.port=8088'
 ```
 
-`TOSS_CLIENT_KEY`, `TOSS_SECRET_KEY`에 개발자센터의 API 개별 연동 테스트 키를 등록합니다. 키값은 소스·README에 적지 않습니다. 브라우저용 설정 API `GET /api/v1/payment-config`는 인증된 사용자에게 client key와 통화만 제공하고 secret은 반환하지 않습니다. Swagger에도 `bearerAuth`와 401 응답을 표시해 실제 인증 정책과 맞췄습니다. 키가 없거나 라이브·다른 연동 방식의 키라면 외부 호출 전에 차단합니다.
+`TOSS_CLIENT_KEY`, `TOSS_SECRET_KEY`에 개발자센터의 API 개별 연동 테스트 키를 등록합니다. 키값은 소스·README에 적지 않습니다. 브라우저용 설정 API `GET /api/v1/payment-config`는 인증된 사용자에게 client key와 통화만 제공하고 secret은 반환하지 않습니다. Swagger에도 `bearerAuth`와 401 응답을 표시해 실제 인증 정책과 맞췄습니다. 키가 없거나 라이브·다른 연동 방식의 키라면 외부 호출 전에 차단합니다. 승인·취소·복구 요청은 처리 작업을 만들기 전에 이 설정을 확인하므로, 키 누락으로 거절돼도 선점·결제 상태가 바뀌지 않습니다.
 
 브라우저에서 [결제 데모](http://localhost:8088/payment-demo.html)를 열고 가짜 계정 `paymentdemo` / `DemoPayment123!`로 로그인합니다. `A1,A2` 선점 → 주문 생성 → 통합결제창 인증 → 서버 승인 → A1 부분취소 → 잔여 전체취소 순서로 확인할 수 있습니다. 인증에 실제 결제 앱이나 본인 인증 화면이 나타날 수 있지만, 테스트 키 환경에서 승인된 결제는 실제 출금되지 않습니다. [토스 테스트 환경](https://docs.tosspayments.com/guides/v2/get-started/environment)
 
-데모는 전용 H2 메모리 DB를 사용하고 서버 종료 시 데이터가 삭제됩니다. 다른 DB URL을 넣으면 JPA 초기화 전에 차단합니다. MySQL Testcontainers는 별도의 일회용 DB로 검증하며 기존 개발 DB를 초기화하지 않습니다. 서버 재시작 후 이전 브라우저 상태가 남아 있으면 데모 로그아웃 후 다시 시작합니다.
+데모 정적 페이지(`payment-demo.html`, `payment-success.html`, `payment-fail.html`과 JS·CSS)는 `payment-demo` 프로필에서만 공개합니다. 다른 프로필에서는 기본 거부 규칙을 따라 익명 요청에 401을 반환합니다. 데모는 전용 H2 메모리 DB를 사용하고 서버 종료 시 데이터가 삭제됩니다. 다른 DB URL을 넣으면 JPA 초기화 전에 차단합니다. MySQL Testcontainers는 별도의 일회용 DB로 검증하며 기존 개발 DB를 초기화하지 않습니다. 서버 재시작 후 이전 브라우저 상태가 남아 있으면 데모 로그아웃 후 다시 시작합니다.
 
-선점 생성·해제에서 HTTP 409의 `HOLD_EXPIRED`·`HOLD_NOT_ACTIVE`를 받으면 오래된 선점·주문 상태와 요청 키를 정리하고, 다음 시도에서 같은 좌석을 새 UUID로 선점할 수 있습니다. 네트워크·서버 오류 등 결과가 불명확한 실패에서는 기존 UUID를 유지합니다. 미확정 결제·취소 요청이 있으면 다른 계정 로그인을 차단하고 같은 계정의 재인증은 허용합니다. 정상 계정 전환은 로그인 성공 후 이전 계정의 주문·결제 상태와 화면을 초기화합니다.
+선점 생성·해제, 주문 생성, 승인에서 HTTP 409의 `HOLD_EXPIRED`·`HOLD_NOT_ACTIVE`를 받으면 오래된 선점·주문 상태와 요청 키를 정리하고, 다음 시도에서 같은 좌석을 새 UUID로 선점할 수 있습니다. 결제창을 열기 전에도 주문 기한이 지났으면 같은 방식으로 정리하고 다시 선점하도록 안내합니다. 네트워크·서버 오류 등 결과가 불명확한 실패에서는 기존 UUID를 유지합니다. 미확정 결제·취소 요청이 있으면 다른 계정 로그인을 차단하고 같은 계정의 재인증은 허용합니다. 정상 계정 전환은 로그인 성공 후 이전 계정의 주문·결제 상태와 화면을 초기화합니다.
 
 | 검증 대상 | 확인한 결과 |
 | --- | --- |
-| 기본 Java 테스트, H2 | 총 345건 중 344개 통과·skip 1, 실패·오류 0 |
-| 실제 MySQL 8.4.8, `mysql-test` | 예약·결제·동시성·스키마 66개 통과, 실패·오류·skip 0 |
-| JavaScript 데모 동작 | 33개 통과, 실패·skip 0 |
+| 기본 Java 테스트, H2 | 총 387건 중 386개 통과·skip 1, 실패·오류 0 |
+| 실제 MySQL 8.4.8, `mysql-test` | 예약·결제·동시성·스키마 83개 통과, 실패·오류·skip 0 |
+| JavaScript 데모 동작 | 49개 통과, 실패·skip 0 |
 | `assemble` | 빌드 성공 |
 
 2026-10-13 최종 통합에서 `./gradlew --no-daemon test mysqlTest assemble`과 JavaScript 테스트를 실행한 결과입니다. 기본 Java 실행의 skip 1건은 MySQL 전용 `PaymentSchemaUpgradeIntegrationTest`를 분리한 것이며, 해당 스키마 검증의 실제 2개 경우는 `mysqlTest`에서 모두 실행했습니다.
 
-추가 회귀 테스트로 할인 제한의 공식 HTTP 모의응답과 새 전체취소, 긴 한글·Unicode 주문명, 데모의 만료 복구·계정 전환, 기존 예매의 좌석 취소 이력·응답, 설정 API의 Swagger 인증 표시를 확인했습니다. 이번 할인 제한 검증은 공식 HTTP 모의응답에 기반하며, 실제 토스 TEST 거래·결제창은 다시 실행하지 않았습니다.
+추가 회귀 테스트로 할인 제한의 공식 HTTP 모의응답과 새 전체취소, 긴 한글·Unicode 주문명, 데모의 만료 복구·계정 전환, 기존 예매의 좌석 취소 이력·응답, 설정 API의 Swagger 인증 표시를 확인했습니다. 이어서 PG에 반영되지 않은 취소의 같은 키 재전송과 재전송 거절, 승인 조회 `NOT_FOUND`의 유예 전·후, 키 미설정 시 claim 전 거절, finalize의 `SEAT_BUSY` 재시도(MySQL 포함), 전체 취소 후 재취소 409, 예매·주문 좌석의 같은 취소 시각, 데모의 승인·주문 생성 409와 만료 주문 정리, 숫자 경로 형식 오류 400, 데모 페이지의 프로필별 공개 범위를 회귀 테스트로 추가했습니다. 이번 할인 제한 검증은 공식 HTTP 모의응답에 기반하며, 실제 토스 TEST 거래·결제창은 다시 실행하지 않았습니다.
 
 위 자동화 검증의 PG는 테스트 대역입니다. MySQL 테스트는 시작 시 JDBC DB 제품명·버전·profile을 확인하며 Docker 실패를 H2나 skip으로 대체하지 않습니다. 전체 부하·멀티서버·운영 성능을 검증한 것은 아닙니다.
 
@@ -248,7 +251,7 @@ node --test src/test/js/payment-demo.test.js
 
 ### 기존 MySQL 스키마에 반영할 때
 
-스키마 변경은 [수동 SQL](src/main/resources/db/manual/week-04-payment.sql)로 제공합니다. 애플리케이션을 중지하고 백업한 뒤 `SHOW CREATE TABLE`로 기존 `reservations.status` ENUM과 `reserved_seats` baseline을 비교해 **한 번만** 적용해야 합니다. 이미 `canceled_at`이나 결제 테이블이 있다면 다시 적용할 수 없습니다. MySQL DDL은 암묵적으로 커밋되므로 부분 실패 시 현재 스키마를 확인해야 하며, 결제 이력을 지우는 자동 DROP 롤백은 제공하지 않습니다. 자동 마이그레이션 프레임워크는 도입하지 않았습니다.
+스키마 변경은 [수동 SQL](src/main/resources/db/manual/week-04-payment.sql)로 제공합니다. 애플리케이션을 중지하고 백업한 뒤 `SHOW CREATE TABLE`로 기존 `reservations.status` ENUM과 `reserved_seats` baseline을 비교해 **한 번만** 적용해야 합니다. 이미 `canceled_at`이나 결제 테이블이 있다면 다시 적용할 수 없습니다. Hibernate `ddl-auto: update`로 새 코드를 먼저 실행하면 `canceled_at`과 결제 테이블은 생기지만 `reservations.status` ENUM에는 `PAYMENT_PENDING`이 추가되지 않으므로, 이 SQL을 먼저 적용합니다. 이미 그렇게 실행했다면 SQL 전체를 다시 실행하지 말고, 앞부분의 ENUM 변경 블록만 적용한 뒤 나머지 테이블·인덱스는 `SHOW CREATE TABLE`로 비교해 판단합니다. MySQL DDL은 암묵적으로 커밋되므로 부분 실패 시 현재 스키마를 확인해야 하며, 결제 이력을 지우는 자동 DROP 롤백은 제공하지 않습니다. 자동 마이그레이션 프레임워크는 도입하지 않았습니다.
 
 [PaymentSchemaUpgradeIntegrationTest](src/test/java/com/ceos/cgv/domain/payment/schema/PaymentSchemaUpgradeIntegrationTest.java)에서 서로 다른 기존 ENUM 순서 2개를 구성해 기존 예매 5행·좌석 이력 5행을 각각 넣은 뒤 SQL을 적용했습니다. 기존 컬럼 값과 ENUM 순서가 유지되고, 기존 좌석의 `canceled_at`은 null이며 새 `PAYMENT_PENDING` 저장이 가능함을 확인했습니다. 이후 실제 ORM으로 선점 → 주문 → 승인 → 부분취소와 DTO 조회도 수행했습니다.
 

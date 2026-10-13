@@ -1,6 +1,7 @@
 package com.ceos.cgv.domain.payment.service.transaction;
 
 import com.ceos.cgv.domain.payment.config.PaymentPricingProperties;
+import com.ceos.cgv.domain.payment.config.PaymentRecoveryProperties;
 import com.ceos.cgv.domain.payment.dto.request.PaymentCancelRequest;
 import com.ceos.cgv.domain.payment.dto.request.PaymentConfirmRequest;
 import com.ceos.cgv.domain.payment.dto.request.PaymentOrderCreateRequest;
@@ -39,6 +40,7 @@ import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
+import java.time.Instant;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
@@ -57,6 +59,7 @@ public class PaymentTransactionService {
     private final PaymentOperationRepository paymentOperationRepository;
     private final ReservationPaymentService reservationPaymentService;
     private final PaymentPricingProperties pricingProperties;
+    private final PaymentRecoveryProperties recoveryProperties;
     private final PaymentResponses paymentResponses;
     private final PaymentJson paymentJson;
     private final PaymentPayload paymentPayload;
@@ -192,6 +195,9 @@ public class PaymentTransactionService {
                         .map(PaymentOrderSeat::getReservedSeatId)
                         .sorted()
                         .toList();
+        // 남은 좌석이 없는 전체 취소는 잘못된 좌석 요청이 아니라 이미 끝난 취소다.
+        if (request.reservedSeatIds() == null && active.isEmpty())
+            throw new BusinessException(ErrorCode.RESERVATION_ALREADY_CANCELED);
         List<Long> requested =
                 request.reservedSeatIds() == null
                         ? active
@@ -323,9 +329,11 @@ public class PaymentTransactionService {
                     "APPROVAL_COMPENSATED", paymentJson.write(paymentResponses.payment(payment)));
         } else {
             List<Long> ids = paymentJson.seatIds(operation.getSeatIdsJson());
+            // 예매 좌석과 주문 좌석의 취소 시각이 같도록 한 번만 읽는다.
+            Instant canceledAt = paymentClock.instant();
             reservationPaymentService.cancelPaidSeats(
-                    payment.getOrder().getReservationId(), userId, ids);
-            payment.getOrder().cancelSeats(ids, paymentClock.instant());
+                    payment.getOrder().getReservationId(), userId, ids, canceledAt);
+            payment.getOrder().cancelSeats(ids, canceledAt);
             payment.canceled(result, paymentJson.write(result.cancellations()));
             operation.succeed(paymentJson.write(paymentResponses.payment(payment)));
         }
@@ -363,6 +371,45 @@ public class PaymentTransactionService {
                 && result.status() == GatewayPaymentStatus.DONE
                 && result.balanceAmount() == operation.getPayment().getOrder().getTotalAmount()
                 && result.cancellations().isEmpty();
+    }
+
+    // PG가 취소를 처리하지 않은 상태가 확인된 UNKNOWN 취소만 같은 멱등키로 다시 보낸다.
+    public boolean cancellationCanResume(Long userId, Long operationId, GatewayPayment result) {
+        PaymentOperation operation = lockOperation(operationId, userId);
+        Payment payment = operation.getPayment();
+        if (operation.isTerminal()
+                || operation.isCompensating()
+                || operation.getType() != PaymentOperationType.CANCEL
+                || !matches(payment, result)
+                || result.balanceAmount() != operation.getPreviousBalance()
+                || (result.status() != GatewayPaymentStatus.DONE
+                        && result.status() != GatewayPaymentStatus.PARTIAL_CANCELED)) return false;
+        List<GatewayCancellation> stored =
+                paymentJson.cancellations(payment.getCancellationsJson());
+        return stored.size() == result.cancellations().size()
+                && new HashSet<>(stored).equals(new HashSet<>(result.cancellations()));
+    }
+
+    public PaymentOperationResponse approvalNotFound(
+            Long userId, Long operationId, String code) {
+        PaymentOperation operation = lockOperation(operationId, userId);
+        if (operation.isTerminal()
+                || operation.isCompensating()
+                || operation.getType() != PaymentOperationType.CONFIRM)
+            return paymentResponses.operation(operation);
+        Payment payment = operation.getPayment();
+        // 선점 기한과 유예 시간이 지나기 전의 NOT_FOUND는 아직 승인 결과를 단정하지 않는다.
+        Instant giveUpAt =
+                payment.getOrder().getExpiresAt().plus(recoveryProperties.approvalNotFoundGrace());
+        if (paymentClock.instant().isBefore(giveUpAt)) {
+            operation.unknown(code);
+            return paymentResponses.operation(operation);
+        }
+        reservationPaymentService.releaseFailedPayment(
+                payment.getOrder().getReservationId(), userId);
+        payment.failedApproval();
+        operation.fail("GATEWAY_NOT_FOUND", paymentJson.write(paymentResponses.payment(payment)));
+        return paymentResponses.operation(operation);
     }
 
     public PaymentWork startCompensation(Long userId, Long operationId, String code) {

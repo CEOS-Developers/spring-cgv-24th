@@ -28,11 +28,15 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Supplier;
 
 @Service
 @RequiredArgsConstructor
 @Transactional(propagation = Propagation.NEVER)
 public class PaymentWorkflowService {
+    private static final int FINALIZE_MAX_ATTEMPTS = 3;
+    private static final long FINALIZE_BACKOFF_MILLIS = 50;
+
     private final PaymentTransactionService transactionService;
     private final PaymentGateway paymentGateway;
     private final PaymentQueryService queryService;
@@ -48,6 +52,7 @@ public class PaymentWorkflowService {
     }
 
     public PaymentOperationResponse confirm(Long userId, UUID key, PaymentConfirmRequest request) {
+        verifyGatewayReady();
         PaymentWork work;
         try {
             work = transactionService.claimApproval(userId, key, request);
@@ -64,6 +69,7 @@ public class PaymentWorkflowService {
 
     public PaymentOperationResponse cancel(
             Long userId, Long paymentId, UUID key, PaymentCancelRequest request) {
+        verifyGatewayReady();
         PaymentWork work;
         try {
             work = transactionService.claimCancellation(userId, paymentId, key, request);
@@ -78,6 +84,7 @@ public class PaymentWorkflowService {
     }
 
     public PaymentOperationResponse reconcile(Long userId, Long operationId) {
+        verifyGatewayReady();
         return execute(userId, transactionService.recovery(userId, operationId), true);
     }
 
@@ -115,12 +122,19 @@ public class PaymentWorkflowService {
                                         work.amount(),
                                         work.gatewayKey()));
         } catch (PaymentGatewayException exception) {
+            if (recovery
+                    && !work.compensating()
+                    && work.type() == PaymentOperationType.CONFIRM
+                    && exception.failureType() == GatewayFailureType.NOT_FOUND)
+                return approvalNotFound(userId, work, exception.code());
             if (!recovery
                     && !work.compensating()
                     && exception.failureType() == GatewayFailureType.REJECTED) {
                 try {
-                    return transactionService.rejected(
-                            userId, work.operationId(), exception.code());
+                    return finalizeWithRetry(
+                            () ->
+                                    transactionService.rejected(
+                                            userId, work.operationId(), exception.code()));
                 } catch (RuntimeException saveFailure) {
                     return markUnknown(userId, work, "FAILURE_SAVE_PENDING");
                 }
@@ -130,16 +144,20 @@ public class PaymentWorkflowService {
             return markUnknown(userId, work, "GATEWAY_OUTCOME_UNKNOWN");
         }
         try {
-            if (recovery
-                    && work.compensating()
-                    && transactionService.compensationCanResume(userId, work.operationId(), result))
+            // 복구 조회로 재전송이 안전함이 확인되면 저장된 같은 멱등키로 한 번만 다시 실행한다.
+            if (recovery && canResend(userId, work, result))
                 return execute(
                         userId, transactionService.recovery(userId, work.operationId()), false);
             if (work.compensating() || work.type() == PaymentOperationType.CANCEL)
-                return transactionService.canceled(userId, work.operationId(), result);
+                return finalizeWithRetry(
+                        () -> transactionService.canceled(userId, work.operationId(), result));
             return recovery
-                    ? transactionService.recoverApproval(userId, work.operationId(), result)
-                    : transactionService.approved(userId, work.operationId(), result);
+                    ? finalizeWithRetry(
+                            () ->
+                                    transactionService.recoverApproval(
+                                            userId, work.operationId(), result))
+                    : finalizeWithRetry(
+                            () -> transactionService.approved(userId, work.operationId(), result));
         } catch (BusinessException exception) {
             if (work.type() == PaymentOperationType.CONFIRM
                     && !work.compensating()
@@ -147,8 +165,12 @@ public class PaymentWorkflowService {
                 try {
                     return execute(
                             userId,
-                            transactionService.startCompensation(
-                                    userId, work.operationId(), exception.getErrorCode().name()),
+                            finalizeWithRetry(
+                                    () ->
+                                            transactionService.startCompensation(
+                                                    userId,
+                                                    work.operationId(),
+                                                    exception.getErrorCode().name())),
                             false);
                 } catch (RuntimeException compensationFailure) {
                     return markUnknown(userId, work, "COMPENSATION_SAVE_PENDING");
@@ -160,11 +182,62 @@ public class PaymentWorkflowService {
         }
     }
 
+    private boolean canResend(Long userId, PaymentWork work, GatewayPayment result) {
+        if (work.compensating())
+            return finalizeWithRetry(
+                    () ->
+                            transactionService.compensationCanResume(
+                                    userId, work.operationId(), result));
+        if (work.type() == PaymentOperationType.CANCEL)
+            return finalizeWithRetry(
+                    () ->
+                            transactionService.cancellationCanResume(
+                                    userId, work.operationId(), result));
+        return false;
+    }
+
+    private PaymentOperationResponse approvalNotFound(
+            Long userId, PaymentWork work, String code) {
+        try {
+            return finalizeWithRetry(
+                    () -> transactionService.approvalNotFound(userId, work.operationId(), code));
+        } catch (RuntimeException saveFailure) {
+            return markUnknown(userId, work, code);
+        }
+    }
+
     private boolean permanentConfirmationFailure(ErrorCode code) {
         return code == ErrorCode.SEAT_OWNER_MISMATCH
                 || code == ErrorCode.RESERVATION_NOT_FOUND
                 || code == ErrorCode.HOLD_NOT_ACTIVE
                 || code == ErrorCode.SCREENING_SEATS_NOT_READY;
+    }
+
+    // PG 결과를 받은 뒤의 확정은 짧은 좌석 NOWAIT 충돌에만 새 트랜잭션으로 몇 번 더 시도한다.
+    private <T> T finalizeWithRetry(Supplier<T> finalization) {
+        for (int attempt = 1; ; attempt++) {
+            try {
+                return finalization.get();
+            } catch (BusinessException exception) {
+                if (exception.getErrorCode() != ErrorCode.SEAT_BUSY
+                        || attempt >= FINALIZE_MAX_ATTEMPTS) throw exception;
+                try {
+                    Thread.sleep(FINALIZE_BACKOFF_MILLIS * attempt);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw exception;
+                }
+            }
+        }
+    }
+
+    private void verifyGatewayReady() {
+        try {
+            paymentGateway.verifyReady();
+        } catch (PaymentGatewayException exception) {
+            // PG 키 설정이 없으면 DB 상태를 바꾸기 전에 거절한다.
+            throw new BusinessException(ErrorCode.INTERNAL_SERVER_ERROR);
+        }
     }
 
     private PaymentOperationResponse markUnknown(Long userId, PaymentWork work, String code) {

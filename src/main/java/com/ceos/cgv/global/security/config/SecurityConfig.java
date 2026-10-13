@@ -8,6 +8,8 @@ import jakarta.servlet.DispatcherType;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
+import org.springframework.core.env.Environment;
+import org.springframework.core.env.Profiles;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -25,10 +27,14 @@ import static org.springframework.security.web.servlet.util.matcher.PathPatternR
 @Configuration
 @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
 public class SecurityConfig {
+    private static final String PAYMENT_DEMO_PROFILE = "payment-demo";
+
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http, JwtService jwtService,
-                                                   ObjectMapper objectMapper) throws Exception {
-        RequestMatcher publicApiMatcher = new PublicApiRequestMatcher();
+                                                   ObjectMapper objectMapper,
+                                                   Environment environment) throws Exception {
+        RequestMatcher publicApiMatcher = new PublicApiRequestMatcher(
+                environment.acceptsProfiles(Profiles.of(PAYMENT_DEMO_PROFILE)));
         RestAuthenticationEntryPoint entryPoint = new RestAuthenticationEntryPoint(objectMapper);
         RequestMatcher userApiMatcher = new OrRequestMatcher(
                 pathPattern(POST, "/api/v1/movies/{movieId}/likes"),

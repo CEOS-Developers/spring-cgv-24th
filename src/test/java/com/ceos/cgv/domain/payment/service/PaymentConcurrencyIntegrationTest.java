@@ -23,6 +23,7 @@ import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -38,6 +39,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @SpringBootTest
@@ -149,7 +151,7 @@ class PaymentConcurrencyIntegrationTest extends PaymentIntegrationFixture {
                 .isEqualTo(ErrorCode.INVALID_SEAT);
         assertThat(occupiedSeats(order)).isEqualTo(1); assertThat(canceledSeats(order)).isEqualTo(1);
         verify(gateway, times(1)).cancel(any());
-        verify(reservationPayments, times(1)).cancelPaidSeats(order.reservationId(), USER_ID, request.reservedSeatIds());
+        verify(reservationPayments, times(1)).cancelPaidSeats(eq(order.reservationId()), eq(USER_ID), eq(request.reservedSeatIds()), any(Instant.class));
     }
 
     @Test
@@ -218,7 +220,7 @@ class PaymentConcurrencyIntegrationTest extends PaymentIntegrationFixture {
         assertThat(queries.payment(USER_ID, order.paymentId()).activeOperationId()).isNull();
         if (cancellation) {
             assertThat(canceledSeats(order)).isEqualTo(2); assertThat(occupiedSeats(order)).isZero();
-            verify(reservationPayments, times(1)).cancelPaidSeats(anyLong(), anyLong(), any());
+            verify(reservationPayments, times(1)).cancelPaidSeats(anyLong(), anyLong(), any(), any());
             verify(gateway, times(1)).cancel(any());
         } else {
             assertThat(reservationStatus(order)).isEqualTo("RESERVED");

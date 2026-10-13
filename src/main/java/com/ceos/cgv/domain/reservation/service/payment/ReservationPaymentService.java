@@ -95,8 +95,9 @@ public class ReservationPaymentService {
                 .forEach(seat -> seat.releaseIfOwnedBy(reservation));
     }
 
-    public void cancelPaidSeats(Long reservationId, Long userId, List<Long> reservedSeatIds) {
-        if (reservedSeatIds == null || reservedSeatIds.isEmpty()
+    public void cancelPaidSeats(Long reservationId, Long userId, List<Long> reservedSeatIds,
+                                Instant canceledAt) {
+        if (canceledAt == null || reservedSeatIds == null || reservedSeatIds.isEmpty()
                 || reservedSeatIds.stream().anyMatch(id -> id == null)
                 || new HashSet<>(reservedSeatIds).size() != reservedSeatIds.size()) {
             throw new BusinessException(ErrorCode.INVALID_REQUEST);
@@ -119,8 +120,7 @@ public class ReservationPaymentService {
         }
         List<ScreeningSeat> seats = lockSeats(reservation, selected);
         ReservationSeatLifecycle.verifyOccupancy(seats, reservation);
-        Instant now = seatHoldClock.instant();
-        selected.forEach(seat -> seat.cancel(now));
+        selected.forEach(seat -> seat.cancel(canceledAt));
         seats.forEach(seat -> seat.releaseIfOwnedBy(reservation));
         reservation.completeSeatCancellation();
     }
