@@ -34,9 +34,10 @@ public final class ReservationSeatLifecycle {
         seats.forEach(seat -> seat.releaseIfOwnedBy(reservation));
     }
 
-    public static void cancel(Reservation reservation, List<ScreeningSeat> seats) {
+    public static void cancel(Reservation reservation, List<ScreeningSeat> seats, Instant now) {
         verifyOccupancy(seats, reservation);
         reservation.cancel();
+        reservation.getReservedSeats().forEach(seat -> seat.cancel(now));
         seats.forEach(seat -> seat.releaseIfOwnedBy(reservation));
     }
 }
