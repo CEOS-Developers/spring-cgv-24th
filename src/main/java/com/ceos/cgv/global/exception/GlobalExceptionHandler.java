@@ -8,6 +8,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.AuthenticationException;
 
@@ -37,8 +38,10 @@ public class GlobalExceptionHandler {
         ));
     }
 
+    // 경로 변수나 쿼리 값의 형식 오류는 클라이언트 입력 문제다. 서버 설정 문제를 뜻하는
+    // ConversionNotSupportedException은 상위 TypeMismatchException에 묶지 않고 500으로 남긴다.
     @ExceptionHandler({MethodArgumentNotValidException.class, HttpMessageNotReadableException.class,
-            MissingRequestHeaderException.class})
+            MissingRequestHeaderException.class, MethodArgumentTypeMismatchException.class})
     public ResponseEntity<ErrorResponse> handleInvalidRequest(Exception exception) {
         return ResponseEntity.badRequest().body(new ErrorResponse(
                 HttpStatus.BAD_REQUEST.value(),
