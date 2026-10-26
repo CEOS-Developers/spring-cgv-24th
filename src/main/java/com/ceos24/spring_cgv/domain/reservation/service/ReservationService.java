@@ -26,11 +26,11 @@ public class ReservationService {
     private final ReservationSeatRepository reservationSeatRepository;
 
     /***
-     * 함수 기능: 좌석을 확정하여 예매를 생성한다. 결제 승인 직전에 호출된다.
+     * 함수 기능: 좌석을 점유(RESERVED)하여 예매를 생성한다. 결제창으로 넘어가기 전에 호출된다.
      * @param member 예매한 회원
      * @param screening 예매 대상 상영회차
      * @param totalPrice 예매 총 금액
-     * @param seats 확정할 좌석 목록
+     * @param seats 점유할 좌석 목록
      * @return 생성된 예매
      */
     @Transactional
@@ -42,14 +42,14 @@ public class ReservationService {
             throw new ReservationException(ReservationErrorCode.RESERVATION_SEAT_EMPTY);
         }
 
-        // 예약을 DB에 저장한다.
+        // 예매를 DB에 저장한다.
         Reservation reservation = reservationRepository.save(Reservation.builder()
                 .member(member)
                 .screening(screening)
                 .price(totalPrice)
                 .build());
 
-        // 예매한 좌석을 DB에 저장한다. -> 여기서 유니크 제약이 있다면 중복 좌석 예매를 방지할 수 있다.
+        // 각 좌석을 RESERVED 상태로 저장한다.
         reservationSeatRepository.saveAll(seats.stream()
                 .map(seat -> ReservationSeat.builder()
                         .reservation(reservation)
@@ -61,9 +61,27 @@ public class ReservationService {
                         .build())
                 .toList());
 
-        log.info("[예매 확정] reservationId={}, screeningId={}, seatCount={}",
+        log.info("[좌석 점유] reservationId={}, screeningId={}, seatCount={}",
                 reservation.getId(), screening.getId(), seats.size());
 
         return reservation;
+    }
+
+    /***
+     * 함수 기능: 결제를 마치지 못한 예매의 좌석 점유를 해제하고 예매를 취소한다.
+     *          이미 다른 예매가 가져간 좌석 행은 조회되지 않으므로 건드리지 않는다.
+     * @param reservation 점유를 해제할 예매
+     */
+    @Transactional
+    public void release(Reservation reservation) {
+
+        List<ReservationSeat> seatRows =
+                reservationSeatRepository.findAllByReservationId(reservation.getId());
+
+        seatRows.forEach(ReservationSeat::unreserve);
+        reservation.cancel();
+
+        log.info("[좌석 점유 해제] reservationId={}, seatCount={}",
+                reservation.getId(), seatRows.size());
     }
 }

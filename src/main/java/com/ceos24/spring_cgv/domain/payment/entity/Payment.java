@@ -5,6 +5,7 @@ import com.ceos24.spring_cgv.domain.movie.entity.Screening;
 import com.ceos24.spring_cgv.domain.payment.enums.OrderType;
 import com.ceos24.spring_cgv.domain.payment.enums.PaymentStatus;
 import com.ceos24.spring_cgv.domain.payment.enums.TossPaymentMethod;
+import com.ceos24.spring_cgv.domain.reservation.entity.Reservation;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -42,6 +43,10 @@ public class Payment {
     @JoinColumn(name = "screening_id", nullable = false)
     private Screening screening;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "reservation_id", nullable = false)
+    private Reservation reservation;
+
     @Column(name = "order_id", length = 64, nullable = false)
     private String orderId; // 생성된 고유 주문 번호
 
@@ -78,9 +83,11 @@ public class Payment {
     private String lastTransactionKey; // 마지막 거래의 키 값
 
     @Builder
-    private Payment(Member member, Screening screening, String orderId, String orderName, Integer totalAmount) {
+    private Payment(Member member, Screening screening, Reservation reservation,
+                    String orderId, String orderName, Integer totalAmount) {
         this.member = member;
         this.screening = screening;
+        this.reservation = reservation;
         this.orderId = orderId;
         this.orderName = orderName;
         this.totalAmount = totalAmount;
