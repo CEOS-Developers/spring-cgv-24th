@@ -2,6 +2,7 @@ package com.ceos24.spring_cgv.domain.reservation.entity;
 
 import com.ceos24.spring_cgv.domain.movie.entity.Screening;
 import com.ceos24.spring_cgv.domain.reservation.enums.AgeGroup;
+import com.ceos24.spring_cgv.domain.reservation.enums.SeatStatus;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -57,6 +58,10 @@ public class ReservationSeat {
     @Column(name = "price", nullable = false)
     private Integer price;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status", length = 10, nullable = false)
+    private SeatStatus status;
+
     @Builder
     private ReservationSeat(Reservation reservation, Screening screening, Integer seatRow, Integer seatNumber, AgeGroup ageGroup, Integer price) {
         this.reservation = reservation;
@@ -65,5 +70,17 @@ public class ReservationSeat {
         this.seatNumber = seatNumber;
         this.ageGroup = ageGroup;
         this.price = price;
+        this.status = SeatStatus.RESERVED; // 생성 시점부터 점유 상태다.
+    }
+
+    /***
+     * 함수 기능: 결제를 마치지 못한 좌석의 점유를 해제한다. 다시 판매할 수 있게 된다.
+     */
+    public void unreserve() {
+        this.status = SeatStatus.UNRESERVED;
+    }
+
+    public boolean isReserved() {
+        return this.status == SeatStatus.RESERVED;
     }
 }

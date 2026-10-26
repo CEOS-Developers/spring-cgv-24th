@@ -61,4 +61,12 @@ public class Reservation {
         this.price = price;
         this.reservedAt = LocalDateTime.now();
     }
+
+    /***
+     * 함수 기능: 결제를 마치지 못해 예매를 취소 상태로 전이한다.
+     */
+    public void cancel() {
+        this.status = ReservationStatus.CANCELED;
+        this.canceledAt = LocalDateTime.now();
+    }
 }
