@@ -2,6 +2,7 @@ package com.ceos24.spring_cgv.domain.payment.controller;
 
 import com.ceos24.spring_cgv.domain.payment.dto.request.PaymentReadyRequest;
 import com.ceos24.spring_cgv.domain.payment.dto.response.PaymentConfirmResponse;
+import com.ceos24.spring_cgv.domain.payment.dto.response.PaymentInfoResponse;
 import com.ceos24.spring_cgv.domain.payment.dto.response.PaymentReadyResponse;
 import com.ceos24.spring_cgv.domain.payment.exception.code.PaymentSuccessCode;
 import com.ceos24.spring_cgv.domain.payment.service.PaymentService;
@@ -14,6 +15,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -72,5 +74,18 @@ public class PaymentController {
         paymentService.fail(code, message, orderId);
 
         return ApiResponse.onSuccess(PaymentSuccessCode.PAYMENT_FAILED);
+    }
+
+    @Operation(summary = "완료된 결제 단건 조회",
+            description = "승인이 완료된 결제 1건의 정보를 조회합니다.")
+    @GetMapping("/{paymentId}")
+    public ApiResponse<PaymentInfoResponse> findPayment(
+            @AuthenticationPrincipal CustomUserDetails userDetails,
+            @PathVariable Long paymentId
+    ) {
+
+        return ApiResponse.onSuccess(
+                PaymentSuccessCode.PAYMENT_FETCHED,
+                paymentService.findPayment(userDetails.getMemberId(), paymentId));
     }
 }

@@ -11,10 +11,12 @@ import com.ceos24.spring_cgv.domain.payment.client.TossPaymentClient;
 import com.ceos24.spring_cgv.domain.payment.dto.SeatPosition;
 import com.ceos24.spring_cgv.domain.payment.dto.request.PaymentReadyRequest;
 import com.ceos24.spring_cgv.domain.payment.dto.response.PaymentConfirmResponse;
+import com.ceos24.spring_cgv.domain.payment.dto.response.PaymentInfoResponse;
 import com.ceos24.spring_cgv.domain.payment.dto.response.PaymentReadyResponse;
 import com.ceos24.spring_cgv.domain.payment.client.dto.TossPaymentConfirmResponse;
 import com.ceos24.spring_cgv.domain.payment.entity.Payment;
 import com.ceos24.spring_cgv.domain.payment.entity.PaymentSeat;
+import com.ceos24.spring_cgv.domain.payment.enums.PaymentStatus;
 import com.ceos24.spring_cgv.domain.payment.enums.TossPaymentMethod;
 import com.ceos24.spring_cgv.domain.payment.exception.PaymentException;
 import com.ceos24.spring_cgv.domain.payment.exception.code.PaymentErrorCode;
@@ -202,6 +204,17 @@ public class PaymentService {
     }
 
     /***
+     * 함수 기능: 승인 완료된 결제 1건을 조회한다. 본인이 결제한 건만 조회할 수 있다.
+     * @param memberId 조회를 요청한 회원 식별자
+     * @param paymentId 조회할 결제 식별자
+     * @return PaymentInfoResponse 주문 정보, 결제 금액/수단/상태, 요청·승인 시각, 예매 ID
+     */
+    public PaymentInfoResponse findPayment(Long memberId, Long paymentId) {
+
+        return PaymentInfoResponse.from(findDonePayment(memberId, paymentId));
+    }
+
+    /***
      * 함수 기능: 결제 좌석 스냅샷을 예매 생성 입력으로 변환한다.
      *          ReservationService가 결제 도메인을 모르게 하려고 여기서 변환한다.
      * @param paymentSeats 결제 시점에 기록한 좌석 스냅샷
@@ -300,5 +313,10 @@ public class PaymentService {
     private Member getMember(Long memberId) {
         return memberRepository.findById(memberId)
                 .orElseThrow(() -> new MemberException(MemberErrorCode.MEMBER_NOT_FOUND));
+    }
+
+    private Payment findDonePayment(Long memberId, Long paymentId) {
+        return paymentRepository.findByIdAndMemberIdAndStatus(paymentId, memberId, PaymentStatus.DONE)
+                .orElseThrow(() -> new PaymentException(PaymentErrorCode.PAYMENT_NOT_FOUND));
     }
 }

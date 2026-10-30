@@ -16,6 +16,7 @@ public enum PaymentErrorCode implements BaseErrorCode {
     PAYMENT_METHOD_NOT_SUPPORTED(HttpStatus.BAD_REQUEST, "PAYMENT400_5", "지원하지 않는 결제 수단입니다."),
     PAYMENT_SCREENING_NOT_FOUND(HttpStatus.NOT_FOUND, "PAYMENT404_1", "해당 상영회차를 찾을 수 없습니다."),
     PAYMENT_ORDER_NOT_FOUND(HttpStatus.NOT_FOUND, "PAYMENT404_2", "해당 주문을 찾을 수 없습니다."),
+    PAYMENT_NOT_FOUND(HttpStatus.NOT_FOUND, "PAYMENT404_3", "완료된 결제를 찾을 수 없습니다."),
     PAYMENT_SEAT_ALREADY_TAKEN(HttpStatus.CONFLICT, "PAYMENT409_1", "이미 예매된 좌석입니다."),
     PAYMENT_SEAT_ALREADY_HELD(HttpStatus.CONFLICT, "PAYMENT409_2", "다른 고객이 결제 중인 좌석입니다."),
     PAYMENT_CONFIRM_FAILED(HttpStatus.BAD_GATEWAY, "PAYMENT502_1", "결제 승인에 실패했습니다."),
