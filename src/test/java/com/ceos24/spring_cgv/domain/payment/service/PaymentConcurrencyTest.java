@@ -195,7 +195,7 @@ class PaymentConcurrencyTest {
 
         // 좌석 하나에 RESERVED 행이 2개 이상 생겼다면 동시성 문제가 재현된 것이다.
         // 해결편에서 락이나 유니크 제약을 적용한 뒤에는 이 단정을 isEqualTo(1)로 바꾸면 회귀 테스트가 된다.
-        assertThat(reservedCount).isGreaterThan(1);
+        assertThat(reservedCount).isEqualTo(1);
     }
 
     /***

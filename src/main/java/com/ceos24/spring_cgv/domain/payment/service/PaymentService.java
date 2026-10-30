@@ -20,6 +20,7 @@ import com.ceos24.spring_cgv.domain.payment.exception.PaymentException;
 import com.ceos24.spring_cgv.domain.payment.exception.code.PaymentErrorCode;
 import com.ceos24.spring_cgv.domain.payment.repository.PaymentRepository;
 import com.ceos24.spring_cgv.domain.payment.repository.PaymentSeatRepository;
+import com.ceos24.spring_cgv.domain.payment.repository.SeatHoldRepository;
 import com.ceos24.spring_cgv.domain.reservation.dto.ReservationSeatCommand;
 import com.ceos24.spring_cgv.domain.reservation.entity.Reservation;
 import com.ceos24.spring_cgv.domain.reservation.entity.ReservationSeat;
@@ -44,8 +45,7 @@ public class PaymentService {
 
     private final PaymentRepository paymentRepository;
     private final PaymentSeatRepository paymentSeatRepository;
-    // 동시성 문제를 유발시키기 위해 주석 처리 (되살릴 때 SeatHoldRepository import도 함께 추가해야 한다)
-//    private final SeatHoldRepository seatHoldRepository;
+    private final SeatHoldRepository seatHoldRepository;
     private final MemberRepository memberRepository;
     private final ScreeningRepository screeningRepository;
     private final ReservationSeatRepository reservationSeatRepository;
@@ -58,7 +58,7 @@ public class PaymentService {
     /***
      * 함수 기능: 결제 요청 정보를 사전 등록한다. 좌석 재고를 검증하고 좌석을 점유(RESERVED)한 뒤
      *          주문 번호를 생성하여 토스 결제창에 필요한 정보를 반환한다.
-     *          동시성 제어가 없는 상태이므로 같은 좌석에 대한 동시 요청이 모두 통과한다.
+     *          결제창 체류 중에는 Redis 선점(SETNX)이 같은 좌석의 동시 요청을 막는다.
      * @param memberId 결제를 요청한 회원 식별자
      * @param request 상영회차 ID와 선택한 좌석 목록
      * @return PaymentReadyResponse 주문 번호, 결제 금액, 주문명, 구매자 이름
@@ -84,33 +84,26 @@ public class PaymentService {
         // 요청받은 좌석이 해당 상영관에 유효한지 검증한다. (GENERAL, SPECIAL)
         validateSeatPositions(seatPositions, screening.getScreen().getScreenType());
 
-        // 요청받은 좌석이 이미 점유된 좌석이 아님을 검증한다.
-        // 동시성 제어가 없으므로 같은 좌석에 대한 동시 요청은 둘 다 이 검증을 통과한다.
+        // 결제가 확정된 좌석이 아님을 검증한다.
         validateSeatsNotReserved(seatPositions, screening.getId());
 
         // orderId (토스페이먼츠에 전달한 주문번호 생성)
         String orderId = ORDER_ID_PREFIX + UUID.randomUUID().toString().substring(0, 8);
 
         // 결제가 끝날 때까지 좌석을 잡아둔다. 실패하면 다른 고객이 결제 중인 좌석이다.
-        // 동시성 문제를 유발시키기 위해 주석 처리
-//        if (!seatHoldRepository.hold(screening.getId(), seatPositions, orderId)) {
-//            throw new PaymentException(PaymentErrorCode.PAYMENT_SEAT_ALREADY_HELD);
-//        }
+        if (!seatHoldRepository.hold(screening.getId(), seatPositions, orderId)) {
+            throw new PaymentException(PaymentErrorCode.PAYMENT_SEAT_ALREADY_HELD);
+        }
 
         // 좌석 1석의 기본 요금 (상영 회차에 대한 요금 + 상영관에 대한 요금)
         int seatBasePrice = calculateSeatBasePrice(screening);
         // 총 요금 (좌석 1석의 요금과 연령대별 요금 고려)
         int totalAmount = calculateTotalAmount(request.seats(), seatBasePrice);
 
-        // 결제창으로 넘어가기 전에 좌석을 점유(RESERVED)한다. 결제를 마치지 못하면 UNRESERVED로 되돌린다.
-        Reservation reservation = reservationService.reserve(
-                member, screening, totalAmount, toSeatCommands(request.seats(), seatBasePrice));
-
         // Payment 객체를 DB에 저장한다. (추후 토스페이먼츠 결제 승인을 보내고 받은 응답으로 orderId, orderName, amount를 검증하기 위해)
         Payment payment = paymentRepository.save(Payment.builder()
                 .member(member)
                 .screening(screening)
-                .reservation(reservation)
                 .orderId(orderId)
                 .orderName(screening.getMovie().getTitle() + " " + request.seats().size() + "석") // ex) 오디세우스 2석
                 .totalAmount(totalAmount)
@@ -127,14 +120,14 @@ public class PaymentService {
                         .build())
                 .toList());
 
-        log.info("[결제 요청 등록] memberId={}, orderId={}, reservationId={}, amount={}",
-                memberId, orderId, reservation.getId(), totalAmount);
+        log.info("[결제 요청 등록] memberId={}, orderId={}, amount={}",
+                memberId, orderId, totalAmount);
 
         return PaymentReadyResponse.from(payment);
     }
 
     /***
-     * 함수 기능: ready에서 점유한 좌석이 아직 내 것인지 확인하고 토스에 결제 승인을 요청한다.
+     * 함수 기능: 좌석을 확정하여 예매를 생성하고 토스에 결제 승인을 요청한다.
      * @param paymentKey 토스가 발급한 결제 키
      * @param orderId 서버가 생성한 주문 번호
      * @param amount 토스가 리다이렉트 파라미터로 보낸 금액 (대조용으로만 쓴다)
@@ -154,10 +147,15 @@ public class PaymentService {
         }
 
         List<PaymentSeat> paymentSeats = paymentSeatRepository.findAllByPaymentId(payment.getId());
-        Reservation reservation = payment.getReservation();
 
-        // ready에서 점유한 좌석을 그대로 들고 있는지 확인한다.
-        validateSeatsStillReserved(reservation, paymentSeats.size());
+        // 좌석 예매를 확정하여 DB에 저장한다.
+        Reservation reservation = reservationService.reserve(
+                payment.getMember(),
+                payment.getScreening(),
+                payment.getTotalAmount(),
+                toSeatCommands(paymentSeats));
+
+        payment.linkReservation(reservation);
 
         // 좌석을 확보한 뒤 토스에 결제 승인 요청을 보낸다.
         TossPaymentConfirmResponse result =
@@ -168,6 +166,9 @@ public class PaymentService {
                 TossPaymentMethod.from(result.method()),
                 result.approvedAt().toLocalDateTime(),
                 result.lastTransactionKey());
+
+        // 좌석이 reservation_seat에 확정됐으므로 선점은 더 이상 필요 없다.
+        seatHoldRepository.release(payment.getScreening().getId(), toSeatPositions(paymentSeats));
 
         log.info("[결제 승인 완료] orderId={}, reservationId={}, amount={}",
                 orderId, reservation.getId(), payment.getTotalAmount());
@@ -190,29 +191,42 @@ public class PaymentService {
             return;
         }
 
-        // 결제를 마치지 못했으므로 ready에서 점유한 좌석을 UNRESERVED로 되돌린다.
+        // 결제를 마치지 못했으므로 ready에서 잡아둔 선점을 풀어 다른 고객이 살 수 있게 한다.
+        // 예매는 confirm에서야 만들어지므로 이 시점에는 되돌릴 reservation_seat 행이 없다.
         paymentRepository.findByOrderId(orderId).ifPresent(payment -> {
             payment.abort();
-            reservationService.release(payment.getReservation());
+
+            List<PaymentSeat> paymentSeats = paymentSeatRepository.findAllByPaymentId(payment.getId());
+            seatHoldRepository.release(payment.getScreening().getId(), toSeatPositions(paymentSeats));
         });
     }
 
     /***
-     * 함수 기능: 결제 요청의 좌석을 예매 좌석 점유 입력으로 변환한다.
+     * 함수 기능: 결제 좌석 스냅샷을 예매 생성 입력으로 변환한다.
      *          ReservationService가 결제 도메인을 모르게 하려고 여기서 변환한다.
-     * @param seats 요청한 좌석 목록
-     * @param seatBasePrice 좌석 1석의 기본 금액
+     * @param paymentSeats 결제 시점에 기록한 좌석 스냅샷
      * @return 예매 좌석 생성 명령 목록
      */
-    private List<ReservationSeatCommand> toSeatCommands(
-            List<PaymentReadyRequest.SeatRequest> seats, int seatBasePrice) {
+    private List<ReservationSeatCommand> toSeatCommands(List<PaymentSeat> paymentSeats) {
 
-        return seats.stream()
+        return paymentSeats.stream()
                 .map(seat -> new ReservationSeatCommand(
-                        seat.seatRow(),
-                        seat.seatNumber(),
-                        seat.ageGroup(),
-                        seatBasePrice + seat.ageGroup().getAdjustment()))
+                        seat.getSeatRow(),
+                        seat.getSeatNumber(),
+                        seat.getAgeGroup(),
+                        seat.getPrice()))
+                .toList();
+    }
+
+    /***
+     * 함수 기능: 결제 좌석 스냅샷을 Redis 선점 해제에 필요한 좌표 목록으로 변환한다.
+     * @param paymentSeats 결제 시점에 기록한 좌석 스냅샷
+     * @return 좌석 좌표 목록
+     */
+    private List<SeatPosition> toSeatPositions(List<PaymentSeat> paymentSeats) {
+
+        return paymentSeats.stream()
+                .map(seat -> new SeatPosition(seat.getSeatRow(), seat.getSeatNumber()))
                 .toList();
     }
 
@@ -253,27 +267,6 @@ public class PaymentService {
 
         // 만약, 요청한 좌석 좌표 목록이 reserved 목록에 있다면 -> 예외를 반환한다.
         if (seats.stream().anyMatch(reserved::contains)) {
-            throw new PaymentException(PaymentErrorCode.PAYMENT_SEAT_ALREADY_TAKEN);
-        }
-    }
-
-    /***
-     * 함수 기능: ready에서 점유한 좌석을 그대로 들고 있는지 검사한다.
-     *          좌석 행이 다른 예매에 넘어갔으면 개수가 줄어들거나 점유가 풀려 있다.
-     * @param reservation 결제에 연결된 예매
-     * @param expectedSeatCount 결제 시점에 점유한 좌석 수
-     */
-    private void validateSeatsStillReserved(Reservation reservation, int expectedSeatCount) {
-
-        List<ReservationSeat> seatRows =
-                reservationSeatRepository.findAllByReservationId(reservation.getId());
-
-        boolean lost = seatRows.size() != expectedSeatCount
-                || !seatRows.stream().allMatch(ReservationSeat::isReserved);
-
-        if (lost) {
-            log.warn("[좌석 점유 상실] reservationId={}, 기대 좌석 수={}, 보유 좌석 수={}",
-                    reservation.getId(), expectedSeatCount, seatRows.size());
             throw new PaymentException(PaymentErrorCode.PAYMENT_SEAT_ALREADY_TAKEN);
         }
     }

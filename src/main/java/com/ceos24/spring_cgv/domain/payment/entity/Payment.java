@@ -43,8 +43,9 @@ public class Payment {
     @JoinColumn(name = "screening_id", nullable = false)
     private Screening screening;
 
+    // 예매는 결제 승인(confirm) 시점에 확정되므로, 결제 요청 시점에는 아직 비어 있다.
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "reservation_id", nullable = false)
+    @JoinColumn(name = "reservation_id")
     private Reservation reservation;
 
     @Column(name = "order_id", length = 64, nullable = false)
@@ -83,17 +84,24 @@ public class Payment {
     private String lastTransactionKey; // 마지막 거래의 키 값
 
     @Builder
-    private Payment(Member member, Screening screening, Reservation reservation,
+    private Payment(Member member, Screening screening,
                     String orderId, String orderName, Integer totalAmount) {
         this.member = member;
         this.screening = screening;
-        this.reservation = reservation;
         this.orderId = orderId;
         this.orderName = orderName;
         this.totalAmount = totalAmount;
         this.orderType = OrderType.SCREENING;
         this.status = PaymentStatus.READY;
         this.requestedAt = LocalDateTime.now();
+    }
+
+    /***
+     * 함수 기능: 확정된 예매를 결제에 연결한다. 결제 승인 과정에서 좌석을 확정한 직후 호출한다.
+     * @param reservation 이 결제로 확정된 예매
+     */
+    public void linkReservation(Reservation reservation) {
+        this.reservation = reservation;
     }
 
     /***
