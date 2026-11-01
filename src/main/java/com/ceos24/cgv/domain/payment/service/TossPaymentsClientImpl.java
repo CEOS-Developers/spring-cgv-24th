@@ -23,12 +23,20 @@ public class TossPaymentsClientImpl implements TossPaymentsClient {
     private final ObjectMapper objectMapper;
 
     @Override
-    public TossPaymentResponse confirm(TossConfirmRequest request) {
-        log.info("Requesting Toss payment confirm: orderId={}, amount={}", request.orderId(), request.amount());
-        return tossRestClient
-                .post()
-                .uri("/v1/payments/confirm")
-                .body(request)
+    public TossPaymentResponse confirm(TossConfirmRequest request, String idempotencyKey) {
+        log.info(
+                "Requesting Toss payment confirm: orderId={}, amount={}, idempotencyKey={}",
+                request.orderId(),
+                request.amount(),
+                idempotencyKey);
+        RestClient.RequestBodySpec requestSpec =
+                tossRestClient.post().uri("/v1/payments/confirm").body(request);
+
+        if (idempotencyKey != null && !idempotencyKey.isBlank()) {
+            requestSpec.header("Idempotency-Key", idempotencyKey);
+        }
+
+        return requestSpec
                 .retrieve()
                 .onStatus(HttpStatusCode::isError, (req, res) -> handleTossError(res))
                 .body(TossPaymentResponse.class);
@@ -46,12 +54,22 @@ public class TossPaymentsClientImpl implements TossPaymentsClient {
     }
 
     @Override
-    public TossPaymentResponse cancel(String paymentKey, TossCancelRequest request) {
-        log.info("Requesting Toss payment cancel: paymentKey={}, cancelAmount={}", paymentKey, request.cancelAmount());
-        return tossRestClient
+    public TossPaymentResponse cancel(String paymentKey, TossCancelRequest request, String idempotencyKey) {
+        log.info(
+                "Requesting Toss payment cancel: paymentKey={}, cancelAmount={}, idempotencyKey={}",
+                paymentKey,
+                request.cancelAmount(),
+                idempotencyKey);
+        RestClient.RequestBodySpec requestSpec = tossRestClient
                 .post()
                 .uri("/v1/payments/{paymentKey}/cancel", paymentKey)
-                .body(request)
+                .body(request);
+
+        if (idempotencyKey != null && !idempotencyKey.isBlank()) {
+            requestSpec.header("Idempotency-Key", idempotencyKey);
+        }
+
+        return requestSpec
                 .retrieve()
                 .onStatus(HttpStatusCode::isError, (req, res) -> handleTossError(res))
                 .body(TossPaymentResponse.class);

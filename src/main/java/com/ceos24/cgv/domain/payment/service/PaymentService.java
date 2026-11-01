@@ -12,7 +12,9 @@ import com.ceos24.cgv.domain.payment.dto.TossCancelRequest;
 import com.ceos24.cgv.domain.payment.dto.TossConfirmRequest;
 import com.ceos24.cgv.domain.payment.dto.TossPaymentResponse;
 import com.ceos24.cgv.domain.payment.entity.Payment;
+import com.ceos24.cgv.domain.payment.entity.PaymentCancelHistory;
 import com.ceos24.cgv.domain.payment.entity.PaymentStatus;
+import com.ceos24.cgv.domain.payment.repository.PaymentCancelHistoryRepository;
 import com.ceos24.cgv.domain.payment.repository.PaymentRepository;
 import com.ceos24.cgv.global.exception.BusinessException;
 import com.ceos24.cgv.global.exception.ErrorCode;
@@ -31,6 +33,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class PaymentService {
 
     private final PaymentRepository paymentRepository;
+    private final PaymentCancelHistoryRepository paymentCancelHistoryRepository;
     private final OrderRepository orderRepository;
     private final TossPaymentsClient tossPaymentsClient;
 
@@ -70,13 +73,32 @@ public class PaymentService {
                 .findByOrderId(request.orderId())
                 .orElseThrow(() -> new BusinessException(ErrorCode.PAYMENT_NOT_FOUND));
 
-        // 2. 중복 승인 방어 (상태 검증: READY 상태에서만 승인 가능)
+        // 2. 이미 결제 완료(DONE) 상태인 경우 멱등 반환 처리 (네트워크 재시도, 중복 호출 안전 보장)
+        if (payment.getStatus() == PaymentStatus.DONE) {
+            // 위변조 검증: 파라미터(amount, paymentKey) 일치 확인
+            if (!payment.getTotalAmount().equals(request.amount())
+                    || (payment.getPaymentKey() != null
+                            && !payment.getPaymentKey().equals(request.paymentKey()))) {
+                log.error(
+                        "이미 승인 완료된 결제에 대한 위변조 파라미터 재요청 감지: orderId={}, DB amount={}, req amount={}, DB key={}, req key={}",
+                        request.orderId(),
+                        payment.getTotalAmount(),
+                        request.amount(),
+                        payment.getPaymentKey(),
+                        request.paymentKey());
+                throw new BusinessException(ErrorCode.PAYMENT_AMOUNT_MISMATCH, "이미 승인 완료된 결제의 정보와 일치하지 않습니다.");
+            }
+            log.info("결제 승인 멱등성 응답 (Idempotent OK): 이미 승인 완료된 요청입니다. (orderId={})", request.orderId());
+            return PaymentResponse.from(payment);
+        }
+
+        // 3. 중복 승인 방어 (상태 검증: READY 상태에서만 최초 승인 가능)
         if (payment.getStatus() != PaymentStatus.READY) {
-            log.warn("결제 승인 거절: 이미 처리된 결제입니다. orderId={}, status={}", request.orderId(), payment.getStatus());
+            log.warn("결제 승인 거절: 처리할 수 없는 결제 상태입니다. orderId={}, status={}", request.orderId(), payment.getStatus());
             throw new BusinessException(ErrorCode.PAYMENT_ALREADY_PROCESSED);
         }
 
-        // 3. 1원 단위 금액 무결성 검증 (위변조 차단)
+        // 4. 1원 단위 금액 무결성 검증 (위변조 차단)
         if (!payment.getTotalAmount().equals(request.amount())) {
             log.error(
                     "결제 금액 위변조 감지! DB 금액: {}원, 요청 금액: {}원 (orderId={})",
@@ -86,18 +108,19 @@ public class PaymentService {
             throw new BusinessException(ErrorCode.PAYMENT_AMOUNT_MISMATCH);
         }
 
-        // 4. 모든 무결성 검증 통과 후 비로소 토스페이먼츠 승인 API 호출
+        // 5. 모든 무결성 검증 통과 후 비로소 토스페이먼츠 승인 API 호출 (orderId를 Idempotency-Key로 주입)
         TossPaymentResponse tossResponse;
         try {
             tossResponse = tossPaymentsClient.confirm(
-                    new TossConfirmRequest(request.paymentKey(), request.orderId(), request.amount()));
+                    new TossConfirmRequest(request.paymentKey(), request.orderId(), request.amount()),
+                    request.orderId());
         } catch (Exception e) {
             log.error("토스 결제 승인 API 호출 실패: orderId={}, error={}", request.orderId(), e.getMessage());
             payment.abort();
             throw e;
         }
 
-        // 5. 승인 성공 시 결제 정보(paymentKey, method, approvedAt) DB 영속화 및 상태 DONE 전이
+        // 6. 승인 성공 시 결제 정보(paymentKey, method, approvedAt) DB 영속화 및 상태 DONE 전이
         LocalDateTime approvedAt = tossResponse.approvedAt() != null
                 ? OffsetDateTime.parse(tossResponse.approvedAt()).toLocalDateTime()
                 : LocalDateTime.now();
@@ -121,7 +144,19 @@ public class PaymentService {
                 .findByPaymentKey(paymentKey)
                 .orElseThrow(() -> new BusinessException(ErrorCode.PAYMENT_NOT_FOUND));
 
-        // 2. 이미 전액 취소된 결제 재취소 차단
+        // 2. 취소 멱등성 검증 (cancelRequestId가 주어졌을 때 이미 처리된 취소인지 확인)
+        if (request.cancelRequestId() != null && !request.cancelRequestId().isBlank()) {
+            Optional<PaymentCancelHistory> existingCancel =
+                    paymentCancelHistoryRepository.findByCancelRequestId(request.cancelRequestId());
+            if (existingCancel.isPresent()) {
+                log.info(
+                        "결제 취소 멱등성 응답 (Idempotent OK): 이미 처리된 취소 요청입니다. (cancelRequestId={})",
+                        request.cancelRequestId());
+                return PaymentResponse.from(payment);
+            }
+        }
+
+        // 3. 이미 전액 취소된 결제 재취소 차단
         if (payment.getStatus() == PaymentStatus.CANCELED) {
             throw new BusinessException(ErrorCode.PAYMENT_ALREADY_CANCELED);
         }
@@ -131,7 +166,7 @@ public class PaymentService {
         String itemName = "전체 취소";
         Long cancelAmount;
 
-        // 3. 품목 기반 부분 취소인 경우 vs 전체/금액 기반 취소인 경우
+        // 4. 품목 기반 부분 취소인 경우 vs 전체/금액 기반 취소인 경우
         if (request.orderItemId() != null) {
             targetItem = payment.getOrder().getOrderItems().stream()
                     .filter(oi -> oi.getId().equals(request.orderItemId()))
@@ -156,22 +191,30 @@ public class PaymentService {
             }
         }
 
-        // 4. 결제 잔액 초과 검증
+        // 5. 결제 잔액 초과 검증
         if (cancelAmount > payment.getBalanceAmount()) {
             throw new BusinessException(ErrorCode.PAYMENT_CANCEL_AMOUNT_EXCEEDED);
         }
 
-        // 5. 토스페이먼츠 취소 API 호출
+        // 6. 토스페이먼츠 취소 API 호출 (cancelRequestId를 Idempotency-Key로 주입)
         try {
-            tossPaymentsClient.cancel(paymentKey, new TossCancelRequest(request.cancelReason(), cancelAmount));
+            tossPaymentsClient.cancel(
+                    paymentKey, new TossCancelRequest(request.cancelReason(), cancelAmount), request.cancelRequestId());
         } catch (Exception e) {
             log.error(
                     "토스 결제 취소 API 호출 실패: paymentKey={}, amount={}, error={}", paymentKey, cancelAmount, e.getMessage());
             throw e;
         }
 
-        // 6. 도메인 잔액 차감 & 상태 전이 & 취소 이력 영속화
-        payment.cancel(targetItem, cancelQty, itemName, cancelAmount, request.cancelReason(), LocalDateTime.now());
+        // 7. 도메인 잔액 차감 & 상태 전이 & 취소 이력(cancelRequestId 포함) 영속화
+        payment.cancel(
+                request.cancelRequestId(),
+                targetItem,
+                cancelQty,
+                itemName,
+                cancelAmount,
+                request.cancelReason(),
+                LocalDateTime.now());
 
         return PaymentResponse.from(payment);
     }

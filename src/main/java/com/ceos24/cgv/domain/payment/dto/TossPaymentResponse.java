@@ -15,6 +15,18 @@ public record TossPaymentResponse(
         String requestedAt,
         List<TossCancel> cancels,
         TossCard card) {
+
+    public TossPaymentResponse(
+            String paymentKey,
+            String orderId,
+            String status,
+            String method,
+            Long totalAmount,
+            Long balanceAmount,
+            String approvedAt) {
+        this(paymentKey, orderId, status, method, totalAmount, balanceAmount, approvedAt, null, null, null);
+    }
+
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record TossCancel(
             Long cancelAmount, String cancelReason, Long refundableAmount, String canceledAt, String transactionKey) {}

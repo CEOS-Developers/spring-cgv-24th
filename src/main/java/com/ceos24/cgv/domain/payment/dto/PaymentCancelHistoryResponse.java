@@ -5,6 +5,7 @@ import java.time.LocalDateTime;
 
 public record PaymentCancelHistoryResponse(
         Long id,
+        String cancelRequestId,
         Long cancelAmount,
         String cancelReason,
         LocalDateTime canceledAt,
@@ -15,6 +16,7 @@ public record PaymentCancelHistoryResponse(
     public static PaymentCancelHistoryResponse from(PaymentCancelHistory history) {
         return new PaymentCancelHistoryResponse(
                 history.getId(),
+                history.getCancelRequestId(),
                 history.getCancelAmount(),
                 history.getCancelReason(),
                 history.getCanceledAt(),

@@ -6,9 +6,17 @@ import com.ceos24.cgv.domain.payment.dto.TossPaymentResponse;
 
 public interface TossPaymentsClient {
 
-    TossPaymentResponse confirm(TossConfirmRequest request);
+    default TossPaymentResponse confirm(TossConfirmRequest request) {
+        return confirm(request, request != null ? request.orderId() : null);
+    }
+
+    TossPaymentResponse confirm(TossConfirmRequest request, String idempotencyKey);
 
     TossPaymentResponse getPayment(String paymentKey);
 
-    TossPaymentResponse cancel(String paymentKey, TossCancelRequest request);
+    default TossPaymentResponse cancel(String paymentKey, TossCancelRequest request) {
+        return cancel(paymentKey, request, null);
+    }
+
+    TossPaymentResponse cancel(String paymentKey, TossCancelRequest request, String idempotencyKey);
 }

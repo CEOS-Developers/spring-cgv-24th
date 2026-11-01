@@ -101,10 +101,21 @@ public class Payment {
     }
 
     public void cancel(Long cancelAmount, String cancelReason, LocalDateTime canceledAt) {
-        cancel(null, null, null, cancelAmount, cancelReason, canceledAt);
+        cancel(null, null, null, null, cancelAmount, cancelReason, canceledAt);
     }
 
     public void cancel(
+            OrderItem orderItem,
+            Long cancelQuantity,
+            String itemName,
+            Long cancelAmount,
+            String cancelReason,
+            LocalDateTime canceledAt) {
+        cancel(null, orderItem, cancelQuantity, itemName, cancelAmount, cancelReason, canceledAt);
+    }
+
+    public void cancel(
+            String cancelRequestId,
             OrderItem orderItem,
             Long cancelQuantity,
             String itemName,
@@ -136,7 +147,7 @@ public class Payment {
         }
 
         PaymentCancelHistory cancelHistory = new PaymentCancelHistory(
-                this, orderItem, cancelQuantity, itemName, cancelAmount, cancelReason, canceledAt);
+                this, cancelRequestId, orderItem, cancelQuantity, itemName, cancelAmount, cancelReason, canceledAt);
         this.cancelHistories.add(cancelHistory);
     }
 
