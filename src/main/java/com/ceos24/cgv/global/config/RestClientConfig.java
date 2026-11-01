@@ -1,5 +1,6 @@
 package com.ceos24.cgv.global.config;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Base64;
@@ -12,6 +13,11 @@ import org.springframework.web.client.RestClient;
 
 @Configuration
 public class RestClientConfig {
+
+    @Bean
+    public ObjectMapper objectMapper() {
+        return new ObjectMapper().findAndRegisterModules();
+    }
 
     @Bean
     public RestClient tossRestClient(TossProperties tossProperties) {
