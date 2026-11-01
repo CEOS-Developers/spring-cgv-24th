@@ -31,7 +31,7 @@ public class SeatService {
         Screen screen = screening.getScreen();
         List<Seat> newSeats = new ArrayList<>();
         for (int i = 0; i < screen.getTotalSeats(); i++) {
-            Seat seat = new Seat(screening, (long) i + 1, false);
+            Seat seat = Seat.create(screening, (long) i + 1);
             newSeats.add(seat);
         }
         seatRepository.saveAll(newSeats);

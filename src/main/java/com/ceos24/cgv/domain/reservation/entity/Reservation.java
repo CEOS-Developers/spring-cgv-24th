@@ -13,12 +13,6 @@ import lombok.NoArgsConstructor;
 @Entity
 public class Reservation {
 
-    public Reservation(Member member, Seat seat) {
-        this.member = member;
-        this.seat = seat;
-        createdAt = LocalDateTime.now();
-    }
-
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -32,4 +26,30 @@ public class Reservation {
     private Seat seat;
 
     private LocalDateTime createdAt;
+
+    protected Reservation(Member member, Seat seat) {
+        this.member = member;
+        this.seat = seat;
+        this.createdAt = LocalDateTime.now();
+    }
+
+    public static Reservation create(Member member, Seat seat) {
+        validateReservation(member, seat);
+        return new Reservation(member, seat);
+    }
+
+    private static void validateReservation(Member member, Seat seat) {
+        if (member == null) {
+            throw new IllegalArgumentException("회원 정보는 필수입니다.");
+        }
+        if (seat == null) {
+            throw new IllegalArgumentException("좌석 정보는 필수입니다.");
+        }
+    }
+
+    public void cancel() {
+        if (this.seat != null) {
+            this.seat.cancelReservation();
+        }
+    }
 }

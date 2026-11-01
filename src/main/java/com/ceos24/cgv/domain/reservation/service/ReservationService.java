@@ -22,24 +22,34 @@ public class ReservationService {
 
     @Transactional
     public void reserveSeat(Long memberId, Long screeningId, Long seatNumber) {
-        Seat seat = seatRepository.findByScreeningIdAndSeatNumber(screeningId, seatNumber);
+        Seat seat = findSeat(screeningId, seatNumber);
         seat.reserveSeat();
-        Member member = memberRepository
-                .findById(memberId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.MEMBER_NOT_FOUND));
-        Reservation reservation = new Reservation(member, seat);
+
+        Member member = findMember(memberId);
+        Reservation reservation = Reservation.create(member, seat);
         reservationRepository.save(reservation);
     }
 
     @Transactional
     public void cancelReservation(Long memberId, Long screeningId, Long seatNumber) {
-        Reservation reservation = reservationRepository
+        Reservation reservation = findReservationToCancel(memberId, screeningId, seatNumber);
+        reservation.cancel();
+        reservationRepository.delete(reservation);
+    }
+
+    private Seat findSeat(Long screeningId, Long seatNumber) {
+        return seatRepository
+                .findByScreeningIdAndSeatNumber(screeningId, seatNumber)
+                .orElseThrow(() -> new BusinessException(ErrorCode.SEAT_NOT_FOUND));
+    }
+
+    private Member findMember(Long memberId) {
+        return memberRepository.findById(memberId).orElseThrow(() -> new BusinessException(ErrorCode.MEMBER_NOT_FOUND));
+    }
+
+    private Reservation findReservationToCancel(Long memberId, Long screeningId, Long seatNumber) {
+        return reservationRepository
                 .findReservationToCancel(memberId, screeningId, seatNumber)
                 .orElseThrow(() -> new BusinessException(ErrorCode.RESERVATION_NOT_FOUND));
-
-        Seat seat = reservation.getSeat();
-        seat.cancelReservation();
-
-        reservationRepository.delete(reservation);
     }
 }

@@ -49,12 +49,12 @@ class ReservationServiceTest {
         Long seatNumber = 10L;
 
         Screening screening = new Screening(null, null, null, null);
-        Seat seat = new Seat(screening, seatNumber, false);
+        Seat seat = Seat.create(screening, seatNumber);
         Member member = mock(Member.class);
         lenient().when(member.getId()).thenReturn(memberId);
 
         given(seatRepository.findByScreeningIdAndSeatNumber(screeningId, seatNumber))
-                .willReturn(seat);
+                .willReturn(Optional.of(seat));
         given(memberRepository.findById(memberId)).willReturn(Optional.of(member));
 
         // when
@@ -66,6 +66,23 @@ class ReservationServiceTest {
     }
 
     @Test
+    @DisplayName("reserveSeat: 좌석이 존재하지 않을 때 예외 발생")
+    void reserveSeat_SeatNotFound() {
+        // given
+        Long memberId = 1L;
+        Long screeningId = 1L;
+        Long seatNumber = 10L;
+
+        given(seatRepository.findByScreeningIdAndSeatNumber(screeningId, seatNumber))
+                .willReturn(Optional.empty());
+
+        // when & then
+        assertThatThrownBy(() -> reservationService.reserveSeat(memberId, screeningId, seatNumber))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.SEAT_NOT_FOUND);
+    }
+
+    @Test
     @DisplayName("reserveSeat: 회원이 존재하지 않을 때 예외 발생")
     void reserveSeat_MemberNotFound() {
         // given
@@ -74,10 +91,10 @@ class ReservationServiceTest {
         Long seatNumber = 10L;
 
         Screening screening = new Screening(null, null, null, null);
-        Seat seat = new Seat(screening, seatNumber, false);
+        Seat seat = Seat.create(screening, seatNumber);
 
         given(seatRepository.findByScreeningIdAndSeatNumber(screeningId, seatNumber))
-                .willReturn(seat);
+                .willReturn(Optional.of(seat));
         given(memberRepository.findById(memberId)).willReturn(Optional.empty());
 
         // when & then
@@ -95,11 +112,12 @@ class ReservationServiceTest {
         Long seatNumber = 10L;
 
         Screening screening = new Screening(null, null, null, null);
-        Seat seat = new Seat(screening, seatNumber, true);
+        Seat seat = Seat.create(screening, seatNumber);
+        seat.reserveSeat(); // 예약된 상태로 설정
         Member member = mock(Member.class);
         lenient().when(member.getId()).thenReturn(memberId);
 
-        Reservation reservation = new Reservation(member, seat);
+        Reservation reservation = Reservation.create(member, seat);
 
         given(reservationRepository.findReservationToCancel(memberId, screeningId, seatNumber))
                 .willReturn(Optional.of(reservation));
