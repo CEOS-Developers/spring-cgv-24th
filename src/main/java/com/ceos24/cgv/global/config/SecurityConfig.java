@@ -71,6 +71,8 @@ public class SecurityConfig {
                         .accessDeniedHandler(jwtAccessDeniedHandler))
                 .authorizeHttpRequests(auth -> auth.requestMatchers("/api/auth/**")
                         .permitAll()
+                        .requestMatchers("/api/payments/**")
+                        .permitAll() // 결제 API 허용
                         .requestMatchers(HttpMethod.GET, "/api/movies")
                         .permitAll() // 전체 영화 조회
                         .requestMatchers(HttpMethod.GET, "/api/screenings/{screeningId}")
