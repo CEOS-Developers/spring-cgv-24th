@@ -29,7 +29,6 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         try {
             if (token != null) {
                 ApiUserDetails userDetails = jwtProvider.getAuthenticationInfo(token);
-
                 UsernamePasswordAuthenticationToken authentication =
                         new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
                 SecurityContext context = SecurityContextHolder.createEmptyContext();

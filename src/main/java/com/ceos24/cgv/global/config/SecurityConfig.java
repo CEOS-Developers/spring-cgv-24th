@@ -89,9 +89,7 @@ public class SecurityConfig {
                         .permitAll() // 매장 정보 조회
                         .anyRequest()
                         .authenticated())
-                .addFilterBefore(
-                        new JwtAuthenticationFilter(jwtProvider, memberRepository),
-                        UsernamePasswordAuthenticationFilter.class);
+                .addFilterBefore(new JwtAuthenticationFilter(jwtProvider), UsernamePasswordAuthenticationFilter.class);
         return http.build();
     }
 

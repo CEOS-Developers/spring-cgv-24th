@@ -42,3 +42,4 @@ secrets.yml
 
 .idea
 schema.sql
+/docs/
