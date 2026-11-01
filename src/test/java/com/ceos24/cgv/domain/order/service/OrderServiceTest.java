@@ -2,8 +2,6 @@ package com.ceos24.cgv.domain.order.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
@@ -14,7 +12,6 @@ import com.ceos24.cgv.domain.member.repository.MemberRepository;
 import com.ceos24.cgv.domain.order.dto.request.CreateOrderRequest;
 import com.ceos24.cgv.domain.order.dto.request.OrderItemRequest;
 import com.ceos24.cgv.domain.order.entity.Order;
-import com.ceos24.cgv.domain.order.repository.OrderItemRepository;
 import com.ceos24.cgv.domain.order.repository.OrderRepository;
 import com.ceos24.cgv.domain.store.entity.Menu;
 import com.ceos24.cgv.domain.store.entity.MenuStock;
@@ -28,6 +25,7 @@ import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -41,9 +39,6 @@ class OrderServiceTest {
 
     @Mock
     private OrderRepository orderRepository;
-
-    @Mock
-    private OrderItemRepository orderItemRepository;
 
     @Mock
     private MemberRepository memberRepository;
@@ -87,8 +82,11 @@ class OrderServiceTest {
 
         // then
         assertEquals(8L, menuStock.getStock());
-        verify(orderRepository).save(any(Order.class));
-        verify(orderItemRepository).saveAll(anyList());
+        ArgumentCaptor<Order> orderCaptor = ArgumentCaptor.forClass(Order.class);
+        verify(orderRepository).save(orderCaptor.capture());
+        Order savedOrder = orderCaptor.getValue();
+        assertEquals(1, savedOrder.getOrderItems().size());
+        assertEquals(10000L, savedOrder.getTotalPrice());
     }
 
     @Test
@@ -165,6 +163,7 @@ class OrderServiceTest {
         Member member = mock(Member.class);
         Store store = new Store(null, "Test Store");
         Menu menu = new Menu("Popcorn", 5000L);
+        ReflectionTestUtils.setField(menu, "id", menuId);
         MenuStock menuStock = new MenuStock(menu, store, 10L);
 
         given(memberRepository.findById(memberId)).willReturn(Optional.of(member));
