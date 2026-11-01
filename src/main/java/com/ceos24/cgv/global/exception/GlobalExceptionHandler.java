@@ -15,7 +15,8 @@ public class GlobalExceptionHandler {
         log.warn("BusinessException: {}", e.getMessage());
         ErrorCode errorCode = e.getErrorCode();
         return ResponseEntity.status(errorCode.getStatus())
-                .body(ApiResponse.error(errorCode.getStatus(), errorCode.getMessage()));
+                .body(ApiResponse.error(
+                        errorCode.getStatus(), e.getMessage() != null ? e.getMessage() : errorCode.getMessage()));
     }
 
     @ExceptionHandler(org.springframework.dao.DataIntegrityViolationException.class)

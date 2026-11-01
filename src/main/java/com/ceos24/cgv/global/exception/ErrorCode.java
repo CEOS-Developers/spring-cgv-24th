@@ -28,6 +28,7 @@ public enum ErrorCode {
     STORE_NOT_FOUND(404, "존재하지 않는 매장입니다."),
     MENU_NOT_FOUND(404, "해당 매장에 존재하지 않는 메뉴입니다."),
     OUT_OF_STOCK(400, "재고가 부족합니다."),
+    ORDER_NOT_FOUND(404, "존재하지 않는 주문입니다."),
 
     // Reservation / Theater / FavoriteTheater
     ALREADY_RESERVED(409, "이미 예매된 좌석입니다."),
@@ -42,7 +43,15 @@ public enum ErrorCode {
     // Movie / FavoriteMovie
     MOVIE_NOT_FOUND(404, "존재하지 않는 영화입니다."),
     FAVORITE_MOVIE_ALREADY_EXIST(409, "이미 찜한 영화입니다."),
-    FAVORITE_MOVIE_NOT_FOUND(404, "찜한 영화가 존재하지 않습니다.");
+    FAVORITE_MOVIE_NOT_FOUND(404, "찜한 영화가 존재하지 않습니다."),
+
+    // Payment
+    PAYMENT_NOT_FOUND(404, "존재하지 않는 결제 정보입니다."),
+    PAYMENT_AMOUNT_MISMATCH(400, "결제 요청 금액이 주문 금액과 일치하지 않습니다."),
+    PAYMENT_ALREADY_PROCESSED(400, "이미 완료되었거나 처리 불가능한 결제입니다."),
+    PAYMENT_CANCEL_AMOUNT_EXCEEDED(400, "취소 요청 금액이 남은 결제 잔액을 초과했습니다."),
+    PAYMENT_ALREADY_CANCELED(400, "이미 전액 취소된 결제입니다."),
+    PAYMENT_GATEWAY_ERROR(502, "외부 결제 대행사(PG) 통신 중 오류가 발생했습니다.");
 
     private final int status;
     private final String message;
