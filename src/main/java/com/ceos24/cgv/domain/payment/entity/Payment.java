@@ -1,6 +1,7 @@
 package com.ceos24.cgv.domain.payment.entity;
 
 import com.ceos24.cgv.domain.order.entity.Order;
+import com.ceos24.cgv.domain.order.entity.OrderItem;
 import com.ceos24.cgv.global.exception.BusinessException;
 import com.ceos24.cgv.global.exception.ErrorCode;
 import jakarta.persistence.*;
@@ -100,6 +101,16 @@ public class Payment {
     }
 
     public void cancel(Long cancelAmount, String cancelReason, LocalDateTime canceledAt) {
+        cancel(null, null, null, cancelAmount, cancelReason, canceledAt);
+    }
+
+    public void cancel(
+            OrderItem orderItem,
+            Long cancelQuantity,
+            String itemName,
+            Long cancelAmount,
+            String cancelReason,
+            LocalDateTime canceledAt) {
         if (this.status == PaymentStatus.CANCELED) {
             throw new BusinessException(ErrorCode.PAYMENT_ALREADY_CANCELED, "이미 전액 취소된 결제입니다.");
         }
@@ -124,7 +135,8 @@ public class Payment {
             this.status = PaymentStatus.PARTIAL_CANCELED;
         }
 
-        PaymentCancelHistory cancelHistory = new PaymentCancelHistory(this, cancelAmount, cancelReason, canceledAt);
+        PaymentCancelHistory cancelHistory = new PaymentCancelHistory(
+                this, orderItem, cancelQuantity, itemName, cancelAmount, cancelReason, canceledAt);
         this.cancelHistories.add(cancelHistory);
     }
 

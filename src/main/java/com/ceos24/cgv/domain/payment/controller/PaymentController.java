@@ -1,5 +1,6 @@
 package com.ceos24.cgv.domain.payment.controller;
 
+import com.ceos24.cgv.domain.payment.dto.PaymentCancelRequest;
 import com.ceos24.cgv.domain.payment.dto.PaymentConfirmRequest;
 import com.ceos24.cgv.domain.payment.dto.PaymentPrepareRequest;
 import com.ceos24.cgv.domain.payment.dto.PaymentPrepareResponse;
@@ -11,6 +12,8 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -36,6 +39,21 @@ public class PaymentController {
     @PostMapping("/confirm")
     public ResponseEntity<ApiResponse<PaymentResponse>> confirmPayment(@RequestBody PaymentConfirmRequest request) {
         PaymentResponse response = paymentService.confirmPayment(request);
+        return ResponseEntity.ok(ApiResponse.success(response));
+    }
+
+    @Operation(summary = "결제 단건 조회", description = "결제 키(paymentKey)를 통해 자체 DB에서 결제 정보 및 품목별 취소 이력을 조회합니다.")
+    @GetMapping("/{paymentKey}")
+    public ResponseEntity<ApiResponse<PaymentResponse>> getPayment(@PathVariable String paymentKey) {
+        PaymentResponse response = paymentService.getPayment(paymentKey);
+        return ResponseEntity.ok(ApiResponse.success(response));
+    }
+
+    @Operation(summary = "결제 취소 (전체 / 품목별 부분 취소)", description = "토스 결제를 전체 또는 품목 단위로 부분 취소하고 남은 잔액을 차감합니다.")
+    @PostMapping("/{paymentKey}/cancel")
+    public ResponseEntity<ApiResponse<PaymentResponse>> cancelPayment(
+            @PathVariable String paymentKey, @RequestBody PaymentCancelRequest request) {
+        PaymentResponse response = paymentService.cancelPayment(paymentKey, request);
         return ResponseEntity.ok(ApiResponse.success(response));
     }
 }

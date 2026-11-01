@@ -29,6 +29,8 @@ public enum ErrorCode {
     MENU_NOT_FOUND(404, "해당 매장에 존재하지 않는 메뉴입니다."),
     OUT_OF_STOCK(400, "재고가 부족합니다."),
     ORDER_NOT_FOUND(404, "존재하지 않는 주문입니다."),
+    ORDER_ITEM_NOT_FOUND(404, "존재하지 않는 주문 품목입니다."),
+    ORDER_ITEM_CANCEL_QUANTITY_EXCEEDED(400, "취소 요청 수량이 남은 주문 수량을 초과했습니다."),
 
     // Reservation / Theater / FavoriteTheater
     ALREADY_RESERVED(409, "이미 예매된 좌석입니다."),

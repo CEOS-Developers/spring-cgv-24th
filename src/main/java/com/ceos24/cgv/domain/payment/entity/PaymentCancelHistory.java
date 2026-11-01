@@ -1,5 +1,6 @@
 package com.ceos24.cgv.domain.payment.entity;
 
+import com.ceos24.cgv.domain.order.entity.OrderItem;
 import jakarta.persistence.*;
 import java.time.LocalDateTime;
 import lombok.AccessLevel;
@@ -20,6 +21,14 @@ public class PaymentCancelHistory {
     @JoinColumn(name = "payment_id", nullable = false)
     private Payment payment;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "order_item_id")
+    private OrderItem orderItem;
+
+    private String itemName;
+
+    private Long cancelQuantity;
+
     @Column(nullable = false)
     private Long cancelAmount;
 
@@ -30,6 +39,17 @@ public class PaymentCancelHistory {
     private LocalDateTime canceledAt;
 
     public PaymentCancelHistory(Payment payment, Long cancelAmount, String cancelReason, LocalDateTime canceledAt) {
+        this(payment, null, null, "전체 취소", cancelAmount, cancelReason, canceledAt);
+    }
+
+    public PaymentCancelHistory(
+            Payment payment,
+            OrderItem orderItem,
+            Long cancelQuantity,
+            String itemName,
+            Long cancelAmount,
+            String cancelReason,
+            LocalDateTime canceledAt) {
         if (payment == null) {
             throw new IllegalArgumentException("결제 정보는 필수입니다.");
         }
@@ -40,6 +60,11 @@ public class PaymentCancelHistory {
             throw new IllegalArgumentException("취소 사유는 필수입니다.");
         }
         this.payment = payment;
+        this.orderItem = orderItem;
+        this.cancelQuantity = cancelQuantity;
+        this.itemName = itemName != null
+                ? itemName
+                : (orderItem != null ? orderItem.getMenu().getName() : "기타 취소");
         this.cancelAmount = cancelAmount;
         this.cancelReason = cancelReason;
         this.canceledAt = canceledAt != null ? canceledAt : LocalDateTime.now();

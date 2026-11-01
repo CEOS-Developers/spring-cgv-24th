@@ -1,11 +1,14 @@
 package com.ceos24.cgv.domain.payment.service;
 
 import com.ceos24.cgv.domain.order.entity.Order;
+import com.ceos24.cgv.domain.order.entity.OrderItem;
 import com.ceos24.cgv.domain.order.repository.OrderRepository;
+import com.ceos24.cgv.domain.payment.dto.PaymentCancelRequest;
 import com.ceos24.cgv.domain.payment.dto.PaymentConfirmRequest;
 import com.ceos24.cgv.domain.payment.dto.PaymentPrepareRequest;
 import com.ceos24.cgv.domain.payment.dto.PaymentPrepareResponse;
 import com.ceos24.cgv.domain.payment.dto.PaymentResponse;
+import com.ceos24.cgv.domain.payment.dto.TossCancelRequest;
 import com.ceos24.cgv.domain.payment.dto.TossConfirmRequest;
 import com.ceos24.cgv.domain.payment.dto.TossPaymentResponse;
 import com.ceos24.cgv.domain.payment.entity.Payment;
@@ -99,6 +102,76 @@ public class PaymentService {
                 ? OffsetDateTime.parse(tossResponse.approvedAt()).toLocalDateTime()
                 : LocalDateTime.now();
         payment.complete(tossResponse.paymentKey(), tossResponse.method(), approvedAt);
+
+        return PaymentResponse.from(payment);
+    }
+
+    @Transactional(readOnly = true)
+    public PaymentResponse getPayment(String paymentKey) {
+        Payment payment = paymentRepository
+                .findByPaymentKey(paymentKey)
+                .orElseThrow(() -> new BusinessException(ErrorCode.PAYMENT_NOT_FOUND));
+        return PaymentResponse.from(payment);
+    }
+
+    @Transactional
+    public PaymentResponse cancelPayment(String paymentKey, PaymentCancelRequest request) {
+        // 1. paymentKey로 결제 조회
+        Payment payment = paymentRepository
+                .findByPaymentKey(paymentKey)
+                .orElseThrow(() -> new BusinessException(ErrorCode.PAYMENT_NOT_FOUND));
+
+        // 2. 이미 전액 취소된 결제 재취소 차단
+        if (payment.getStatus() == PaymentStatus.CANCELED) {
+            throw new BusinessException(ErrorCode.PAYMENT_ALREADY_CANCELED);
+        }
+
+        OrderItem targetItem = null;
+        Long cancelQty = null;
+        String itemName = "전체 취소";
+        Long cancelAmount;
+
+        // 3. 품목 기반 부분 취소인 경우 vs 전체/금액 기반 취소인 경우
+        if (request.orderItemId() != null) {
+            targetItem = payment.getOrder().getOrderItems().stream()
+                    .filter(oi -> oi.getId().equals(request.orderItemId()))
+                    .findFirst()
+                    .orElseThrow(() -> new BusinessException(ErrorCode.ORDER_ITEM_NOT_FOUND));
+
+            cancelQty = request.cancelQuantity() != null ? request.cancelQuantity() : 1L;
+            itemName = targetItem.getMenu().getName();
+
+            // OrderItem 잔여 수량 검증 및 환불 금액 자동 산출
+            cancelAmount = targetItem.cancelQuantity(cancelQty);
+        } else {
+            // orderItemId가 없으면 금액 기반 취소 또는 잔액 전액 취소
+            cancelAmount = request.cancelAmount() != null ? request.cancelAmount() : payment.getBalanceAmount();
+            // 전액 취소 시 모든 품목 잔여 수량도 일괄 취소 처리
+            if (cancelAmount.equals(payment.getBalanceAmount())) {
+                for (OrderItem oi : payment.getOrder().getOrderItems()) {
+                    if (oi.getCancelableQuantity() > 0) {
+                        oi.cancelQuantity(oi.getCancelableQuantity());
+                    }
+                }
+            }
+        }
+
+        // 4. 결제 잔액 초과 검증
+        if (cancelAmount > payment.getBalanceAmount()) {
+            throw new BusinessException(ErrorCode.PAYMENT_CANCEL_AMOUNT_EXCEEDED);
+        }
+
+        // 5. 토스페이먼츠 취소 API 호출
+        try {
+            tossPaymentsClient.cancel(paymentKey, new TossCancelRequest(request.cancelReason(), cancelAmount));
+        } catch (Exception e) {
+            log.error(
+                    "토스 결제 취소 API 호출 실패: paymentKey={}, amount={}, error={}", paymentKey, cancelAmount, e.getMessage());
+            throw e;
+        }
+
+        // 6. 도메인 잔액 차감 & 상태 전이 & 취소 이력 영속화
+        payment.cancel(targetItem, cancelQty, itemName, cancelAmount, request.cancelReason(), LocalDateTime.now());
 
         return PaymentResponse.from(payment);
     }
