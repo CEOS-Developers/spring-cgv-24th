@@ -45,6 +45,11 @@ public class PaymentSeat {
     @Column(name = "price", nullable = false)
     private Integer price;
 
+    // 환불된 좌석은 그 취소 건을 가리킨다. null이면 아직 유효한(환불되지 않은) 좌석이다.
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "payment_cancel_id")
+    private PaymentCancel canceledBy;
+
     @Builder
     private PaymentSeat(Payment payment, Integer seatRow, Integer seatNumber, AgeGroup ageGroup, Integer price) {
         this.payment = payment;
@@ -52,5 +57,17 @@ public class PaymentSeat {
         this.seatNumber = seatNumber;
         this.ageGroup = ageGroup;
         this.price = price;
+    }
+
+    /***
+     * 함수 기능: 이 좌석이 어느 취소 건으로 환불됐는지 기록한다.
+     * @param cancel 이 좌석을 환불한 취소 건
+     */
+    public void markCanceled(PaymentCancel cancel) {
+        this.canceledBy = cancel;
+    }
+
+    public boolean isCanceled() {
+        return this.canceledBy != null;
     }
 }
