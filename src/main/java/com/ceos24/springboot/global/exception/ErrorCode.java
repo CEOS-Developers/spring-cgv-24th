@@ -79,6 +79,16 @@ public enum ErrorCode {
             "결제 만료 시각은 생성 시각보다 이후여야 합니다."
     ),
 
+    RESERVATION_NOT_PAYABLE(
+            HttpStatus.CONFLICT,
+            "현재 상태에서는 해당 예매의 결제를 준비할 수 없습니다."
+    ),
+
+    PAYMENT_NOT_PREPARABLE(
+            HttpStatus.CONFLICT,
+            "기존 결제의 상태 또는 정보로 인해 결제를 준비할 수 없습니다."
+    ),
+
 
     // Authentication & Authorization
     TOKEN_NOT_EXIST(
