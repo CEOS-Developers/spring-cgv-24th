@@ -10,7 +10,9 @@ import com.ceos24.cgv.domain.reservation.exception.ReservationException;
 import com.ceos24.cgv.domain.reservation.repository.ReservationRepository;
 import com.ceos24.cgv.domain.reservation.repository.ReservationSeatRepository;
 import com.ceos24.cgv.domain.screening.entity.Screening;
+import com.ceos24.cgv.domain.screening.entity.ScreeningSeat;
 import com.ceos24.cgv.domain.screening.repository.ScreeningRepository;
+import com.ceos24.cgv.domain.screening.repository.ScreeningSeatRepository;
 import com.ceos24.cgv.domain.theater.entity.Seat;
 import com.ceos24.cgv.domain.theater.repository.SeatRepository;
 import com.ceos24.cgv.domain.user.entity.User;
@@ -36,7 +38,11 @@ public class ReservationService {
     private final ScreeningRepository screeningRepository;
     private final SeatRepository seatRepository;
     private final UserRepository userRepository;
+    private final ScreeningSeatRepository screeningSeatRepository;
 
+    /**
+     * 영화 예매
+     */
     /**
      * 영화 예매
      */
@@ -45,53 +51,51 @@ public class ReservationService {
             Long userId,
             ReservationCreateRequest request
     ) {
-        // 요청한 상영 일정과 좌석 목록을 검증
         validateReservationRequest(request);
 
         User user = getUserOrThrow(userId);
+        Screening screening = getScreeningOrThrow(request.screeningId());
 
-        // 예매할 상영 일정 체크
-        Screening screening =
-                getScreeningOrThrow(request.screeningId());
-
-        // 이미 시작된 상영 일정인지?
         validateScreeningNotStarted(screening);
 
-
-        List<Long> seatIds = request.seatIds()
-                .stream()
+        List<Long> seatIds = request.seatIds().stream()
                 .sorted()
                 .toList();
 
-        // 동시 예매를 방지하기 위해 좌석 -> 비관적 락 처리
-        List<Seat> seats =
-                seatRepository.findAllByIdForUpdate(seatIds);
+        // 물리 좌석 대신 상영 일정별 좌석을 잠가
+        // 다른 상영 일정의 동일 좌석 예매와 경합하지 않도록 한다.
+        List<ScreeningSeat> screeningSeats =
+                screeningSeatRepository.findAllForUpdate(
+                        screening.getId(),
+                        seatIds
+                );
 
+        List<Seat> seats = screeningSeats.stream()
+                .map(ScreeningSeat::getSeat)
+                .toList();
 
+        // 요청한 모든 좌석이 해당 상영 일정에 등록되어 있는지 확인한다.
         validateAllSeatsExist(seatIds, seats);
-
-        // 좌석이 해당 상영 일정의 상영관에 속하는지
         validateSeatsBelongToScreen(screening, seats);
 
-        // 해당 상영 일정에서 이미 예매된 좌석인지
-        validateSeatsNotReserved(
-                screening.getId(),
-                seatIds
-        );
+        // 락 대기 중 상영 시작 시간이 지났을 수 있으므로 다시 확인한다.
+        validateScreeningNotStarted(screening);
 
+        // 잠금을 획득한 최신 점유 상태를 기준으로 중복 예매를 검사한다.
+        validateSeatsNotReserved(screeningSeats);
 
-        Reservation reservation =
-                Reservation.create(user, screening);
+        // 점유 변경과 예매 저장은 같은 트랜잭션에서 처리한다.
+        // 이후 저장에 실패하면 점유 변경도 함께 롤백된다.
+        screeningSeats.forEach(ScreeningSeat::reserve);
 
-        // 상영관 타입의 기본 가격을 좌석 가격으로
+        Reservation reservation = Reservation.create(user, screening);
+
         Integer seatPrice = screening.getScreen()
                 .getScreenType()
                 .getBasePrice();
 
-        // 요청한 좌석을 예매에 추가하고 총 가격을 계산
         for (Seat seat : seats) {
-            ReservationSeat reservationSeat =
-                    ReservationSeat.create(seat);
+            ReservationSeat reservationSeat = ReservationSeat.create(seat);
 
             reservation.addReservationSeat(
                     reservationSeat,
@@ -99,14 +103,14 @@ public class ReservationService {
             );
         }
 
-        // 예매와 예매 좌석을 함께 저장한다.
         Reservation savedReservation =
                 reservationRepository.save(reservation);
 
-        // 저장된 예매를 응답 DTO로 변환한다.
         return ReservationResponse.from(savedReservation);
     }
-
+    /**
+     * 영화 예매 취소
+     */
     /**
      * 영화 예매 취소
      */
@@ -115,28 +119,49 @@ public class ReservationService {
             Long userId,
             Long reservationId
     ) {
-
         User user = getUserOrThrow(userId);
 
-        // 중복 취소를 막기 위해 예매를 비관적 락 처리
-        Reservation reservation =
-                reservationRepository
-                        .findByIdForUpdate(reservationId)
-                        .orElseThrow(() ->
-                                new ReservationException(
-                                        ReservationErrorCode
-                                                .RESERVATION_NOT_FOUND
-                                )
-                        );
+        // 동일 예매의 취소 요청을 직렬화한다.
+        Reservation reservation = reservationRepository
+                .findByIdForUpdate(reservationId)
+                .orElseThrow(() ->
+                        new ReservationException(
+                                ReservationErrorCode.RESERVATION_NOT_FOUND
+                        )
+                );
 
+        validateReservationOwner(reservation, user);
 
-        validateReservationOwner(
-                reservation,
-                user
-        );
-
-        // 이미 취소된 예매인지
+        // 이미 취소된 예매가 재예매된 좌석을 해제하지 않도록
+        // 좌석 점유 해제 전에 예매 상태부터 확인한다.
         validateNotAlreadyCanceled(reservation);
+
+        List<Long> seatIds = reservation.getReservationSeats().stream()
+                .map(reservationSeat -> reservationSeat.getSeat().getId())
+                .sorted()
+                .toList();
+
+        if (seatIds.isEmpty()) {
+            throw new IllegalStateException(
+                    "예매에 연결된 좌석 이력이 없습니다."
+            );
+        }
+
+        // 예매 생성과 동일한 상영 일정별 좌석을 잠근다.
+        List<ScreeningSeat> screeningSeats =
+                screeningSeatRepository.findAllForUpdate(
+                        reservation.getScreening().getId(),
+                        seatIds
+                );
+
+        if (screeningSeats.size() != seatIds.size()) {
+            throw new IllegalStateException(
+                    "예매 좌석 이력과 상영 일정별 좌석 정보가 일치하지 않습니다."
+            );
+        }
+
+        // 좌석 점유만 해제하고 ReservationSeat 이력은 유지한다.
+        screeningSeats.forEach(ScreeningSeat::release);
 
         reservation.cancel();
     }
@@ -207,21 +232,14 @@ public class ReservationService {
     }
 
     private void validateSeatsNotReserved(
-            Long screeningId,
-            List<Long> seatIds
+            List<ScreeningSeat> screeningSeats
     ) {
-        List<Long> reservedSeatIds =
-                reservationSeatRepository
-                        .findReservedSeatIds(
-                                screeningId,
-                                seatIds,
-                                ReservationStatus.RESERVED
-                        );
+        boolean reservedSeatExists = screeningSeats.stream()
+                .anyMatch(ScreeningSeat::isReserved);
 
-        if (!reservedSeatIds.isEmpty()) {
+        if (reservedSeatExists) {
             throw new ReservationException(
-                    ReservationErrorCode
-                            .SEAT_ALREADY_RESERVED
+                    ReservationErrorCode.SEAT_ALREADY_RESERVED
             );
         }
     }
