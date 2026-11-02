@@ -1,6 +1,8 @@
 package com.ceos24.spring_cgv.domain.payment.controller;
 
+import com.ceos24.spring_cgv.domain.payment.dto.request.PaymentCancelRequest;
 import com.ceos24.spring_cgv.domain.payment.dto.request.PaymentReadyRequest;
+import com.ceos24.spring_cgv.domain.payment.dto.response.PaymentCancelResponse;
 import com.ceos24.spring_cgv.domain.payment.dto.response.PaymentConfirmResponse;
 import com.ceos24.spring_cgv.domain.payment.dto.response.PaymentInfoResponse;
 import com.ceos24.spring_cgv.domain.payment.dto.response.PaymentReadyResponse;
@@ -87,5 +89,21 @@ public class PaymentController {
         return ApiResponse.onSuccess(
                 PaymentSuccessCode.PAYMENT_FETCHED,
                 paymentService.findPayment(userDetails.getMemberId(), paymentId));
+    }
+
+    @Operation(summary = "결제 취소 (전체/부분)",
+            description = "승인된 결제를 취소합니다. 좌석 목록을 비워 보내면 아직 환불되지 않은 좌석 전체를, "
+                    + "좌석을 지정하면 해당 좌석만 부분 취소합니다. "
+                    + "본인이 결제한 건만 취소할 수 있고, 상영이 시작된 회차는 취소할 수 없습니다.")
+    @PostMapping("/{paymentId}/cancel")
+    public ApiResponse<PaymentCancelResponse> cancelPayment(
+            @AuthenticationPrincipal CustomUserDetails userDetails,
+            @PathVariable Long paymentId,
+            @Valid @RequestBody PaymentCancelRequest request
+    ) {
+
+        return ApiResponse.onSuccess(
+                PaymentSuccessCode.PAYMENT_CANCELED,
+                paymentService.cancel(userDetails.getMemberId(), paymentId, request));
     }
 }

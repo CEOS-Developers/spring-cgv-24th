@@ -38,12 +38,21 @@ public record PaymentInfoResponse(
         @Schema(description = "결제 승인 시각", example = "2026-10-16T14:23:45")
         LocalDateTime approvedAt,
 
+        @Schema(description = "누적 취소 금액", example = "14000")
+        Integer canceledAmount,
+
+        @Schema(description = "남은 결제 금액", example = "14000")
+        Integer balanceAmount,
+
+        @Schema(description = "전액 취소된 시각. 전액 취소 전에는 비어 있습니다.", example = "2026-10-16T15:10:00")
+        LocalDateTime canceledAt,
+
         @Schema(description = "이 결제로 확정된 예매 ID", example = "1")
         Long reservationId
 ) {
-    // 승인(DONE) 상태의 결제만 받는다는 전제로 작성했다.
-    // method/paymentKey/approvedAt/reservation은 승인 시점에 채워지므로,
-    // 다른 상태의 결제를 넘기면 method에서 NPE가 발생한다.
+    // 승인(DONE) 이후 상태의 결제만 받는다는 전제로 작성했다.
+    // method/paymentKey/approvedAt/reservation은 승인 시점에 채워져 취소 후에도 남아 있지만,
+    // 승인 전 상태의 결제를 넘기면 method에서 NPE가 발생한다.
     public static PaymentInfoResponse from(Payment payment) {
 
         return PaymentInfoResponse.builder()
@@ -56,6 +65,9 @@ public record PaymentInfoResponse(
                 .paymentKey(payment.getPaymentKey())
                 .requestedAt(payment.getRequestedAt())
                 .approvedAt(payment.getApprovedAt())
+                .canceledAmount(payment.getCanceledAmount())
+                .balanceAmount(payment.getBalanceAmount())
+                .canceledAt(payment.getCanceledAt())
                 .reservationId(payment.getReservation().getId())
                 .build();
     }

@@ -9,17 +9,24 @@ import com.ceos24.spring_cgv.domain.movie.entity.Screening;
 import com.ceos24.spring_cgv.domain.movie.repository.ScreeningRepository;
 import com.ceos24.spring_cgv.domain.payment.client.TossPaymentClient;
 import com.ceos24.spring_cgv.domain.payment.dto.SeatPosition;
+import com.ceos24.spring_cgv.domain.payment.dto.CancelAttempt;
+import com.ceos24.spring_cgv.domain.payment.dto.request.PaymentCancelRequest;
 import com.ceos24.spring_cgv.domain.payment.dto.request.PaymentReadyRequest;
+import com.ceos24.spring_cgv.domain.payment.dto.response.PaymentCancelResponse;
 import com.ceos24.spring_cgv.domain.payment.dto.response.PaymentConfirmResponse;
 import com.ceos24.spring_cgv.domain.payment.dto.response.PaymentInfoResponse;
 import com.ceos24.spring_cgv.domain.payment.dto.response.PaymentReadyResponse;
+import com.ceos24.spring_cgv.domain.payment.client.dto.TossPaymentCancelResponse;
 import com.ceos24.spring_cgv.domain.payment.client.dto.TossPaymentConfirmResponse;
 import com.ceos24.spring_cgv.domain.payment.entity.Payment;
+import com.ceos24.spring_cgv.domain.payment.entity.PaymentCancel;
 import com.ceos24.spring_cgv.domain.payment.entity.PaymentSeat;
+import com.ceos24.spring_cgv.domain.payment.enums.CancelStatus;
 import com.ceos24.spring_cgv.domain.payment.enums.PaymentStatus;
 import com.ceos24.spring_cgv.domain.payment.enums.TossPaymentMethod;
 import com.ceos24.spring_cgv.domain.payment.exception.PaymentException;
 import com.ceos24.spring_cgv.domain.payment.exception.code.PaymentErrorCode;
+import com.ceos24.spring_cgv.domain.payment.repository.PaymentCancelRepository;
 import com.ceos24.spring_cgv.domain.payment.repository.PaymentRepository;
 import com.ceos24.spring_cgv.domain.payment.repository.PaymentSeatRepository;
 import com.ceos24.spring_cgv.domain.payment.repository.SeatHoldRepository;
@@ -47,15 +54,20 @@ public class PaymentService {
 
     private final PaymentRepository paymentRepository;
     private final PaymentSeatRepository paymentSeatRepository;
+    private final PaymentCancelRepository paymentCancelRepository;
     private final SeatHoldRepository seatHoldRepository;
     private final MemberRepository memberRepository;
     private final ScreeningRepository screeningRepository;
     private final ReservationSeatRepository reservationSeatRepository;
     private final TossPaymentClient tossPaymentClient;
     private final ReservationService reservationService;
+    private final PaymentCancelRecorder paymentCancelRecorder;
 
     // 주문 번호 접두어.
     private static final String ORDER_ID_PREFIX = "cgv_";
+
+    // 취소 멱등성 키 접두어. 승인 등 다른 작업의 키와 섞이지 않게 구분한다.
+    private static final String CANCEL_KEY_PREFIX = "cancel-";
 
     /***
      * 함수 기능: 결제 요청 정보를 사전 등록한다. 좌석 재고를 검증하고 좌석을 점유(RESERVED)한 뒤
@@ -204,14 +216,71 @@ public class PaymentService {
     }
 
     /***
-     * 함수 기능: 승인 완료된 결제 1건을 조회한다. 본인이 결제한 건만 조회할 수 있다.
+     * 함수 기능: 승인 이후 상태의 결제 1건을 조회한다. 부분/전액 취소된 결제도 내역에서 보여야 하므로 함께 조회한다.
      * @param memberId 조회를 요청한 회원 식별자
      * @param paymentId 조회할 결제 식별자
-     * @return PaymentInfoResponse 주문 정보, 결제 금액/수단/상태, 요청·승인 시각, 예매 ID
+     * @return PaymentInfoResponse 주문 정보, 결제 금액/수단/상태, 취소 금액, 요청·승인 시각, 예매 ID
      */
     public PaymentInfoResponse findPayment(Long memberId, Long paymentId) {
 
-        return PaymentInfoResponse.from(findDonePayment(memberId, paymentId));
+        return PaymentInfoResponse.from(findPaymentForView(memberId, paymentId));
+    }
+
+    /***
+     * 함수 기능: 승인된 결제를 취소한다. 좌석을 지정하지 않으면 아직 환불되지 않은 좌석 전체를 취소한다.
+     *          토스 취소가 성공한 뒤에만 우리 상태(결제 금액/상태, 좌석 점유, 예매)를 반영한다.
+     * @param memberId 취소를 요청한 회원 식별자
+     * @param paymentId 취소할 결제 식별자
+     * @param request 취소할 좌석 목록과 취소 사유
+     * @return PaymentCancelResponse 취소 후 결제 상태와 금액, 이번에 취소된 좌석
+     */
+    @Transactional
+    public PaymentCancelResponse cancel(Long memberId, Long paymentId, PaymentCancelRequest request) {
+
+        Payment payment = findCancelablePayment(memberId, paymentId);
+
+        // 상영이 시작된 회차는 좌석을 되돌릴 수 없다.
+        if (payment.getScreening().getStartTime().isBefore(LocalDateTime.now())) {
+            throw new PaymentException(PaymentErrorCode.PAYMENT_NOT_CANCELABLE);
+        }
+
+        // 취소할 좌석을 결정한다. PaymentCancelRequest.SeatRequest가 비어있다면 ->
+        List<PaymentSeat> targets = resolveCancelTargets(paymentId, request.seats());
+        // 취소할 좌석의 전체 금액
+        int cancelAmount = targets.stream().mapToInt(PaymentSeat::getPrice).sum();
+
+        // 좌석 단위로 계산하므로 초과가 나오면 좌석 데이터와 누적 취소 금액이 어긋난 것이다.
+        if (cancelAmount > payment.getBalanceAmount()) {
+            throw new PaymentException(PaymentErrorCode.PAYMENT_CANCEL_AMOUNT_EXCEEDED);
+        }
+
+        // 멱등성을 보장하기 위해 좌석 집합으로 Idempotent-Key를 만든다.
+        // 어떤 취소인지를 좌석 집합으로 식별한다. 같은 취소의 재시도는 같은 지문을 얻는다.
+        String fingerprint = cancelFingerprint(payment.getOrderId(), targets);
+
+        validateNoConflictingPendingCancel(paymentId, fingerprint);
+
+        // 토스에 보내기 전에 시도를 남긴다. 응답을 받지 못해도 이 기록은 살아남는다.
+        CancelAttempt attempt =
+                paymentCancelRecorder.record(paymentId, cancelAmount, request.reason(), fingerprint);
+
+        TossPaymentCancelResponse result = requestCancel(payment, cancelAmount, request.reason(), attempt);
+
+        // cancel 트랜잭션은 PaymentCancel 객체를 받은 적이 없기에 id로 새로 조회한다.
+        PaymentCancel cancel = findCancelAttempt(attempt.id());
+        LocalDateTime canceledAt = result.latestCancel().canceledAt().toLocalDateTime();
+
+        cancel.complete(result.balanceAmount(), result.latestCancel().transactionKey(), canceledAt);
+        payment.applyCancel(result.balanceAmount(), canceledAt);
+        targets.forEach(seat -> seat.markCanceled(cancel));
+
+        // 취소한 좌석만 점유를 풀어 다시 판매할 수 있게 한다.
+        reservationService.unreserveSeats(payment.getReservation(), toReservationSeats(payment, targets));
+
+        log.info("[결제 취소 완료] orderId={}, cancelAmount={}, balanceAmount={}, status={}",
+                payment.getOrderId(), cancelAmount, result.balanceAmount(), payment.getStatus());
+
+        return PaymentCancelResponse.of(payment, cancel, targets);
     }
 
     /***
@@ -315,8 +384,184 @@ public class PaymentService {
                 .orElseThrow(() -> new MemberException(MemberErrorCode.MEMBER_NOT_FOUND));
     }
 
-    private Payment findDonePayment(Long memberId, Long paymentId) {
-        return paymentRepository.findByIdAndMemberIdAndStatus(paymentId, memberId, PaymentStatus.DONE)
+    /***
+     * 함수 기능: 내역에 보여도 되는 상태의 본인 결제를 조회한다.
+     * @param memberId 조회를 요청한 회원 식별자
+     * @param paymentId 조회할 결제 식별자
+     * @return 조회할 수 있는 결제
+     */
+    private Payment findPaymentForView(Long memberId, Long paymentId) {
+
+        return paymentRepository.findByIdAndMemberIdAndStatusIn(paymentId, memberId,
+                        List.of(PaymentStatus.DONE, PaymentStatus.PARTIAL_CANCELED, PaymentStatus.CANCELED))
                 .orElseThrow(() -> new PaymentException(PaymentErrorCode.PAYMENT_NOT_FOUND));
+    }
+
+    /***
+     * 함수 기능: 토스에 취소를 요청하고 실패 유형에 따라 취소 시도 기록을 정리한다.
+     *          명시적 거절은 실패로 확정하고, 응답 없음은 REQUESTED로 남겨 대조 대상이 되게 한다.
+     * @param payment 취소할 결제
+     * @param cancelAmount 취소할 금액
+     * @param reason 취소 사유
+     * @param attempt 토스 호출 전에 기록한 취소 시도
+     * @return 토스 취소 응답
+     */
+    private TossPaymentCancelResponse requestCancel(Payment payment, Integer cancelAmount,
+                                                    String reason, CancelAttempt attempt) {
+        try {
+            return tossPaymentClient.cancel(
+                    payment.getPaymentKey(), cancelAmount, reason, attempt.idempotencyKey());
+
+        } catch (PaymentException e) {
+            // 취소 여부를 모르는 경우에는 REQUESTED로 남겨야 하므로 실패로 확정하지 않는다.
+            if (e.getErrorCode() != PaymentErrorCode.PAYMENT_CANCEL_RESULT_UNKNOWN) {
+                paymentCancelRecorder.markFailed(attempt.id());
+            }
+
+            throw e;
+        }
+    }
+
+    /***
+     * 함수 기능: 취소할 좌석을 결정한다. 좌석을 지정하지 않으면 아직 환불되지 않은 좌석 전체가 대상이다.
+     * @param paymentId 결제 식별자
+     * @param requested 요청받은 좌석 목록 (비어 있으면 전체 취소)
+     * @return 취소 대상 결제 좌석 목록
+     */
+    private List<PaymentSeat> resolveCancelTargets(Long paymentId,
+                                                   List<PaymentCancelRequest.SeatRequest> requested) {
+
+        List<PaymentSeat> paymentSeats = paymentSeatRepository.findAllByPaymentId(paymentId);
+
+        // 좌석을 지정하지 않으면 전체 취소다.
+        if (requested == null || requested.isEmpty()) {
+
+            // 아직 취소되지 않은 좌석을 remaining에 넣는다.
+            List<PaymentSeat> remaining = paymentSeats.stream()
+                    .filter(seat -> !seat.isCanceled())
+                    .toList();
+
+            // 만약, remaining이 비었다면 -> 모두 취소되었다는 뜻이므로 에러를 반환한다.
+            if (remaining.isEmpty()) {
+                throw new PaymentException(PaymentErrorCode.PAYMENT_ALREADY_CANCELED);
+            }
+
+            return remaining;
+        }
+
+        // 같은 좌석을 중복해서 보내면 취소 금액이 두 번 더해진다.
+        if (Set.copyOf(requested).size() != requested.size()) {
+            throw new PaymentException(PaymentErrorCode.PAYMENT_SEAT_DUPLICATED);
+        }
+
+        return requested.stream()
+                .map(seat -> findCancelableSeat(paymentSeats, seat))
+                .toList();
+    }
+
+    /***
+     * 함수 기능: 요청한 좌표에 해당하는, 아직 환불되지 않은 결제 좌석을 찾는다.
+     * @param paymentSeats 결제의 전체 좌석 스냅샷
+     * @param requested 요청받은 좌석 좌표
+     * @return 취소할 수 있는 결제 좌석
+     */
+    private PaymentSeat findCancelableSeat(List<PaymentSeat> paymentSeats,
+                                           PaymentCancelRequest.SeatRequest requested) {
+
+        PaymentSeat found = paymentSeats.stream()
+                .filter(seat -> seat.getSeatRow().equals(requested.seatRow())
+                        && seat.getSeatNumber().equals(requested.seatNumber()))
+                .findFirst()
+                .orElseThrow(() -> new PaymentException(PaymentErrorCode.PAYMENT_CANCEL_SEAT_NOT_FOUND));
+
+        if (found.isCanceled()) {
+            throw new PaymentException(PaymentErrorCode.PAYMENT_SEAT_ALREADY_CANCELED);
+        }
+
+        return found;
+    }
+
+    /***
+     * 함수 기능: 취소한 결제 좌석에 대응하는 예매 좌석 행을 좌표로 찾는다.
+     * @param payment 취소 중인 결제
+     * @param canceled 이번에 취소한 결제 좌석
+     * @return 점유를 풀어야 하는 예매 좌석 행
+     */
+    private List<ReservationSeat> toReservationSeats(Payment payment, List<PaymentSeat> canceled) {
+
+        Set<SeatPosition> positions = canceled.stream()
+                .map(seat -> new SeatPosition(seat.getSeatRow(), seat.getSeatNumber()))
+                .collect(Collectors.toSet());
+
+        return reservationSeatRepository.findAllByReservationId(payment.getReservation().getId()).stream()
+                .filter(seat -> positions.contains(new SeatPosition(seat.getSeatRow(), seat.getSeatNumber())))
+                .filter(ReservationSeat::isReserved)
+                .toList();
+    }
+
+    /***
+     * 함수 기능: 취소할 수 있는 상태의 본인 결제를 조회한다.
+     * @param memberId 취소를 요청한 회원 식별자
+     * @param paymentId 취소할 결제 식별자
+     * @return 취소할 수 있는 결제
+     */
+    private Payment findCancelablePayment(Long memberId, Long paymentId) {
+
+        // 결제가 완료, 부분 취소, 취소된 본인의 결제 내역을 조회한다.
+        Payment payment = paymentRepository.findByIdAndMemberIdAndStatusIn(paymentId, memberId,
+                        List.of(PaymentStatus.DONE, PaymentStatus.PARTIAL_CANCELED, PaymentStatus.CANCELED))
+                .orElseThrow(() -> new PaymentException(PaymentErrorCode.PAYMENT_NOT_FOUND));
+
+        // 회원의 결제 내역이 이미 취소되었다면 '이미 취소되었습니다'를 반환한다.
+        if (payment.getStatus() == PaymentStatus.CANCELED) {
+            throw new PaymentException(PaymentErrorCode.PAYMENT_ALREADY_CANCELED);
+        }
+
+        return payment;
+    }
+
+    /***
+     * 함수 기능: 별도 트랜잭션에서 기록한 취소 시도를 잠금 조회해 영속 상태로 가져온다.
+     *          일반 조회는 REPEATABLE READ 스냅샷 때문에 그 행을 보지 못한다.
+     * @param cancelId 취소 시도 식별자
+     * @return 영속 상태의 취소 시도
+     */
+    private PaymentCancel findCancelAttempt(Long cancelId) {
+
+        return paymentCancelRepository.findWithLockById(cancelId)
+                .orElseThrow(() -> new PaymentException(PaymentErrorCode.PAYMENT_CANCEL_FAILED));
+    }
+
+    /***
+     * 함수 기능: 어떤 취소인지를 식별하는 지문을 만든다. 멱등성 키의 바탕이 된다.
+     *          좌석 집합이 같으면 항상 같은 문자열이 나오므로, 같은 취소의 재시도가 같은 키를 쓰게 된다.
+     *          금액만으로 식별하면 금액이 같은 다른 좌석을 같은 취소로 오인한다.
+     * @param orderId 서버가 생성한 주문 번호
+     * @param targets 취소 대상 결제 좌석
+     * @return cancel-{주문번호}-{정렬된 좌석좌표} 형식의 지문
+     */
+    private String cancelFingerprint(String orderId, List<PaymentSeat> targets) {
+
+        String seats = targets.stream()
+                .map(seat -> seat.getSeatRow() + ":" + seat.getSeatNumber())
+                .sorted()
+                .collect(Collectors.joining(","));
+
+        return CANCEL_KEY_PREFIX + orderId + "-" + seats;
+    }
+
+    /***
+     * 함수 기능: 결과를 모르는 취소가 이번 요청과 다른 취소라면 거부한다.
+     *          같은 취소라면 통과시켜, 같은 멱등성 키로 재시도해 토스가 원래 결과를 돌려주게 한다.
+     * @param paymentId 결제 식별자
+     * @param fingerprint 이번 취소의 지문
+     */
+    private void validateNoConflictingPendingCancel(Long paymentId, String fingerprint) {
+
+        paymentCancelRepository.findFirstByPaymentIdAndStatus(paymentId, CancelStatus.REQUESTED)
+                .filter(pending -> !pending.getRequestFingerprint().equals(fingerprint))
+                .ifPresent(pending -> {
+                    throw new PaymentException(PaymentErrorCode.PAYMENT_CANCEL_IN_PROGRESS);
+                });
     }
 }
