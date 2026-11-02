@@ -22,6 +22,8 @@ import com.ceos24.cgv.domain.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import com.ceos24.cgv.domain.payment.entity.Payment;
+import com.ceos24.cgv.domain.payment.repository.PaymentRepository;
 
 import java.time.LocalDateTime;
 import java.util.HashSet;
@@ -39,6 +41,8 @@ public class ReservationService {
     private final SeatRepository seatRepository;
     private final UserRepository userRepository;
     private final ScreeningSeatRepository screeningSeatRepository;
+    private final PaymentRepository paymentRepository;
+
 
     /**
      * 영화 예매
@@ -95,18 +99,26 @@ public class ReservationService {
                 .getBasePrice();
 
         for (Seat seat : seats) {
-            ReservationSeat reservationSeat = ReservationSeat.create(seat);
+            // 좌석을 생성할 때 예매 당시 가격을 함께 저장한다.
+            ReservationSeat reservationSeat = ReservationSeat.create(seat,seatPrice);
 
-            reservation.addReservationSeat(
-                    reservationSeat,
-                    seatPrice
-            );
+            // 좌석에 저장된 가격으로 예매 총액을 계산한다.
+            reservation.addReservationSeat(reservationSeat);
         }
 
         Reservation savedReservation =
                 reservationRepository.save(reservation);
 
-        return ReservationResponse.from(savedReservation);
+        // 모든 좌석과 총액이 확정된 뒤 결제 준비 정보를 생성한다.
+        // 같은 트랜잭션이므로 결제 정보 저장 실패 시 예매와 좌석 점유도 롤백된다.
+        Payment payment = paymentRepository.save(
+                Payment.create(savedReservation)
+        );
+
+        return ReservationResponse.from(
+                savedReservation,
+                payment.getOrderId()
+        );
     }
 
     /**
