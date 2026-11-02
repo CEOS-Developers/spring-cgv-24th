@@ -56,7 +56,7 @@ public class Reservation extends BaseTimeEntity {
         this.user = user;
         this.screening = screening;
         this.totalPrice = 0;
-        this.status = ReservationStatus.RESERVED;
+        this.status = ReservationStatus.PENDING_PAYMENT;
     }
 
     public static Reservation create(
@@ -70,23 +70,58 @@ public class Reservation extends BaseTimeEntity {
     }
 
     /**
-     * 예매 좌석 추가
+     * 예매 좌석 추가 :
+     * 좌석별 가격을 기준으로 주문 총액을 계산한다.
+     * 가격을 별도 인자로 받지 않아 좌석 금액과 총액의 불일치를 방지한다.
      */
-    public void addReservationSeat(
-            ReservationSeat reservationSeat,
-            Integer seatPrice
-    ) {
-        reservationSeats.add(reservationSeat);
-        reservationSeat.assignReservation(this);
+    public void addReservationSeat(ReservationSeat reservationSeat) {
 
-        totalPrice += seatPrice;
+        //결제 대기 상태인지 확인
+        if (status != ReservationStatus.PENDING_PAYMENT) {
+            throw new IllegalStateException("결제 대기 상태에서만 좌석을 추가할 수 있습니다.");
+        }
+
+        //이미 추가한 좌석인지 체크
+        boolean duplicated = reservationSeats.stream()
+                .anyMatch(existing ->
+                        existing.getSeat().getId()
+                                .equals(reservationSeat.getSeat().getId())
+                );
+
+        if (duplicated) {
+            throw new IllegalArgumentException("이미 추가된 좌석입니다.");
+        }
+
+        //좌석 연결 객체에 현재 예매를 지정
+        reservationSeat.assignReservation(this);
+        //현재 예매의 목록에도 추가
+        reservationSeats.add(reservationSeat);
+        //좌석 가격을 총액에 더하기
+        totalPrice += reservationSeat.getSeatPrice();
+    }
+
+    // 결제 성공 후 호출할 메서드
+    /**
+     * 결제 서비스가 승인 성공을 확인한 뒤 호출한다.
+     */
+    public void confirmPayment() {
+        if (status != ReservationStatus.PENDING_PAYMENT) {
+            throw new IllegalStateException("결제 대기 상태의 예매만 확정할 수 있습니다.");
+        }
+
+        this.status = ReservationStatus.CONFIRMED;
     }
 
     /**
-     * 예매 취소
+     * 미결제 예매를 취소한다.
+     * 결제된 예매는 PG 취소 성공을 확인하는 별도 흐름으로 처리한다.
      */
-    //취소하더라도 좌석 삭제 안함-> 취소된 예매가 어떤 좌석인지 알 수 있음.
     public void cancel() {
+        if (status != ReservationStatus.PENDING_PAYMENT) {
+            throw new IllegalStateException("결제 대기 상태의 예매만 직접 취소할 수 있습니다.");
+        }
+
+        reservationSeats.forEach(ReservationSeat::cancel);
         this.status = ReservationStatus.CANCELED;
     }
 
