@@ -1,6 +1,5 @@
 package com.ceos24.springboot.global.exception;
 
-import com.ceos24.springboot.auth.exception.LoginFailedException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -42,21 +41,6 @@ public class GlobalExceptionHandler {
                 .body(response);
     }
 
-    // 로그인 인증 실패 예외 처리
-    @ExceptionHandler(LoginFailedException.class)
-    public ResponseEntity<ErrorResponse> handleLoginFailed(
-            LoginFailedException e
-    ) {
-
-        ErrorResponse response = ErrorResponse.of(
-                HttpStatus.UNAUTHORIZED,
-                e.getMessage()
-        );
-
-        return ResponseEntity
-                .status(HttpStatus.UNAUTHORIZED)
-                .body(response);
-    }
     // 검증 실패 응답 통일
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ErrorResponse> handleValidation(

@@ -53,6 +53,32 @@ public enum ErrorCode {
             "이미 취소된 예매입니다."
     ),
 
+    // Payment
+    PAYMENT_USER_REQUIRED(
+            HttpStatus.BAD_REQUEST,
+            "결제 사용자가 필요합니다."
+    ),
+
+    PAYMENT_TARGET_TYPE_REQUIRED(
+            HttpStatus.BAD_REQUEST,
+            "결제 대상 유형이 필요합니다."
+    ),
+
+    INVALID_PAYMENT_TARGET_ID(
+            HttpStatus.BAD_REQUEST,
+            "유효한 결제 대상 ID가 필요합니다."
+    ),
+
+    INVALID_PAYMENT_AMOUNT(
+            HttpStatus.BAD_REQUEST,
+            "결제 금액은 0보다 커야 합니다."
+    ),
+
+    INVALID_PAYMENT_EXPIRATION(
+            HttpStatus.BAD_REQUEST,
+            "결제 만료 시각은 생성 시각보다 이후여야 합니다."
+    ),
+
 
     // Authentication & Authorization
     TOKEN_NOT_EXIST(
@@ -73,6 +99,11 @@ public enum ErrorCode {
     ACCESS_DENIED(
             HttpStatus.FORBIDDEN,
         "접근 권한이 없습니다."
+    ),
+
+    LOGIN_FAILED(
+            HttpStatus.UNAUTHORIZED,
+            "이메일 또는 비밀번호가 올바르지 않습니다."
     ),
 
     // Signup

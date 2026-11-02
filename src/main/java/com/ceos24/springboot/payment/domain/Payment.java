@@ -1,10 +1,13 @@
 package com.ceos24.springboot.payment.domain;
 
 import com.ceos24.springboot.user.domain.User;
+import com.ceos24.springboot.global.exception.ErrorCode;
+import com.ceos24.springboot.global.exception.GlobalException;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+
 
 import java.time.LocalDateTime;
 import java.util.UUID;
@@ -75,21 +78,23 @@ public class Payment {
             LocalDateTime expiresAt
     ) {
         if (user == null) {
-            throw new IllegalArgumentException("결제 사용자가 필요합니다.");
+            throw new GlobalException(ErrorCode.PAYMENT_USER_REQUIRED);
         }
+
         if (targetType == null) {
-            throw new IllegalArgumentException("결제 대상 유형이 필요합니다.");
+            throw new GlobalException(ErrorCode.PAYMENT_TARGET_TYPE_REQUIRED);
         }
+
         if (targetId == null || targetId <= 0) {
-            throw new IllegalArgumentException("유효한 결제 대상 ID가 필요합니다.");
+            throw new GlobalException(ErrorCode.INVALID_PAYMENT_TARGET_ID);
         }
+
         if (amount == null || amount <= 0) {
-            throw new IllegalArgumentException("결제 금액은 0보다 커야 합니다.");
+            throw new GlobalException(ErrorCode.INVALID_PAYMENT_AMOUNT);
         }
+
         if (now == null || expiresAt == null || !expiresAt.isAfter(now)) {
-            throw new IllegalArgumentException(
-                    "결제 만료 시각은 생성 시각보다 이후여야 합니다."
-            );
+            throw new GlobalException(ErrorCode.INVALID_PAYMENT_EXPIRATION);
         }
 
         this.orderId = "pay_" + UUID.randomUUID();
