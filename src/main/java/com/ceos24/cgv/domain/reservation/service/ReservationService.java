@@ -108,9 +108,7 @@ public class ReservationService {
 
         return ReservationResponse.from(savedReservation);
     }
-    /**
-     * 영화 예매 취소
-     */
+
     /**
      * 영화 예매 취소
      */
