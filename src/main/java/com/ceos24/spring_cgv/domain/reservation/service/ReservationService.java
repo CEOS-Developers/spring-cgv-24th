@@ -68,20 +68,36 @@ public class ReservationService {
     }
 
     /***
-     * 함수 기능: 결제를 마치지 못한 예매의 좌석 점유를 해제하고 예매를 취소한다.
-     *          이미 다른 예매가 가져간 좌석 행은 조회되지 않으므로 건드리지 않는다.
+     * 함수 기능: 예매에서 지정한 좌석들의 점유를 해제한다.
+     *          남은 점유 좌석이 없으면 예매도 취소 상태로 전이한다.
+     * @param reservation 대상 예매
+     * @param seats 점유를 해제할 좌석 행
+     */
+    @Transactional
+    public void unreserveSeats(Reservation reservation, List<ReservationSeat> seats) {
+
+        seats.forEach(ReservationSeat::unreserve);
+
+        // 같은 영속성 컨텍스트이므로 위에서 바꾼 상태가 그대로 보인다.
+        boolean noneReserved = reservationSeatRepository.findAllByReservationId(reservation.getId())
+                .stream()
+                .noneMatch(ReservationSeat::isReserved);
+
+        if (noneReserved) {
+            reservation.cancel();
+        }
+
+        log.info("[좌석 점유 해제] reservationId={}, seatCount={}, 예매취소={}",
+                reservation.getId(), seats.size(), noneReserved);
+    }
+
+    /***
+     * 함수 기능: 예매의 모든 좌석 점유를 해제한다. 결제를 마치지 못한 예매를 되돌릴 때 쓴다.
      * @param reservation 점유를 해제할 예매
      */
     @Transactional
     public void release(Reservation reservation) {
 
-        List<ReservationSeat> seatRows =
-                reservationSeatRepository.findAllByReservationId(reservation.getId());
-
-        seatRows.forEach(ReservationSeat::unreserve);
-        reservation.cancel();
-
-        log.info("[좌석 점유 해제] reservationId={}, seatCount={}",
-                reservation.getId(), seatRows.size());
+        unreserveSeats(reservation, reservationSeatRepository.findAllByReservationId(reservation.getId()));
     }
 }
