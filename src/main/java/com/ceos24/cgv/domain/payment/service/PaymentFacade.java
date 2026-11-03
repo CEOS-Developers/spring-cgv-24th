@@ -5,10 +5,14 @@ import com.ceos24.cgv.domain.payment.client.dto.TossPaymentResponse;
 import com.ceos24.cgv.domain.payment.dto.request.PaymentConfirmRequest;
 import com.ceos24.cgv.domain.payment.dto.response.PaymentResponse;
 import com.ceos24.cgv.domain.payment.entity.Payment;
+import com.ceos24.cgv.domain.payment.exception.PaymentErrorStatus;
 import com.ceos24.cgv.domain.payment.exception.TossPaymentException;
+import com.ceos24.cgv.global.exception.GeneralException;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class PaymentFacade {
@@ -35,11 +39,28 @@ public class PaymentFacade {
 			throw e;
 		}
 
+		return completeOrCompensate(payment, toss);
+	}
+
+	private PaymentResponse completeOrCompensate(Payment payment, TossPaymentResponse toss) {
 		try {
 			return paymentService.completeApproval(payment.getId(), toss);
 		} catch (RuntimeException e) {
+			throw compensate(payment, toss, e);
+		}
+	}
+
+	// 토스 승인은 끝났지만 주문 확정에 실패한 경우 전액 취소한다. 던질 예외를 반환한다
+	private RuntimeException compensate(Payment payment, TossPaymentResponse toss, RuntimeException cause) {
+		try {
+			TossPaymentResponse canceled = tossPaymentClient.cancel(toss.paymentKey(), "주문 확정 실패로 인한 자동 취소", null,
+					payment.getCompensationIdempotencyKey());
+			paymentService.recordCompensation(payment.getId(), canceled);
+			return new GeneralException(PaymentErrorStatus.PAYMENT_COMPENSATED);
+		} catch (RuntimeException e) {
+			log.error("보상 취소 실패 - 수동 확인 필요. paymentId: {}, tossOrderId: {}", payment.getId(), payment.getTossOrderId(), e);
 			paymentService.markUnknown(payment.getId());
-			throw e;
+			return cause;
 		}
 	}
 }

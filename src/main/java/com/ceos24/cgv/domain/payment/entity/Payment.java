@@ -85,11 +85,21 @@ public class Payment {
 		return "confirm-" + tossOrderId;
 	}
 
+	// 승인 후 주문 확정에 실패해 자동 취소할 때 쓰는 멱등키 (재시도해도 같은 키)
+	public String getCompensationIdempotencyKey() {
+		return "compensate-" + tossOrderId;
+	}
+
 	public void approve(String paymentKey, String method, Instant approvedAt) {
 		this.paymentKey = paymentKey;
 		this.method = method;
 		this.approvedAt = approvedAt;
 		this.status = PaymentStatus.DONE;
+	}
+
+	public void cancelFully() {
+		this.status = PaymentStatus.CANCELED;
+		this.balanceAmount = 0;
 	}
 
 	public void fail() {

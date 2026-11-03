@@ -28,6 +28,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import com.ceos24.cgv.domain.concession.entity.Stock;
 
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -136,5 +137,22 @@ public class OrderService {
 		Payment payment = paymentRepository.findByOrderId(orderId)
 				.orElseThrow(() -> new GeneralException(PaymentErrorStatus.PAYMENT_NOT_FOUND));
 		return PaymentReadyResponse.from(payment);
+	}
+
+	// 결제 승인 후 호출. 락 순서를 고정(itemId 오름차순)해 데드락을 막고, 하나라도 부족하면 전체 차감을 롤백한다
+	@Transactional
+	public void completePaidOrder(Order order) {
+		List<OrderItem> orderItems = orderItemRepository.findByOrderIdWithItem(order.getId()).stream()
+				.sorted(Comparator.comparing(orderItem -> orderItem.getItem().getId()))
+				.toList();
+
+		for (OrderItem orderItem : orderItems) {
+			int updated = stockRepository.decreaseStock(order.getTheater().getId(), orderItem.getItem().getId(),
+					orderItem.getQuantity());
+			if (updated == 0) {
+				throw new GeneralException(ConcessionErrorStatus.INSUFFICIENT_STOCK);
+			}
+		}
+		order.completePayment();
 	}
 }

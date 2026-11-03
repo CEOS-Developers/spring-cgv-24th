@@ -1,5 +1,6 @@
 package com.ceos24.cgv.domain.payment.service;
 
+import com.ceos24.cgv.domain.concession.service.OrderService;
 import com.ceos24.cgv.domain.payment.client.dto.TossPaymentResponse;
 import com.ceos24.cgv.domain.payment.dto.request.PaymentConfirmRequest;
 import com.ceos24.cgv.domain.payment.dto.response.PaymentResponse;
@@ -22,6 +23,7 @@ public class PaymentService {
 	private static final List<PaymentStatus> CONFIRMABLE = List.of(PaymentStatus.READY, PaymentStatus.UNKNOWN);
 
 	private final PaymentRepository paymentRepository;
+	private final OrderService orderService;
 
 	@Transactional
 	public Payment startApproval(Long userId, PaymentConfirmRequest request) {
@@ -56,9 +58,19 @@ public class PaymentService {
 
 		payment.approve(toss.paymentKey(), toss.method(), toss.approvedAt().toInstant());
 		if (payment.getOrder() != null) {
-			payment.getOrder().completePayment();
+			orderService.completePaidOrder(payment.getOrder());
 		}
 		return PaymentResponse.from(payment);
+	}
+
+	@Transactional
+	public void recordCompensation(Long paymentId, TossPaymentResponse canceled) {
+		Payment payment = getPayment(paymentId);
+		payment.approve(canceled.paymentKey(), canceled.method(), canceled.approvedAt().toInstant());
+		payment.cancelFully();
+		if (payment.getOrder() != null) {
+			payment.getOrder().cancelPayment();
+		}
 	}
 
 	@Transactional

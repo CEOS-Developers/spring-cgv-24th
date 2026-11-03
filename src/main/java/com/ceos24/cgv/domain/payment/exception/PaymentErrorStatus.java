@@ -16,7 +16,8 @@ public enum PaymentErrorStatus implements BaseErrorCode {
 	PAYMENT_AMOUNT_MISMATCH(HttpStatus.BAD_REQUEST, "PAYMENT400_1", "결제 금액이 주문 금액과 일치하지 않습니다."),
 	PAYMENT_NOT_CONFIRMABLE(HttpStatus.CONFLICT, "PAYMENT409", "이미 처리 중이거나 승인할 수 없는 결제입니다."),
 	PG_RESPONSE_MISMATCH(HttpStatus.BAD_GATEWAY, "PAYMENT502_1", "결제사 응답이 주문 정보와 일치하지 않습니다."),
-	PG_RESULT_UNKNOWN(HttpStatus.BAD_GATEWAY, "PAYMENT502", "결제 결과를 확인하지 못했습니다. 잠시 후 결제 내역을 확인해주세요.");
+	PG_RESULT_UNKNOWN(HttpStatus.BAD_GATEWAY, "PAYMENT502", "결제 결과를 확인하지 못했습니다. 잠시 후 결제 내역을 확인해주세요."),
+	PAYMENT_COMPENSATED(HttpStatus.CONFLICT, "PAYMENT409_1", "결제 승인 후 주문을 확정하지 못해 결제가 자동 취소되었습니다.");
 
 	private final HttpStatus httpStatus;
 	private final String code;
