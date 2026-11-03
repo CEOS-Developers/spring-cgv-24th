@@ -249,19 +249,139 @@ class ReservationServiceTest {
     }
 
     @Test
-    void 결제_완료된_예매를_취소하면_결제는_건드리지_않는다() {
-        var user = user(1L);
-        var screen = screen(1L, theater(1L));
-        var schedule = schedule(1L, movie(1L), screen, LocalDateTime.now(clock).plusMinutes(30));
-        var reservation = reservation(100L, user, schedule, "A1");
-        ReflectionTestUtils.setField(reservation, "status", ReservationStatus.RESERVED);
+    void 결제_완료된_예매는_결제_취소_API로_취소해야_한다() {
+        var reservation = reservationWithStatus(ReservationStatus.RESERVED);
         when(reservationRepository.findById(100L)).thenReturn(Optional.of(reservation));
+        when(paymentRepository.findByReservationId(100L))
+                .thenReturn(Optional.of(Payment.forReservation(reservation, "테스트 영화 1매")));
+
+        assertThatThrownBy(() -> reservationService.cancel(100L, 1L))
+                .isInstanceOf(GeneralException.class)
+                .extracting(error -> ((GeneralException) error).getCode())
+                .isEqualTo(ReservationErrorStatus.PAYMENT_CANCEL_REQUIRED);
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.RESERVED);
+        verify(reservationSeatRepository, never()).deleteByReservationId(any());
+    }
+
+    @Test
+    void 결제_기록이_없는_예매완료_건은_기존대로_취소한다() {
+        var reservation = reservationWithStatus(ReservationStatus.RESERVED);
+        when(reservationRepository.findById(100L)).thenReturn(Optional.of(reservation));
+        when(paymentRepository.findByReservationId(100L)).thenReturn(Optional.empty());
 
         reservationService.cancel(100L, 1L);
 
         assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CANCELLED);
         verify(reservationSeatRepository).deleteByReservationId(100L);
-        verifyNoInteractions(paymentRepository);
+    }
+
+    @Test
+    void 결제가_진행_중인_예매는_취소할_수_없다() {
+        var reservation = reservationWithStatus(ReservationStatus.PAYING);
+        when(reservationRepository.findById(100L)).thenReturn(Optional.of(reservation));
+
+        assertThatThrownBy(() -> reservationService.cancel(100L, 1L))
+                .isInstanceOf(GeneralException.class)
+                .extracting(error -> ((GeneralException) error).getCode())
+                .isEqualTo(ReservationErrorStatus.RESERVATION_PAYMENT_IN_PROGRESS);
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.PAYING);
+        verify(reservationSeatRepository, never()).deleteByReservationId(any());
+    }
+
+    @Test
+    void 선점이_만료되어_결제_진행_전환에_실패하면_예외가_발생한다() {
+        when(reservationRepository.startPaying(100L, NOW)).thenReturn(0);
+
+        assertThatThrownBy(() -> reservationService.startPaying(100L))
+                .isInstanceOf(GeneralException.class)
+                .extracting(error -> ((GeneralException) error).getCode())
+                .isEqualTo(ReservationErrorStatus.RESERVATION_HOLD_EXPIRED);
+    }
+
+    @Test
+    void 선점이_유효하면_결제_진행으로_전환한다() {
+        when(reservationRepository.startPaying(100L, NOW)).thenReturn(1);
+
+        reservationService.startPaying(100L);
+
+        verify(reservationRepository).startPaying(100L, NOW);
+    }
+
+    @Test
+    void 결제_진행_중인_예매를_결제_완료로_확정한다() {
+        var reservation = reservationWithStatus(ReservationStatus.PAYING);
+
+        reservationService.confirmPaid(reservation);
+
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.RESERVED);
+    }
+
+    @Test
+    void 결제_진행_중이_아닌_예매는_확정할_수_없다() {
+        var reservation = reservationWithStatus(ReservationStatus.CANCELLED);
+
+        assertThatThrownBy(() -> reservationService.confirmPaid(reservation))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CANCELLED);
+    }
+
+    @Test
+    void 결제_진행_중인_예매는_미결제_해제시_취소하고_좌석을_삭제한다() {
+        var reservation = reservationWithStatus(ReservationStatus.PAYING);
+
+        reservationService.releaseUnpaid(reservation);
+
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CANCELLED);
+        verify(reservationSeatRepository).deleteByReservationId(100L);
+    }
+
+    @Test
+    void 결제_진행_중이_아닌_예매는_미결제_해제를_해도_바뀌지_않는다() {
+        var reservation = reservationWithStatus(ReservationStatus.RESERVED);
+
+        reservationService.releaseUnpaid(reservation);
+
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.RESERVED);
+        verifyNoInteractions(reservationSeatRepository);
+    }
+
+    @Test
+    void 예매_완료된_예매는_결제_취소시_취소하고_좌석을_삭제한다() {
+        var reservation = reservationWithStatus(ReservationStatus.RESERVED);
+
+        reservationService.releaseCanceled(reservation);
+
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CANCELLED);
+        verify(reservationSeatRepository).deleteByReservationId(100L);
+    }
+
+    @Test
+    void 결제_취소_해제를_중복_호출해도_한_번만_동작한다() {
+        var reservation = reservationWithStatus(ReservationStatus.RESERVED);
+
+        reservationService.releaseCanceled(reservation);
+        reservationService.releaseCanceled(reservation);
+
+        verify(reservationSeatRepository, times(1)).deleteByReservationId(100L);
+    }
+
+    @Test
+    void 상영_20분_전이_지나면_결제_취소를_검증에서_거절한다() {
+        var reservation = reservationWithStatus(ReservationStatus.RESERVED);
+        ReflectionTestUtils.setField(reservation.getSchedule(), "startTime", LocalDateTime.now(clock).plusMinutes(10));
+
+        assertThatThrownBy(() -> reservationService.validateCancelable(reservation))
+                .isInstanceOf(GeneralException.class)
+                .extracting(error -> ((GeneralException) error).getCode())
+                .isEqualTo(ReservationErrorStatus.CANCEL_DEADLINE_PASSED);
+    }
+
+    private Reservation reservationWithStatus(ReservationStatus status) {
+        var screen = screen(1L, theater(1L));
+        var schedule = schedule(1L, movie(1L), screen, LocalDateTime.now(clock).plusMinutes(30));
+        var reservation = reservation(100L, user(1L), schedule, "A1");
+        ReflectionTestUtils.setField(reservation, "status", status);
+        return reservation;
     }
 
     @Test

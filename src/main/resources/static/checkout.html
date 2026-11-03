@@ -8,7 +8,13 @@
 <body>
 <h2>CGV 결제 테스트</h2>
 <p>Access Token <input id="token" size="60" placeholder="로그인 응답의 accessToken"></p>
-<p>매점 주문 id <input id="orderId" size="10"></p>
+<p>주문 종류
+    <select id="kind">
+        <option value="orders">매점 주문</option>
+        <option value="reservations">영화 예매</option>
+    </select>
+    id <input id="orderId" size="10">
+</p>
 <button id="payButton">결제하기</button>
 <pre id="log"></pre>
 
@@ -26,11 +32,12 @@
     document.getElementById("payButton").addEventListener("click", async () => {
         const token = document.getElementById("token").value.trim();
         const orderId = document.getElementById("orderId").value.trim();
+        const kind = document.getElementById("kind").value;
         sessionStorage.setItem("accessToken", token); // 결제 후 돌아온 성공 페이지에서 승인 API 호출에 사용
 
         try {
             const clientKey = await getData("/api/payments/client-key", token);
-            const info = await getData(`/api/orders/${orderId}/payment-info`, token); // 금액은 서버가 계산한 값만 사용
+            const info = await getData(`/api/${kind}/${orderId}/payment-info`, token); // 금액은 서버가 계산한 값만 사용
             log("결제 준비 정보: " + JSON.stringify(info));
 
             const payment = TossPayments(clientKey).payment({ customerKey: TossPayments.ANONYMOUS });

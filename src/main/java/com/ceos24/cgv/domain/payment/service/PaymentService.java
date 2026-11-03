@@ -12,6 +12,7 @@ import com.ceos24.cgv.domain.payment.enums.PaymentStatus;
 import com.ceos24.cgv.domain.payment.exception.PaymentErrorStatus;
 import com.ceos24.cgv.domain.payment.repository.PaymentCancelRepository;
 import com.ceos24.cgv.domain.payment.repository.PaymentRepository;
+import com.ceos24.cgv.domain.reservation.service.ReservationService;
 import com.ceos24.cgv.global.exception.GeneralException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -32,6 +33,7 @@ public class PaymentService {
 	private final PaymentRepository paymentRepository;
 	private final PaymentCancelRepository paymentCancelRepository;
 	private final OrderService orderService;
+	private final ReservationService reservationService;
 
 	// completed가 있으면 이미 끝난 취소 요청, 없으면 토스 호출이 필요한 취소 건
 	public record CancelStart(PaymentResponse completed, Long cancelId, String paymentKey, Integer amount, String reason,
@@ -61,6 +63,10 @@ public class PaymentService {
 			return payment;
 		}
 
+		// UNKNOWN 재시도는 예매가 이미 PAYING이다. 벌크 UPDATE 전에 필요한 값을 먼저 읽어 둔다
+		if (payment.getReservation() != null && payment.getStatus() != PaymentStatus.UNKNOWN) {
+			reservationService.startPaying(payment.getReservation().getId());
+		}
 		int updated = paymentRepository.updateStatusIfMatches(payment.getId(), CONFIRMABLE, PaymentStatus.IN_PROGRESS);
 		if (updated == 0) {
 			throw new GeneralException(PaymentErrorStatus.PAYMENT_NOT_CONFIRMABLE);
@@ -81,6 +87,9 @@ public class PaymentService {
 		if (payment.getOrder() != null) {
 			orderService.completePaidOrder(payment.getOrder());
 		}
+		if (payment.getReservation() != null) {
+			reservationService.confirmPaid(payment.getReservation());
+		}
 		return toResponse(payment);
 	}
 
@@ -91,6 +100,9 @@ public class PaymentService {
 		payment.cancelFully();
 		if (payment.getOrder() != null) {
 			payment.getOrder().cancelPayment();
+		}
+		if (payment.getReservation() != null) {
+			reservationService.releaseUnpaid(payment.getReservation());
 		}
 		PaymentCancel cancel = PaymentCancel.request(payment, payment.getCompensationIdempotencyKey(), payment.getAmount(),
 				COMPENSATION_REASON);
@@ -130,6 +142,9 @@ public class PaymentService {
 				&& !requestedAmount.equals(payment.getBalanceAmount())) {
 			throw new GeneralException(PaymentErrorStatus.PARTIAL_CANCEL_NOT_SUPPORTED);
 		}
+		if (payment.getReservation() != null) {
+			reservationService.validateCancelable(payment.getReservation());
+		}
 
 		int amount = (requestedAmount != null) ? requestedAmount : payment.getBalanceAmount();
 		payment.reserveCancel(amount);
@@ -147,6 +162,9 @@ public class PaymentService {
 			payment.applyCanceledStatus();
 			if (payment.getBalanceAmount() == 0 && payment.getOrder() != null) {
 				orderService.restoreCanceledOrder(payment.getOrder());
+			}
+			if (payment.getBalanceAmount() == 0 && payment.getReservation() != null) {
+				reservationService.releaseCanceled(payment.getReservation());
 			}
 		}
 		return toResponse(payment);
@@ -191,7 +209,11 @@ public class PaymentService {
 
 	@Transactional
 	public void fail(Long paymentId) {
-		getPayment(paymentId).fail();
+		Payment payment = getPayment(paymentId);
+		payment.fail();
+		if (payment.getReservation() != null) {
+			reservationService.releaseUnpaid(payment.getReservation());
+		}
 	}
 
 	@Transactional

@@ -67,6 +67,13 @@ public class Reservation {
                 totalPrice, seatSummary);
     }
 
+    public void confirmPayment() {
+        if (status != ReservationStatus.PAYING) {
+            throw new IllegalStateException("결제 진행 중인 예매만 확정할 수 있습니다. status: " + status);
+        }
+        this.status = ReservationStatus.RESERVED;
+    }
+
     public void cancel() {
         this.status = ReservationStatus.CANCELLED;
     }

@@ -208,11 +208,16 @@ public class ReservationService {
             throw new GeneralException(ReservationErrorStatus.ALREADY_CANCELLED);
         }
 
-        if (!reservation.getSchedule().isBeforeCancelDeadline(LocalDateTime.now(clock))) {
-            throw new GeneralException(ReservationErrorStatus.CANCEL_DEADLINE_PASSED);
+        if (reservation.getStatus() == ReservationStatus.PAYING) {
+            throw new GeneralException(ReservationErrorStatus.RESERVATION_PAYMENT_IN_PROGRESS);
         }
 
         boolean pendingPayment = reservation.getStatus() == ReservationStatus.PENDING_PAYMENT;
+        if (!pendingPayment && paymentRepository.findByReservationId(reservationId).isPresent()) {
+            throw new GeneralException(ReservationErrorStatus.PAYMENT_CANCEL_REQUIRED);
+        }
+
+        validateCancelable(reservation);
         reservation.cancel();
         reservationSeatRepository.deleteByReservationId(reservationId);
         if (pendingPayment) {
@@ -220,6 +225,42 @@ public class ReservationService {
                     .filter(payment -> payment.getStatus() == PaymentStatus.READY)
                     .ifPresent(Payment::expire);
         }
+    }
+
+    @Transactional
+    public void startPaying(Long reservationId) {
+        if (reservationRepository.startPaying(reservationId, Instant.now(clock)) == 0) {
+            throw new GeneralException(ReservationErrorStatus.RESERVATION_HOLD_EXPIRED);
+        }
+    }
+
+    @Transactional
+    public void confirmPaid(Reservation reservation) {
+        reservation.confirmPayment();
+    }
+
+    @Transactional
+    public void releaseUnpaid(Reservation reservation) {
+        release(reservation, ReservationStatus.PAYING);
+    }
+
+    @Transactional
+    public void releaseCanceled(Reservation reservation) {
+        release(reservation, ReservationStatus.RESERVED);
+    }
+
+    public void validateCancelable(Reservation reservation) {
+        if (!reservation.getSchedule().isBeforeCancelDeadline(LocalDateTime.now(clock))) {
+            throw new GeneralException(ReservationErrorStatus.CANCEL_DEADLINE_PASSED);
+        }
+    }
+
+    private void release(Reservation reservation, ReservationStatus expected) {
+        if (reservation.getStatus() != expected) {
+            return;
+        }
+        reservation.cancel();
+        reservationSeatRepository.deleteByReservationId(reservation.getId());
     }
 
     private String buildSeatSummary(List<Seat> seats) {

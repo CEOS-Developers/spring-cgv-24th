@@ -40,4 +40,11 @@ public interface ReservationRepository extends JpaRepository<Reservation, Long> 
             "AND r.status = com.ceos24.cgv.domain.reservation.enums.ReservationStatus.PENDING_PAYMENT " +
             "AND r.expiresAt <= :now")
     int expireHolds(@Param("ids") List<Long> ids, @Param("now") Instant now);
+
+    @Modifying(clearAutomatically = true)
+    @Query("UPDATE Reservation r SET r.status = com.ceos24.cgv.domain.reservation.enums.ReservationStatus.PAYING " +
+            "WHERE r.id = :id " +
+            "AND r.status = com.ceos24.cgv.domain.reservation.enums.ReservationStatus.PENDING_PAYMENT " +
+            "AND r.expiresAt > :now")
+    int startPaying(@Param("id") Long id, @Param("now") Instant now);
 }

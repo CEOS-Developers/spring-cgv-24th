@@ -7,6 +7,11 @@ import com.ceos24.cgv.domain.payment.entity.PaymentCancel;
 import com.ceos24.cgv.domain.payment.exception.PaymentErrorStatus;
 import com.ceos24.cgv.domain.payment.repository.PaymentCancelRepository;
 import com.ceos24.cgv.domain.payment.repository.PaymentRepository;
+import com.ceos24.cgv.domain.payment.client.dto.TossPaymentResponse;
+import com.ceos24.cgv.domain.payment.enums.PaymentStatus;
+import com.ceos24.cgv.domain.reservation.entity.Reservation;
+import com.ceos24.cgv.domain.reservation.exception.ReservationErrorStatus;
+import com.ceos24.cgv.domain.reservation.service.ReservationService;
 import com.ceos24.cgv.global.exception.GeneralException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -15,6 +20,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.Optional;
 
 import static com.ceos24.cgv.support.TestFixtures.*;
@@ -30,6 +37,8 @@ class PaymentServiceTest {
 	private PaymentRepository paymentRepository;
 	@Mock
 	private PaymentCancelRepository paymentCancelRepository;
+	@Mock
+	private ReservationService reservationService;
 
 	@InjectMocks
 	private PaymentService paymentService;
@@ -177,5 +186,144 @@ class PaymentServiceTest {
 		assertThat(result.cancelId()).isEqualTo(200L);
 		assertThat(result.amount()).isEqualTo(15_000);
 		assertThat(payment.getBalanceAmount()).isZero();
+	}
+
+	private Reservation heldReservation() {
+		var screen = screen(1L, theater(2L));
+		var schedule = schedule(1L, movie(1L), screen, LocalDateTime.now().plusHours(1));
+		return reservation(50L, user(10L), schedule, "A1");
+	}
+
+	private Payment reservationPayment() {
+		return withId(Payment.forReservation(heldReservation(), "테스트 영화 1매"), 100L);
+	}
+
+	private TossPaymentResponse doneToss(Payment payment) {
+		return new TossPaymentResponse("pk-1", payment.getTossOrderId(), "DONE", payment.getAmount(), payment.getAmount(),
+				"카드", OffsetDateTime.now(), null);
+	}
+
+	@Test
+	void 예매_결제는_선점이_만료되면_결제_상태를_바꾸지_않고_거절한다() {
+		Payment payment = reservationPayment();
+		when(paymentRepository.findByTossOrderId(payment.getTossOrderId())).thenReturn(Optional.of(payment));
+		doThrow(new GeneralException(ReservationErrorStatus.RESERVATION_HOLD_EXPIRED)).when(reservationService).startPaying(50L);
+
+		assertThatThrownBy(() -> paymentService.startApproval(10L, new PaymentConfirmRequest("pk-1", payment.getTossOrderId(), 15_000)))
+				.isInstanceOf(GeneralException.class)
+				.extracting(error -> ((GeneralException) error).getCode())
+				.isEqualTo(ReservationErrorStatus.RESERVATION_HOLD_EXPIRED);
+		verify(paymentRepository, never()).updateStatusIfMatches(anyLong(), anyList(), any());
+	}
+
+	@Test
+	void 예매_결제는_승인_시작_전에_예매를_결제_진행으로_전환한다() {
+		Payment payment = reservationPayment();
+		when(paymentRepository.findByTossOrderId(payment.getTossOrderId())).thenReturn(Optional.of(payment));
+		when(paymentRepository.updateStatusIfMatches(eq(100L), anyList(), any())).thenReturn(1);
+
+		paymentService.startApproval(10L, new PaymentConfirmRequest("pk-1", payment.getTossOrderId(), 15_000));
+
+		var inOrder = inOrder(reservationService, paymentRepository);
+		inOrder.verify(reservationService).startPaying(50L);
+		inOrder.verify(paymentRepository).updateStatusIfMatches(eq(100L), anyList(), any());
+	}
+
+	@Test
+	void 결과_불명_결제를_재시도할_때는_예매를_다시_전환하지_않는다() {
+		Payment payment = reservationPayment();
+		payment.markUnknown();
+		when(paymentRepository.findByTossOrderId(payment.getTossOrderId())).thenReturn(Optional.of(payment));
+		when(paymentRepository.updateStatusIfMatches(eq(100L), anyList(), any())).thenReturn(1);
+
+		paymentService.startApproval(10L, new PaymentConfirmRequest("pk-1", payment.getTossOrderId(), 15_000));
+
+		verify(reservationService, never()).startPaying(anyLong());
+	}
+
+	@Test
+	void 예매_결제_승인이_완료되면_예매를_확정한다() {
+		Payment payment = reservationPayment();
+		when(paymentRepository.findById(100L)).thenReturn(Optional.of(payment));
+
+		paymentService.completeApproval(100L, doneToss(payment));
+
+		assertThat(payment.getStatus()).isEqualTo(PaymentStatus.DONE);
+		verify(reservationService).confirmPaid(payment.getReservation());
+	}
+
+	@Test
+	void 예매_결제가_실패하면_예매를_해제한다() {
+		Payment payment = reservationPayment();
+		when(paymentRepository.findById(100L)).thenReturn(Optional.of(payment));
+
+		paymentService.fail(100L);
+
+		assertThat(payment.getStatus()).isEqualTo(PaymentStatus.FAILED);
+		verify(reservationService).releaseUnpaid(payment.getReservation());
+	}
+
+	@Test
+	void 결과_불명으로_표시해도_예매는_건드리지_않는다() {
+		Payment payment = reservationPayment();
+		when(paymentRepository.findById(100L)).thenReturn(Optional.of(payment));
+
+		paymentService.markUnknown(100L);
+
+		assertThat(payment.getStatus()).isEqualTo(PaymentStatus.UNKNOWN);
+		verifyNoInteractions(reservationService);
+	}
+
+	@Test
+	void 예매_결제_보상_취소를_기록하면_예매를_해제한다() {
+		Payment payment = reservationPayment();
+		when(paymentRepository.findById(100L)).thenReturn(Optional.of(payment));
+
+		paymentService.recordCompensation(100L, doneToss(payment));
+
+		assertThat(payment.getStatus()).isEqualTo(PaymentStatus.CANCELED);
+		verify(reservationService).releaseUnpaid(payment.getReservation());
+	}
+
+	@Test
+	void 예매_결제_취소를_시작할_때_취소_가능_시간을_검증한다() {
+		Payment payment = reservationPayment();
+		payment.approve("pk-1", "카드", Instant.now());
+		when(paymentRepository.findByIdForUpdate(100L)).thenReturn(Optional.of(payment));
+		when(paymentCancelRepository.save(any(PaymentCancel.class))).thenAnswer(invocation -> withId(invocation.getArgument(0), 200L));
+
+		paymentService.startCancel(10L, 100L, "key-1", new PaymentCancelRequest("단순 변심", null));
+
+		verify(reservationService).validateCancelable(payment.getReservation());
+	}
+
+	@Test
+	void 취소_가능_시간이_지난_예매_결제는_취소를_예약하지_않는다() {
+		Payment payment = reservationPayment();
+		payment.approve("pk-1", "카드", Instant.now());
+		when(paymentRepository.findByIdForUpdate(100L)).thenReturn(Optional.of(payment));
+		doThrow(new GeneralException(ReservationErrorStatus.CANCEL_DEADLINE_PASSED)).when(reservationService).validateCancelable(any());
+
+		assertThatThrownBy(() -> paymentService.startCancel(10L, 100L, "key-1", new PaymentCancelRequest("단순 변심", null)))
+				.isInstanceOf(GeneralException.class)
+				.extracting(error -> ((GeneralException) error).getCode())
+				.isEqualTo(ReservationErrorStatus.CANCEL_DEADLINE_PASSED);
+		assertThat(payment.getBalanceAmount()).isEqualTo(15_000);
+		verify(paymentCancelRepository, never()).save(any());
+	}
+
+	@Test
+	void 예매_결제_취소로_잔액이_0이_되면_예매를_해제한다() {
+		Payment payment = reservationPayment();
+		payment.approve("pk-1", "카드", Instant.now());
+		payment.reserveCancel(15_000);
+		PaymentCancel cancel = withId(PaymentCancel.request(payment, "key-1", 15_000, "단순 변심"), 200L);
+		when(paymentRepository.findByIdForUpdate(100L)).thenReturn(Optional.of(payment));
+		when(paymentCancelRepository.findById(200L)).thenReturn(Optional.of(cancel));
+
+		paymentService.completeCancel(100L, 200L, doneToss(payment));
+
+		assertThat(payment.getStatus()).isEqualTo(PaymentStatus.CANCELED);
+		verify(reservationService).releaseCanceled(payment.getReservation());
 	}
 }
