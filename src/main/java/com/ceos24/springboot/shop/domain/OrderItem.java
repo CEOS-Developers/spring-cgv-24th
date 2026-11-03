@@ -16,7 +16,7 @@ public class OrderItem {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     @Column(name = "order_item_id")
-    private Long OrderItemId;
+    private Long orderItemId;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "order_id")
@@ -29,6 +29,9 @@ public class OrderItem {
     @Column(name = "quantity")
     private Integer quantity;
 
+    @Column(name = "unit_price", nullable = false)
+    private Integer unitPrice;
+
     @Builder
     public OrderItem(
             StoreOrder order,
@@ -38,5 +41,6 @@ public class OrderItem {
         this.order = order;
         this.menu = menu;
         this.quantity = quantity;
+        this.unitPrice = menu.getMenuPrice();
     }
 }

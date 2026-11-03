@@ -53,6 +53,15 @@ public enum ErrorCode {
             "이미 취소된 예매입니다."
     ),
 
+    // Shop
+    STORE_ORDER_NOT_FOUND(HttpStatus.NOT_FOUND, "해당 매점 주문을 찾을 수 없습니다."),
+    STORE_ORDER_EXPIRED(HttpStatus.CONFLICT, "매점 주문의 결제 대기 시간이 만료되었습니다."),
+    STORE_ORDER_NOT_PAYABLE(HttpStatus.CONFLICT, "현재 상태에서는 매점 주문을 결제할 수 없습니다."),
+    INVALID_STORE_ORDER_REQUEST(HttpStatus.BAD_REQUEST, "주문할 메뉴와 수량이 올바르지 않습니다."),
+    INSUFFICIENT_STOCK(HttpStatus.CONFLICT, "매점 상품의 재고가 부족합니다."),
+    STORE_INVENTORY_NOT_FOUND(HttpStatus.NOT_FOUND, "해당 영화관에서 판매하는 상품을 찾을 수 없습니다."),
+    PAID_STORE_ORDER_CANCEL_NOT_SUPPORTED(HttpStatus.CONFLICT, "결제 완료 주문은 환불 처리 후 취소해야 합니다."),
+
     // Payment
     PAYMENT_USER_REQUIRED(
             HttpStatus.BAD_REQUEST,
@@ -111,7 +120,7 @@ public enum ErrorCode {
 
     PAYMENT_IN_PROGRESS(
             HttpStatus.CONFLICT,
-            "결제 처리 중이므로 예매를 변경할 수 없습니다."
+            "결제 처리 중이므로 예매 또는 주문을 변경할 수 없습니다."
     ),
 
     PAYMENT_RESULT_UNKNOWN(
