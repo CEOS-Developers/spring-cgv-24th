@@ -125,4 +125,11 @@ public class StoreOrder {
             throw new GlobalException(ErrorCode.INVALID_PAYMENT_STATUS);
         }
     }
+
+    public void cancelAfterRefund() {
+        if (status != StoreOrderStatus.PAID || paymentProcessing) {
+            throw new GlobalException(ErrorCode.INVALID_PAYMENT_STATUS);
+        }
+        status = StoreOrderStatus.CANCELED;
+    }
 }

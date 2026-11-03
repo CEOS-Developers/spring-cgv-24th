@@ -66,6 +66,15 @@ public enum ErrorCode {
     PAID_STORE_ORDER_CANCEL_NOT_SUPPORTED(HttpStatus.CONFLICT, "결제 완료 주문은 환불 처리 후 취소해야 합니다."),
 
     // Payment
+    INVALID_PAYMENT_CANCEL_REQUEST(HttpStatus.BAD_REQUEST, "취소 사유(1~200자), 양수 금액 및 멱등키(소문자·숫자·_·-, 1~64자)를 확인해 주세요."),
+    PAYMENT_NOT_CANCELABLE(HttpStatus.CONFLICT, "승인된 결제만 취소할 수 있습니다."),
+    PAYMENT_ALREADY_CANCELED(HttpStatus.CONFLICT, "이미 전액 취소된 결제입니다."),
+    PAYMENT_CANCEL_AMOUNT_EXCEEDED(HttpStatus.BAD_REQUEST, "취소 금액이 남은 결제 금액을 초과합니다."),
+    PAYMENT_CANCEL_IN_PROGRESS(HttpStatus.CONFLICT, "다른 취소 요청의 결과를 먼저 확인해야 합니다. 기존 요청의 멱등키로 재시도해 주세요."),
+    PAYMENT_CANCEL_REQUEST_MISMATCH(HttpStatus.CONFLICT, "동일 멱등키에 다른 취소 내용을 사용할 수 없습니다."),
+    PAYMENT_CANCEL_FAILED(HttpStatus.BAD_GATEWAY, "PG에서 결제 취소를 거절했습니다. 결제 금액은 변경되지 않았습니다."),
+    PAYMENT_CANCEL_RESULT_UNKNOWN(HttpStatus.SERVICE_UNAVAILABLE, "취소 결과를 확인하지 못했습니다. 새 멱등키를 만들지 말고 동일한 요청으로 재시도해 주세요."),
+    PAYMENT_CANCEL_METHOD_NOT_SUPPORTED(HttpStatus.CONFLICT, "가상계좌 환불은 환불 계좌 연동 후 사용할 수 있습니다."),
     INVALID_PAYMENT_PAGE(HttpStatus.BAD_REQUEST, "page는 0 이상, size는 1 이상 100 이하로 입력해야 합니다."),
 
     PAYMENT_USER_REQUIRED(

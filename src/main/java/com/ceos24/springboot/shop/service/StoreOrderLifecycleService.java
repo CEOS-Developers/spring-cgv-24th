@@ -43,6 +43,11 @@ public class StoreOrderLifecycleService {
         restoreStock(order);
     }
 
+    public void refundLocked(StoreOrder order) {
+        order.cancelAfterRefund();
+        restoreStock(order);
+    }
+
     private void closePendingPayment(StoreOrder order, boolean expired) {
         payments.findFirstByTargetTypeAndTargetIdOrderByIdDesc(PaymentTargetType.STORE_ORDER, order.getOrderId())
                 .ifPresent(existing -> payments.findMyPaymentWithLock(existing.getOrderId(), order.getUser().getId())

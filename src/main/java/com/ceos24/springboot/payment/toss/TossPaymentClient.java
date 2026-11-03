@@ -3,6 +3,8 @@ package com.ceos24.springboot.payment.toss;
 import com.ceos24.springboot.payment.config.TossPaymentProperties;
 import com.ceos24.springboot.payment.dto.TossPaymentConfirmRequest;
 import com.ceos24.springboot.payment.dto.TossPaymentConfirmResponse;
+import com.ceos24.springboot.payment.dto.TossPaymentCancelRequest;
+import com.ceos24.springboot.payment.dto.TossPaymentCancelResponse;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
@@ -90,9 +92,23 @@ public class TossPaymentClient {
         return requireResponse(response);
     }
 
-    private TossPaymentConfirmResponse requireResponse(
-            TossPaymentConfirmResponse response
-    ) {
+    public TossPaymentCancelResponse cancel(String paymentKey, TossPaymentCancelRequest request, String idempotencyKey) {
+        if (!StringUtils.hasText(idempotencyKey)) {
+            throw new IllegalArgumentException("결제 취소 요청에 사용할 멱등키가 필요합니다.");
+        }
+        return requireResponse(restClient.post()
+                .uri("/v1/payments/{paymentKey}/cancel", paymentKey)
+                .contentType(MediaType.APPLICATION_JSON)
+                .header("Idempotency-Key", idempotencyKey)
+                .body(request).retrieve().body(TossPaymentCancelResponse.class));
+    }
+
+    public TossPaymentCancelResponse findForCancellation(String paymentKey) {
+        return requireResponse(restClient.get().uri("/v1/payments/{paymentKey}", paymentKey)
+                .retrieve().body(TossPaymentCancelResponse.class));
+    }
+
+    private <T> T requireResponse(T response) {
         if (response == null) {
             throw new RestClientException(
                     "토스 API 응답 본문이 비어 있습니다."

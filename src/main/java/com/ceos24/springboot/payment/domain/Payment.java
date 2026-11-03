@@ -47,6 +47,10 @@ public class Payment {
     @Column(name = "amount", nullable = false, updatable = false)
     private Long amount;
 
+    // 최초 금액은 보존하고, 승인/환불이 검증됐을 때만 잔액을 변경한다.
+    @Column(name = "balance_amount", nullable = false)
+    private Long balanceAmount;
+
     // Merchant-side order-name snapshot; do not depend on current movie/menu data.
     @Column(name = "order_name", nullable = false, updatable = false, length = 100)
     private String orderName;
@@ -115,6 +119,7 @@ public class Payment {
         this.targetType = targetType;
         this.targetId = targetId;
         this.amount = amount;
+        this.balanceAmount = 0L;
         this.orderName = targetType == PaymentTargetType.RESERVATION ? "영화 티켓 예매" : "매점 상품 주문";
         this.currency = "KRW";
         this.status = PaymentStatus.READY;
@@ -175,7 +180,31 @@ public class Payment {
 
         this.approvedAt = approvedAt;
         this.paymentMethod = paymentMethod;
+        this.balanceAmount = amount;
         this.status = PaymentStatus.DONE;
+    }
+
+    public void validateCancelable() {
+        if (status == PaymentStatus.CANCELED && approvedAt != null) {
+            throw new GlobalException(ErrorCode.PAYMENT_ALREADY_CANCELED);
+        }
+        if ((status != PaymentStatus.DONE && status != PaymentStatus.PARTIAL_CANCELED)
+                || approvedAt == null || balanceAmount == null || balanceAmount <= 0) {
+            throw new GlobalException(ErrorCode.PAYMENT_NOT_CANCELABLE);
+        }
+    }
+
+    public void applyCancellation(long cancelAmount) {
+        validateCancelable();
+        if (cancelAmount <= 0 || cancelAmount > balanceAmount) {
+            throw new GlobalException(ErrorCode.PAYMENT_CANCEL_AMOUNT_EXCEEDED);
+        }
+        balanceAmount -= cancelAmount;
+        status = balanceAmount == 0 ? PaymentStatus.CANCELED : PaymentStatus.PARTIAL_CANCELED;
+    }
+
+    public long getCanceledAmount() {
+        return approvedAt == null ? 0L : amount - balanceAmount;
     }
 
     public void markFailed() {

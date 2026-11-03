@@ -13,6 +13,8 @@ public record PaymentDetailResponse(
         Long targetId,
         String orderName,
         Long amount,
+        Long balanceAmount,
+        Long canceledAmount,
         String currency,
         String paymentMethod,
         PaymentStatus status,
@@ -21,7 +23,8 @@ public record PaymentDetailResponse(
 ) {
     public static PaymentDetailResponse from(Payment payment) {
         return new PaymentDetailResponse(payment.getId(), payment.getOrderId(), payment.getTargetType(),
-                payment.getTargetId(), payment.getOrderName(), payment.getAmount(), payment.getCurrency(),
+                payment.getTargetId(), payment.getOrderName(), payment.getAmount(), payment.getBalanceAmount(),
+                payment.getCanceledAmount(), payment.getCurrency(),
                 payment.getPaymentMethod(), payment.getStatus(), payment.getCreatedAt(), payment.getApprovedAt());
     }
 }

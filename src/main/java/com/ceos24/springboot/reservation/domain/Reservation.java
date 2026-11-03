@@ -166,4 +166,12 @@ public class Reservation {
 
         paymentProcessing = false;
     }
+
+    // 전액 환불이 PG에서 확인된 뒤, 예매 락 안에서만 호출한다.
+    public void cancelAfterRefund() {
+        if (status != ReservationStatus.Reserved || paymentProcessing) {
+            throw new GlobalException(ErrorCode.INVALID_PAYMENT_STATUS);
+        }
+        status = ReservationStatus.Canceled;
+    }
 }

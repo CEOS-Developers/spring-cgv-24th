@@ -9,11 +9,25 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.util.Optional;
+import java.util.Collection;
 import com.ceos24.springboot.payment.domain.PaymentStatus;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
 public interface PaymentRepository extends JpaRepository<Payment, Long> {
+
+    Optional<Payment> findByIdAndUser_IdAndStatusInAndApprovedAtIsNotNull(
+            Long id, Long userId, Collection<PaymentStatus> statuses);
+
+    Page<Payment> findAllByUser_IdAndStatusInAndApprovedAtIsNotNull(
+            Long userId, Collection<PaymentStatus> statuses, Pageable pageable);
+
+    @Query("select p.targetType as targetType, p.targetId as targetId from Payment p where p.id = :id and p.user.id = :userId")
+    Optional<TargetReference> findTargetById(@Param("id") Long id, @Param("userId") Long userId);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select p from Payment p where p.id = :id and p.user.id = :userId")
+    Optional<Payment> findMyPaymentByIdWithLock(@Param("id") Long id, @Param("userId") Long userId);
 
     Optional<Payment> findByIdAndUser_IdAndStatus(Long id, Long userId, PaymentStatus status);
 
