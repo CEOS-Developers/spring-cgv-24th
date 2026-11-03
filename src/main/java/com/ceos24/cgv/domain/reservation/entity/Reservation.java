@@ -135,6 +135,29 @@ public class Reservation extends BaseTimeEntity {
         this.status = ReservationStatus.CANCELED;
     }
 
+    //취소 관련 메서드
+    public void cancelSeatsAfterRefund(List<ReservationSeat> selectedSeats) {
+        if (status != ReservationStatus.CONFIRMED
+                && status != ReservationStatus.PARTIALLY_CANCELED) {
+            throw new IllegalStateException("환불 가능한 예매 상태가 아닙니다.");
+        }
+
+        for (ReservationSeat seat : selectedSeats) {
+            if (!reservationSeats.contains(seat) || seat.isCanceled()) {
+                throw new IllegalStateException("취소할 수 없는 예매 좌석입니다.");
+            }
+        }
+
+        selectedSeats.forEach(ReservationSeat::cancel);
+
+        boolean allCanceled = reservationSeats.stream()
+                .allMatch(ReservationSeat::isCanceled);
+
+        this.status = allCanceled
+                ? ReservationStatus.CANCELED
+                : ReservationStatus.PARTIALLY_CANCELED;
+    }
+
     public boolean isCanceled() {
         return status == ReservationStatus.CANCELED;
     }

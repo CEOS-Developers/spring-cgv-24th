@@ -1,6 +1,7 @@
 package com.ceos24.cgv.domain.payment.controller;
 
 import com.ceos24.cgv.domain.payment.dto.request.PaymentConfirmRequest;
+import com.ceos24.cgv.domain.payment.dto.request.PaymentPartialCancelRequest;
 import com.ceos24.cgv.domain.payment.dto.response.PaymentDetailResponse;
 import com.ceos24.cgv.domain.payment.dto.response.TossConfirmResponse;
 import com.ceos24.cgv.domain.payment.service.PaymentApprovalService;
@@ -80,5 +81,19 @@ public class PaymentController {
         return ApiResponse.onSuccess("결제 전체 취소에 성공했습니다.", response);
     }
 
+    @PostMapping("/{orderId}/cancel/partial")
+    @Operation(summary = "선택한 예매 좌석 결제 취소")
+    public ApiResponse<PaymentDetailResponse> cancelPartial(
+            @Parameter(hidden = true)
+            @AuthenticationPrincipal CustomUserDetails principal,
+            @PathVariable("orderId") String orderId,
+            @Valid @RequestBody PaymentPartialCancelRequest request
+    ) {
+        PaymentDetailResponse response = paymentCancellationService.cancelPartial(
+                principal.getUserId(), orderId, request
+        );
+
+        return ApiResponse.onSuccess("선택한 좌석의 결제를 취소했습니다.", response);
+    }
 
 }

@@ -10,6 +10,7 @@ public record TossCancelResponse(
         Integer totalAmount,
         //남은 금액
         Integer balanceAmount,
+        String lastTransactionKey,
         //취소 거래 이력
         List<CancelDetail> cancels
 ) {

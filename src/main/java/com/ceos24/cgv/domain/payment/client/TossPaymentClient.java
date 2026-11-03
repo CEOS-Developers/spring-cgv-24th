@@ -53,4 +53,31 @@ public class TossPaymentClient {
 
         return response;
     }
+
+    public TossCancelResponse cancelPartial(
+            String paymentKey,
+            int cancelAmount,
+            String cancelReason,
+            String idempotencyKey
+    ) {
+        if (cancelAmount <= 0) {
+            throw new IllegalArgumentException("취소 금액은 0보다 커야 합니다.");
+        }
+
+        TossCancelResponse response = restClient.post()
+                .uri("/v1/payments/{paymentKey}/cancel", paymentKey)
+                .header("Idempotency-Key", idempotencyKey)
+                .body(Map.of(
+                        "cancelReason", cancelReason,
+                        "cancelAmount", cancelAmount
+                ))
+                .retrieve()
+                .body(TossCancelResponse.class);
+
+        if (response == null) {
+            throw new IllegalStateException("Toss 부분 취소 응답이 비어 있습니다.");
+        }
+
+        return response;
+    }
 }

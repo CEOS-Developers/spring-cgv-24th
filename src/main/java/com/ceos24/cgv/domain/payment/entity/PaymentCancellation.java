@@ -1,5 +1,6 @@
 package com.ceos24.cgv.domain.payment.entity;
 
+import com.ceos24.cgv.domain.payment.enums.CancelType;
 import com.ceos24.cgv.domain.payment.exception.PaymentException;
 import com.ceos24.cgv.domain.reservation.entity.ReservationSeat;
 import com.ceos24.cgv.global.common.BaseTimeEntity;
@@ -52,6 +53,11 @@ public class PaymentCancellation extends BaseTimeEntity {
     @Column(unique = true)
     private String transactionKey;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "cancellation_type", length = 10)
+    private CancelType type;
+
+
     private OffsetDateTime canceledAt;
 
     public static PaymentCancellation requestFull(Payment payment, String reason) {
@@ -65,6 +71,9 @@ public class PaymentCancellation extends BaseTimeEntity {
         cancellation.reason = reason;
         cancellation.idempotencyKey = UUID.randomUUID().toString();
         cancellation.status = Status.REQUESTED;
+
+        cancellation.type = CancelType.FULL;
+
         return cancellation;
     }
 
@@ -109,7 +118,13 @@ public class PaymentCancellation extends BaseTimeEntity {
         cancellation.reason = reason;
         cancellation.idempotencyKey = requestId.toString();
         cancellation.status = Status.REQUESTED;
+        cancellation.type = CancelType.PARTIAL;
 
         return cancellation;
+    }
+
+    public boolean isFull() {
+        // 유형 컬럼을 추가하기 전 저장된 이력은 기존 전체 취소 건이다.
+        return type == null || type == CancelType.FULL;
     }
 }

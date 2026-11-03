@@ -1,10 +1,12 @@
 package com.ceos24.cgv.domain.payment.service;
 
 import com.ceos24.cgv.domain.payment.dto.request.PaymentConfirmRequest;
+import com.ceos24.cgv.domain.payment.dto.request.PaymentPartialCancelRequest;
 import com.ceos24.cgv.domain.payment.dto.response.PaymentDetailResponse;
 import com.ceos24.cgv.domain.payment.dto.response.TossCancelResponse;
 import com.ceos24.cgv.domain.payment.entity.Payment;
 import com.ceos24.cgv.domain.payment.entity.PaymentCancellation;
+import com.ceos24.cgv.domain.payment.entity.PaymentCancellationSeat;
 import com.ceos24.cgv.domain.payment.enums.PaymentStatus;
 import com.ceos24.cgv.domain.payment.exception.PaymentErrorCode;
 import com.ceos24.cgv.domain.payment.exception.PaymentException;
@@ -12,7 +14,9 @@ import com.ceos24.cgv.domain.payment.repository.PaymentCancellationRepository;
 import com.ceos24.cgv.domain.payment.repository.PaymentCancellationSeatRepository;
 import com.ceos24.cgv.domain.payment.repository.PaymentRepository;
 import com.ceos24.cgv.domain.payment.service.command.FullCancellationCommand;
+import com.ceos24.cgv.domain.payment.service.command.PartialCancellationCommand;
 import com.ceos24.cgv.domain.reservation.entity.Reservation;
+import com.ceos24.cgv.domain.reservation.entity.ReservationSeat;
 import com.ceos24.cgv.domain.reservation.enums.ReservationStatus;
 import com.ceos24.cgv.domain.reservation.exception.ReservationErrorCode;
 import com.ceos24.cgv.domain.reservation.exception.ReservationException;
@@ -25,8 +29,11 @@ import org.springframework.transaction.annotation.Transactional;
 import com.ceos24.cgv.domain.payment.dto.response.TossConfirmResponse;
 
 import java.time.LocalDateTime;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -194,7 +201,9 @@ public class PaymentTransactionService {
                             PaymentErrorCode.PAYMENT_NOT_CANCELABLE
                     ));
 
-            if (!Objects.equals(existing.getReason(), reason)) {
+            //취소 상태에서 기존 요청을 재사용하는 조건임
+
+            if (!existing.isFull() || !Objects.equals(existing.getReason(), reason)) {
                 throw new PaymentException(PaymentErrorCode.PAYMENT_NOT_CANCELABLE);
             }
 
@@ -268,6 +277,175 @@ public class PaymentTransactionService {
         screeningSeats.forEach(ScreeningSeat::release);
 
         return PaymentDetailResponse.from(payment);
+    }
+
+    //취소 준비 메서드 추가
+    @Transactional
+    public PartialCancellationCommand preparePartialCancellation(
+            Long userId,
+            String orderId,
+            PaymentPartialCancelRequest request
+    ) {
+        ApprovalRows rows = lockApprovalRows(orderId);
+        Payment payment = rows.payment();
+        Reservation reservation = rows.reservation();
+
+        if (!Objects.equals(reservation.getUser().getId(), userId)) {
+            throw new PaymentException(PaymentErrorCode.PAYMENT_ACCESS_DENIED);
+        }
+
+        List<Long> ids = request.reservationSeatIds();
+        Set<Long> requestedIds = new HashSet<>(ids);
+
+        if (requestedIds.isEmpty() || requestedIds.size() != ids.size()) {
+            throw new PaymentException(PaymentErrorCode.PAYMENT_NOT_CANCELABLE);
+        }
+
+        String key = request.requestId().toString();
+        var previous = paymentCancellationRepository.findRequestForUpdate(
+                payment.getId(), key
+        );
+
+        // 같은 취소 건의 재전송인지 좌석 집합과 사유까지 비교한다.
+        if (previous.isPresent()) {
+            PaymentCancellation existing = previous.get();
+
+            Set<Long> savedIds = loadCancellationSeats(existing.getId()).stream()
+                    .map(ReservationSeat::getId)
+                    .collect(Collectors.toSet());
+
+            if (existing.isFull()
+                    || existing.getStatus() == PaymentCancellation.Status.FAILED
+                    || !Objects.equals(existing.getReason(), request.cancelReason())
+                    || !savedIds.equals(requestedIds)) {
+                throw new PaymentException(PaymentErrorCode.PAYMENT_NOT_CANCELABLE);
+            }
+
+            return PartialCancellationCommand.from(payment, existing);
+        }
+
+        if (reservation.getStatus() != ReservationStatus.CONFIRMED
+                && reservation.getStatus() != ReservationStatus.PARTIALLY_CANCELED) {
+            throw new PaymentException(PaymentErrorCode.PAYMENT_NOT_CANCELABLE);
+        }
+
+        List<ReservationSeat> selectedSeats = reservation.getReservationSeats().stream()
+                .filter(seat -> requestedIds.contains(seat.getId()))
+                .toList();
+
+        // 다른 예매의 좌석, 존재하지 않는 좌석, 이미 환불한 좌석을 거른다.
+        if (selectedSeats.size() != requestedIds.size()
+                || selectedSeats.stream().anyMatch(ReservationSeat::isCanceled)) {
+            throw new PaymentException(PaymentErrorCode.PAYMENT_NOT_CANCELABLE);
+        }
+
+        // 다른 요청 ID의 취소가 진행 중이면 여기서 차단된다.
+        payment.startPartialCancellation();
+
+        PaymentCancellation cancellation = paymentCancellationRepository.save(
+                PaymentCancellation.requestPartial(
+                        payment, selectedSeats, request.cancelReason(), request.requestId()
+                )
+        );
+
+        var links = selectedSeats.stream()
+                .map(seat -> PaymentCancellationSeat.create(cancellation, seat))
+                .toList();
+
+        paymentCancellationSeatRepository.saveAll(links);
+
+        return PartialCancellationCommand.from(payment, cancellation);
+    }
+
+    //부분 취소 메서드
+    @Transactional
+    public PaymentDetailResponse completePartialCancellation(
+            String orderId,
+            Long cancellationId,
+            TossCancelResponse response
+    ) {
+        ApprovalRows rows = lockApprovalRows(orderId);
+        Payment payment = rows.payment();
+        Reservation reservation = rows.reservation();
+
+        PaymentCancellation cancellation = paymentCancellationRepository
+                .findByIdForUpdate(cancellationId)
+                .orElseThrow(() ->
+                        new PaymentException(PaymentErrorCode.PAYMENT_NOT_CANCELABLE));
+
+        if (cancellation.isFull()
+                || !Objects.equals(cancellation.getPayment().getId(), payment.getId())) {
+            throw new PaymentException(PaymentErrorCode.PAYMENT_NOT_CANCELABLE);
+        }
+
+        // 같은 응답을 두 번 처리해도 금액을 더하거나 좌석을 다시 반환하지 않는다.
+        if (cancellation.getStatus() == PaymentCancellation.Status.DONE) {
+            return PaymentDetailResponse.from(payment);
+        }
+
+        if (cancellation.getStatus() != PaymentCancellation.Status.REQUESTED
+                || payment.getStatus() != PaymentStatus.CANCELING) {
+            throw new PaymentException(PaymentErrorCode.PAYMENT_NOT_CANCELABLE);
+        }
+
+        int expectedBalance = payment.getRemainingAmount() - cancellation.getAmount();
+        String expectedStatus = expectedBalance == 0 ? "CANCELED" : "PARTIAL_CANCELED";
+
+        if (response == null
+                || !Objects.equals(orderId, response.orderId())
+                || !Objects.equals(payment.getPaymentKey(), response.paymentKey())
+                || !Objects.equals(payment.getAmount(), response.totalAmount())
+                || !Objects.equals(expectedBalance, response.balanceAmount())
+                || !expectedStatus.equals(response.status())
+                || response.lastTransactionKey() == null
+                || response.lastTransactionKey().isBlank()
+                || response.cancels() == null) {
+            throw new PaymentException(PaymentErrorCode.INVALID_CANCEL_RESPONSE);
+        }
+
+        var refund = response.cancels().stream()
+                .filter(Objects::nonNull)
+                .filter(item -> response.lastTransactionKey().equals(item.transactionKey()))
+                .filter(item -> "DONE".equals(item.cancelStatus()))
+                .filter(item -> Objects.equals(cancellation.getAmount(), item.cancelAmount()))
+                .filter(item -> Objects.equals(cancellation.getReason(), item.cancelReason()))
+                .filter(item -> item.canceledAt() != null)
+                .findFirst()
+                .orElseThrow(() ->
+                        new PaymentException(PaymentErrorCode.INVALID_CANCEL_RESPONSE));
+
+        List<ReservationSeat> selectedSeats = loadCancellationSeats(cancellationId);
+        if (selectedSeats.isEmpty()) {
+            throw new IllegalStateException("취소 이력에 연결된 좌석이 없습니다.");
+        }
+
+        // 요청에 저장된 예매 좌석만 실제 상영 회차 좌석으로 변환한다.
+        List<Long> seatIds = selectedSeats.stream()
+                .map(seat -> seat.getSeat().getId())
+                .sorted()
+                .toList();
+
+        List<ScreeningSeat> screeningSeats = screeningSeatRepository.findAllForUpdate(
+                reservation.getScreening().getId(), seatIds
+        );
+        if (screeningSeats.size() != seatIds.size()) {
+            throw new IllegalStateException("반환할 상영 좌석 정보가 일치하지 않습니다.");
+        }
+
+        payment.completePartialCancellation(refund.cancelAmount());
+        reservation.cancelSeatsAfterRefund(selectedSeats);
+        cancellation.complete(refund.transactionKey(), refund.canceledAt());
+        screeningSeats.forEach(ScreeningSeat::release);
+
+        return PaymentDetailResponse.from(payment);
+    }
+
+    private List<ReservationSeat> loadCancellationSeats(Long cancellationId) {
+        return paymentCancellationSeatRepository
+                .findAllByCancellation_Id(cancellationId)
+                .stream()
+                .map(PaymentCancellationSeat::getReservationSeat)
+                .toList();
     }
 
     private TossCancelResponse.CancelDetail validateFullRefund(

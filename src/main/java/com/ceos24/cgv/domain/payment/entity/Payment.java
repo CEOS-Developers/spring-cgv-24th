@@ -140,4 +140,28 @@ public class Payment extends BaseTimeEntity {
         this.canceledAmount += refundedAmount;
         this.status = PaymentStatus.CANCELED;
     }
+
+    //상태 변경 메서드
+    public void startPartialCancellation() {
+        if (status != PaymentStatus.DONE
+                && status != PaymentStatus.PARTIALLY_CANCELED) {
+            throw new PaymentException(PaymentErrorCode.PAYMENT_NOT_CANCELABLE);
+        }
+
+        this.status = PaymentStatus.CANCELING;
+    }
+
+    public void completePartialCancellation(int refundedAmount) {
+        if (status != PaymentStatus.CANCELING
+                || refundedAmount <= 0
+                || refundedAmount > getRemainingAmount()) {
+            throw new PaymentException(PaymentErrorCode.PAYMENT_NOT_CANCELABLE);
+        }
+
+        this.canceledAmount += refundedAmount;
+        //두번째 부분 취소도 가능하도록
+        this.status = getRemainingAmount() == 0
+                ? PaymentStatus.CANCELED
+                : PaymentStatus.PARTIALLY_CANCELED;
+    }
 }
