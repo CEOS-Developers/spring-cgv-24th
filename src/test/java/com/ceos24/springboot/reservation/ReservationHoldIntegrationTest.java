@@ -21,6 +21,9 @@ import com.ceos24.springboot.reservation.service.ReservationExpirationScheduler;
 import com.ceos24.springboot.reservation.service.ReservationExpirationService;
 import com.ceos24.springboot.reservation.service.ReservationService;
 import com.ceos24.springboot.theater.domain.*;
+import com.ceos24.springboot.theater.repository.ScreeningSeatRepository;
+import com.ceos24.springboot.theater.service.ScreeningService;
+import com.ceos24.springboot.theater.dto.ScreeningCreateRequest;
 import com.ceos24.springboot.user.domain.User;
 import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.AfterEach;
@@ -79,6 +82,8 @@ class ReservationHoldIntegrationTest {
     @Autowired private PaymentConfirmService paymentConfirmService;
     @Autowired private PaymentConfirmTransactionService paymentTransactions;
     @MockitoBean(enforceOverride = true) private TossPaymentClient tossPaymentClient;
+    @Autowired private ScreeningSeatRepository screeningSeats;
+    @Autowired private ScreeningService screeningService;
 
     private TransactionTemplate transaction;
     private Long userId;
@@ -93,7 +98,11 @@ class ReservationHoldIntegrationTest {
     private Long priceId;
 
     @BeforeEach
-    void setUp() {
+    void setUp() throws Exception {
+        try (var connection = jdbc.getDataSource().getConnection()) {
+            assertThat(connection.getMetaData().getDatabaseProductName())
+                    .isEqualTo(System.getenv().getOrDefault("SEAT_LOCK_TEST_DB", "H2"));
+        }
         transaction = new TransactionTemplate(transactionManager);
         transaction.executeWithoutResult(ignored -> {
             String suffix = UUID.randomUUID().toString();
@@ -117,6 +126,12 @@ class ReservationHoldIntegrationTest {
                     .build()).getScreeningId();
             firstSeatId = persist(Seat.create(screen, "A", 1)).getSeatId();
             secondSeatId = persist(Seat.create(screen, "A", 2)).getSeatId();
+            for (Long id : List.of(screeningId, otherScreeningId)) {
+                for (Long seatId : List.of(firstSeatId, secondSeatId)) {
+                    persist(ScreeningSeat.create(entityManager.find(Screening.class, id),
+                            entityManager.find(Seat.class, seatId)));
+                }
+            }
             jdbc.update("""
                     insert into price (audience_type, day_type, time_type, screen_category, ticket_price)
                     values ('Adult', ?, 'Normal', 'General', 12345)
@@ -131,6 +146,7 @@ class ReservationHoldIntegrationTest {
             jdbc.update("delete from payment where user_id in (?, ?)", userId, otherUserId);
             jdbc.update("delete from reservation_seat where screening_id in (?, ?)", screeningId, otherScreeningId);
             jdbc.update("delete from reservation where screening_id in (?, ?)", screeningId, otherScreeningId);
+            jdbc.update("delete from screening_seat where screening_id in (?, ?)", screeningId, otherScreeningId);
             jdbc.update("delete from screening where screening_id in (?, ?)", screeningId, otherScreeningId);
             jdbc.update("delete from seat where screen_id = ?", screenId);
             jdbc.update("delete from screen where screen_id = ?", screenId);
@@ -403,6 +419,117 @@ class ReservationHoldIntegrationTest {
         } catch (GlobalException e) {
             assertThat(e.getErrorCode()).isEqualTo(ErrorCode.SEAT_UNAVAILABLE);
             return false;
+        }
+    }
+
+    @Test
+    void contenderWaitsForScreeningSeatLockThenSeesCommittedWinningHold() throws Exception {
+        CountDownLatch locked = new CountDownLatch(1);
+        CountDownLatch finishWinner = new CountDownLatch(1);
+        CountDownLatch contenderStarted = new CountDownLatch(1);
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var winner = executor.submit(() -> transaction.execute(ignored -> {
+                screeningSeats.findWithLock(screeningId, firstSeatId).orElseThrow();
+                locked.countDown();
+                await(finishWinner);
+                return create(userId, screeningId, firstSeatId);
+            }));
+            assertThat(locked.await(5, TimeUnit.SECONDS)).isTrue();
+            var contender = executor.submit(() -> {
+                contenderStarted.countDown();
+                return selectAfter(new CountDownLatch(0), otherUserId);
+            });
+            try {
+                assertThat(contenderStarted.await(5, TimeUnit.SECONDS)).isTrue();
+                assertThatThrownBy(() -> contender.get(200, TimeUnit.MILLISECONDS))
+                        .isInstanceOf(java.util.concurrent.TimeoutException.class);
+            } finally {
+                finishWinner.countDown();
+            }
+            assertThat(winner.get(10, TimeUnit.SECONDS).status()).isEqualTo(ReservationStatus.Pending);
+            assertThat(contender.get(10, TimeUnit.SECONDS)).isFalse();
+        }
+        assertThat(reservationSeats.findAllByScreening_ScreeningIdAndSeat_SeatIdIn(screeningId, List.of(firstSeatId)))
+                .hasSize(1);
+        assertThat(reservations.findAllByUser_IdOrderByReservationAtDesc(otherUserId)).isEmpty();
+    }
+
+    @Test
+    void screeningSeatLockDoesNotBlockOtherSeatOrAnotherScreening() throws Exception {
+        CountDownLatch locked = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        try (var executor = Executors.newFixedThreadPool(3)) {
+            var locker = executor.submit(() -> transaction.executeWithoutResult(ignored -> {
+                screeningSeats.findWithLock(screeningId, firstSeatId).orElseThrow();
+                locked.countDown();
+                await(release);
+            }));
+            try {
+                assertThat(locked.await(5, TimeUnit.SECONDS)).isTrue();
+                var otherSeat = executor.submit(() -> create(userId, screeningId, secondSeatId));
+                var otherScreening = executor.submit(() -> create(otherUserId, otherScreeningId, firstSeatId));
+                assertThat(otherSeat.get(5, TimeUnit.SECONDS).status()).isEqualTo(ReservationStatus.Pending);
+                assertThat(otherScreening.get(5, TimeUnit.SECONDS).status()).isEqualTo(ReservationStatus.Pending);
+            } finally {
+                release.countDown();
+            }
+            locker.get(5, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
+    void reversedMultiSeatRequestsLockInSameOrderAndHaveOneWinner() throws Exception {
+        CountDownLatch start = new CountDownLatch(1);
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var first = executor.submit(() -> selectManyAfter(start, userId, firstSeatId, secondSeatId));
+            var second = executor.submit(() -> selectManyAfter(start, otherUserId, secondSeatId, firstSeatId));
+            start.countDown();
+            assertThat(List.of(first.get(10, TimeUnit.SECONDS), second.get(10, TimeUnit.SECONDS)))
+                    .containsExactlyInAnyOrder(true, false);
+        }
+        assertThat(reservationSeats.findAllByScreening_ScreeningIdAndSeat_SeatIdIn(
+                screeningId, List.of(firstSeatId, secondSeatId))).hasSize(2);
+    }
+
+    private boolean selectManyAfter(CountDownLatch start, Long owner, Long... seats) throws InterruptedException {
+        start.await();
+        try {
+            create(owner, screeningId, seats);
+            return true;
+        } catch (GlobalException e) {
+            assertThat(e.getErrorCode()).isEqualTo(ErrorCode.SEAT_UNAVAILABLE);
+            return false;
+        }
+    }
+
+    @Test
+    void registeringScreeningCreatesAllLockRowsInSameTransaction() {
+        transaction.executeWithoutResult(tx -> {
+            var registered = screeningService.createScreening(new ScreeningCreateRequest(
+                    screenId, movieId, LocalDate.now().plusDays(8), LocalTime.of(18, 0),
+                    LocalTime.of(20, 0), ScreeningType.Original));
+            assertThat(jdbc.queryForObject("select count(*) from screening_seat where screening_id = ?",
+                    Long.class, registered.screeningId())).isEqualTo(2);
+            assertThat(screeningSeats.findWithLock(registered.screeningId(), firstSeatId)).isPresent();
+            assertThat(screeningSeats.findWithLock(registered.screeningId(), secondSeatId)).isPresent();
+            tx.setRollbackOnly();
+        });
+    }
+
+    @Test
+    void duplicateScreeningSeatRowIsRejectedByUniqueConstraint() {
+        assertThatThrownBy(() -> transaction.executeWithoutResult(ignored ->
+                screeningSeats.saveAndFlush(ScreeningSeat.create(entityManager.find(Screening.class, screeningId),
+                        entityManager.find(Seat.class, firstSeatId)))))
+                .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+    }
+
+    private void await(CountDownLatch latch) {
+        try {
+            if (!latch.await(10, TimeUnit.SECONDS)) throw new IllegalStateException("seat lock wait timed out");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(e);
         }
     }
 

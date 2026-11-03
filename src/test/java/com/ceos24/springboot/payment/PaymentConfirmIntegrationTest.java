@@ -127,8 +127,12 @@ class PaymentConfirmIntegrationTest {
                     .totalPrice((int) AMOUNT).status(ReservationStatus.Pending)
                     .reservationAt(now).expiresAt(now.plusMinutes(10)).build());
             reservationId = reservation.getReservationId();
-            persist(ReservationSeat.create(reservation, screening, persist(Seat.create(screen, "A", 1))));
-            persist(ReservationSeat.create(reservation, screening, persist(Seat.create(screen, "A", 2))));
+            Seat firstSeat = persist(Seat.create(screen, "A", 1));
+            Seat secondSeat = persist(Seat.create(screen, "A", 2));
+            persist(ScreeningSeat.create(screening, firstSeat));
+            persist(ScreeningSeat.create(screening, secondSeat));
+            persist(ReservationSeat.create(reservation, screening, firstSeat));
+            persist(ReservationSeat.create(reservation, screening, secondSeat));
         });
 
         prepared = paymentService.prepareReservation(userId,
@@ -152,6 +156,7 @@ class PaymentConfirmIntegrationTest {
             jdbc.update("delete from payment");
             jdbc.update("delete from reservation_seat");
             jdbc.update("delete from reservation");
+            jdbc.update("delete from screening_seat");
             jdbc.update("delete from seat");
             jdbc.update("delete from screening");
             jdbc.update("delete from screen");

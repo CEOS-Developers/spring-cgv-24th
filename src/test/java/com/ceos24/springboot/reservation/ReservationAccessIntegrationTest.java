@@ -17,6 +17,7 @@ import com.ceos24.springboot.theater.domain.Screen;
 import com.ceos24.springboot.theater.domain.ScreenType;
 import com.ceos24.springboot.theater.domain.Screening;
 import com.ceos24.springboot.theater.domain.ScreeningType;
+import com.ceos24.springboot.theater.domain.ScreeningSeat;
 import com.ceos24.springboot.theater.domain.Seat;
 import com.ceos24.springboot.theater.domain.Theater;
 import com.ceos24.springboot.user.domain.User;
@@ -127,6 +128,9 @@ class ReservationAccessIntegrationTest {
         newSeatTwo = persist(Seat.create(screen, "A", 3));
         otherUserSeat = persist(Seat.create(screen, "A", 4));
         availableSeat = persist(Seat.create(screen, "A", 5));
+        for (Seat seat : List.of(oldSeat, newSeatOne, newSeatTwo, otherUserSeat, availableSeat)) {
+            persist(ScreeningSeat.create(screening, seat));
+        }
 
         LocalDateTime base = LocalDateTime.now().minusDays(2);
         olderA = createReservation(userA, base, List.of(oldSeat));
