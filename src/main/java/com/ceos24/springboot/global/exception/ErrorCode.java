@@ -66,6 +66,8 @@ public enum ErrorCode {
     PAID_STORE_ORDER_CANCEL_NOT_SUPPORTED(HttpStatus.CONFLICT, "결제 완료 주문은 환불 처리 후 취소해야 합니다."),
 
     // Payment
+    INVALID_PAYMENT_PAGE(HttpStatus.BAD_REQUEST, "page는 0 이상, size는 1 이상 100 이하로 입력해야 합니다."),
+
     PAYMENT_USER_REQUIRED(
             HttpStatus.BAD_REQUEST,
             "결제 사용자가 필요합니다."

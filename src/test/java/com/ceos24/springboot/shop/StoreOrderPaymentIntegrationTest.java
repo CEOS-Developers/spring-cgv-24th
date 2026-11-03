@@ -335,7 +335,7 @@ class StoreOrderPaymentIntegrationTest {
 
     private TossPaymentConfirmResponse remote(PaymentConfirmRequest request, String status) {
         return new TossPaymentConfirmResponse(request.paymentKey(), request.orderId(), request.amount(), "매점 상품 주문",
-                status, "카드", status.equals("DONE") ? OffsetDateTime.now().withNano(0) : null);
+                status, "카드", status.equals("DONE") ? OffsetDateTime.now().withNano(0) : null, "KRW");
     }
 
     private String confirmHttp(PaymentConfirmRequest request) throws Exception {

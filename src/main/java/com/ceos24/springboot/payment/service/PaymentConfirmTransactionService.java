@@ -95,7 +95,7 @@ public class PaymentConfirmTransactionService {
         } else if ("DONE".equals(remote.status()) && remote.approvedAt() != null) {
             LocalDateTime approvedAt = remote.approvedAt()
                     .atZoneSameInstant(ZoneId.of("Asia/Seoul")).toLocalDateTime();
-            payment.complete(approvedAt);
+            payment.complete(approvedAt, remote.method());
             target.complete();
         } else if ("ABORTED".equals(remote.status()) || "EXPIRED".equals(remote.status())) {
             payment.markFailed();
@@ -149,7 +149,8 @@ public class PaymentConfirmTransactionService {
         return remote != null
                 && Objects.equals(payment.getPaymentKey(), remote.paymentKey())
                 && Objects.equals(payment.getOrderId(), remote.orderId())
-                && Objects.equals(payment.getAmount(), remote.totalAmount());
+                && Objects.equals(payment.getAmount(), remote.totalAmount())
+                && Objects.equals(payment.getCurrency(), remote.currency());
     }
 
     private ConfirmContext context(Long userId, LockedTarget target, Payment payment,

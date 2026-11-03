@@ -12,6 +12,7 @@ public record TossPaymentConfirmResponse(
         String orderName,// 결제 상품명
         String status,// 토스에서 관리하는 결제 상태
         String method, // 결제 수단
-        OffsetDateTime approvedAt // 승인 완료 시각
+        OffsetDateTime approvedAt, // 승인 완료 시각
+        String currency // 승인 금액의 통화
 ) {
 }

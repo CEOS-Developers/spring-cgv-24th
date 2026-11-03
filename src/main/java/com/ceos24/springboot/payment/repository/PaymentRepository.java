@@ -9,8 +9,15 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.util.Optional;
+import com.ceos24.springboot.payment.domain.PaymentStatus;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 
 public interface PaymentRepository extends JpaRepository<Payment, Long> {
+
+    Optional<Payment> findByIdAndUser_IdAndStatus(Long id, Long userId, PaymentStatus status);
+
+    Page<Payment> findAllByUser_IdAndStatus(Long userId, PaymentStatus status, Pageable pageable);
 
     interface TargetReference {
         PaymentTargetType getTargetType();

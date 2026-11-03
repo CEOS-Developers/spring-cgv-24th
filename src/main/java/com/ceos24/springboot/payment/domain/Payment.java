@@ -14,7 +14,9 @@ import java.util.UUID;
 
 @Entity
 @Getter
-@Table(name = "payment", uniqueConstraints = {@UniqueConstraint(name = "uk_payment_order_id", columnNames = "order_id"),
+@Table(name = "payment", indexes = @Index(name = "idx_payment_user_status_approved",
+        columnList = "user_id,status,approved_at,payment_id"),
+        uniqueConstraints = {@UniqueConstraint(name = "uk_payment_order_id", columnNames = "order_id"),
                 @UniqueConstraint(name = "uk_payment_payment_key", columnNames = "payment_key")}
 )
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
@@ -44,6 +46,17 @@ public class Payment {
     // 클라이언트가 보낸 금액이 아닌 서버에서 계산한 최종 금액
     @Column(name = "amount", nullable = false, updatable = false)
     private Long amount;
+
+    // Merchant-side order-name snapshot; do not depend on current movie/menu data.
+    @Column(name = "order_name", nullable = false, updatable = false, length = 100)
+    private String orderName;
+
+    @Column(name = "currency", nullable = false, updatable = false, length = 3)
+    private String currency;
+
+    // Verified PG approval metadata; unknown for payments approved before this field existed.
+    @Column(name = "payment_method", length = 100)
+    private String paymentMethod;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 20)
@@ -102,6 +115,8 @@ public class Payment {
         this.targetType = targetType;
         this.targetId = targetId;
         this.amount = amount;
+        this.orderName = targetType == PaymentTargetType.RESERVATION ? "영화 티켓 예매" : "매점 상품 주문";
+        this.currency = "KRW";
         this.status = PaymentStatus.READY;
         this.confirmIdempotencyKey = UUID.randomUUID().toString();
         this.createdAt = now;
@@ -151,7 +166,7 @@ public class Payment {
         this.status = PaymentStatus.PROCESSING;
     }
 
-    public void complete(LocalDateTime approvedAt) {
+    public void complete(LocalDateTime approvedAt, String paymentMethod) {
         validateProcessingState();
 
         if (approvedAt == null) {
@@ -159,6 +174,7 @@ public class Payment {
         }
 
         this.approvedAt = approvedAt;
+        this.paymentMethod = paymentMethod;
         this.status = PaymentStatus.DONE;
     }
 

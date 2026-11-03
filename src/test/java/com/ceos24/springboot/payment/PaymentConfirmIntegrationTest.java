@@ -145,7 +145,7 @@ class PaymentConfirmIntegrationTest {
                 idempotencyKey
         )).thenReturn(new TossPaymentConfirmResponse(
                 PAYMENT_KEY, prepared.orderId(), AMOUNT, "영화 티켓 예매",
-                "DONE", "카드", APPROVED_AT
+                "DONE", "카드", APPROVED_AT, "KRW"
         ));
     }
 
@@ -311,7 +311,7 @@ class PaymentConfirmIntegrationTest {
         doAnswer(invocation -> {
             backdateExpiry();
             return new TossPaymentConfirmResponse(PAYMENT_KEY, prepared.orderId(), AMOUNT,
-                    "영화 티켓 예매", "ABORTED", "카드", null);
+                    "영화 티켓 예매", "ABORTED", "카드", null, "KRW");
         }).when(tossPaymentClient).confirm(any(), anyString());
         assertError(() -> approval.confirm(userId, request), ErrorCode.PAYMENT_APPROVAL_FAILED);
         assertThat(payments.findById(prepared.paymentId()).orElseThrow().getStatus()).isEqualTo(PaymentStatus.FAILED);
@@ -323,7 +323,19 @@ class PaymentConfirmIntegrationTest {
 
     private TossPaymentConfirmResponse approvedRemote() {
         return new TossPaymentConfirmResponse(PAYMENT_KEY, prepared.orderId(), AMOUNT,
-                "영화 티켓 예매", "DONE", "카드", APPROVED_AT);
+                "영화 티켓 예매", "DONE", "카드", APPROVED_AT, "KRW");
+    }
+
+    @Test
+    void differentPgCurrencyCannotCompleteThePayment() {
+        when(tossPaymentClient.confirm(any(), anyString())).thenReturn(new TossPaymentConfirmResponse(
+                PAYMENT_KEY, prepared.orderId(), AMOUNT, "영화 티켓 예매", "DONE", "카드", APPROVED_AT, "USD"));
+        assertError(() -> approval.confirm(userId, new PaymentConfirmRequest(PAYMENT_KEY, prepared.orderId(), AMOUNT)),
+                ErrorCode.PAYMENT_RESULT_UNKNOWN);
+        assertThat(payments.findById(prepared.paymentId()).orElseThrow().getStatus()).isEqualTo(PaymentStatus.UNKNOWN);
+        Reservation saved = reservations.findById(reservationId).orElseThrow();
+        assertThat(saved.getStatus()).isEqualTo(ReservationStatus.Pending);
+        assertThat(saved.isPaymentProcessing()).isTrue();
     }
 
     private void backdateExpiry() {
@@ -343,6 +355,9 @@ class PaymentConfirmIntegrationTest {
             assertThat(payment.getStatus()).isEqualTo(PaymentStatus.DONE);
             assertThat(payment.getPaymentKey()).isEqualTo(PAYMENT_KEY);
             assertThat(payment.getAmount()).isEqualTo(AMOUNT);
+            assertThat(payment.getCurrency()).isEqualTo("KRW");
+            assertThat(payment.getPaymentMethod()).isEqualTo("카드");
+            assertThat(payment.getOrderName()).isEqualTo("영화 티켓 예매");
             assertThat(payment.getApprovedAt()).isEqualTo(APPROVED_AT
                     .atZoneSameInstant(ZoneId.of("Asia/Seoul")).toLocalDateTime());
             assertThat(payment.getConfirmIdempotencyKey()).isEqualTo(idempotencyKey);

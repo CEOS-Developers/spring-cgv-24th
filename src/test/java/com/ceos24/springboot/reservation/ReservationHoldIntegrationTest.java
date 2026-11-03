@@ -548,7 +548,7 @@ class ReservationHoldIntegrationTest {
                 anyString()
         )).thenReturn(new TossPaymentConfirmResponse(
                 paymentKey, prepared.orderId(), prepared.amount(), prepared.orderName(),
-                "DONE", "카드", OffsetDateTime.now().withNano(0)
+                "DONE", "카드", OffsetDateTime.now().withNano(0), "KRW"
         ));
         return new PaymentConfirmRequest(paymentKey, prepared.orderId(), prepared.amount());
     }

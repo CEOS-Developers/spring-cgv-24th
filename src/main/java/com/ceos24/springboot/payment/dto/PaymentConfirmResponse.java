@@ -30,7 +30,7 @@ public record PaymentConfirmResponse(
         return new PaymentConfirmResponse(
                 payment.getId(),
                 payment.getOrderId(),
-                "영화 티켓 예매",
+                payment.getOrderName(),
                 payment.getAmount(),
                 payment.getStatus(),
                 reservation.getReservationId(),
@@ -42,7 +42,7 @@ public record PaymentConfirmResponse(
     }
 
     public static PaymentConfirmResponse from(Payment payment, StoreOrder order) {
-        return new PaymentConfirmResponse(payment.getId(), payment.getOrderId(), "매점 상품 주문",
+        return new PaymentConfirmResponse(payment.getId(), payment.getOrderId(), payment.getOrderName(),
                 payment.getAmount(), payment.getStatus(), null, null, payment.getApprovedAt(),
                 order.getOrderId(), order.getStatus());
     }
