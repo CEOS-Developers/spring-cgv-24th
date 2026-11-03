@@ -96,12 +96,17 @@
     element('payment-seats')?.replaceChildren();
   }
 
-  function clearInactiveHold(error) {
-    if (error.httpStatus !== 409 || !['HOLD_EXPIRED', 'HOLD_NOT_ACTIVE'].includes(error.code)) return;
+  function clearHoldState() {
     delete session.hold; delete session.holdRequest; delete session.order; delete session.confirmation;
     delete session.paymentId; delete session.operation; delete session.approvalKeys;
     clearPaymentView();
     save(); renderOrder();
+  }
+
+  // HOLD_EXPIRED와 HOLD_NOT_ACTIVE 409는 서버가 선점 상태를 확인하고 거절한 응답이라 대기 중인 서버 작업이 없다.
+  function clearInactiveHold(error) {
+    if (error.httpStatus !== 409 || !['HOLD_EXPIRED', 'HOLD_NOT_ACTIVE'].includes(error.code)) return;
+    clearHoldState();
   }
 
   function renderPayment(result) {
@@ -184,6 +189,7 @@
       await applyOperation(operation);
     } catch (error) {
       if (error.httpStatus && error.httpStatus < 500) { delete session.operation; save(); }
+      clearInactiveHold(error);
       throw error;
     }
   }
@@ -263,7 +269,9 @@
   });
 
   on('create-order', 'click', async () => {
-    session.order = await api('/api/v1/payment-orders', 'POST', { reservationId: session.hold.reservationId });
+    try {
+      session.order = await api('/api/v1/payment-orders', 'POST', { reservationId: session.hold.reservationId });
+    } catch (error) { clearInactiveHold(error); throw error; }
     save(); renderOrder(); notice('주문을 생성했습니다. 테스트 결제창을 열어주세요.');
   });
 
@@ -278,6 +286,11 @@
 
   on('open-payment', 'click', async () => {
     if (unresolved()) throw userError('진행 중인 요청 결과를 먼저 확인해주세요.');
+    const expiresAt = Date.parse(session.order?.expiresAt);
+    if (Number.isFinite(expiresAt) && expiresAt <= Date.now()) {
+      clearHoldState();
+      throw userError('좌석 선점 시간이 만료되었습니다. 좌석을 다시 선점해주세요.');
+    }
     if (typeof window.TossPayments !== 'function') throw userError('결제 SDK를 불러오지 못했습니다. 새로고침해주세요.');
     const config = await api('/api/v1/payment-config');
     session.customerKey ||= crypto.randomUUID();

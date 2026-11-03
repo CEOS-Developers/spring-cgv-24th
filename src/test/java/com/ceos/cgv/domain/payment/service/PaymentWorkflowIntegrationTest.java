@@ -85,6 +85,30 @@ class PaymentWorkflowIntegrationTest extends com.ceos.cgv.support.DatabaseIntegr
                 });
     }
 
+    // verifyReady는 설정만 확인하므로, PG 요청이 없었는지는 요청 메서드로 구분한다.
+    void verifyNoGatewayRequests() {
+        verify(gateway, never()).confirm(any());
+        verify(gateway, never()).getPayment(any());
+        verify(gateway, never()).cancel(any());
+    }
+
+    void setOrderExpiry(Long paymentId, Instant expiresAt) {
+        new org.springframework.transaction.support.TransactionTemplate(transactionManager)
+                .executeWithoutResult(
+                        status ->
+                                org.springframework.test.util.ReflectionTestUtils.setField(
+                                        // LAZY 프록시가 아니라 실제 엔티티의 필드를 바꾼다.
+                                        org.hibernate.Hibernate.unproxy(
+                                                entityManager
+                                                        .find(
+                                                                com.ceos.cgv.domain.payment.entity
+                                                                        .Payment.class,
+                                                                paymentId)
+                                                        .getOrder()),
+                                        "expiresAt",
+                                        expiresAt));
+    }
+
     PaymentOrderResponse order(int count) {
         List<ReservedSeatRequest> seats = new ArrayList<>();
         for (int i = 1; i <= count; i++) seats.add(new ReservedSeatRequest("A", i));
@@ -197,7 +221,7 @@ class PaymentWorkflowIntegrationTest extends com.ceos.cgv.support.DatabaseIntegr
                                         new PaymentConfirmRequest("key", order.orderId(), 1L)))
                 .hasMessageContaining("금액");
         assertThatThrownBy(() -> queries.order(8718L, order.orderId())).hasMessageContaining("권한");
-        verifyNoInteractions(gateway);
+        verifyNoGatewayRequests();
     }
 
     @Test
@@ -449,7 +473,7 @@ class PaymentWorkflowIntegrationTest extends com.ceos.cgv.support.DatabaseIntegr
                 .isInstanceOf(BusinessException.class)
                 .extracting(error -> ((BusinessException) error).getErrorCode())
                 .isEqualTo(ErrorCode.HOLD_EXPIRED);
-        verifyNoInteractions(gateway);
+        verifyNoGatewayRequests();
     }
 
     @Test
@@ -826,7 +850,7 @@ class PaymentWorkflowIntegrationTest extends com.ceos.cgv.support.DatabaseIntegr
                 .isInstanceOf(BusinessException.class);
         assertThatThrownBy(() -> service.reconcile(8718L, approved.operationId()))
                 .isInstanceOf(BusinessException.class);
-        verifyNoInteractions(gateway);
+        verifyNoGatewayRequests();
     }
 
     @Test
@@ -848,7 +872,7 @@ class PaymentWorkflowIntegrationTest extends com.ceos.cgv.support.DatabaseIntegr
                                 String.class,
                                 order.reservationId()))
                 .isEqualTo("HELD");
-        verifyNoInteractions(gateway);
+        verifyNoGatewayRequests();
         jdbc.update("UPDATE movies SET visibility='PUBLIC' WHERE movie_id=8714");
         when(gateway.confirm(any())).thenReturn(payment);
         PaymentOperationResponse approved = service.confirm(8711L, key, request);
@@ -1019,7 +1043,8 @@ class PaymentWorkflowIntegrationTest extends com.ceos.cgv.support.DatabaseIntegr
                                                 8715L, List.of(new ReservedSeatRequest("A", 1))))
                                 .created())
                 .isTrue();
-        verify(gateway, times(1)).cancel(any());
+        // 첫 복구는 PG 상태가 취소 전 그대로여서 같은 멱등키로 한 번 재전송했다(이 응답도 TIMEOUT).
+        verify(gateway, times(2)).cancel(any());
     }
 
     String token(long id) {
@@ -1246,7 +1271,11 @@ class PaymentWorkflowIntegrationTest extends com.ceos.cgv.support.DatabaseIntegr
                                                         "simulated cancellation save outage"))
                                         .doCallRealMethod()
                                         .when(reservationPayments)
-                                        .cancelPaidSeats(order.reservationId(), 8711L, ids));
+                                        .cancelPaidSeats(
+                                                eq(order.reservationId()),
+                                                eq(8711L),
+                                                eq(ids),
+                                                any(Instant.class)));
         GatewayPayment partial =
                 new GatewayPayment(
                         payment.paymentKey(),
@@ -1366,5 +1395,735 @@ class PaymentWorkflowIntegrationTest extends com.ceos.cgv.support.DatabaseIntegr
                                 order.reservationId()))
                 .isEqualTo("CANCELED");
         verify(gateway, times(3)).cancel(any());
+    }
+
+    // ---- 취소 UNKNOWN 재전송 ----
+
+    private PaymentOperationResponse pendingCancellation(
+            PaymentOrderResponse order, PaymentCancelRequest request) {
+        PaymentOperationResponse pending =
+                service.cancel(8711L, order.paymentId(), UUID.randomUUID(), request);
+        assertThat(pending.status()).isEqualTo(PaymentOperationStatus.UNKNOWN);
+        assertThat(queries.payment(8711L, order.paymentId()).activeOperationId())
+                .isEqualTo(pending.operationId());
+        return pending;
+    }
+
+    private GatewayPayment partialCanceled(GatewayPayment payment) {
+        return cancellationResult(
+                payment,
+                10000,
+                GatewayPaymentStatus.PARTIAL_CANCELED,
+                List.of(new GatewayCancellation("partial", 10000, Instant.now(), "DONE")));
+    }
+
+    @Test
+    void 취소_UNKNOWN_조회가_취소전_상태를_보이면_같은_멱등키로_재전송해_완료한다() {
+        PaymentOrderResponse order = order(2);
+        confirm(order);
+        GatewayPayment payment = done(order);
+        PaymentCancelRequest request =
+                new PaymentCancelRequest(
+                        List.of(order.seats().getFirst().reservedSeatId()), "좌석 취소");
+        when(gateway.cancel(any()))
+                .thenThrow(new PaymentGatewayException(GatewayFailureType.UNKNOWN, "TRANSPORT_ERROR"))
+                .thenReturn(partialCanceled(payment));
+        PaymentOperationResponse pending = pendingCancellation(order, request);
+        when(gateway.getPayment(payment.paymentKey())).thenReturn(payment);
+
+        PaymentOperationResponse completed = service.reconcile(8711L, pending.operationId());
+
+        assertThat(completed.operationId()).isEqualTo(pending.operationId());
+        assertThat(completed.status()).isEqualTo(PaymentOperationStatus.SUCCEEDED);
+        assertThat(completed.result().status()).isEqualTo(PaymentStatus.PARTIALLY_CANCELED);
+        assertThat(completed.result().balanceAmount()).isEqualTo(10000);
+        assertThat(queries.payment(8711L, order.paymentId()).activeOperationId()).isNull();
+        assertThat(
+                        jdbc.queryForObject(
+                                "SELECT current_reservation_id FROM screening_seats WHERE"
+                                        + " screening_seat_id=8716",
+                                Long.class))
+                .isNull();
+        assertThat(
+                        jdbc.queryForObject(
+                                "SELECT current_reservation_id FROM screening_seats WHERE"
+                                        + " screening_seat_id=8717",
+                                Long.class))
+                .isEqualTo(order.reservationId());
+        org.mockito.ArgumentCaptor<CancelPaymentCommand> commands =
+                org.mockito.ArgumentCaptor.forClass(CancelPaymentCommand.class);
+        verify(gateway, times(2)).cancel(commands.capture());
+        // 금액·직전 잔액·사유·멱등키가 모두 첫 요청과 같아야 PG의 멱등 처리가 이중 환불을 막는다.
+        assertThat(commands.getAllValues().get(1)).isEqualTo(commands.getAllValues().get(0));
+        verify(gateway, times(1)).getPayment(payment.paymentKey());
+        assertThat(service.reconcile(8711L, pending.operationId())).isEqualTo(completed);
+        verify(gateway, times(2)).cancel(any());
+    }
+
+    @Test
+    void 재전송한_취소가_확정_거절되면_작업을_실패로_끝내고_새_키로_다시_취소할_수_있다() {
+        PaymentOrderResponse order = order(2);
+        confirm(order);
+        GatewayPayment payment = done(order);
+        when(gateway.cancel(any()))
+                .thenThrow(new PaymentGatewayException(GatewayFailureType.UNKNOWN, "TRANSPORT_ERROR"))
+                .thenThrow(new PaymentGatewayException(GatewayFailureType.REJECTED, "REFUND_REJECTED"));
+        PaymentOperationResponse pending =
+                pendingCancellation(
+                        order,
+                        new PaymentCancelRequest(
+                                List.of(order.seats().getFirst().reservedSeatId()), "좌석 취소"));
+        when(gateway.getPayment(payment.paymentKey())).thenReturn(payment);
+
+        PaymentOperationResponse failed = service.reconcile(8711L, pending.operationId());
+
+        assertThat(failed.operationId()).isEqualTo(pending.operationId());
+        assertThat(failed.status()).isEqualTo(PaymentOperationStatus.FAILED);
+        assertThat(failed.failureCode()).isEqualTo("REFUND_REJECTED");
+        assertThat(failed.result().status()).isEqualTo(PaymentStatus.DONE);
+        assertThat(failed.result().balanceAmount()).isEqualTo(20000);
+        assertThat(queries.payment(8711L, order.paymentId()).activeOperationId()).isNull();
+        assertThat(
+                        jdbc.queryForObject(
+                                "SELECT COUNT(*) FROM screening_seats WHERE"
+                                        + " current_reservation_id=?",
+                                Integer.class,
+                                order.reservationId()))
+                .isEqualTo(2);
+        assertThat(service.reconcile(8711L, pending.operationId())).isEqualTo(failed);
+        verify(gateway, times(2)).cancel(any());
+
+        doReturn(partialCanceled(payment)).when(gateway).cancel(any());
+        PaymentOperationResponse retried =
+                service.cancel(
+                        8711L,
+                        order.paymentId(),
+                        UUID.randomUUID(),
+                        new PaymentCancelRequest(
+                                List.of(order.seats().getFirst().reservedSeatId()), "새 키 취소"));
+
+        assertThat(retried.operationId()).isNotEqualTo(pending.operationId());
+        assertThat(retried.status()).isEqualTo(PaymentOperationStatus.SUCCEEDED);
+        assertThat(retried.result().balanceAmount()).isEqualTo(10000);
+        org.mockito.ArgumentCaptor<CancelPaymentCommand> commands =
+                org.mockito.ArgumentCaptor.forClass(CancelPaymentCommand.class);
+        verify(gateway, times(3)).cancel(commands.capture());
+        assertThat(commands.getAllValues().get(1).idempotencyKey())
+                .isEqualTo(commands.getAllValues().get(0).idempotencyKey());
+        assertThat(commands.getAllValues().get(2).idempotencyKey())
+                .isNotEqualTo(commands.getAllValues().get(0).idempotencyKey());
+    }
+
+    @Test
+    void 취소_UNKNOWN_조회가_이미_반영된_취소를_보이면_재전송없이_완료한다() {
+        PaymentOrderResponse order = order(2);
+        confirm(order);
+        GatewayPayment payment = done(order);
+        when(gateway.cancel(any()))
+                .thenThrow(new PaymentGatewayException(GatewayFailureType.UNKNOWN, "TRANSPORT_ERROR"));
+        PaymentOperationResponse pending =
+                pendingCancellation(
+                        order,
+                        new PaymentCancelRequest(
+                                List.of(order.seats().getFirst().reservedSeatId()), "좌석 취소"));
+        when(gateway.getPayment(payment.paymentKey())).thenReturn(partialCanceled(payment));
+
+        PaymentOperationResponse completed = service.reconcile(8711L, pending.operationId());
+
+        assertThat(completed.status()).isEqualTo(PaymentOperationStatus.SUCCEEDED);
+        assertThat(completed.result().balanceAmount()).isEqualTo(10000);
+        assertThat(queries.payment(8711L, order.paymentId()).activeOperationId()).isNull();
+        assertThat(
+                        jdbc.queryForObject(
+                                "SELECT current_reservation_id FROM screening_seats WHERE"
+                                        + " screening_seat_id=8716",
+                                Long.class))
+                .isNull();
+        verify(gateway, times(1)).cancel(any());
+    }
+
+    @Test
+    void 취소_UNKNOWN_조회가_예상밖_상태면_재전송없이_UNKNOWN을_유지한다() {
+        PaymentOrderResponse order = order(2);
+        confirm(order);
+        GatewayPayment payment = done(order);
+        when(gateway.cancel(any()))
+                .thenThrow(new PaymentGatewayException(GatewayFailureType.UNKNOWN, "TRANSPORT_ERROR"));
+        PaymentOperationResponse pending =
+                pendingCancellation(
+                        order,
+                        new PaymentCancelRequest(
+                                List.of(order.seats().getFirst().reservedSeatId()), "좌석 취소"));
+        GatewayCancellation unrelated =
+                new GatewayCancellation("unrelated", 10000, Instant.now(), "DONE");
+        List<GatewayPayment> unexpected =
+                List.of(
+                        // 잔액은 그대로인데 처음 보는 취소 거래가 있다.
+                        cancellationResult(
+                                payment, 20000, GatewayPaymentStatus.DONE, List.of(unrelated)),
+                        cancellationResult(
+                                payment,
+                                20000,
+                                GatewayPaymentStatus.PARTIAL_CANCELED,
+                                List.of(unrelated)),
+                        // 취소 전 잔액이어도 결제가 취소 가능한 상태가 아니다.
+                        cancellationResult(payment, 20000, GatewayPaymentStatus.ABORTED, List.of()),
+                        cancellationResult(payment, 20000, GatewayPaymentStatus.CANCELED, List.of()),
+                        // 잔액이 다른 값으로 바뀌었다.
+                        cancellationResult(payment, 5000, GatewayPaymentStatus.PARTIAL_CANCELED, List.of()),
+                        // 다른 결제 정보다.
+                        new GatewayPayment(
+                                "wrong-key",
+                                payment.orderId(),
+                                20000,
+                                20000,
+                                GatewayPaymentStatus.DONE,
+                                "카드",
+                                payment.approvedAt(),
+                                null,
+                                List.of()),
+                        new GatewayPayment(
+                                payment.paymentKey(),
+                                payment.orderId(),
+                                30000,
+                                20000,
+                                GatewayPaymentStatus.DONE,
+                                "카드",
+                                payment.approvedAt(),
+                                null,
+                                List.of()));
+        for (GatewayPayment state : unexpected) {
+            when(gateway.getPayment(payment.paymentKey())).thenReturn(state);
+            PaymentOperationResponse unknown = service.reconcile(8711L, pending.operationId());
+            assertThat(unknown.status()).isEqualTo(PaymentOperationStatus.UNKNOWN);
+            assertThat(unknown.failureCode()).isEqualTo("INVALID_CANCELLATION_RESULT");
+        }
+
+        assertThat(queries.payment(8711L, order.paymentId()).activeOperationId())
+                .isEqualTo(pending.operationId());
+        assertThat(queries.payment(8711L, order.paymentId()).balanceAmount()).isEqualTo(20000);
+        assertThat(
+                        jdbc.queryForObject(
+                                "SELECT COUNT(*) FROM screening_seats WHERE"
+                                        + " current_reservation_id=?",
+                                Integer.class,
+                                order.reservationId()))
+                .isEqualTo(2);
+        verify(gateway, times(1)).cancel(any());
+        verify(gateway, times(unexpected.size())).getPayment(payment.paymentKey());
+    }
+
+    // ---- PG 키 설정 확인 ----
+
+    @Test
+    void PG_설정이_없으면_승인은_DB를_바꾸기_전에_거절하고_설정_후_같은_요청이_진행된다() {
+        PaymentOrderResponse order = order(1);
+        GatewayPayment payment = done(order);
+        PaymentConfirmRequest request =
+                new PaymentConfirmRequest(
+                        payment.paymentKey(), order.orderId(), order.totalAmount());
+        UUID key = UUID.randomUUID();
+        doThrow(new PaymentGatewayException(GatewayFailureType.UNKNOWN, "NOT_CONFIGURED"))
+                .when(gateway)
+                .verifyReady();
+
+        assertThatThrownBy(() -> service.confirm(8711L, key, request))
+                .isInstanceOf(BusinessException.class)
+                .extracting(error -> ((BusinessException) error).getErrorCode())
+                .isEqualTo(ErrorCode.INTERNAL_SERVER_ERROR);
+
+        assertThat(
+                        jdbc.queryForObject(
+                                "SELECT status FROM reservations WHERE reservation_id=?",
+                                String.class,
+                                order.reservationId()))
+                .isEqualTo("HELD");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM payment_operation", Integer.class))
+                .isZero();
+        assertThat(
+                        jdbc.queryForObject(
+                                "SELECT status FROM payment WHERE id=?",
+                                String.class,
+                                order.paymentId()))
+                .isEqualTo("READY");
+        assertThat(queries.payment(8711L, order.paymentId()).activeOperationId()).isNull();
+        verifyNoGatewayRequests();
+
+        doNothing().when(gateway).verifyReady();
+        when(gateway.confirm(any())).thenReturn(payment);
+        assertThat(service.confirm(8711L, key, request).status())
+                .isEqualTo(PaymentOperationStatus.SUCCEEDED);
+    }
+
+    @Test
+    void PG_설정이_없으면_취소와_예매_취소는_작업을_만들지_않고_거절한다() {
+        PaymentOrderResponse order = order(2);
+        confirm(order);
+        doThrow(new PaymentGatewayException(GatewayFailureType.UNKNOWN, "TEST_KEYS_REQUIRED"))
+                .when(gateway)
+                .verifyReady();
+
+        assertThatThrownBy(
+                        () ->
+                                service.cancel(
+                                        8711L,
+                                        order.paymentId(),
+                                        UUID.randomUUID(),
+                                        new PaymentCancelRequest(null, "전체")))
+                .isInstanceOf(BusinessException.class)
+                .extracting(error -> ((BusinessException) error).getErrorCode())
+                .isEqualTo(ErrorCode.INTERNAL_SERVER_ERROR);
+        assertThatThrownBy(
+                        () ->
+                                service.cancelReservation(
+                                        8711L, order.reservationId(), UUID.randomUUID()))
+                .isInstanceOf(BusinessException.class)
+                .extracting(error -> ((BusinessException) error).getErrorCode())
+                .isEqualTo(ErrorCode.INTERNAL_SERVER_ERROR);
+
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM payment_operation", Integer.class))
+                .isEqualTo(1);
+        assertThat(queries.payment(8711L, order.paymentId()).activeOperationId()).isNull();
+        assertThat(queries.payment(8711L, order.paymentId()).balanceAmount()).isEqualTo(20000);
+        assertThat(
+                        jdbc.queryForObject(
+                                "SELECT status FROM reservations WHERE reservation_id=?",
+                                String.class,
+                                order.reservationId()))
+                .isEqualTo("RESERVED");
+        verify(gateway, never()).cancel(any());
+    }
+
+    @Test
+    void PG_설정이_없으면_복구도_PG_조회_없이_거절하고_작업은_UNKNOWN으로_남는다() {
+        PaymentOrderResponse order = order(1);
+        GatewayPayment payment = done(order);
+        when(gateway.confirm(any()))
+                .thenThrow(new PaymentGatewayException(GatewayFailureType.UNKNOWN, "TIMEOUT"));
+        PaymentOperationResponse pending =
+                service.confirm(
+                        8711L,
+                        UUID.randomUUID(),
+                        new PaymentConfirmRequest(
+                                payment.paymentKey(), order.orderId(), order.totalAmount()));
+        assertThat(pending.status()).isEqualTo(PaymentOperationStatus.UNKNOWN);
+        doThrow(new PaymentGatewayException(GatewayFailureType.UNKNOWN, "NOT_CONFIGURED"))
+                .when(gateway)
+                .verifyReady();
+
+        assertThatThrownBy(() -> service.reconcile(8711L, pending.operationId()))
+                .isInstanceOf(BusinessException.class)
+                .extracting(error -> ((BusinessException) error).getErrorCode())
+                .isEqualTo(ErrorCode.INTERNAL_SERVER_ERROR);
+
+        assertThat(queries.operation(8711L, pending.operationId()).status())
+                .isEqualTo(PaymentOperationStatus.UNKNOWN);
+        verify(gateway, never()).getPayment(any());
+    }
+
+    // ---- 승인 UNKNOWN + 조회 NOT_FOUND ----
+
+    @Test
+    void 승인_UNKNOWN_조회가_NOT_FOUND여도_유예전에는_유지하고_유예후에는_선점을_풀어준다() {
+        PaymentOrderResponse order = order(1);
+        GatewayPayment payment = done(order);
+        when(gateway.confirm(any()))
+                .thenThrow(new PaymentGatewayException(GatewayFailureType.UNKNOWN, "TIMEOUT"));
+        UUID key = UUID.randomUUID();
+        PaymentConfirmRequest request =
+                new PaymentConfirmRequest(
+                        payment.paymentKey(), order.orderId(), order.totalAmount());
+        PaymentOperationResponse pending = service.confirm(8711L, key, request);
+        assertThat(pending.status()).isEqualTo(PaymentOperationStatus.UNKNOWN);
+        when(gateway.getPayment(payment.paymentKey()))
+                .thenThrow(
+                        new PaymentGatewayException(
+                                GatewayFailureType.NOT_FOUND, "NOT_FOUND_PAYMENT"));
+
+        // 선점 기한은 지났지만 유예(30분) 안이면 아직 단정하지 않는다.
+        setOrderExpiry(order.paymentId(), Instant.now().minus(java.time.Duration.ofMinutes(10)));
+        PaymentOperationResponse within = service.reconcile(8711L, pending.operationId());
+        assertThat(within.status()).isEqualTo(PaymentOperationStatus.UNKNOWN);
+        assertThat(within.failureCode()).isEqualTo("NOT_FOUND_PAYMENT");
+        assertThat(
+                        jdbc.queryForObject(
+                                "SELECT status FROM reservations WHERE reservation_id=?",
+                                String.class,
+                                order.reservationId()))
+                .isEqualTo("PAYMENT_PENDING");
+        assertThat(
+                        jdbc.queryForObject(
+                                "SELECT current_reservation_id FROM screening_seats WHERE"
+                                        + " screening_seat_id=8716",
+                                Long.class))
+                .isEqualTo(order.reservationId());
+        assertThatThrownBy(
+                        () ->
+                                holds.create(
+                                        8711L,
+                                        UUID.randomUUID(),
+                                        new SeatHoldCreateRequest(
+                                                8715L, List.of(new ReservedSeatRequest("A", 2)))))
+                .isInstanceOf(BusinessException.class)
+                .extracting(error -> ((BusinessException) error).getErrorCode())
+                .isEqualTo(ErrorCode.HOLD_LIMIT_REACHED);
+
+        setOrderExpiry(order.paymentId(), Instant.now().minus(java.time.Duration.ofMinutes(31)));
+        PaymentOperationResponse failed = service.reconcile(8711L, pending.operationId());
+
+        assertThat(failed.operationId()).isEqualTo(pending.operationId());
+        assertThat(failed.status()).isEqualTo(PaymentOperationStatus.FAILED);
+        assertThat(failed.failureCode()).isEqualTo("GATEWAY_NOT_FOUND");
+        assertThat(failed.result().status()).isEqualTo(PaymentStatus.FAILED);
+        assertThat(queries.payment(8711L, order.paymentId()).activeOperationId()).isNull();
+        assertThat(
+                        jdbc.queryForObject(
+                                "SELECT status FROM reservations WHERE reservation_id=?",
+                                String.class,
+                                order.reservationId()))
+                .isEqualTo("RELEASED");
+        assertThat(
+                        jdbc.queryForObject(
+                                "SELECT COUNT(*) FROM screening_seats WHERE"
+                                        + " current_reservation_id=?",
+                                Integer.class,
+                                order.reservationId()))
+                .isZero();
+        assertThat(service.reconcile(8711L, pending.operationId())).isEqualTo(failed);
+        assertThat(service.confirm(8711L, key, request)).isEqualTo(failed);
+        assertThat(
+                        holds.create(
+                                        8711L,
+                                        UUID.randomUUID(),
+                                        new SeatHoldCreateRequest(
+                                                8715L, List.of(new ReservedSeatRequest("A", 1))))
+                                .created())
+                .isTrue();
+        verify(gateway, times(1)).confirm(any());
+        verify(gateway, times(2)).getPayment(payment.paymentKey());
+    }
+
+    // ---- 확정 단계의 좌석 NOWAIT 충돌 재시도 ----
+
+    private void stubInTransaction(Runnable stubbing) {
+        // 스파이 스텁은 호출자 트랜잭션 안에서 설정하는 기존 방식을 따른다.
+        new org.springframework.transaction.support.TransactionTemplate(transactionManager)
+                .executeWithoutResult(status -> stubbing.run());
+    }
+
+    @Test
+    void 승인_확정이_좌석_NOWAIT_충돌을_한번_만나도_재시도로_완료한다() {
+        PaymentOrderResponse order = order(1);
+        stubInTransaction(
+                () ->
+                        doThrow(new BusinessException(ErrorCode.SEAT_BUSY))
+                                .doCallRealMethod()
+                                .when(reservationPayments)
+                                .confirmPayment(order.reservationId(), 8711L));
+
+        PaymentOperationResponse result = confirm(order);
+
+        assertThat(result.status()).isEqualTo(PaymentOperationStatus.SUCCEEDED);
+        assertThat(result.result().status()).isEqualTo(PaymentStatus.DONE);
+        assertThat(
+                        jdbc.queryForObject(
+                                "SELECT status FROM reservations WHERE reservation_id=?",
+                                String.class,
+                                order.reservationId()))
+                .isEqualTo("RESERVED");
+        assertThat(queries.payment(8711L, order.paymentId()).activeOperationId()).isNull();
+        verify(reservationPayments, times(2)).confirmPayment(order.reservationId(), 8711L);
+        verify(gateway, times(1)).confirm(any());
+        verify(gateway, never()).getPayment(any());
+    }
+
+    @Test
+    void 승인_확정이_계속_충돌하면_세번만_시도하고_UNKNOWN으로_남아_조회로_완료한다() {
+        PaymentOrderResponse order = order(1);
+        GatewayPayment payment = done(order);
+        stubInTransaction(
+                () ->
+                        doThrow(new BusinessException(ErrorCode.SEAT_BUSY))
+                                .when(reservationPayments)
+                                .confirmPayment(order.reservationId(), 8711L));
+
+        PaymentOperationResponse unknown = confirm(order);
+
+        assertThat(unknown.status()).isEqualTo(PaymentOperationStatus.UNKNOWN);
+        assertThat(unknown.failureCode()).isEqualTo("FINALIZATION_PENDING");
+        assertThat(
+                        jdbc.queryForObject(
+                                "SELECT status FROM reservations WHERE reservation_id=?",
+                                String.class,
+                                order.reservationId()))
+                .isEqualTo("PAYMENT_PENDING");
+        verify(reservationPayments, times(3)).confirmPayment(order.reservationId(), 8711L);
+
+        stubInTransaction(
+                () ->
+                        doCallRealMethod()
+                                .when(reservationPayments)
+                                .confirmPayment(order.reservationId(), 8711L));
+        when(gateway.getPayment(payment.paymentKey())).thenReturn(payment);
+        PaymentOperationResponse completed = service.reconcile(8711L, unknown.operationId());
+
+        assertThat(completed.status()).isEqualTo(PaymentOperationStatus.SUCCEEDED);
+        assertThat(
+                        jdbc.queryForObject(
+                                "SELECT status FROM reservations WHERE reservation_id=?",
+                                String.class,
+                                order.reservationId()))
+                .isEqualTo("RESERVED");
+        verify(gateway, times(1)).confirm(any());
+    }
+
+    @Test
+    void 좌석_NOWAIT_충돌이_아닌_확정_실패는_재시도하지_않고_바로_보상취소로_넘어간다() {
+        PaymentOrderResponse order = order(1);
+        GatewayPayment payment = done(order);
+        stubInTransaction(
+                () ->
+                        doThrow(new BusinessException(ErrorCode.SEAT_OWNER_MISMATCH))
+                                .when(reservationPayments)
+                                .confirmPayment(order.reservationId(), 8711L));
+        when(gateway.cancel(any()))
+                .thenReturn(
+                        cancellationResult(
+                                payment,
+                                0,
+                                GatewayPaymentStatus.CANCELED,
+                                List.of(
+                                        new GatewayCancellation(
+                                                "compensation",
+                                                payment.totalAmount(),
+                                                Instant.now(),
+                                                "DONE"))));
+
+        PaymentOperationResponse failed = confirm(order);
+
+        assertThat(failed.status()).isEqualTo(PaymentOperationStatus.FAILED);
+        assertThat(failed.failureCode()).isEqualTo("APPROVAL_COMPENSATED");
+        verify(reservationPayments, times(1)).confirmPayment(order.reservationId(), 8711L);
+        verify(gateway, times(1)).cancel(any());
+    }
+
+    @Test
+    void 취소_확정이_좌석_NOWAIT_충돌을_한번_만나도_재시도로_완료한다() {
+        PaymentOrderResponse order = order(2);
+        confirm(order);
+        GatewayPayment payment = done(order);
+        List<Long> ids = List.of(order.seats().getFirst().reservedSeatId());
+        stubInTransaction(
+                () ->
+                        doThrow(new BusinessException(ErrorCode.SEAT_BUSY))
+                                .doCallRealMethod()
+                                .when(reservationPayments)
+                                .cancelPaidSeats(
+                                        eq(order.reservationId()),
+                                        eq(8711L),
+                                        eq(ids),
+                                        any(Instant.class)));
+        when(gateway.cancel(any())).thenReturn(partialCanceled(payment));
+
+        PaymentOperationResponse result =
+                service.cancel(
+                        8711L,
+                        order.paymentId(),
+                        UUID.randomUUID(),
+                        new PaymentCancelRequest(ids, "좌석 취소"));
+
+        assertThat(result.status()).isEqualTo(PaymentOperationStatus.SUCCEEDED);
+        assertThat(result.result().balanceAmount()).isEqualTo(10000);
+        assertThat(queries.payment(8711L, order.paymentId()).activeOperationId()).isNull();
+        assertThat(
+                        jdbc.queryForObject(
+                                "SELECT current_reservation_id FROM screening_seats WHERE"
+                                        + " screening_seat_id=8716",
+                                Long.class))
+                .isNull();
+        verify(reservationPayments, times(2))
+                .cancelPaidSeats(
+                        eq(order.reservationId()), eq(8711L), eq(ids), any(Instant.class));
+        verify(gateway, times(1)).cancel(any());
+        verify(gateway, never()).getPayment(any());
+    }
+
+    @Test
+    void 취소_확정이_계속_충돌하면_세번만_시도하고_UNKNOWN으로_남아_조회로_완료한다() {
+        PaymentOrderResponse order = order(2);
+        confirm(order);
+        GatewayPayment payment = done(order);
+        List<Long> ids = List.of(order.seats().getFirst().reservedSeatId());
+        stubInTransaction(
+                () ->
+                        doThrow(new BusinessException(ErrorCode.SEAT_BUSY))
+                                .when(reservationPayments)
+                                .cancelPaidSeats(
+                                        eq(order.reservationId()),
+                                        eq(8711L),
+                                        eq(ids),
+                                        any(Instant.class)));
+        GatewayPayment partial = partialCanceled(payment);
+        when(gateway.cancel(any())).thenReturn(partial);
+
+        PaymentOperationResponse unknown =
+                service.cancel(
+                        8711L,
+                        order.paymentId(),
+                        UUID.randomUUID(),
+                        new PaymentCancelRequest(ids, "좌석 취소"));
+
+        assertThat(unknown.status()).isEqualTo(PaymentOperationStatus.UNKNOWN);
+        assertThat(unknown.failureCode()).isEqualTo("FINALIZATION_PENDING");
+        assertThat(queries.payment(8711L, order.paymentId()).balanceAmount()).isEqualTo(20000);
+        verify(reservationPayments, times(3))
+                .cancelPaidSeats(
+                        eq(order.reservationId()), eq(8711L), eq(ids), any(Instant.class));
+
+        stubInTransaction(
+                () ->
+                        doCallRealMethod()
+                                .when(reservationPayments)
+                                .cancelPaidSeats(
+                                        eq(order.reservationId()),
+                                        eq(8711L),
+                                        eq(ids),
+                                        any(Instant.class)));
+        when(gateway.getPayment(payment.paymentKey())).thenReturn(partial);
+        PaymentOperationResponse completed = service.reconcile(8711L, unknown.operationId());
+
+        assertThat(completed.status()).isEqualTo(PaymentOperationStatus.SUCCEEDED);
+        assertThat(completed.result().balanceAmount()).isEqualTo(10000);
+        verify(gateway, times(1)).cancel(any());
+    }
+
+    @Test
+    void 재시도_대기_중_인터럽트되면_더_시도하지_않고_인터럽트_상태를_보존한다() {
+        PaymentOrderResponse order = order(1);
+        stubInTransaction(
+                () ->
+                        doAnswer(
+                                        call -> {
+                                            Thread.currentThread().interrupt();
+                                            throw new BusinessException(ErrorCode.SEAT_BUSY);
+                                        })
+                                .when(reservationPayments)
+                                .confirmPayment(order.reservationId(), 8711L));
+        PaymentOperationResponse unknown;
+        try {
+            unknown = confirm(order);
+            assertThat(Thread.currentThread().isInterrupted()).isTrue();
+        } finally {
+            Thread.interrupted();
+        }
+
+        assertThat(unknown.status()).isEqualTo(PaymentOperationStatus.UNKNOWN);
+        assertThat(unknown.failureCode()).isEqualTo("FINALIZATION_PENDING");
+        verify(reservationPayments, times(1)).confirmPayment(order.reservationId(), 8711L);
+    }
+
+    // ---- 전체 취소 후 재취소와 취소 시각 ----
+
+    @Test
+    void 이미_전체_취소된_결제의_새키_전체취소는_409로_거절하고_PG를_호출하지_않는다() throws Exception {
+        PaymentOrderResponse order = order(2);
+        confirm(order);
+        GatewayPayment payment = done(order);
+        when(gateway.cancel(any()))
+                .thenReturn(
+                        cancellationResult(
+                                payment,
+                                0,
+                                GatewayPaymentStatus.CANCELED,
+                                List.of(
+                                        new GatewayCancellation(
+                                                "full", 20000, Instant.now(), "DONE"))));
+        UUID fullKey = UUID.randomUUID();
+        PaymentCancelRequest full = new PaymentCancelRequest(null, "전체 취소");
+        PaymentOperationResponse canceled = service.cancel(8711L, order.paymentId(), fullKey, full);
+        assertThat(canceled.status()).isEqualTo(PaymentOperationStatus.SUCCEEDED);
+        clearInvocations(gateway);
+
+        assertThatThrownBy(
+                        () ->
+                                service.cancel(
+                                        8711L,
+                                        order.paymentId(),
+                                        UUID.randomUUID(),
+                                        new PaymentCancelRequest(null, "다시 전체 취소")))
+                .isInstanceOf(BusinessException.class)
+                .extracting(error -> ((BusinessException) error).getErrorCode())
+                .isEqualTo(ErrorCode.RESERVATION_ALREADY_CANCELED);
+        assertThatThrownBy(
+                        () ->
+                                service.cancelReservation(
+                                        8711L, order.reservationId(), UUID.randomUUID()))
+                .isInstanceOf(BusinessException.class)
+                .extracting(error -> ((BusinessException) error).getErrorCode())
+                .isEqualTo(ErrorCode.RESERVATION_ALREADY_CANCELED);
+        mvc.perform(
+                        org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete(
+                                        "/api/v1/reservations/" + order.reservationId())
+                                .header("Authorization", token(8711L))
+                                .header("Idempotency-Key", UUID.randomUUID()))
+                .andExpect(
+                        org.springframework.test.web.servlet.result.MockMvcResultMatchers.status()
+                                .isConflict());
+        // 이미 취소된 특정 좌석을 지정한 부분취소는 기존대로 좌석 오류다.
+        assertThatThrownBy(
+                        () ->
+                                service.cancel(
+                                        8711L,
+                                        order.paymentId(),
+                                        UUID.randomUUID(),
+                                        new PaymentCancelRequest(
+                                                List.of(order.seats().getFirst().reservedSeatId()),
+                                                "취소된 좌석")))
+                .isInstanceOf(BusinessException.class)
+                .extracting(error -> ((BusinessException) error).getErrorCode())
+                .isEqualTo(ErrorCode.INVALID_SEAT);
+        // 같은 키의 완료 재전송은 저장된 응답을 그대로 돌려준다.
+        assertThat(service.cancel(8711L, order.paymentId(), fullKey, full)).isEqualTo(canceled);
+
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM payment_operation", Integer.class))
+                .isEqualTo(2);
+        verify(gateway, never()).cancel(any());
+        verify(gateway, never()).getPayment(any());
+    }
+
+    @Test
+    void 좌석_취소_시각은_예매_좌석과_주문_좌석에_같은_값으로_저장된다() {
+        PaymentOrderResponse order = order(2);
+        confirm(order);
+        GatewayPayment payment = done(order);
+        when(gateway.cancel(any()))
+                .thenReturn(
+                        cancellationResult(
+                                payment,
+                                0,
+                                GatewayPaymentStatus.CANCELED,
+                                List.of(
+                                        new GatewayCancellation(
+                                                "full", 20000, Instant.now(), "DONE"))));
+
+        assertThat(
+                        service.cancel(
+                                        8711L,
+                                        order.paymentId(),
+                                        UUID.randomUUID(),
+                                        new PaymentCancelRequest(null, "전체 취소"))
+                                .status())
+                .isEqualTo(PaymentOperationStatus.SUCCEEDED);
+
+        assertThat(
+                        jdbc.queryForObject(
+                                "SELECT COUNT(*) FROM reserved_seats rs JOIN payment_order_seat pos"
+                                        + " ON pos.reserved_seat_id = rs.reserved_seat_id WHERE"
+                                        + " rs.reservation_id=? AND rs.canceled_at IS NOT NULL AND"
+                                        + " pos.canceled_at IS NOT NULL AND rs.canceled_at ="
+                                        + " pos.canceled_at",
+                                Integer.class,
+                                order.reservationId()))
+                .isEqualTo(2);
     }
 }

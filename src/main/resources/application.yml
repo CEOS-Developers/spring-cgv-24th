@@ -21,6 +21,8 @@ cgv:
     cleanup-batch-size: 100
     cleanup-delay-ms: 60000
   payment:
+    recovery:
+      approval-not-found-grace: PT30M
     toss:
       client-key: ${TOSS_CLIENT_KEY:}
       secret-key: ${TOSS_SECRET_KEY:}

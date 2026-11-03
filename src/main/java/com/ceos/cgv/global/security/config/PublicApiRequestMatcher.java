@@ -21,20 +21,27 @@ public class PublicApiRequestMatcher implements RequestMatcher {
             pathPattern(GET, "/api/v1/cinemas"),
             pathPattern(GET, "/api/v1/cinemas/{cinemaId}"),
             pathPattern(GET, "/api/v1/products"),
-            pathPattern(GET, "/payment-demo.html"),
-            pathPattern(GET, "/payment-success.html"),
-            pathPattern(GET, "/payment-fail.html"),
-            pathPattern(GET, "/payment-demo.js"),
-            pathPattern(GET, "/payment-demo.css"),
             pathPattern(GET, "/swagger-ui.html"),
             pathPattern(GET, "/swagger-ui/**"),
             pathPattern(GET, "/v3/api-docs"),
             pathPattern(GET, "/v3/api-docs.yaml"),
             pathPattern(GET, "/v3/api-docs/**"),
             pathPattern(GET, "/actuator/health"));
+    private final RequestMatcher demoPageMatcher = new OrRequestMatcher(
+            pathPattern(GET, "/payment-demo.html"),
+            pathPattern(GET, "/payment-success.html"),
+            pathPattern(GET, "/payment-fail.html"),
+            pathPattern(GET, "/payment-demo.js"),
+            pathPattern(GET, "/payment-demo.css"));
+    private final boolean demoPagesEnabled;
+
+    // 결제 데모 정적 페이지는 payment-demo 프로필에서만 공개한다. 그 밖의 프로필에서는 기본 거부 규칙을 따른다.
+    public PublicApiRequestMatcher(boolean demoPagesEnabled) {
+        this.demoPagesEnabled = demoPagesEnabled;
+    }
 
     @Override
     public boolean matches(HttpServletRequest request) {
-        return publicApiMatcher.matches(request);
+        return publicApiMatcher.matches(request) || (demoPagesEnabled && demoPageMatcher.matches(request));
     }
 }

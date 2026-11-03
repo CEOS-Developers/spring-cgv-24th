@@ -121,6 +121,19 @@ class SecurityPathAccessIntegrationTest {
                 .andExpect(status().isBadRequest());
     }
 
+    // 기본(test) 프로필에서는 데모 정적 페이지가 기본 거부 규칙을 따른다. 공개 여부는 PaymentDemoApiIntegrationTest가 데모 프로필에서 확인한다.
+    @ParameterizedTest
+    @ValueSource(strings = {"/payment-demo.html", "/payment-success.html", "/payment-fail.html",
+            "/payment-demo.js", "/payment-demo.css"})
+    void 결제_데모_페이지는_payment_demo_프로필이_아니면_공개하지_않는다(String path) throws Exception {
+        mockMvc.perform(get(path))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("TOKEN_NOT_EXIST"));
+        mockMvc.perform(get(path).header("Authorization", "Bearer " + jwtService.issue(1L, UserRole.USER)))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("ACCESS_DENIED"));
+    }
+
     @Test
     void Swagger와_상태_조회는_GET으로_계속_공개한다() throws Exception {
         mockMvc.perform(get("/v3/api-docs")).andExpect(status().isOk());
