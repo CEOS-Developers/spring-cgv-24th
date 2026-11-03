@@ -9,8 +9,6 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 import java.time.Instant;
-import java.util.UUID;
-
 
 @Entity
 @Getter
@@ -39,16 +37,12 @@ public class Order {
 	@Enumerated(EnumType.STRING)
 	private OrderStatus status;
 
-	@Column(name = "toss_order_id", unique = true, length = 64)
-	private String tossOrderId;
-
 	private Order(User user, Theater theater, Instant orderedAt, Integer totalPrice) {
 		this.user = user;
 		this.theater = theater;
 		this.orderedAt = orderedAt;
 		this.totalPrice = totalPrice;
 		this.status = OrderStatus.PENDING_PAYMENT;
-		this.tossOrderId = UUID.randomUUID().toString();
 	}
 
 	public static Order create(User user, Theater theater, Integer totalPrice) {

@@ -6,7 +6,9 @@ import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import com.ceos24.cgv.domain.reservation.entity.Reservation;
 
+import java.util.UUID;
 import java.time.Instant;
 
 @Entity
@@ -20,8 +22,18 @@ public class Payment {
 	private Long id;
 
 	@OneToOne(fetch = FetchType.LAZY)
-	@JoinColumn(name = "order_id", nullable = false, unique = true)
+	@JoinColumn(name = "order_id", unique = true)
 	private Order order;
+
+	@OneToOne(fetch = FetchType.LAZY)
+	@JoinColumn(name = "reservation_id", unique = true)
+	private Reservation reservation;
+
+	@Column(nullable = false, unique = true, length = 64)
+	private String tossOrderId; // 토스에 전달하는 주문번호
+
+	@Column(nullable = false, length = 100)
+	private String orderName; // 결제창에 표시할 상품명
 
 	@Column(unique = true, length = 200)
 	private String paymentKey;
@@ -40,14 +52,21 @@ public class Payment {
 
 	private Instant approvedAt;
 
-	private Payment(Order order) {
+	private Payment(Order order, Reservation reservation, String orderName, Integer amount) {
 		this.order = order;
-		this.amount = order.getTotalPrice();
-		this.balanceAmount = order.getTotalPrice();
+		this.reservation = reservation;
+		this.tossOrderId = UUID.randomUUID().toString();
+		this.orderName = orderName;
+		this.amount = amount;
+		this.balanceAmount = amount;
 		this.status = PaymentStatus.READY;
 	}
 
-	public static Payment create(Order order) {
-		return new Payment(order);
+	public static Payment forOrder(Order order) {
+		return new Payment(order, null, "CGV 매점 주문 #" + order.getId(), order.getTotalPrice());
+	}
+
+	public static Payment forReservation(Reservation reservation, String orderName) {
+		return new Payment(null, reservation, orderName, reservation.getTotalPrice());
 	}
 }

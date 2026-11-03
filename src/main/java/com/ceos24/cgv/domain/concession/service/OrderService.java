@@ -14,6 +14,7 @@ import com.ceos24.cgv.domain.concession.repository.OrderRepository;
 import com.ceos24.cgv.domain.concession.repository.StockRepository;
 import com.ceos24.cgv.domain.payment.dto.response.PaymentReadyResponse;
 import com.ceos24.cgv.domain.payment.entity.Payment;
+import com.ceos24.cgv.domain.payment.exception.PaymentErrorStatus;
 import com.ceos24.cgv.domain.payment.repository.PaymentRepository;
 import com.ceos24.cgv.domain.theater.entity.Theater;
 import com.ceos24.cgv.domain.theater.exception.TheaterErrorStatus;
@@ -81,7 +82,7 @@ public class OrderService {
 			orderItemRepository.save(orderItem);
 		}
 
-		paymentRepository.save(Payment.create(order));
+		paymentRepository.save(Payment.forOrder(order));
 
 		return order.getId();
 	}
@@ -132,6 +133,8 @@ public class OrderService {
 			throw new GeneralException(ConcessionErrorStatus.ORDER_NOT_PENDING_PAYMENT);
 		}
 
-		return PaymentReadyResponse.from(order);
+		Payment payment = paymentRepository.findByOrderId(orderId)
+				.orElseThrow(() -> new GeneralException(PaymentErrorStatus.PAYMENT_NOT_FOUND));
+		return PaymentReadyResponse.from(payment);
 	}
 }
