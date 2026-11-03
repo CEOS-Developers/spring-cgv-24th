@@ -1,7 +1,10 @@
 package com.ceos24.cgv.domain.theater.controller;
 
+import com.ceos24.cgv.domain.theater.dto.request.ScreenCreateRequest;
 import com.ceos24.cgv.domain.theater.dto.request.TheaterCreateRequest;
 import com.ceos24.cgv.domain.theater.dto.request.TheaterUpdateRequest;
+import com.ceos24.cgv.domain.theater.dto.response.ScreenCreateResponse;
+import com.ceos24.cgv.domain.theater.service.ScreenService;
 import com.ceos24.cgv.domain.theater.service.TheaterService;
 import com.ceos24.cgv.global.apiPayload.ApiResponse;
 import com.ceos24.cgv.global.apiPayload.code.status.SuccessStatus;
@@ -23,6 +26,7 @@ import org.springframework.web.bind.annotation.*;
 public class TheaterAdminController {
 
     private final TheaterService theaterService;
+    private final ScreenService screenService;
 
     @Operation(summary = "영화관 생성 API", description = "관리자 권한으로 새로운 영화관 데이터를 생성합니다.")
     @PostMapping
@@ -46,5 +50,16 @@ public class TheaterAdminController {
     public ApiResponse<Void> deleteTheater(@PathVariable Long theaterId) {
         theaterService.delete(theaterId);
         return ApiResponse.onSuccess(null);
+    }
+
+    @Operation(summary = "상영관 등록 API", description = "영화관에 상영관을 등록하고 상영관 타입 규격대로 좌석을 생성합니다.")
+    @PostMapping("/{theaterId}/screens")
+    public ResponseEntity<ApiResponse<ScreenCreateResponse>> createScreen(
+            @PathVariable Long theaterId,
+            @Valid @RequestBody ScreenCreateRequest request
+    ) {
+        return ResponseEntity
+                .status(HttpStatus.CREATED)
+                .body(ApiResponse.onSuccess(SuccessStatus.CREATED, screenService.create(theaterId, request)));
     }
 }
