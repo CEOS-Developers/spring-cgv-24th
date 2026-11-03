@@ -12,6 +12,11 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import com.ceos24.cgv.domain.payment.dto.response.PaymentReadyResponse;
+import com.ceos24.cgv.global.security.CustomUserDetails;
+import com.ceos24.cgv.global.config.SwaggerConfig;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 
 import java.util.List;
 
@@ -42,9 +47,22 @@ public class OrderController {
         return ApiResponse.onSuccess(orderService.findById(orderId, userId));
     }
 
-    @Operation(summary = "내 주문 내역 조회 API", description = "특정 유저의 매점 주문 내역 전체를 조회합니다.")
-    @GetMapping
-    public ApiResponse<List<OrderResponse>> getMyOrders(@RequestParam Long userId) {
-        return ApiResponse.onSuccess(orderService.findByUserId(userId));
-    }
+	@Operation(summary = "내 주문 내역 조회 API", description = "특정 유저의 매점 주문 내역 전체를 조회합니다.")
+	@GetMapping
+	public ApiResponse<List<OrderResponse>> getMyOrders(@RequestParam Long userId) {
+		return ApiResponse.onSuccess(orderService.findByUserId(userId));
+	}
+
+
+	@Operation(summary = "결제 준비 정보 조회 API")
+	@SecurityRequirement(name = SwaggerConfig.JWT_SCHEME)
+	@GetMapping("/{orderId}/payment-info")
+	public ApiResponse<PaymentReadyResponse> getPaymentInfo(
+			@PathVariable Long orderId,
+			@AuthenticationPrincipal CustomUserDetails userDetails
+	) {
+		return ApiResponse.onSuccess(
+				orderService.getPaymentInfo(orderId, userDetails.getUserId()));
+	}
+
 }
