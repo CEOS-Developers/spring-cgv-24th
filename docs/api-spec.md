@@ -81,8 +81,10 @@
 | POST | `/api/payments/reservations/prepare` | 로그인 | `reservationId` | 200 결제 준비 정보 |
 | POST | `/api/payments/store-orders/prepare` | 로그인 | `storeOrderId` | 200 결제 준비 정보 |
 | POST | `/api/payments/confirm` | 로그인 | `paymentKey, orderId, amount` | 200 결제 승인 결과 |
-| GET | `/api/payments` | 로그인 | 선택 Query: `page=0, size=20` | 200 본인 완료 결제 목록 |
-| GET | `/api/payments/{paymentId}` | 로그인 | 없음 | 200 본인 완료 결제 상세 |
+| POST | `/api/payments/{paymentId}/cancel` | 로그인 | Header: `Idempotency-Key`, Body: `cancelReason, cancelAmount?` | 200 취소 결과 |
+| GET | `/api/payments/{paymentId}/cancellations` | 로그인 | 없음 | 200 본인 취소 요청 이력 |
+| GET | `/api/payments` | 로그인 | 선택 Query: `page=0, size=20` | 200 본인 승인 결제 내역(취소 포함) |
+| GET | `/api/payments/{paymentId}` | 로그인 | 없음 | 200 본인 승인 결제 상세(취소 포함) |
 
 ### 진행 순서
 
@@ -135,6 +137,8 @@ Authorization: Bearer <accessToken>
   "targetId": 1,
   "orderName": "영화 티켓 예매",
   "amount": 28000,
+  "balanceAmount": 28000,
+  "canceledAmount": 0,
   "currency": "KRW",
   "paymentMethod": "카드",
   "status": "DONE",
@@ -142,6 +146,8 @@ Authorization: Bearer <accessToken>
   "approvedAt": "2026-11-03T21:01:00"
 }
 ```
+
+상세 응답에는 `balanceAmount`(남은 금액)와 `canceledAmount`(누적 취소 금액)도 포함됩니다. 최초 승인 시에는 각각 `28000`, `0`입니다. 부분 취소 후에도 `amount`는 최초 승인 금액으로 유지합니다.
 
 `targetType`은 `RESERVATION / STORE_ORDER`입니다. `targetId`는 해당 예매 또는 매점 주문의 ID입니다. `approvedAt`은 Toss 승인 시각을 한국 시간으로 변환한 값이며, 응답의 `LocalDateTime`에는 시간대 표기가 없습니다.
 `paymentMethod`는 승인 응답에서 저장하며, 필드 추가 이전 결제는 `null`일 수 있습니다. `orderName`은 현재 구매 종류별 고정 명칭을 결제 생성 시 저장합니다. 영화 제목이나 개별 메뉴 이름은 포함하지 않습니다.
@@ -164,14 +170,67 @@ Authorization: Bearer <accessToken>
 }
 ```
 
-`content`에는 상세 응답과 같은 구조의 결제들이 들어갑니다. 페이지는 0부터 시작하고 `size`는 1~100입니다. `approvedAt DESC, paymentId DESC`로 정렬합니다. 다른 사용자 결제와 `DONE` 이외 상태는 제외합니다. 조회 과정에서는 Toss API를 호출하지 않습니다.
+`content`에는 상세 응답과 같은 구조의 결제들이 들어갑니다. 페이지는 0부터 시작하고 `size`는 1~100입니다. `approvedAt DESC, paymentId DESC`로 정렬합니다. 본인의 승인 이력이 있는 `DONE / PARTIAL_CANCELED / CANCELED` 결제를 포함하며 승인 전 대기 취소는 제외합니다. 조회 과정에서는 Toss API를 호출하지 않습니다.
 
 | 상황 | 응답 |
 | --- | --- |
 | 목록에 완료 결제가 없음 | 200, 빈 `content` |
-| 상세 ID가 없거나 다른 사용자 결제이거나 미완료 결제 | 404 `PAYMENT_NOT_FOUND` |
+| 상세 ID가 없거나 다른 사용자 결제이거나 승인 이력이 없음 | 404 `PAYMENT_NOT_FOUND` |
 | 음수 page 또는 범위를 벗어난 size | 400 `INVALID_PAYMENT_PAGE` |
 | 인증 없음·유효하지 않은 토큰 | 401 |
+
+### 전체·부분 취소
+
+상세한 상태 전이와 재시도 정책은 [결제 취소 구현 안내](payment-cancellation.md)를 참고하세요.
+
+```http
+POST /api/payments/2/cancel
+Authorization: Bearer <accessToken>
+Idempotency-Key: 67512ba1-a798-4d85-a439-b091069b8001
+Content-Type: application/json
+```
+
+```json
+{
+  "cancelReason": "사용자 요청",
+  "cancelAmount": 8000
+}
+```
+
+`cancelAmount`를 생략하거나 `null`로 보내면 **현재 남은 금액 전체**를 취소합니다. 취소 사유는 공백이 아닌 1~200자, 금액은 양수이며 현재 잔액을 초과할 수 없습니다. 멱등키는 소문자·숫자·`_`·`-`로 구성한 1~64자로, UUID를 권장합니다.
+
+같은 취소의 재시도에는 같은 멱등키와 Body를 사용합니다. 새로운 부분 취소에만 새 키를 사용합니다. 완료된 동일 요청은 PG 재호출 없이 반환합니다.
+
+```json
+{
+  "cancellationId": 1,
+  "paymentId": 2,
+  "requestId": "67512ba1-a798-4d85-a439-b091069b8001",
+  "cancelAmount": 8000,
+  "cancelReason": "사용자 요청",
+  "cancelStatus": "DONE",
+  "balanceAmount": 20000,
+  "paymentStatus": "PARTIAL_CANCELED",
+  "createdAt": "2026-11-03T22:00:00",
+  "canceledAt": "2026-11-03T22:00:01"
+}
+```
+
+취소 요청 이력은 `GET /api/payments/2/cancellations`로 조회합니다. 위 응답 형태의 배열이며 최신 요청부터 반환합니다. 각 요청의 금액·사유·상태·시각은 해당 요청 정보이고, `balanceAmount, paymentStatus`는 **조회 시점 결제 전체의 현재 값**입니다. 실패·결과 미확정 요청도 포함합니다.
+
+| 상황 | 응답 |
+| --- | --- |
+| 금액·사유·멱등키 형식 오류 | 400 `INVALID_PAYMENT_CANCEL_REQUEST` |
+| 잔액 초과 | 400 `PAYMENT_CANCEL_AMOUNT_EXCEEDED` |
+| 승인 전 상태 | 409 `PAYMENT_NOT_CANCELABLE` |
+| 전액 취소 후 새 취소 요청 | 409 `PAYMENT_ALREADY_CANCELED` |
+| 같은 키에 다른 사유·금액 | 409 `PAYMENT_CANCEL_REQUEST_MISMATCH` |
+| 다른 취소 요청이 처리 중 또는 결과 미확정 | 409 `PAYMENT_CANCEL_IN_PROGRESS` |
+| 가상계좌(환불 계좌 연동 필요) | 409 `PAYMENT_CANCEL_METHOD_NOT_SUPPORTED` |
+| PG의 명시적 거절 및 미취소 확인 | 502 `PAYMENT_CANCEL_FAILED` |
+| 통신 장애·응답 검증 실패 등 결과 미확정 | 503 `PAYMENT_CANCEL_RESULT_UNKNOWN` |
+
+부분 취소는 금액 환불이며 개별 좌석·메뉴 선택 취소는 아닙니다. 잔액이 0이 되면 예매를 취소하고 좌석을 반환하거나, 매점 주문을 취소하고 전체 재고를 한 번 반환합니다.
 
 ## 영화 좋아요·영화관 즐겨찾기
 
@@ -188,4 +247,4 @@ Authorization: Bearer <accessToken>
 
 ## 현재 구현 범위
 
-PG 환불·부분 취소·웹훅 수신·주기적인 PG 대사 작업은 아직 없습니다. 완료 결제 조회는 **우리 DB에 확정·저장된 승인 내역**을 반환합니다. PG 관리자 화면에서 별도로 취소한 결과까지 자동 반영하는 조회는 아닙니다.
+승인된 결제의 전체·부분 취소를 지원합니다. 가상계좌 환불 계좌 입력, 개별 좌석·메뉴 취소, 웹훅 수신·주기적인 PG 대사 작업은 아직 없습니다. 결제 조회는 **우리 DB에 검증·저장된 승인·취소 내역**을 반환하며, PG 관리자 화면에서 별도로 취소한 결과를 자동 반영하지 않습니다.
