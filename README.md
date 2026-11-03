@@ -1,6 +1,8 @@
 # spring-cgv-24th
 CEOS 24기 백엔드 스터디 - CGV 클론 코딩 프로젝트
 
+[CGV-API 명세서](https://app.notion.com/p/CGV-CLONE-Project-API-400de222d8e48038ba4cfedc75e00427?source=copy_link)
+
 # 🎬 CGV Clone Project
 
 CGV 서비스를 참고하여 영화 조회, 극장 및 상영 정보 조회, 영화 예매, 매점 주문, 영화/극장 찜 기능을 구현하는 Spring Boot 프로젝트입니다.
