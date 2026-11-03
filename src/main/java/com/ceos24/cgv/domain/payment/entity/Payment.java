@@ -1,6 +1,8 @@
 package com.ceos24.cgv.domain.payment.entity;
 
 import com.ceos24.cgv.domain.payment.enums.PaymentStatus;
+import com.ceos24.cgv.domain.payment.exception.PaymentErrorCode;
+import com.ceos24.cgv.domain.payment.exception.PaymentException;
 import com.ceos24.cgv.domain.reservation.entity.Reservation;
 import com.ceos24.cgv.domain.reservation.enums.ReservationStatus;
 import com.ceos24.cgv.global.common.BaseTimeEntity;
@@ -91,8 +93,12 @@ public class Payment extends BaseTimeEntity {
         if (status != PaymentStatus.READY) {
             throw new IllegalStateException("결제 준비 상태에서만 승인을 시작할 수 있습니다.");
         }
-        if (paymentKey == null || paymentKey.isBlank() || paymentKey.length() > 200) {
-            throw new IllegalArgumentException("유효한 결제 키가 필요합니다.");
+        if (paymentKey == null
+                || paymentKey.isBlank()
+                || paymentKey.length() > 200) {
+            throw new PaymentException(
+                    PaymentErrorCode.INVALID_PAYMENT_KEY
+            );
         }
 
         this.paymentKey = paymentKey;
