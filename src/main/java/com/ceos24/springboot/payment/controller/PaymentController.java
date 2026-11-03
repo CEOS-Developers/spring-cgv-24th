@@ -1,7 +1,10 @@
 package com.ceos24.springboot.payment.controller;
 
+import com.ceos24.springboot.payment.dto.PaymentConfirmRequest;
+import com.ceos24.springboot.payment.dto.PaymentConfirmResponse;
 import com.ceos24.springboot.payment.dto.PaymentPrepareResponse;
 import com.ceos24.springboot.payment.dto.ReservationPaymentPrepareRequest;
+import com.ceos24.springboot.payment.service.PaymentConfirmService;
 import com.ceos24.springboot.payment.service.PaymentService;
 import com.ceos24.springboot.user.security.CustomUserDetails;
 import lombok.RequiredArgsConstructor;
@@ -15,6 +18,7 @@ import org.springframework.web.bind.annotation.*;
 public class PaymentController {
 
     private final PaymentService paymentService;
+    private final PaymentConfirmService paymentConfirmService;
 
     @PostMapping("/reservations/prepare")
     public ResponseEntity<PaymentPrepareResponse> prepareReservation(
@@ -23,6 +27,19 @@ public class PaymentController {
     ) {
         return ResponseEntity.ok(
                 paymentService.prepareReservation(
+                        userDetails.getUserId(),
+                        request
+                )
+        );
+    }
+
+    @PostMapping("/confirm")
+    public ResponseEntity<PaymentConfirmResponse> confirm(
+            @AuthenticationPrincipal CustomUserDetails userDetails,
+            @RequestBody PaymentConfirmRequest request
+    ) {
+        return ResponseEntity.ok(
+                paymentConfirmService.confirm(
                         userDetails.getUserId(),
                         request
                 )

@@ -399,33 +399,5 @@ public class ReservationService {
                 .toList();
     }
 
-    // 점유 좌석을 예약된 좌석으로 예매 확정
-    @Transactional(noRollbackFor = ReservationExpiredException.class)
-    public ReservationResponse confirmReservation(Long userId, Long reservationId) {
 
-        // 본인 예매 조회 및 락
-        Reservation reservation = reservationRepository
-                .findMyReservationWithLock(reservationId, userId)
-                .orElseThrow(() -> new GlobalException(ErrorCode.RESERVATION_NOT_FOUND));
-
-        LocalDateTime now = LocalDateTime.now();
-        if (reservation.expireIfPending(now)) {
-            reservationSeatRepository.deleteAllByReservation_ReservationId(reservationId);
-            throw new ReservationExpiredException();
-        }
-        if (reservation.getStatus() == ReservationStatus.Expired) {
-            throw new ReservationExpiredException();
-        }
-        if (reservation.getStatus() != ReservationStatus.Reserved) {
-            if (reservation.getStatus() != ReservationStatus.Pending) {
-                throw new GlobalException(ErrorCode.INVALID_RESERVATION_STATUS);
-            }
-            reservation.confirm(now);
-        }
-
-        List<Seat> seats = reservationSeatRepository
-                .findAllByReservation_ReservationId(reservationId)
-                .stream().map(ReservationSeat::getSeat).toList();
-        return ReservationResponse.from(reservation, seats);
-    }
 }

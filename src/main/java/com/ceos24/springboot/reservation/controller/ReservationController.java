@@ -44,16 +44,7 @@ public class ReservationController {
                 .body(response);
     }
 
-    @Operation(summary = "예매 확정", description = "10분 이내의 본인 대기 예매를 확정합니다.")
-    @PatchMapping("/{reservationId}/confirm")
-    public ResponseEntity<ReservationResponse> confirmReservation(
-            @AuthenticationPrincipal CustomUserDetails userDetails,
-            @PathVariable Long reservationId
-    ) {
-        return ResponseEntity.ok(reservationService.confirmReservation(
-                userDetails.getUserId(), reservationId
-        ));
-    }
+
 
     // 예매 확인
     @Operation(

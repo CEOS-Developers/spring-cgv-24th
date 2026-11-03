@@ -125,4 +125,57 @@ public class Payment {
                 expiresAt
         );
     }
+
+    // 결제 상태 변경
+    public void startProcessing(String paymentKey) {
+        if (status != PaymentStatus.READY
+                && status != PaymentStatus.UNKNOWN) {
+            throw new GlobalException(ErrorCode.INVALID_PAYMENT_STATUS);
+        }
+
+        if (paymentKey == null || paymentKey.isBlank()
+                || paymentKey.length() > 200) {
+            throw new GlobalException(
+                    ErrorCode.INVALID_PAYMENT_CONFIRM_REQUEST
+            );
+        }
+
+        if (this.paymentKey != null
+                && !this.paymentKey.equals(paymentKey)) {
+            throw new GlobalException(
+                    ErrorCode.PAYMENT_INFORMATION_MISMATCH
+            );
+        }
+
+        this.paymentKey = paymentKey;
+        this.status = PaymentStatus.PROCESSING;
+    }
+
+    public void complete(LocalDateTime approvedAt) {
+        validateProcessingState();
+
+        if (approvedAt == null) {
+            throw new GlobalException(ErrorCode.INVALID_PAYMENT_STATUS);
+        }
+
+        this.approvedAt = approvedAt;
+        this.status = PaymentStatus.DONE;
+    }
+
+    public void markFailed() {
+        validateProcessingState();
+        this.status = PaymentStatus.FAILED;
+    }
+
+    public void markUnknown() {
+        validateProcessingState();
+        this.status = PaymentStatus.UNKNOWN;
+    }
+
+    private void validateProcessingState() {
+        if (status != PaymentStatus.PROCESSING
+                && status != PaymentStatus.UNKNOWN) {
+            throw new GlobalException(ErrorCode.INVALID_PAYMENT_STATUS);
+        }
+    }
 }

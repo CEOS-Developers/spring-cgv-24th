@@ -2,7 +2,14 @@ package com.ceos24.springboot.payment.repository;
 
 import com.ceos24.springboot.payment.domain.Payment;
 import com.ceos24.springboot.payment.domain.PaymentTargetType;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+
+import java.util.Optional;
+
 
 import java.util.Optional;
 
@@ -13,5 +20,31 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
     Optional<Payment> findFirstByTargetTypeAndTargetIdOrderByIdDesc(
             PaymentTargetType targetType,
             Long targetId
+    );
+
+    // 예매 -> 결제 순서로 잠그기 위해 먼저 예매 ID만 조회하고, 이후 결제 행을 잠급니다.
+    @Query("""
+            select p.targetId
+            from Payment p
+            where p.orderId = :orderId
+              and p.user.id = :userId
+              and p.targetType = :targetType
+            """)
+    Optional<Long> findTargetId(
+            @Param("orderId") String orderId,
+            @Param("userId") Long userId,
+            @Param("targetType") PaymentTargetType targetType
+    );
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("""
+            select p
+            from Payment p
+            where p.orderId = :orderId
+              and p.user.id = :userId
+            """)
+    Optional<Payment> findMyPaymentWithLock(
+            @Param("orderId") String orderId,
+            @Param("userId") Long userId
     );
 }

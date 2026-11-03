@@ -89,6 +89,46 @@ public enum ErrorCode {
             "기존 결제의 상태 또는 정보로 인해 결제를 준비할 수 없습니다."
     ),
 
+    INVALID_PAYMENT_CONFIRM_REQUEST(
+            HttpStatus.BAD_REQUEST,
+            "결제 승인 요청값이 올바르지 않습니다."
+    ),
+
+    PAYMENT_NOT_FOUND(
+            HttpStatus.NOT_FOUND,
+            "해당 결제를 찾을 수 없습니다."
+    ),
+
+    PAYMENT_INFORMATION_MISMATCH(
+            HttpStatus.CONFLICT,
+            "저장된 결제 정보와 요청 정보가 일치하지 않습니다."
+    ),
+
+    INVALID_PAYMENT_STATUS(
+            HttpStatus.CONFLICT,
+            "현재 결제 상태에서는 요청을 처리할 수 없습니다."
+    ),
+
+    PAYMENT_IN_PROGRESS(
+            HttpStatus.CONFLICT,
+            "결제 처리 중이므로 예매를 변경할 수 없습니다."
+    ),
+
+    PAYMENT_RESULT_UNKNOWN(
+            HttpStatus.SERVICE_UNAVAILABLE,
+            "결제 결과를 확인 중입니다. 같은 주문으로 다시 확인해 주세요."
+    ),
+
+    PAYMENT_APPROVAL_FAILED(
+            HttpStatus.BAD_REQUEST,
+            "결제가 실패하거나 만료되었습니다."
+    ),
+
+    PAID_RESERVATION_CANCEL_NOT_SUPPORTED(
+            HttpStatus.CONFLICT,
+            "결제 완료 예매는 환불 처리 후 취소해야 합니다."
+    ),
+
 
     // Authentication & Authorization
     TOKEN_NOT_EXIST(

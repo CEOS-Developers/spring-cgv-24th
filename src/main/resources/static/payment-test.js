@@ -131,17 +131,21 @@ payButton.addEventListener("click", async () => {
     }
 });
 
-// 3. 토스 인증 이후 돌아온 결과를 표시한다.
+// 3. 인증 결과를 확인하고 우리 서버에 승인을 요청한다.
 const params = new URLSearchParams(location.search);
 const paymentResult = params.get("result");
+
+const confirmSection = document.getElementById("confirmSection");
+const confirmButton = document.getElementById("confirmButton");
 
 if (paymentResult) {
     checkout.hidden = true;
 
     if (paymentResult === "success") {
+        confirmSection.hidden = false;
+
         show({
-            message: "결제 인증 성공. 아직 서버 승인 전입니다.",
-            paymentKey: params.get("paymentKey"),
+            message: "결제 인증 성공. 서버 승인을 진행하세요.",
             orderId: params.get("orderId"),
             amount: params.get("amount")
         });
@@ -153,3 +157,68 @@ if (paymentResult) {
         });
     }
 }
+
+confirmButton.addEventListener("click", async () => {
+    confirmButton.disabled = true;
+
+    try {
+        const token = document
+            .getElementById("confirmToken")
+            .value.trim();
+
+        const paymentKey = params.get("paymentKey");
+        const orderId = params.get("orderId");
+        const amount = Number(params.get("amount"));
+
+        if (!token) {
+            throw new Error("로그인 accessToken을 입력하세요.");
+        }
+
+        if (!paymentKey || !orderId
+            || !Number.isSafeInteger(amount)
+            || amount <= 0) {
+            throw new Error("인증 결과의 결제 정보가 올바르지 않습니다.");
+        }
+
+        const response = await fetch("/api/payments/confirm", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${token}`
+            },
+            body: JSON.stringify({
+                paymentKey,
+                orderId,
+                amount
+            })
+        });
+
+        const body = await response.json();
+
+        if (!response.ok) {
+            show(body);
+            return;
+        }
+
+        if (body.status !== "DONE"
+            || body.reservationStatus !== "Reserved") {
+            throw new Error("결제 완료 상태를 확인할 수 없습니다.");
+        }
+
+        show({
+            message: "결제와 영화 예매가 완료되었습니다.",
+            ...body
+        });
+
+        document.getElementById("confirmToken").value = "";
+        confirmSection.hidden = true;
+
+    } catch (error) {
+        show({
+            message: error.message,
+            안내: "통신 오류라면 새 결제를 만들지 말고 같은 화면에서 결과를 다시 확인하세요."
+        });
+    } finally {
+        confirmButton.disabled = false;
+    }
+});

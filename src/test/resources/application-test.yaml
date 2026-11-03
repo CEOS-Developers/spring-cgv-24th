@@ -1,6 +1,6 @@
 spring:
   datasource:
-    url: jdbc:h2:mem:login-test;MODE=MySQL;DB_CLOSE_DELAY=-1
+    url: jdbc:h2:mem:test-${random.uuid};MODE=MySQL;DB_CLOSE_DELAY=-1
     driver-class-name: org.h2.Driver
     username: sa
     password: ""
@@ -13,3 +13,9 @@ jwt:
   # Test-only signing key; never use this key outside tests.
   secret: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
   access-token-expiration: 3600000
+
+payment:
+  toss:
+    # Test-only configuration; gateway calls in payment tests are mocked.
+    secret-key: test_gsk_not_a_real_key
+    base-url: https://api.tosspayments.com

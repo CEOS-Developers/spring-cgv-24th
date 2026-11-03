@@ -2,6 +2,8 @@ package com.ceos24.springboot.reservation.domain;
 
 import com.ceos24.springboot.theater.domain.Screening;
 import com.ceos24.springboot.user.domain.User;
+import com.ceos24.springboot.global.exception.ErrorCode;
+import com.ceos24.springboot.global.exception.GlobalException;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Builder;
@@ -52,6 +54,9 @@ public class Reservation {
     @Column(name = "status", length = 20)
     private ReservationStatus status;
 
+    @Column(name = "payment_processing", nullable = false)
+    private boolean paymentProcessing;
+
     @Column(name = "reservation_at")
     private LocalDateTime reservationAt;
 
@@ -85,10 +90,13 @@ public class Reservation {
 
     // 예매 전 점유시간 설정
     public boolean expireIfPending(LocalDateTime now) {
-        if (status != ReservationStatus.Pending || expiresAt == null
+        if (paymentProcessing
+                || status != ReservationStatus.Pending
+                || expiresAt == null
                 || expiresAt.isAfter(now)) {
             return false;
         }
+
         status = ReservationStatus.Expired;
         return true;
     }
@@ -103,6 +111,16 @@ public class Reservation {
 
     // 예매 취소
     public void cancel() {
+        if (paymentProcessing) {
+            throw new GlobalException(ErrorCode.PAYMENT_IN_PROGRESS);
+        }
+
+        if (status == ReservationStatus.Reserved) {
+            throw new GlobalException(
+                    ErrorCode.PAID_RESERVATION_CANCEL_NOT_SUPPORTED
+            );
+        }
+
         if (this.status == ReservationStatus.Canceled) {
             throw new IllegalArgumentException("이미 취소된 예매입니다.");
         }
@@ -111,5 +129,41 @@ public class Reservation {
         }
 
         this.status = ReservationStatus.Canceled;
+    }
+
+    // 결제 시작
+    public void beginPayment(LocalDateTime now) {
+        if (paymentProcessing) {
+            throw new GlobalException(ErrorCode.PAYMENT_IN_PROGRESS);
+        }
+
+        if (status != ReservationStatus.Pending) {
+            throw new GlobalException(ErrorCode.RESERVATION_NOT_PAYABLE);
+        }
+
+        if (expiresAt == null || !expiresAt.isAfter(now)) {
+            throw new GlobalException(ErrorCode.RESERVATION_EXPIRED);
+        }
+
+        paymentProcessing = true;
+    }
+
+    // 결제 승인
+    public void completePayment() {
+        if (!paymentProcessing || status != ReservationStatus.Pending) {
+            throw new GlobalException(ErrorCode.INVALID_PAYMENT_STATUS);
+        }
+
+        // 승인 시작 전에 기한을 검사했고, 처리 중에는 좌석을 유지한다.
+        status = ReservationStatus.Reserved;
+        paymentProcessing = false;
+    }
+
+    public void endPaymentProcessing() {
+        if (!paymentProcessing || status != ReservationStatus.Pending) {
+            throw new GlobalException(ErrorCode.INVALID_PAYMENT_STATUS);
+        }
+
+        paymentProcessing = false;
     }
 }
