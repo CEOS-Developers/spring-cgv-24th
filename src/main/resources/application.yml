@@ -28,3 +28,9 @@ jwt:
 toss:
   client-key: ${TOSS_CLIENT_KEY}
   secret-key: ${TOSS_SECRET_KEY}
+
+admin:
+  seed:
+    enabled: ${ADMIN_SEED_ENABLED:false}
+  login-id: ${ADMIN_LOGIN_ID:}
+  password: ${ADMIN_PASSWORD:}
