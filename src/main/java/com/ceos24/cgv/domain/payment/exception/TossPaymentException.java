@@ -17,6 +17,10 @@ public class TossPaymentException extends GeneralException {
 		this.resultUnknown = resultUnknown;
 	}
 
+	public boolean isNotFoundPayment() {
+		return "NOT_FOUND_PAYMENT".equals(tossCode);
+	}
+
 	public static TossPaymentException rejected(String tossCode, String tossMessage) {
 		return new TossPaymentException(PaymentErrorStatus.PG_REJECTED, tossCode, tossMessage, false);
 	}

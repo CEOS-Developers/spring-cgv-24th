@@ -51,7 +51,7 @@ public class PaymentFacade {
 		try {
 			toss = tossPaymentClient.getByOrderId(payment.getTossOrderId());
 		} catch (TossPaymentException e) {
-			if (e.isResultUnknown() || !"NOT_FOUND_PAYMENT".equals(e.getTossCode())) { // 인증 오류 등 그 외 4xx는 실패로 단정 금지
+			if (e.isResultUnknown() || !e.isNotFoundPayment()) { // 인증 오류 등 그 외 4xx는 실패로 단정 금지
 				paymentService.markUnknown(paymentId);
 				throw e;
 			}
@@ -59,7 +59,7 @@ public class PaymentFacade {
 			return paymentService.getPayment(userId, paymentId);
 		}
 
-		if (!"DONE".equals(toss.status())) { // 승인 완료가 아니면 확정도 취소도 하지 않고 재확인 대상으로 남긴다
+		if (!toss.isDone()) { // 승인 완료가 아니면 확정도 취소도 하지 않고 재확인 대상으로 남긴다
 			paymentService.markUnknown(paymentId);
 			throw new GeneralException(PaymentErrorStatus.PG_RESULT_UNKNOWN);
 		}

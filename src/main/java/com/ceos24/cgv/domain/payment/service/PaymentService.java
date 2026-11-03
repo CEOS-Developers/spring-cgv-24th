@@ -77,19 +77,14 @@ public class PaymentService {
 	@Transactional
 	public PaymentResponse completeApproval(Long paymentId, TossPaymentResponse toss) {
 		Payment payment = getPayment(paymentId);
-		boolean matches = "DONE".equals(toss.status()) && payment.getTossOrderId().equals(toss.orderId())
+		boolean matches = toss.isDone() && payment.getTossOrderId().equals(toss.orderId())
 				&& payment.getAmount().equals(toss.totalAmount());
 		if (!matches) {
 			throw new GeneralException(PaymentErrorStatus.PG_RESPONSE_MISMATCH);
 		}
 
 		payment.approve(toss.paymentKey(), toss.method(), toss.approvedAt().toInstant());
-		if (payment.getOrder() != null) {
-			orderService.completePaidOrder(payment.getOrder());
-		}
-		if (payment.getReservation() != null) {
-			reservationService.confirmPaid(payment.getReservation());
-		}
+		handleApproved(payment);
 		return toResponse(payment);
 	}
 
@@ -101,9 +96,7 @@ public class PaymentService {
 		if (payment.getOrder() != null) {
 			payment.getOrder().cancelPayment();
 		}
-		if (payment.getReservation() != null) {
-			reservationService.releaseUnpaid(payment.getReservation());
-		}
+		handleUnpaidReleased(payment);
 		PaymentCancel cancel = PaymentCancel.request(payment, payment.getCompensationIdempotencyKey(), payment.getAmount(),
 				COMPENSATION_REASON);
 		applyTossCancel(cancel, canceled);
@@ -160,11 +153,8 @@ public class PaymentService {
 		if (cancel.isPending()) {
 			applyTossCancel(cancel, toss);
 			payment.applyCanceledStatus();
-			if (payment.getBalanceAmount() == 0 && payment.getOrder() != null) {
-				orderService.restoreCanceledOrder(payment.getOrder());
-			}
-			if (payment.getBalanceAmount() == 0 && payment.getReservation() != null) {
-				reservationService.releaseCanceled(payment.getReservation());
+			if (payment.getBalanceAmount() == 0) {
+				handleFullyCanceled(payment);
 			}
 		}
 		return toResponse(payment);
@@ -211,14 +201,36 @@ public class PaymentService {
 	public void fail(Long paymentId) {
 		Payment payment = getPayment(paymentId);
 		payment.fail();
-		if (payment.getReservation() != null) {
-			reservationService.releaseUnpaid(payment.getReservation());
-		}
+		handleUnpaidReleased(payment);
 	}
 
 	@Transactional
 	public void markUnknown(Long paymentId) {
 		getPayment(paymentId).markUnknown();
+	}
+
+	private void handleApproved(Payment payment) {
+		if (payment.getOrder() != null) {
+			orderService.completePaidOrder(payment.getOrder());
+		}
+		if (payment.getReservation() != null) {
+			reservationService.confirmPaid(payment.getReservation());
+		}
+	}
+
+	private void handleUnpaidReleased(Payment payment) {
+		if (payment.getReservation() != null) {
+			reservationService.releaseUnpaid(payment.getReservation());
+		}
+	}
+
+	private void handleFullyCanceled(Payment payment) {
+		if (payment.getOrder() != null) {
+			orderService.restoreCanceledOrder(payment.getOrder());
+		}
+		if (payment.getReservation() != null) {
+			reservationService.releaseCanceled(payment.getReservation());
+		}
 	}
 
 	private CancelStart resumeCancel(Payment payment, PaymentCancel existing) {
