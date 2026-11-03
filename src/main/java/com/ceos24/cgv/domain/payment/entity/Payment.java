@@ -2,6 +2,7 @@ package com.ceos24.cgv.domain.payment.entity;
 
 import com.ceos24.cgv.domain.concession.entity.Order;
 import com.ceos24.cgv.domain.payment.enums.PaymentStatus;
+import com.ceos24.cgv.domain.user.entity.User;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -68,5 +69,34 @@ public class Payment {
 
 	public static Payment forReservation(Reservation reservation, String orderName) {
 		return new Payment(null, reservation, orderName, reservation.getTotalPrice());
+	}
+
+	public boolean isOwnedBy(Long userId) {
+		User owner = (order != null) ? order.getUser() : reservation.getUser();
+		return owner.getId().equals(userId);
+	}
+
+	public boolean isApproved() {
+		return status == PaymentStatus.DONE;
+	}
+
+	// 결제 1건의 승인은 논리적으로 한 번뿐이므로 토스 주문번호에서 고정된 멱등키를 만든다 (재시도해도 같은 키)
+	public String getConfirmIdempotencyKey() {
+		return "confirm-" + tossOrderId;
+	}
+
+	public void approve(String paymentKey, String method, Instant approvedAt) {
+		this.paymentKey = paymentKey;
+		this.method = method;
+		this.approvedAt = approvedAt;
+		this.status = PaymentStatus.DONE;
+	}
+
+	public void fail() {
+		this.status = PaymentStatus.FAILED;
+	}
+
+	public void markUnknown() {
+		this.status = PaymentStatus.UNKNOWN;
 	}
 }

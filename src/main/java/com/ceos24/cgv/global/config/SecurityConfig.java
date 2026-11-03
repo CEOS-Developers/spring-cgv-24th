@@ -61,6 +61,7 @@ public class SecurityConfig {
 						.requestMatchers(HttpMethod.POST, "/api/theaters").hasRole("ADMIN")
 						.requestMatchers("/api/theaters/*/likes").authenticated()
 						.requestMatchers("/api/orders/*/payment-info").authenticated()
+						.requestMatchers("/api/payments/**").authenticated()
 						.anyRequest().permitAll())
 				.addFilterBefore(
 						new JwtAuthenticationFilter(jwtTokenProvider, authenticationEntryPoint),
