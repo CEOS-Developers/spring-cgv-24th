@@ -4,7 +4,9 @@ import com.ceos24.cgv.domain.payment.dto.request.PaymentConfirmRequest;
 import com.ceos24.cgv.domain.payment.dto.response.PaymentDetailResponse;
 import com.ceos24.cgv.domain.payment.dto.response.TossConfirmResponse;
 import com.ceos24.cgv.domain.payment.service.PaymentApprovalService;
+import com.ceos24.cgv.domain.payment.service.PaymentCancellationService;
 import com.ceos24.cgv.domain.payment.service.PaymentQueryService;
+import com.ceos24.cgv.domain.reservation.dto.request.PaymentCancelRequest;
 import com.ceos24.cgv.global.apiPayload.ApiResponse;
 import com.ceos24.cgv.global.security.CustomUserDetails;
 import io.swagger.v3.oas.annotations.Operation;
@@ -25,6 +27,8 @@ public class PaymentController {
     private final PaymentApprovalService paymentApprovalService;
 
     private final PaymentQueryService paymentQueryService;
+
+    private final PaymentCancellationService paymentCancellationService;
 
     @PostMapping("/confirm")
     @Operation(
@@ -58,6 +62,22 @@ public class PaymentController {
                 paymentQueryService.getPayment(principal.getUserId(), orderId);
 
         return ApiResponse.onSuccess("결제 정보를 조회했습니다.", response);
+    }
+
+    //결제 취소
+    @PostMapping("/{orderId}/cancel")
+    @Operation(summary = "영화 예매 결제 전체 취소")
+    public ApiResponse<PaymentDetailResponse> cancelFull(
+            @Parameter(hidden = true)
+            @AuthenticationPrincipal CustomUserDetails principal,
+            @PathVariable("orderId") String orderId,
+            @Valid @RequestBody PaymentCancelRequest request
+    ) {
+        PaymentDetailResponse response = paymentCancellationService.cancelFull(
+                principal.getUserId(), orderId, request.cancelReason()
+        );
+
+        return ApiResponse.onSuccess("결제 전체 취소에 성공했습니다.", response);
     }
 
 
