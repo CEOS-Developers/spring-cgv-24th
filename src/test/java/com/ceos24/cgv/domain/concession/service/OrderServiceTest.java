@@ -63,7 +63,6 @@ class OrderServiceTest {
 		when(itemRepository.findById(3L)).thenReturn(Optional.of(item));
 		when(stockRepository.findByTheaterIdAndItemId(2L, 3L)).thenReturn(Optional.of(stock(1L, theater, item, 10)));
 		when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> withId(invocation.getArgument(0), 10L));
-		when(stockRepository.decreaseStock(2L, 3L, 3)).thenReturn(1);
 		when(orderItemRepository.save(any(OrderItem.class))).thenAnswer(invocation -> withId(invocation.getArgument(0), 20L));
 
 		Long result = orderService.create(1L, new OrderCreateRequest(2L, List.of(
@@ -83,10 +82,11 @@ class OrderServiceTest {
 		verify(paymentRepository).save(paymentCaptor.capture());
 		assertThat(paymentCaptor.getValue().getOrder()).isSameAs(orderCaptor.getValue());
 		assertThat(paymentCaptor.getValue().getAmount()).isEqualTo(15_000);
+		verify(stockRepository, never()).decreaseStock(anyLong(), anyLong(), anyInt());
 	}
 
 	@Test
-	void 조건부_재고_차감에_실패하면_재고부족_예외가_발생한다() {
+	void 재고가_주문수량보다_적으면_주문을_생성하지_않는다() {
 		var user = user(1L);
 		var theater = theater(2L);
 		var item = item(3L, "팝콘", 5_000);
@@ -94,13 +94,13 @@ class OrderServiceTest {
 		when(theaterRepository.findById(2L)).thenReturn(Optional.of(theater));
 		when(itemRepository.findById(3L)).thenReturn(Optional.of(item));
 		when(stockRepository.findByTheaterIdAndItemId(2L, 3L)).thenReturn(Optional.of(stock(1L, theater, item, 1)));
-		when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> withId(invocation.getArgument(0), 10L));
-		when(stockRepository.decreaseStock(2L, 3L, 2)).thenReturn(0);
 
 		assertThatThrownBy(() -> orderService.create(1L, new OrderCreateRequest(2L, List.of(new OrderItemRequest(3L, 2)))))
 				.isInstanceOf(GeneralException.class)
 				.extracting(error -> ((GeneralException) error).getCode())
 				.isEqualTo(ConcessionErrorStatus.INSUFFICIENT_STOCK);
+		verify(orderRepository, never()).save(any());
+		verify(paymentRepository, never()).save(any());
 		verify(orderItemRepository, never()).save(any());
 	}
 

@@ -45,4 +45,8 @@ public class Stock {
     public void update(Integer quantity) {
         this.quantity = quantity;
     }
+
+    public boolean hasEnough(int quantity) {
+        return this.quantity >= quantity;
+    }
 }

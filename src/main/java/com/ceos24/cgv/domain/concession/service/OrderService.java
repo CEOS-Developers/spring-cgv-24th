@@ -25,6 +25,7 @@ import com.ceos24.cgv.global.exception.GeneralException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import com.ceos24.cgv.domain.concession.entity.Stock;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -60,8 +61,12 @@ public class OrderService {
 		for (Map.Entry<Long, Integer> entry : quantityByItemId.entrySet()) {
 			Item item = itemRepository.findById(entry.getKey())
 					.orElseThrow(() -> new GeneralException(ConcessionErrorStatus.ITEM_NOT_FOUND));
-			stockRepository.findByTheaterIdAndItemId(request.theaterId(), item.getId())
+
+			Stock stock = stockRepository.findByTheaterIdAndItemId(request.theaterId(), item.getId())
 					.orElseThrow(() -> new GeneralException(ConcessionErrorStatus.STOCK_NOT_FOUND));
+			if (!stock.hasEnough(entry.getValue())) {
+				throw new GeneralException(ConcessionErrorStatus.INSUFFICIENT_STOCK);
+			}
 
 			totalPrice += item.getPrice() * entry.getValue();
 		}
@@ -71,11 +76,6 @@ public class OrderService {
 		for (Map.Entry<Long, Integer> entry : quantityByItemId.entrySet()) {
 			Item item = itemRepository.findById(entry.getKey())
 					.orElseThrow(() -> new GeneralException(ConcessionErrorStatus.ITEM_NOT_FOUND));
-
-			int updatedRows = stockRepository.decreaseStock(request.theaterId(), item.getId(), entry.getValue());
-			if (updatedRows == 0) {
-				throw new GeneralException(ConcessionErrorStatus.INSUFFICIENT_STOCK);
-			}
 
 			OrderItem orderItem = OrderItem.create(order, item, entry.getValue(), item.getPrice());
 			orderItemRepository.save(orderItem);
