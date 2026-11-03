@@ -9,4 +9,5 @@ import java.util.Optional;
 public interface MovieStatisticsRepository extends JpaRepository<MovieStatistics, Long> {
     Optional<MovieStatistics> findByMovieId(Long movieId);
     List<MovieStatistics> findByMovieIdIn(List<Long> movieIds);
+    void deleteByMovieId(Long movieId);
 }

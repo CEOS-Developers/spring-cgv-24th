@@ -11,9 +11,12 @@ import com.ceos24.cgv.domain.movie.entity.MovieStatistics;
 import com.ceos24.cgv.domain.movie.enums.MovieImageType;
 import com.ceos24.cgv.domain.movie.exception.MovieErrorStatus;
 import com.ceos24.cgv.domain.movie.repository.MovieImageRepository;
+import com.ceos24.cgv.domain.movie.repository.MovieLikeRepository;
 import com.ceos24.cgv.domain.movie.repository.MoviePersonRepository;
 import com.ceos24.cgv.domain.movie.repository.MovieRepository;
 import com.ceos24.cgv.domain.movie.repository.MovieStatisticsRepository;
+import com.ceos24.cgv.domain.review.repository.ReviewRepository;
+import com.ceos24.cgv.domain.schedule.repository.ScheduleRepository;
 import com.ceos24.cgv.global.exception.GeneralException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -33,6 +36,9 @@ public class MovieService {
     private final MovieImageRepository movieImageRepository;
     private final MovieStatisticsRepository movieStatisticsRepository;
     private final MoviePersonRepository moviePersonRepository;
+    private final MovieLikeRepository movieLikeRepository;
+    private final ScheduleRepository scheduleRepository;
+    private final ReviewRepository reviewRepository;
 
     @Transactional
     public Long create(MovieCreateRequest request) {
@@ -117,6 +123,13 @@ public class MovieService {
     @Transactional
     public void delete(Long id) {
         Movie movie = getMovieOrThrow(id);
+        if (scheduleRepository.existsByMovieId(id) || reviewRepository.existsByMovieId(id)) {
+            throw new GeneralException(MovieErrorStatus.MOVIE_HAS_HISTORY);
+        }
+        movieImageRepository.deleteByMovieId(id);
+        moviePersonRepository.deleteByMovieId(id);
+        movieStatisticsRepository.deleteByMovieId(id);
+        movieLikeRepository.deleteByMovieId(id);
         movieRepository.delete(movie);
     }
 

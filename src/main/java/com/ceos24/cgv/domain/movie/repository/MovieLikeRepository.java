@@ -7,4 +7,5 @@ import java.util.Optional;
 
 public interface MovieLikeRepository extends JpaRepository<MovieLike, Long> {
     Optional<MovieLike> findByUserIdAndMovieId(Long userId, Long movieId);
+    void deleteByMovieId(Long movieId);
 }
