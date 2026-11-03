@@ -9,6 +9,7 @@ import com.ceos24.cgv.domain.payment.enums.PaymentStatus;
 import com.ceos24.cgv.domain.payment.exception.PaymentErrorCode;
 import com.ceos24.cgv.domain.payment.exception.PaymentException;
 import com.ceos24.cgv.domain.payment.repository.PaymentCancellationRepository;
+import com.ceos24.cgv.domain.payment.repository.PaymentCancellationSeatRepository;
 import com.ceos24.cgv.domain.payment.repository.PaymentRepository;
 import com.ceos24.cgv.domain.payment.service.command.FullCancellationCommand;
 import com.ceos24.cgv.domain.reservation.entity.Reservation;
@@ -36,6 +37,7 @@ public class PaymentTransactionService {
     private final ReservationRepository reservationRepository;
     private final PaymentCancellationRepository paymentCancellationRepository;
     private final ScreeningSeatRepository screeningSeatRepository;
+    private final PaymentCancellationSeatRepository paymentCancellationSeatRepository;
     /**
      * true면 이번 요청이 승인을 시작하고,
      * false면 동일한 결제가 이미 승인된 상태다.
