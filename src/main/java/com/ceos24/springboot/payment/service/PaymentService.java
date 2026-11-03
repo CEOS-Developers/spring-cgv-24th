@@ -7,6 +7,10 @@ import com.ceos24.springboot.payment.domain.PaymentStatus;
 import com.ceos24.springboot.payment.domain.PaymentTargetType;
 import com.ceos24.springboot.payment.dto.PaymentPrepareResponse;
 import com.ceos24.springboot.payment.dto.ReservationPaymentPrepareRequest;
+import com.ceos24.springboot.payment.dto.StoreOrderPaymentPrepareRequest;
+import com.ceos24.springboot.shop.domain.StoreOrder;
+import com.ceos24.springboot.shop.repository.StoreOrderRepository;
+import com.ceos24.springboot.shop.service.StoreOrderExpirationService;
 import com.ceos24.springboot.payment.repository.PaymentRepository;
 import com.ceos24.springboot.reservation.domain.Reservation;
 import com.ceos24.springboot.reservation.domain.ReservationStatus;
@@ -24,6 +28,32 @@ public class PaymentService {
 
     private final PaymentRepository paymentRepository;
     private final ReservationRepository reservationRepository;
+    private final StoreOrderRepository storeOrderRepository;
+    private final StoreOrderExpirationService storeOrderExpirationService;
+
+    @Transactional
+    public PaymentPrepareResponse prepareStoreOrder(Long userId, StoreOrderPaymentPrepareRequest request) {
+        if (request.storeOrderId() == null || request.storeOrderId() <= 0) {
+            throw new GlobalException(ErrorCode.INVALID_PAYMENT_TARGET_ID);
+        }
+        storeOrderExpirationService.releaseExpiredForUser(userId);
+        StoreOrder order = storeOrderRepository.findMyOrderWithLock(request.storeOrderId(), userId)
+                .orElseThrow(() -> new GlobalException(ErrorCode.STORE_ORDER_NOT_FOUND));
+        LocalDateTime now = LocalDateTime.now();
+        order.validatePayable(now);
+        if (order.getTotalAmount() == null || order.getTotalAmount() <= 0) {
+            throw new GlobalException(ErrorCode.INVALID_PAYMENT_AMOUNT);
+        }
+        Long amount = order.getTotalAmount().longValue();
+        var existing = paymentRepository.findFirstByTargetTypeAndTargetIdOrderByIdDesc(
+                PaymentTargetType.STORE_ORDER, order.getOrderId());
+        if (existing.isPresent()) {
+            validateReusablePayment(existing.get(), userId, amount, now);
+            return PaymentPrepareResponse.from(existing.get());
+        }
+        return PaymentPrepareResponse.from(paymentRepository.save(Payment.prepare(order.getUser(),
+                PaymentTargetType.STORE_ORDER, order.getOrderId(), amount, now, order.getExpiresAt())));
+    }
 
     @Transactional
     public PaymentPrepareResponse prepareReservation(Long userId,ReservationPaymentPrepareRequest request) {

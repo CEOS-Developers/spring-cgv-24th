@@ -172,6 +172,13 @@ public class Payment {
         this.status = PaymentStatus.UNKNOWN;
     }
 
+    public void closePending(boolean expired) {
+        if (status != PaymentStatus.READY) {
+            throw new GlobalException(ErrorCode.INVALID_PAYMENT_STATUS);
+        }
+        status = expired ? PaymentStatus.EXPIRED : PaymentStatus.CANCELED;
+    }
+
     private void validateProcessingState() {
         if (status != PaymentStatus.PROCESSING
                 && status != PaymentStatus.UNKNOWN) {

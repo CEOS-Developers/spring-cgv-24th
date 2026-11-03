@@ -2,6 +2,7 @@ package com.ceos24.springboot.payment.dto;
 
 import com.ceos24.springboot.payment.domain.Payment;
 import com.ceos24.springboot.payment.domain.PaymentStatus;
+import com.ceos24.springboot.payment.domain.PaymentTargetType;
 
 import java.time.LocalDateTime;
 
@@ -17,7 +18,7 @@ public record PaymentPrepareResponse(
         return new PaymentPrepareResponse(
                 payment.getId(),
                 payment.getOrderId(),
-                "영화 티켓 예매", // 영화티켓예매로 지정해놓고 나중에 영화명으로 수정할 예정.
+                payment.getTargetType() == PaymentTargetType.RESERVATION ? "영화 티켓 예매" : "매점 상품 주문",
                 payment.getAmount(),
                 payment.getStatus(),
                 payment.getExpiresAt()

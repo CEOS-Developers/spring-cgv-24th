@@ -10,10 +10,18 @@ import org.springframework.data.repository.query.Param;
 
 import java.util.Optional;
 
-
-import java.util.Optional;
-
 public interface PaymentRepository extends JpaRepository<Payment, Long> {
+
+    interface TargetReference {
+        PaymentTargetType getTargetType();
+        Long getTargetId();
+    }
+
+    @Query("""
+            select p.targetType as targetType, p.targetId as targetId
+            from Payment p where p.orderId = :orderId and p.user.id = :userId
+            """)
+    Optional<TargetReference> findTarget(@Param("orderId") String orderId, @Param("userId") Long userId);
 
     // 해당 예매에 연결된 가장 최근 결제를 조회
     // 기존 READY 결제를 재사용하면 사용자가 결제 버튼을 반복해서 눌러도 매번 새로운 주문번호가 생성되지 않는다.
