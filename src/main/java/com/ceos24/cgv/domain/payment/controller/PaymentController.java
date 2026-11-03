@@ -96,4 +96,30 @@ public class PaymentController {
         return ApiResponse.onSuccess("선택한 좌석의 결제를 취소했습니다.", response);
     }
 
+    /**
+     * 승인 처리 중 멈춘 결제의 실제 토스 결과를 조회하고,
+     * 승인 완료가 확인되면 DB의 결제·예매 상태를 복구한다.
+     */
+    @PostMapping("/confirm/recover")
+    @Operation(
+            summary = "결제 승인 결과 복구",
+            description = "APPROVING 상태의 결제를 토스에서 조회하고, "
+                    + "승인 완료가 확인되면 결제와 예매 상태를 갱신합니다."
+    )
+    public ApiResponse<TossConfirmResponse> recoverApproval(
+            @Parameter(hidden = true)
+            @AuthenticationPrincipal CustomUserDetails principal,
+            @Valid @RequestBody PaymentConfirmRequest request
+    ) {
+        TossConfirmResponse response =
+                paymentApprovalService.recoverApproval(
+                        principal.getUserId(),
+                        request
+                );
+
+        return ApiResponse.onSuccess(
+                "결제 승인 결과를 복구했습니다.",
+                response
+        );
+    }
 }

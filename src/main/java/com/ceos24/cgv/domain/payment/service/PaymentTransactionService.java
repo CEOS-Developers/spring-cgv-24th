@@ -442,6 +442,27 @@ public class PaymentTransactionService {
         return PaymentDetailResponse.from(payment);
     }
 
+    @Transactional
+    public void validateApprovalRecovery(
+            Long userId,
+            PaymentConfirmRequest request
+    ) {
+        ApprovalRows rows = lockApprovalRows(request.orderId());
+        Payment payment = rows.payment();
+
+        if (!Objects.equals(rows.reservation().getUser().getId(), userId)) {
+            throw new PaymentException(PaymentErrorCode.PAYMENT_ACCESS_DENIED);
+        }
+
+        if (!Objects.equals(payment.getAmount(), request.amount())) {
+            throw new PaymentException(PaymentErrorCode.PAYMENT_AMOUNT_MISMATCH);
+        }
+
+        if (payment.getStatus() != PaymentStatus.APPROVING
+                || !Objects.equals(payment.getPaymentKey(), request.paymentKey())) {
+            throw new PaymentException(PaymentErrorCode.PAYMENT_NOT_APPROVABLE);
+        }
+    }
     private List<ReservationSeat> loadCancellationSeats(Long cancellationId) {
         return paymentCancellationSeatRepository
                 .findAllByCancellation_Id(cancellationId)

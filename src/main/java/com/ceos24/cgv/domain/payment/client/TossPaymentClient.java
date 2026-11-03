@@ -80,4 +80,18 @@ public class TossPaymentClient {
 
         return response;
     }
+
+    // 승인 처리 중 멈춘 결제의 실제 토스 상태를 조회한다.
+    public TossConfirmResponse getPayment(String paymentKey) {
+        TossConfirmResponse response = restClient.get()
+                .uri("/v1/payments/{paymentKey}", paymentKey)
+                .retrieve()
+                .body(TossConfirmResponse.class);
+
+        if (response == null) {
+            throw new IllegalStateException("Toss 결제 조회 응답이 비어 있습니다.");
+        }
+
+        return response;
+    }
 }
