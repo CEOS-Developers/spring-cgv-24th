@@ -77,4 +77,44 @@ class PaymentFacadeTest {
 		verify(paymentService).markUnknown(100L);
 		verify(paymentService, never()).recordCompensation(anyLong(), any());
 	}
+
+	@Test
+	void 대사에서_토스가_DONE이면_승인_확정_흐름을_다시_수행한다() {
+		Payment payment = readyPayment();
+		TossPaymentResponse approved = toss(payment, "DONE");
+		PaymentResponse response = PaymentResponse.from(payment);
+		when(paymentService.startReconcile(10L, 100L)).thenReturn(payment);
+		when(tossPaymentClient.getByOrderId(payment.getTossOrderId())).thenReturn(approved);
+		when(paymentService.completeApproval(100L, approved)).thenReturn(response);
+
+		PaymentResponse result = paymentFacade.reconcile(10L, 100L);
+
+		assertThat(result).isSameAs(response);
+		verify(paymentService).completeApproval(100L, approved);
+		verify(tossPaymentClient, never()).cancel(anyString(), anyString(), any(), anyString());
+	}
+
+	@Test
+	void 대사에서_토스에_승인된_결제가_없으면_실패_처리한다() {
+		Payment payment = readyPayment();
+		when(paymentService.startReconcile(10L, 100L)).thenReturn(payment);
+		when(tossPaymentClient.getByOrderId(payment.getTossOrderId()))
+				.thenThrow(TossPaymentException.rejected("NOT_FOUND_PAYMENT", "존재하지 않는 결제입니다."));
+
+		paymentFacade.reconcile(10L, 100L);
+
+		verify(paymentService).fail(100L);
+		verify(paymentService, never()).completeApproval(anyLong(), any());
+	}
+
+	@Test
+	void 대사에서_토스_결과도_불명이면_결과_불명을_유지하고_예외를_던진다() {
+		Payment payment = readyPayment();
+		when(paymentService.startReconcile(10L, 100L)).thenReturn(payment);
+		when(tossPaymentClient.getByOrderId(payment.getTossOrderId())).thenThrow(TossPaymentException.unknown("timeout"));
+
+		assertThatThrownBy(() -> paymentFacade.reconcile(10L, 100L)).isInstanceOf(TossPaymentException.class);
+		verify(paymentService).markUnknown(100L);
+		verify(paymentService, never()).fail(anyLong());
+	}
 }

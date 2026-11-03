@@ -79,4 +79,37 @@ class PaymentServiceTest {
 				.extracting(error -> ((GeneralException) error).getCode())
 				.isEqualTo(PaymentErrorStatus.PAYMENT_NOT_CONFIRMABLE);
 	}
+
+	@Test
+	void 다른_사용자의_결제는_조회할_수_없다() {
+		when(paymentRepository.findById(100L)).thenReturn(Optional.of(readyPayment()));
+
+		assertThatThrownBy(() -> paymentService.getPayment(99L, 100L))
+				.isInstanceOf(GeneralException.class)
+				.extracting(error -> ((GeneralException) error).getCode())
+				.isEqualTo(PaymentErrorStatus.NOT_PAYMENT_OWNER);
+	}
+
+	@Test
+	void 결과_불명이_아닌_결제는_대사할_수_없다() {
+		when(paymentRepository.findById(100L)).thenReturn(Optional.of(readyPayment()));
+
+		assertThatThrownBy(() -> paymentService.startReconcile(10L, 100L))
+				.isInstanceOf(GeneralException.class)
+				.extracting(error -> ((GeneralException) error).getCode())
+				.isEqualTo(PaymentErrorStatus.PAYMENT_NOT_RECONCILABLE);
+		verify(paymentRepository, never()).updateStatusIfMatches(anyLong(), anyList(), any());
+	}
+
+	@Test
+	void 결과_불명_결제는_승인_진행_중으로_선점하고_대사를_시작한다() {
+		Payment payment = readyPayment();
+		payment.markUnknown();
+		when(paymentRepository.findById(100L)).thenReturn(Optional.of(payment));
+		when(paymentRepository.updateStatusIfMatches(eq(100L), anyList(), any())).thenReturn(1);
+
+		Payment result = paymentService.startReconcile(10L, 100L);
+
+		assertThat(result).isSameAs(payment);
+	}
 }

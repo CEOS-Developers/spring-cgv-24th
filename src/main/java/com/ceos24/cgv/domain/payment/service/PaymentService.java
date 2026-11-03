@@ -73,6 +73,32 @@ public class PaymentService {
 		}
 	}
 
+	public PaymentResponse getPayment(Long userId, Long paymentId) {
+		Payment payment = getPayment(paymentId);
+		if (!payment.isOwnedBy(userId)) {
+			throw new GeneralException(PaymentErrorStatus.NOT_PAYMENT_OWNER);
+		}
+		return PaymentResponse.from(payment);
+	}
+
+	// UNKNOWN → IN_PROGRESS로 선점해 동시 대사로 재고가 이중 차감되는 것을 막는다
+	@Transactional
+	public Payment startReconcile(Long userId, Long paymentId) {
+		Payment payment = getPayment(paymentId);
+		if (!payment.isOwnedBy(userId)) {
+			throw new GeneralException(PaymentErrorStatus.NOT_PAYMENT_OWNER);
+		}
+		if (payment.getStatus() != PaymentStatus.UNKNOWN) {
+			throw new GeneralException(PaymentErrorStatus.PAYMENT_NOT_RECONCILABLE);
+		}
+
+		int updated = paymentRepository.updateStatusIfMatches(paymentId, List.of(PaymentStatus.UNKNOWN), PaymentStatus.IN_PROGRESS);
+		if (updated == 0) {
+			throw new GeneralException(PaymentErrorStatus.PAYMENT_NOT_RECONCILABLE);
+		}
+		return payment;
+	}
+
 	@Transactional
 	public void fail(Long paymentId) {
 		getPayment(paymentId).fail();

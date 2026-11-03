@@ -42,6 +42,28 @@ public class PaymentFacade {
 		return completeOrCompensate(payment, toss);
 	}
 
+	public PaymentResponse reconcile(Long userId, Long paymentId) {
+		Payment payment = paymentService.startReconcile(userId, paymentId);
+
+		TossPaymentResponse toss;
+		try {
+			toss = tossPaymentClient.getByOrderId(payment.getTossOrderId());
+		} catch (TossPaymentException e) {
+			if (e.isResultUnknown()) {
+				paymentService.markUnknown(paymentId);
+				throw e;
+			}
+			paymentService.fail(paymentId);
+			return paymentService.getPayment(userId, paymentId);
+		}
+
+		if (!"DONE".equals(toss.status())) { // 승인 완료가 아니면 확정도 취소도 하지 않고 재확인 대상으로 남긴다
+			paymentService.markUnknown(paymentId);
+			throw new GeneralException(PaymentErrorStatus.PG_RESULT_UNKNOWN);
+		}
+		return completeOrCompensate(payment, toss);
+	}
+
 	private PaymentResponse completeOrCompensate(Payment payment, TossPaymentResponse toss) {
 		try {
 			return paymentService.completeApproval(payment.getId(), toss);
