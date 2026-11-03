@@ -66,7 +66,9 @@ public class PaymentTransactionService {
             );
         }
 
-        if (!Objects.equals(payment.getAmount(), request.amount())) {
+        // 예매 총액, 결제 예정 금액, 승인 요청 금액이 모두 일치해야 한다.
+        if (!Objects.equals(reservation.getTotalPrice(), payment.getAmount())
+                || !Objects.equals(payment.getAmount(), request.amount())) {
             throw new PaymentException(
                     PaymentErrorCode.PAYMENT_AMOUNT_MISMATCH
             );
