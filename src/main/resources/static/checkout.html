@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>CGV 결제 테스트</title>
+    <script src="https://js.tosspayments.com/v2/standard"></script>
+</head>
+<body>
+<h2>CGV 결제 테스트</h2>
+<p>Access Token <input id="token" size="60" placeholder="로그인 응답의 accessToken"></p>
+<p>매점 주문 id <input id="orderId" size="10"></p>
+<button id="payButton">결제하기</button>
+<pre id="log"></pre>
+
+<script>
+    const log = (msg) => document.getElementById("log").textContent += msg + "\n";
+    const authHeader = (token) => ({ Authorization: "Bearer " + token });
+
+    async function getData(url, token) {
+        const res = await fetch(url, { headers: authHeader(token) });
+        const body = await res.json();
+        if (!res.ok) throw new Error(JSON.stringify(body));
+        return body.data;
+    }
+
+    document.getElementById("payButton").addEventListener("click", async () => {
+        const token = document.getElementById("token").value.trim();
+        const orderId = document.getElementById("orderId").value.trim();
+        sessionStorage.setItem("accessToken", token); // 결제 후 돌아온 성공 페이지에서 승인 API 호출에 사용
+
+        try {
+            const clientKey = await getData("/api/payments/client-key", token);
+            const info = await getData(`/api/orders/${orderId}/payment-info`, token); // 금액은 서버가 계산한 값만 사용
+            log("결제 준비 정보: " + JSON.stringify(info));
+
+            const payment = TossPayments(clientKey).payment({ customerKey: TossPayments.ANONYMOUS });
+            await payment.requestPayment({
+                method: "CARD",
+                amount: { currency: "KRW", value: info.amount },
+                orderId: info.orderId,
+                orderName: info.orderName,
+                successUrl: window.location.origin + "/payment-success.html",
+                failUrl: window.location.origin + "/payment-fail.html",
+            });
+        } catch (e) {
+            log("오류: " + e.message);
+        }
+    });
+</script>
+</body>
+</html>
