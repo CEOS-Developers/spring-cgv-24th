@@ -10,7 +10,9 @@ import org.springframework.http.HttpStatus;
 @AllArgsConstructor
 public enum PaymentErrorStatus implements BaseErrorCode {
 
-	PAYMENT_NOT_FOUND(HttpStatus.NOT_FOUND, "PAYMENT404", "존재하지 않는 결제 정보입니다.");
+	PAYMENT_NOT_FOUND(HttpStatus.NOT_FOUND, "PAYMENT404", "존재하지 않는 결제 정보입니다."),
+	PG_REJECTED(HttpStatus.BAD_REQUEST, "PAYMENT400", "결제사에서 요청이 거절되었습니다."),
+	PG_RESULT_UNKNOWN(HttpStatus.BAD_GATEWAY, "PAYMENT502", "결제 결과를 확인하지 못했습니다. 잠시 후 결제 내역을 확인해주세요.");
 
 	private final HttpStatus httpStatus;
 	private final String code;
