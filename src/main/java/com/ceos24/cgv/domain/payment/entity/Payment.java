@@ -85,4 +85,30 @@ public class Payment extends BaseTimeEntity {
     public int getRemainingAmount() {
         return amount - canceledAmount;
     }
+
+// 토스에 요청한뒤 응답을 받지 못하더라도 어떤 결제의 결과를 확인해야하는지 알기 위해 추가
+    public void startApproval(String paymentKey) {
+        if (status != PaymentStatus.READY) {
+            throw new IllegalStateException("결제 준비 상태에서만 승인을 시작할 수 있습니다.");
+        }
+        if (paymentKey == null || paymentKey.isBlank() || paymentKey.length() > 200) {
+            throw new IllegalArgumentException("유효한 결제 키가 필요합니다.");
+        }
+
+        this.paymentKey = paymentKey;
+        this.status = PaymentStatus.APPROVING;
+    }
+
+
+    public void completeApproval(OffsetDateTime approvedAt) {
+        if (status != PaymentStatus.APPROVING) {
+            throw new IllegalStateException("승인 처리 중인 결제만 완료할 수 있습니다.");
+        }
+        if (approvedAt == null) {
+            throw new IllegalArgumentException("승인 시각이 필요합니다.");
+        }
+
+        this.approvedAt = approvedAt;
+        this.status = PaymentStatus.DONE;
+    }
 }

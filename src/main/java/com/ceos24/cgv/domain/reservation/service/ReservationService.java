@@ -47,9 +47,6 @@ public class ReservationService {
     /**
      * 영화 예매
      */
-    /**
-     * 영화 예매
-     */
     @Transactional
     public ReservationResponse createReservation(
             Long userId,
