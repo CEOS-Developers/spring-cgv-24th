@@ -26,8 +26,8 @@ prepareButton.addEventListener("click", async () => {
         const token =
             document.getElementById("token").value.trim();
 
-        const reservationId =
-            Number(document.getElementById("reservationId").value);
+        const targetId = Number(document.getElementById("targetId").value);
+        const isStoreOrder = document.getElementById("targetType").value === "STORE_ORDER";
 
         if (!clientKey.startsWith("test_gck")) {
             throw new Error(
@@ -39,20 +39,20 @@ prepareButton.addEventListener("click", async () => {
             throw new Error("로그인 accessToken을 입력하세요.");
         }
 
-        if (!Number.isSafeInteger(reservationId) || reservationId <= 0) {
-            throw new Error("유효한 예매 ID를 입력하세요.");
+        if (!Number.isSafeInteger(targetId) || targetId <= 0) {
+            throw new Error("유효한 예매 또는 주문 ID를 입력하세요.");
         }
 
         // 우리 서버에서 결제 대기 정보를 저장하거나 재사용한다.
         const response = await fetch(
-            "/api/payments/reservations/prepare",
+            isStoreOrder ? "/api/payments/store-orders/prepare" : "/api/payments/reservations/prepare",
             {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
                     "Authorization": `Bearer ${token}`
                 },
-                body: JSON.stringify({ reservationId })
+                body: JSON.stringify(isStoreOrder ? { storeOrderId: targetId } : { reservationId: targetId })
             }
         );
 
@@ -200,13 +200,13 @@ confirmButton.addEventListener("click", async () => {
             return;
         }
 
-        if (body.status !== "DONE"
-            || body.reservationStatus !== "Reserved") {
+        const purchaseCompleted = body.reservationStatus === "Reserved" || body.storeOrderStatus === "PAID";
+        if (body.status !== "DONE" || !purchaseCompleted) {
             throw new Error("결제 완료 상태를 확인할 수 없습니다.");
         }
 
         show({
-            message: "결제와 영화 예매가 완료되었습니다.",
+            message: body.storeOrderId ? "결제와 매점 주문이 완료되었습니다." : "결제와 영화 예매가 완료되었습니다.",
             ...body
         });
 

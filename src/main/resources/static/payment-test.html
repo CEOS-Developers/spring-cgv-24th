@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="referrer" content="no-referrer">
-    <title>영화 예매 결제 테스트</title>
+    <title>영화와 매점 결제 테스트</title>
 
     <!-- 토스 SDK를 먼저 불러온 뒤 우리 코드를 실행한다. -->
     <script
@@ -13,7 +13,7 @@
     <script src="/payment-test.js" defer></script>
 </head>
 <body>
-<h1>영화 예매 주문서</h1>
+<h1>영화와 매점 주문서</h1>
 
 <div id="checkout">
     <div id="inputs">
@@ -28,8 +28,16 @@
         </p>
 
         <p>
-            <label for="reservationId">예매 ID</label>
-            <input id="reservationId" type="number" min="1">
+            <label for="targetType">구매 종류</label>
+            <select id="targetType">
+                <option value="RESERVATION">영화 예매</option>
+                <option value="STORE_ORDER">매점 주문</option>
+            </select>
+        </p>
+
+        <p>
+            <label for="targetId">예매 또는 매점 주문 ID</label>
+            <input id="targetId" type="number" min="1">
         </p>
 
         <button id="prepareButton" type="button">
