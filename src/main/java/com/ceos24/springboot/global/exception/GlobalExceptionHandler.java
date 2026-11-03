@@ -1,6 +1,7 @@
 package com.ceos24.springboot.global.exception;
 
 import org.springframework.http.HttpStatus;
+import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -10,6 +11,12 @@ import java.util.stream.Collectors;
 // Controller에서 예외가 발생하면 여기서 공통으로 처리
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    @ExceptionHandler(PessimisticLockingFailureException.class)
+    public ResponseEntity<ErrorResponse> handleLockFailure(PessimisticLockingFailureException e) {
+        ErrorCode errorCode = ErrorCode.RESOURCE_BUSY;
+        return ResponseEntity.status(errorCode.getStatus()).body(ErrorResponse.of(errorCode));
+    }
 
     // 우리가 직접 정의한 GlobalException 처리
     @ExceptionHandler(GlobalException.class)

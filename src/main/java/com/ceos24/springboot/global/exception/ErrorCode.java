@@ -28,6 +28,9 @@ public enum ErrorCode {
     ),
 
     // Reservation
+    INVALID_RESERVATION_REQUEST(HttpStatus.BAD_REQUEST, "상영회차, 좌석 및 관람객 인원이 올바르지 않습니다."),
+    SCREENING_SEAT_NOT_FOUND(HttpStatus.NOT_FOUND, "해당 상영회차에서 선택할 수 있는 좌석을 찾을 수 없습니다."),
+    RESOURCE_BUSY(HttpStatus.CONFLICT, "다른 요청이 동일한 데이터를 처리 중입니다. 잠시 후 다시 시도해 주세요."),
     SEAT_UNAVAILABLE(
             HttpStatus.CONFLICT,
             "이미 예매되었거나 다른 사용자가 선택 중인 좌석입니다."

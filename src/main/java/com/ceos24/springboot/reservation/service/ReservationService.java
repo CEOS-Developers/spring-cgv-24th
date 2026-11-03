@@ -14,6 +14,7 @@ import com.ceos24.springboot.theater.domain.Screening;
 import com.ceos24.springboot.theater.domain.Seat;
 import com.ceos24.springboot.theater.repository.ScreeningRepository;
 import com.ceos24.springboot.theater.repository.SeatRepository;
+import com.ceos24.springboot.theater.repository.ScreeningSeatRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
@@ -47,6 +48,7 @@ public class ReservationService {
 
     private final UserRepository userRepository;
     private final ReservationExpirationService expirationService;
+    private final ScreeningSeatRepository screeningSeatRepository;
 
     // 예매 생성
     @Transactional
@@ -54,8 +56,14 @@ public class ReservationService {
             Long userId,
             ReservationCreateRequest request
     ){
+        validateSelection(request);
         // 첫 DB 조회 전에 별도 트랜잭션에서 만료된 점유를 해제한다.
         expirationService.releaseExpiredSeats(request.screeningId(), request.seatIds());
+
+        for (Long seatId : request.seatIds().stream().sorted().toList()) {
+            screeningSeatRepository.findWithLock(request.screeningId(), seatId)
+                    .orElseThrow(() -> new GlobalException(ErrorCode.SCREENING_SEAT_NOT_FOUND));
+        }
 
         // 로그인 사용자 조회
         User user = userRepository.findById(userId)
@@ -65,7 +73,7 @@ public class ReservationService {
                         )
                 );
 
-        // 1. 상영회차 조회
+        //  상영회차 조회
         Screening screening = screeningRepository
                 .findById(request.screeningId())
                 .orElseThrow(() ->
@@ -75,56 +83,21 @@ public class ReservationService {
                         )
                 );
 
-        // 2. 좌석이 선택되었는지 확인
-        if (request.seatIds() == null
-                || request.seatIds().isEmpty()) {
-
-            throw new IllegalArgumentException(
-                    "좌석을 하나 이상 선택해야 합니다."
-            );
-        }
-
-        // 3. 요청 자체에 중복된 seatId가 있는지 검사
-        long distinctSeatCount =
-                request.seatIds()
-                        .stream()
-                        .distinct()
-                        .count();
-
-        if (distinctSeatCount != request.seatIds().size()) {
-            throw new IllegalArgumentException(
-                    "동일한 좌석을 중복 선택할 수 없습니다."
-            );
-        }
-
-        // 4. 총 예매 인원 수와 좌석 수가 같은지 확인
-        int totalPeople =
-                request.childCount()
-                        + request.youthCount()
-                        + request.adultCount()
-                        + request.seniorCount();
-
-        if (totalPeople != request.seatIds().size()) {
-            throw new IllegalArgumentException(
-                    "예매 인원 수와 선택한 좌석 수가 일치하지 않습니다."
-            );
-        }
-
-        // 5. 실제 해당 상영관에 속하는 좌석 조회
+        //  실제 해당 상영관에 속하는 좌석 조회
         List<Seat> seats =
                 seatRepository.findAllBySeatIdInAndScreenId_ScreenId(
                         request.seatIds(),
                         screening.getScreen().getScreenId()
                 );
 
-        // 6. 존재하지 않거나 다른 상영관 좌석인지 확인
+        // 존재하지 않거나 다른 상영관 좌석인지 확인
         if (seats.size() != request.seatIds().size()) {
             throw new IllegalArgumentException(
                     "해당 상영관에 존재하지 않는 좌석이 포함되어 있습니다."
             );
         }
 
-        // 7. 이미 예약된 좌석인지 확인
+        // 이미 예약된 좌석인지 확인
         List<ReservationSeat> reservedSeats =
                 reservationSeatRepository
                         .findAllByScreening_ScreeningIdAndSeat_SeatIdIn(
@@ -137,7 +110,7 @@ public class ReservationService {
         }
 
 
-        // 8. 가격 계산에 필요한 조건 확인
+        // 가격 계산에 필요한 조건 확인
         DayType dayType =
                 getDayType(screening.getScreeningDate());
 
@@ -148,7 +121,7 @@ public class ReservationService {
                 screening.getScreen().getScreenType();
 
 
-        // 9. 총 가격 계산
+        // 총 가격 계산
         int totalPrice = 0;
 
         totalPrice += calculatePrice(
@@ -183,7 +156,7 @@ public class ReservationService {
                 screenType
         );
 
-        // 10. Reservation 생성
+        // Reservation 생성
         LocalDateTime now = LocalDateTime.now();
         Reservation reservation = Reservation.builder()
                 .user(user)
@@ -198,11 +171,11 @@ public class ReservationService {
                 .expiresAt(now.plusMinutes(HOLD_MINUTES))
                 .build();
 
-        // 11. Reservation 저장
+        // Reservation 저장
         Reservation savedReservation =
                 reservationRepository.save(reservation);
 
-        // 12. ReservationSeat 생성
+        // ReservationSeat 생성
         List<ReservationSeat> reservationSeats =
                 seats.stream()
                         .sorted(Comparator.comparing(Seat::getSeatId))
@@ -215,7 +188,7 @@ public class ReservationService {
                         )
                         .toList();
 
-        // 13. ReservationSeat 저장 및 UNIQUE 위반 여부 판단
+        // ReservationSeat 저장 및 UNIQUE 위반 여부 판단
         try {
             reservationSeatRepository.saveAllAndFlush(reservationSeats);
         } catch (DataIntegrityViolationException e) {
@@ -226,6 +199,21 @@ public class ReservationService {
         return ReservationResponse.from(savedReservation,seats);
     }
 
+
+    private void validateSelection(ReservationCreateRequest request) {
+        if (request == null || request.screeningId() == null || request.screeningId() <= 0
+                || request.seatIds() == null || request.seatIds().isEmpty()
+                || request.seatIds().stream().anyMatch(id -> id == null || id <= 0)
+                || request.seatIds().stream().distinct().count() != request.seatIds().size()
+                || request.childCount() == null || request.childCount() < 0
+                || request.youthCount() == null || request.youthCount() < 0
+                || request.adultCount() == null || request.adultCount() < 0
+                || request.seniorCount() == null || request.seniorCount() < 0
+                || (long) request.childCount() + request.youthCount() + request.adultCount()
+                   + request.seniorCount() != request.seatIds().size()) {
+            throw new GlobalException(ErrorCode.INVALID_RESERVATION_REQUEST);
+        }
+    }
 
     // 관람객 유형별 가격 계산
     private int calculatePrice(
@@ -257,7 +245,7 @@ public class ReservationService {
     }
 
 
-    // 평일 / 주말 판단
+    // 평일과 주말 판단
     private DayType getDayType(LocalDate date) {
 
         DayOfWeek dayOfWeek = date.getDayOfWeek();
@@ -271,7 +259,7 @@ public class ReservationService {
     }
 
 
-    // 조조 / 일반 시간 판단
+    // 조조와 일반 시간 판단
     private TimeType getTimeType(LocalTime startTime) {
 
         // 예: 오전 10시 이전이면 조조

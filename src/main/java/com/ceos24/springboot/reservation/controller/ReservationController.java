@@ -25,7 +25,7 @@ public class ReservationController {
     // 영화 티켓 예매
     @Operation(
             summary = "영화 예매 대기",
-            description = "선택한 좌석을 10분간 점유합니다. 만료 전에 예매 확정 API를 호출해야 합니다."
+            description = "결제 화면으로 이동하기 전에 호출합니다. 회차별 좌석을 잠그고 10분간 점유한 뒤, 결제 준비·인증·승인을 진행합니다."
     )
     @PostMapping
     public ResponseEntity<ReservationResponse> createReservation(

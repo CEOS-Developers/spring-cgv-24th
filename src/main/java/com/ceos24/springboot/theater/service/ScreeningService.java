@@ -4,11 +4,14 @@ import com.ceos24.springboot.movie.domain.Movie;
 import com.ceos24.springboot.movie.repository.MovieRepository;
 import com.ceos24.springboot.theater.domain.Screen;
 import com.ceos24.springboot.theater.domain.Screening;
+import com.ceos24.springboot.theater.domain.ScreeningSeat;
 import com.ceos24.springboot.theater.dto.ScreeningCreateRequest;
 import com.ceos24.springboot.theater.dto.ScreeningResponse;
 import com.ceos24.springboot.theater.repository.ScreenRepository;
 import com.ceos24.springboot.theater.repository.ScreeningRepository;
 import com.ceos24.springboot.theater.repository.TheaterRepository;
+import com.ceos24.springboot.theater.repository.SeatRepository;
+import com.ceos24.springboot.theater.repository.ScreeningSeatRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -27,6 +30,8 @@ public class ScreeningService {
 
     // 추가
     private final TheaterRepository theaterRepository;
+    private final SeatRepository seatRepository;
+    private final ScreeningSeatRepository screeningSeatRepository;
 
 
 
@@ -62,6 +67,11 @@ public class ScreeningService {
 
         Screening savedScreening =
                 screeningRepository.save(screening);
+
+        // 빈좌석도 사용자가 점유 시 비관적에 걸릴 수 있도록
+        screeningSeatRepository.saveAll(seatRepository
+                .findAllByScreenId_ScreenIdOrderBySeatIdAsc(screen.getScreenId()).stream()
+                .map(seat -> ScreeningSeat.create(savedScreening, seat)).toList());
 
         return ScreeningResponse.from(savedScreening);
     }
