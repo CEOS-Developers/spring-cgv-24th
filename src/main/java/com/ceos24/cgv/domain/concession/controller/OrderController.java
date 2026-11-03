@@ -29,28 +29,31 @@ public class OrderController {
     private final OrderService orderService;
 
     @Operation(summary = "매점 주문 API", description = "장바구니에 담긴 상품들을 한 번에 주문합니다.")
+    @SecurityRequirement(name = SwaggerConfig.JWT_SCHEME)
     @PostMapping
     public ResponseEntity<ApiResponse<Long>> createOrder(
-            @RequestParam Long userId,
+            @AuthenticationPrincipal CustomUserDetails userDetails,
             @Valid @RequestBody OrderCreateRequest request
     ) {
-        Long orderId = orderService.create(userId, request);
+        Long orderId = orderService.create(userDetails.getUserId(), request);
         return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.onSuccess(SuccessStatus.CREATED, orderId));
     }
 
     @Operation(summary = "주문 상세 조회 API", description = "특정 주문의 상세 정보를 조회합니다.")
+    @SecurityRequirement(name = SwaggerConfig.JWT_SCHEME)
     @GetMapping("/{orderId}")
     public ApiResponse<OrderResponse> getOrder(
             @PathVariable Long orderId,
-            @RequestParam Long userId
+            @AuthenticationPrincipal CustomUserDetails userDetails
     ) {
-        return ApiResponse.onSuccess(orderService.findById(orderId, userId));
+        return ApiResponse.onSuccess(orderService.findById(orderId, userDetails.getUserId()));
     }
 
 	@Operation(summary = "내 주문 내역 조회 API", description = "특정 유저의 매점 주문 내역 전체를 조회합니다.")
+	@SecurityRequirement(name = SwaggerConfig.JWT_SCHEME)
 	@GetMapping
-	public ApiResponse<List<OrderResponse>> getMyOrders(@RequestParam Long userId) {
-		return ApiResponse.onSuccess(orderService.findByUserId(userId));
+	public ApiResponse<List<OrderResponse>> getMyOrders(@AuthenticationPrincipal CustomUserDetails userDetails) {
+		return ApiResponse.onSuccess(orderService.findByUserId(userDetails.getUserId()));
 	}
 
 

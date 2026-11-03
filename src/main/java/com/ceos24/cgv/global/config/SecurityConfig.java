@@ -1,6 +1,7 @@
 package com.ceos24.cgv.global.config;
 
 import com.ceos24.cgv.global.security.CustomUserDetailsService;
+import com.ceos24.cgv.global.security.SecurityPaths;
 import com.ceos24.cgv.global.security.handler.CustomAccessDeniedHandler;
 import com.ceos24.cgv.global.security.handler.CustomAuthenticationEntryPoint;
 import com.ceos24.cgv.global.security.jwt.JwtAuthenticationFilter;
@@ -8,7 +9,6 @@ import com.ceos24.cgv.global.security.jwt.JwtTokenProvider;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.http.HttpMethod;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.ProviderManager;
 import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
@@ -58,11 +58,10 @@ public class SecurityConfig {
 						.authenticationEntryPoint(authenticationEntryPoint)
 						.accessDeniedHandler(accessDeniedHandler))
 				.authorizeHttpRequests(auth -> auth
-						.requestMatchers(HttpMethod.POST, "/api/theaters").hasRole("ADMIN")
-						.requestMatchers("/api/theaters/*/likes").authenticated()
-						.requestMatchers("/api/orders/*/payment-info").authenticated()
-						.requestMatchers("/api/reservations/*/payment-info").authenticated()
-						.requestMatchers("/api/payments/**").authenticated()
+						.requestMatchers(SecurityPaths.JWT_EXCLUDED_PATHS).permitAll()
+						.requestMatchers("/api/admin/**").hasRole("ADMIN")
+						.requestMatchers("/api/orders/**", "/api/reservations/**", "/api/payments/**",
+								"/api/movies/*/likes", "/api/theaters/*/likes").authenticated()
 						.anyRequest().permitAll())
 				.addFilterBefore(
 						new JwtAuthenticationFilter(jwtTokenProvider, authenticationEntryPoint),
