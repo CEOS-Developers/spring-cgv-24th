@@ -1,0 +1,29 @@
+spring:
+  datasource:
+    url: jdbc:mysql://localhost:3306/cgv_test?allowPublicKeyRetrieval=true&useSSL=false&characterEncoding=UTF-8
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    hikari:
+      maximum-pool-size: 30
+
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: false
+
+logging:
+  level:
+    org.hibernate.SQL: info
+
+jwt:
+  secret: test-only-dummy-secret-key-for-integration-tests-0123456789
+
+toss:
+  client-key: test_ck_dummy
+  secret-key: test_sk_dummy
+
+scheduling:
+  enabled: false
