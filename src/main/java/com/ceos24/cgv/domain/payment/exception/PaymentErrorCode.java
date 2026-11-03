@@ -60,8 +60,22 @@ public enum PaymentErrorCode implements BaseErrorCode {
             HttpStatus.BAD_GATEWAY,
             "PAYMENT5021",
             "결제 승인 응답을 주문 정보와 대조할 수 없습니다."
+    ),
+    INVALID_CANCEL_REASON(
+            HttpStatus.BAD_REQUEST,
+            "PAYMENT4003",
+            "취소 사유는 1~200자로 입력해주세요."
+    ),
+    PAYMENT_NOT_CANCELABLE(
+            HttpStatus.CONFLICT,
+            "PAYMENT4095",
+            "현재 상태에서는 전체 취소를 시작할 수 없습니다."
+    ),
+    INVALID_CANCEL_RESPONSE(
+            HttpStatus.BAD_GATEWAY,
+            "PAYMENT5022",
+            "결제 취소 응답이 요청한 환불 내역과 일치하지 않습니다."
     );
-
     private final HttpStatus httpStatus;
     private final String code;
     private final String message;

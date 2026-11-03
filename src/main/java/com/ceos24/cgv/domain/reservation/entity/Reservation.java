@@ -125,6 +125,16 @@ public class Reservation extends BaseTimeEntity {
         this.status = ReservationStatus.CANCELED;
     }
 
+    //ReservationSeat 행을 유지하면서 각 좌석에 취소 여부를 기록하는 메서드를 추가
+    public void cancelAfterFullRefund() {
+        if (status != ReservationStatus.CONFIRMED) {
+            throw new IllegalStateException("확정된 예매만 환불 완료 처리할 수 있습니다.");
+        }
+
+        reservationSeats.forEach(ReservationSeat::cancel);
+        this.status = ReservationStatus.CANCELED;
+    }
+
     public boolean isCanceled() {
         return status == ReservationStatus.CANCELED;
     }

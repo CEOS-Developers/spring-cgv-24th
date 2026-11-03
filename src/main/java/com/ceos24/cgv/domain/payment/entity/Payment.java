@@ -117,4 +117,27 @@ public class Payment extends BaseTimeEntity {
         this.approvedAt = approvedAt;
         this.status = PaymentStatus.DONE;
     }
+
+    //결제 상태 변경
+    public void startFullCancellation() {
+        if (status != PaymentStatus.DONE
+                || canceledAmount != 0
+                || getRemainingAmount() <= 0) {
+            throw new PaymentException(PaymentErrorCode.PAYMENT_NOT_CANCELABLE);
+        }
+
+        this.status = PaymentStatus.CANCELING;
+    }
+
+    //결제 완료
+    public void completeFullCancellation(int refundedAmount) {
+        if (status != PaymentStatus.CANCELING
+                || refundedAmount <= 0
+                || refundedAmount != getRemainingAmount()) {
+            throw new PaymentException(PaymentErrorCode.PAYMENT_NOT_CANCELABLE);
+        }
+
+        this.canceledAmount += refundedAmount;
+        this.status = PaymentStatus.CANCELED;
+    }
 }
