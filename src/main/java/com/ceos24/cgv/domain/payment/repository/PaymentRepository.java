@@ -16,7 +16,16 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
 
 	Optional<Payment> findByOrderId(Long orderId);
 
+	Optional<Payment> findByReservationId(Long reservationId);
+
 	Optional<Payment> findByPaymentKey(String paymentKey);
+
+	@Modifying
+	@Query("UPDATE Payment p SET p.status = com.ceos24.cgv.domain.payment.enums.PaymentStatus.EXPIRED " +
+			"WHERE p.status = com.ceos24.cgv.domain.payment.enums.PaymentStatus.READY " +
+			"AND p.reservation.id IN (SELECT r.id FROM Reservation r WHERE r.id IN :reservationIds " +
+			"AND r.status = com.ceos24.cgv.domain.reservation.enums.ReservationStatus.EXPIRED)")
+	int expireByExpiredReservationIds(@Param("reservationIds") List<Long> reservationIds);
 
 	Optional<Payment> findByTossOrderId(String tossOrderId);
 

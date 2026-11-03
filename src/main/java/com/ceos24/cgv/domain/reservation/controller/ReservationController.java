@@ -1,16 +1,21 @@
 package com.ceos24.cgv.domain.reservation.controller;
 
+import com.ceos24.cgv.domain.payment.dto.response.PaymentReadyResponse;
 import com.ceos24.cgv.domain.reservation.dto.request.ReservationCreateRequest;
 import com.ceos24.cgv.domain.reservation.dto.response.ReservationResponse;
 import com.ceos24.cgv.domain.reservation.service.ReservationService;
 import com.ceos24.cgv.global.apiPayload.ApiResponse;
 import com.ceos24.cgv.global.apiPayload.code.status.SuccessStatus;
+import com.ceos24.cgv.global.config.SwaggerConfig;
+import com.ceos24.cgv.global.security.CustomUserDetails;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -45,6 +50,16 @@ public class ReservationController {
     @GetMapping
     public ApiResponse<List<ReservationResponse>> getMyReservations(@RequestParam Long userId) {
         return ApiResponse.onSuccess(reservationService.findByUserId(userId));
+    }
+
+    @Operation(summary = "예매 결제 준비 정보 조회 API", description = "선점 중인 예매의 결제 준비 정보를 조회합니다.")
+    @SecurityRequirement(name = SwaggerConfig.JWT_SCHEME)
+    @GetMapping("/{reservationId}/payment-info")
+    public ApiResponse<PaymentReadyResponse> getPaymentInfo(
+            @PathVariable Long reservationId,
+            @AuthenticationPrincipal CustomUserDetails userDetails
+    ) {
+        return ApiResponse.onSuccess(reservationService.getPaymentInfo(reservationId, userDetails.getUserId()));
     }
 
     @Operation(summary = "예매 취소 API", description = "특정 예매를 취소합니다.")

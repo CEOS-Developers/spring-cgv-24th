@@ -130,6 +130,10 @@ public class Payment {
 		this.status = PaymentStatus.FAILED;
 	}
 
+	public void expire() {
+		this.status = PaymentStatus.EXPIRED;
+	}
+
 	public void markUnknown() {
 		this.status = PaymentStatus.UNKNOWN;
 	}

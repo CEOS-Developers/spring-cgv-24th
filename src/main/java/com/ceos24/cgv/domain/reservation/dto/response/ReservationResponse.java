@@ -17,7 +17,8 @@ public record ReservationResponse(
         List<SeatInfoResponse> seats,
         Integer totalPrice,
         ReservationStatus status,
-        Instant reservedAt
+        Instant reservedAt,
+        Instant expiresAt
 ) {
     public static ReservationResponse of(Reservation reservation, List<SeatInfoResponse> seats) {
         return new ReservationResponse(
@@ -30,7 +31,8 @@ public record ReservationResponse(
                 seats,
                 reservation.getTotalPrice(),
                 reservation.getStatus(),
-                reservation.getReservedAt()
+                reservation.getReservedAt(),
+                reservation.getExpiresAt()
         );
     }
 }
