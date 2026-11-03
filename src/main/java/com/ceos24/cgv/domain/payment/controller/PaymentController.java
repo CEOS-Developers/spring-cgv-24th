@@ -1,8 +1,10 @@
 package com.ceos24.cgv.domain.payment.controller;
 
 import com.ceos24.cgv.domain.payment.dto.request.PaymentConfirmRequest;
+import com.ceos24.cgv.domain.payment.dto.response.PaymentDetailResponse;
 import com.ceos24.cgv.domain.payment.dto.response.TossConfirmResponse;
 import com.ceos24.cgv.domain.payment.service.PaymentApprovalService;
+import com.ceos24.cgv.domain.payment.service.PaymentQueryService;
 import com.ceos24.cgv.global.apiPayload.ApiResponse;
 import com.ceos24.cgv.global.security.CustomUserDetails;
 import io.swagger.v3.oas.annotations.Operation;
@@ -21,6 +23,9 @@ import org.springframework.web.bind.annotation.*;
 public class PaymentController {
 
     private final PaymentApprovalService paymentApprovalService;
+
+    private final PaymentQueryService paymentQueryService;
+
     @PostMapping("/confirm")
     @Operation(
             summary = "영화 예매 결제 승인",
@@ -36,5 +41,22 @@ public class PaymentController {
                 paymentApprovalService.confirm(principal.getUserId(), request);
 
         return ApiResponse.onSuccess("결제 승인에 성공했습니다.", response);
+    }
+
+    //결제 조회
+
+
+    @GetMapping("/{orderId}")
+    @Operation(summary = "내 결제 상세 조회")
+    public ApiResponse<PaymentDetailResponse> getPayment(
+            @Parameter(description = "예매 생성 시 발급된 주문번호")
+            @PathVariable("orderId") String orderId,
+            @Parameter(hidden = true)
+            @AuthenticationPrincipal CustomUserDetails principal
+    ) {
+        PaymentDetailResponse response =
+                paymentQueryService.getPayment(principal.getUserId(), orderId);
+
+        return ApiResponse.onSuccess("결제 정보를 조회했습니다.", response);
     }
 }
