@@ -12,7 +12,20 @@ import java.time.LocalDateTime;
 @Entity
 @EntityListeners(AuditingEntityListener.class)
 @Getter
-@Table(name = "refresh_entity")
+@Table(
+        name = "refresh_token",
+        indexes = {
+                @Index(
+                        name = "idx_refresh_token_hash",
+                        columnList = "token_hash",
+                        unique = true
+                ),
+                @Index(
+                        name = "idx_refresh_token_expires_at",
+                        columnList = "expires_at"
+                )
+        }
+)
 @NoArgsConstructor
 @AllArgsConstructor
 public class RefreshEntity {
@@ -24,21 +37,35 @@ public class RefreshEntity {
     @Column(name = "username", nullable = false)
     private String username;
 
-    @Column(nullable = false, length = 512)
-    private String refresh;
+    @Column(
+            name = "token_hash",
+            nullable = false,
+            length = 64,
+            unique = true
+    )
+    private String tokenHash;
+
+    @Column(
+            name = "expires_at",
+            nullable = false
+    )
+    private LocalDateTime expiresAt;
+
 
     @CreatedDate
-    @Column(name = "created_date", updatable = false)
+    @Column(name = "created_date", nullable = false, updatable = false)
     private LocalDateTime createdDate;
 
     public static RefreshEntity create(
             String username,
-            String refresh
+            String tokenHash,
+            LocalDateTime expiresAt
     ) {
         RefreshEntity refreshEntity = new RefreshEntity();
+
         refreshEntity.username = username;
-        refreshEntity.refresh = refresh;
-        refreshEntity.createdDate = LocalDateTime.now();
+        refreshEntity.tokenHash = tokenHash;
+        refreshEntity.expiresAt = expiresAt;
 
         return refreshEntity;
     }
