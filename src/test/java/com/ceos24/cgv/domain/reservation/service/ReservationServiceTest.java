@@ -299,6 +299,33 @@ class ReservationServiceTest {
     }
 
     @Test
+    void 이미_결제가_진행_중인_예매에_결제를_시작하면_이미_진행_중이라는_예외가_발생한다() {
+        var schedule = schedule(1L, movie(1L), screen(1L, theater(1L)), LocalDateTime.now(clock).plusHours(1));
+        var reservation = reservation(100L, user(1L), schedule, "A1");
+        ReflectionTestUtils.setField(reservation, "status", ReservationStatus.PAYING);
+        when(reservationRepository.startPaying(100L, NOW)).thenReturn(0);
+        when(reservationRepository.findById(100L)).thenReturn(Optional.of(reservation));
+
+        assertThatThrownBy(() -> reservationService.startPaying(100L))
+                .isInstanceOf(GeneralException.class)
+                .extracting(error -> ((GeneralException) error).getCode())
+                .isEqualTo(ReservationErrorStatus.RESERVATION_ALREADY_PAYING);
+    }
+
+    @Test
+    void 결제_진행_중이_아닌_예매의_결제_진행_전환이_실패하면_선점_만료_예외가_발생한다() {
+        var schedule = schedule(1L, movie(1L), screen(1L, theater(1L)), LocalDateTime.now(clock).plusHours(1));
+        var reservation = reservation(100L, user(1L), schedule, "A1");
+        when(reservationRepository.startPaying(100L, NOW)).thenReturn(0);
+        when(reservationRepository.findById(100L)).thenReturn(Optional.of(reservation));
+
+        assertThatThrownBy(() -> reservationService.startPaying(100L))
+                .isInstanceOf(GeneralException.class)
+                .extracting(error -> ((GeneralException) error).getCode())
+                .isEqualTo(ReservationErrorStatus.RESERVATION_HOLD_EXPIRED);
+    }
+
+    @Test
     void 선점이_유효하면_결제_진행으로_전환한다() {
         when(reservationRepository.startPaying(100L, NOW)).thenReturn(1);
 

@@ -32,6 +32,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 @Service
@@ -59,10 +60,15 @@ public class OrderService {
 			quantityByItemId.merge(itemRequest.itemId(), itemRequest.quantity(), Integer::sum);
 		}
 
+		Map<Long, Item> itemById = itemRepository.findAllById(quantityByItemId.keySet()).stream()
+				.collect(Collectors.toMap(Item::getId, Function.identity()));
+
 		int totalPrice = 0;
 		for (Map.Entry<Long, Integer> entry : quantityByItemId.entrySet()) {
-			Item item = itemRepository.findById(entry.getKey())
-					.orElseThrow(() -> new GeneralException(ConcessionErrorStatus.ITEM_NOT_FOUND));
+			Item item = itemById.get(entry.getKey());
+			if (item == null) {
+				throw new GeneralException(ConcessionErrorStatus.ITEM_NOT_FOUND);
+			}
 
 			Stock stock = stockRepository.findByTheaterIdAndItemId(request.theaterId(), item.getId())
 					.orElseThrow(() -> new GeneralException(ConcessionErrorStatus.STOCK_NOT_FOUND));
@@ -76,9 +82,7 @@ public class OrderService {
 		Order order = orderRepository.save(Order.create(user, theater, totalPrice));
 
 		for (Map.Entry<Long, Integer> entry : quantityByItemId.entrySet()) {
-			Item item = itemRepository.findById(entry.getKey())
-					.orElseThrow(() -> new GeneralException(ConcessionErrorStatus.ITEM_NOT_FOUND));
-
+			Item item = itemById.get(entry.getKey());
 			OrderItem orderItem = OrderItem.create(order, item, entry.getValue(), item.getPrice());
 			orderItemRepository.save(orderItem);
 		}
@@ -92,7 +96,7 @@ public class OrderService {
 		Order order = orderRepository.findByIdWithTheater(orderId)
 				.orElseThrow(() -> new GeneralException(ConcessionErrorStatus.ORDER_NOT_FOUND));
 
-		if (!order.getUser().getId().equals(userId)) {
+		if (!order.isOwnedBy(userId)) {
 			throw new GeneralException(ConcessionErrorStatus.NOT_ORDER_OWNER);
 		}
 
@@ -126,7 +130,7 @@ public class OrderService {
 		Order order = orderRepository.findByIdWithTheater(orderId)
 				.orElseThrow(() -> new GeneralException(ConcessionErrorStatus.ORDER_NOT_FOUND));
 
-		if (!order.getUser().getId().equals(userId)) {
+		if (!order.isOwnedBy(userId)) {
 			throw new GeneralException(ConcessionErrorStatus.NOT_ORDER_OWNER);
 		}
 

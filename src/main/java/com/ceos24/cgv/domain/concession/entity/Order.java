@@ -49,6 +49,10 @@ public class Order {
 		return new Order(user, theater, Instant.now(), totalPrice);
 	}
 
+	public boolean isOwnedBy(Long userId) {
+		return user.getId().equals(userId);
+	}
+
 	public void completePayment() {
 		this.status = OrderStatus.PAID;
 	}

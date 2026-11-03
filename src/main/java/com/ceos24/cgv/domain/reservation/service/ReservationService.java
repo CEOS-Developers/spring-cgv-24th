@@ -54,9 +54,7 @@ public class ReservationService {
 
     @Transactional
     public Long create(Long userId, ReservationCreateRequest request) {
-        if (request.seatIds().size() != request.seatIds().stream().distinct().count()) {
-            throw new GeneralException(ReservationErrorStatus.DUPLICATE_SEAT_REQUEST);
-        }
+        validateNoDuplicateSeats(request);
 
         Instant now = Instant.now(clock);
 
@@ -70,49 +68,16 @@ public class ReservationService {
             throw new GeneralException(ReservationErrorStatus.RESERVATION_CLOSED);
         }
 
-        List<Seat> seats = seatRepository.findAllById(request.seatIds());
-        if (seats.size() != request.seatIds().size()) {
-            throw new GeneralException(ReservationErrorStatus.SEAT_NOT_FOUND);
-        }
-
-        boolean allSeatsInScreen = seats.stream()
-                .allMatch(seat -> seat.getScreen().getId().equals(schedule.getScreen().getId()));
-        if (!allSeatsInScreen) {
-            throw new GeneralException(ReservationErrorStatus.SEAT_NOT_IN_SCREEN);
-        }
+        List<Seat> seats = findSeatsInScreen(request, schedule);
 
         int totalPrice = schedule.getPrice() * seats.size();
         String seatSummary = buildSeatSummary(seats);
         // releaseExpiredHolds의 벌크 쿼리가 영속성 컨텍스트를 비우므로 지연 로딩이 필요한 값은 먼저 읽어 둔다
         String orderName = schedule.getMovie().getTitle() + " " + seats.size() + "매";
 
-        List<ReservationSeat> occupied = reservationSeatRepository
-                .findByScheduleIdAndSeatIdIn(request.scheduleId(), request.seatIds());
-        List<Long> expiredIds = occupied.stream()
-                .map(ReservationSeat::getReservation)
-                .filter(reservation -> reservation.isHoldExpired(now))
-                .map(Reservation::getId)
-                .distinct()
-                .toList();
-        boolean stillOccupied = occupied.stream().anyMatch(rs -> !expiredIds.contains(rs.getReservation().getId()));
-        if (stillOccupied) {
-            throw new GeneralException(ReservationErrorStatus.SEAT_ALREADY_RESERVED);
-        }
-        releaseExpiredHolds(expiredIds, now);
+        releaseExpiredHoldsOfRequestedSeats(request, now);
 
-        Reservation reservation = reservationRepository.save(
-                Reservation.create(user, schedule, totalPrice, seatSummary, now)
-        );
-
-        List<ReservationSeat> reservationSeats = seats.stream()
-                .sorted(Comparator.comparing(Seat::getId))
-                .map(seat -> ReservationSeat.create(reservation, seat))
-                .toList();
-        try {
-            reservationSeatRepository.saveAllAndFlush(reservationSeats);
-        } catch (DataIntegrityViolationException | PessimisticLockingFailureException e) {
-            throw new GeneralException(ReservationErrorStatus.SEAT_ALREADY_RESERVED);
-        }
+        Reservation reservation = saveHold(user, schedule, seats, totalPrice, seatSummary, now);
 
         paymentRepository.save(Payment.forReservation(reservation, orderName));
 
@@ -230,7 +195,11 @@ public class ReservationService {
     @Transactional
     public void startPaying(Long reservationId) {
         if (reservationRepository.startPaying(reservationId, Instant.now(clock)) == 0) {
-            throw new GeneralException(ReservationErrorStatus.RESERVATION_HOLD_EXPIRED);
+            boolean alreadyPaying = reservationRepository.findById(reservationId)
+                    .map(reservation -> reservation.getStatus() == ReservationStatus.PAYING)
+                    .orElse(false);
+            throw new GeneralException(alreadyPaying ? ReservationErrorStatus.RESERVATION_ALREADY_PAYING
+                    : ReservationErrorStatus.RESERVATION_HOLD_EXPIRED);
         }
     }
 
@@ -263,14 +232,61 @@ public class ReservationService {
         reservationSeatRepository.deleteByReservationId(reservation.getId());
     }
 
-    private String buildSeatSummary(List<Seat> seats) {
-        return seats.stream()
-                .map(seat -> rowNumToLabel(seat.getRowNum()) + seat.getColNum())
-                .collect(Collectors.joining(", "));
+    private void validateNoDuplicateSeats(ReservationCreateRequest request) {
+        if (request.seatIds().size() != request.seatIds().stream().distinct().count()) {
+            throw new GeneralException(ReservationErrorStatus.DUPLICATE_SEAT_REQUEST);
+        }
     }
 
-    // 1→A, 2→B ... 형태로 변환 (CGV 실제 좌석 표기 방식)
-    private String rowNumToLabel(Integer rowNum) {
-        return String.valueOf((char) ('A' + rowNum - 1));
+    private List<Seat> findSeatsInScreen(ReservationCreateRequest request, Schedule schedule) {
+        List<Seat> seats = seatRepository.findAllById(request.seatIds());
+        if (seats.size() != request.seatIds().size()) {
+            throw new GeneralException(ReservationErrorStatus.SEAT_NOT_FOUND);
+        }
+
+        boolean allSeatsInScreen = seats.stream()
+                .allMatch(seat -> seat.getScreen().getId().equals(schedule.getScreen().getId()));
+        if (!allSeatsInScreen) {
+            throw new GeneralException(ReservationErrorStatus.SEAT_NOT_IN_SCREEN);
+        }
+        return seats;
+    }
+
+    private void releaseExpiredHoldsOfRequestedSeats(ReservationCreateRequest request, Instant now) {
+        List<ReservationSeat> occupied = reservationSeatRepository
+                .findByScheduleIdAndSeatIdIn(request.scheduleId(), request.seatIds());
+        List<Long> expiredIds = occupied.stream()
+                .map(ReservationSeat::getReservation)
+                .filter(reservation -> reservation.isHoldExpired(now))
+                .map(Reservation::getId)
+                .distinct()
+                .toList();
+        boolean stillOccupied = occupied.stream().anyMatch(rs -> !expiredIds.contains(rs.getReservation().getId()));
+        if (stillOccupied) {
+            throw new GeneralException(ReservationErrorStatus.SEAT_ALREADY_RESERVED);
+        }
+        releaseExpiredHolds(expiredIds, now);
+    }
+
+    private Reservation saveHold(User user, Schedule schedule, List<Seat> seats, int totalPrice, String seatSummary,
+                                 Instant now) {
+        Reservation reservation = reservationRepository.save(
+                Reservation.create(user, schedule, totalPrice, seatSummary, now)
+        );
+
+        List<ReservationSeat> reservationSeats = seats.stream()
+                .sorted(Comparator.comparing(Seat::getId))
+                .map(seat -> ReservationSeat.create(reservation, seat))
+                .toList();
+        try {
+            reservationSeatRepository.saveAllAndFlush(reservationSeats);
+        } catch (DataIntegrityViolationException | PessimisticLockingFailureException e) {
+            throw new GeneralException(ReservationErrorStatus.SEAT_ALREADY_RESERVED);
+        }
+        return reservation;
+    }
+
+    private String buildSeatSummary(List<Seat> seats) {
+        return seats.stream().map(Seat::getLabel).collect(Collectors.joining(", "));
     }
 }
