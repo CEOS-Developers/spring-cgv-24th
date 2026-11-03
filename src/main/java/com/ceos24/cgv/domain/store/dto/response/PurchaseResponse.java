@@ -2,17 +2,21 @@ package com.ceos24.cgv.domain.store.dto.response;
 
 import com.ceos24.cgv.domain.store.entity.Purchase;
 import com.ceos24.cgv.domain.store.entity.PurchaseItem;
+import com.ceos24.cgv.domain.store.entity.PurchaseStatus;
 
 import java.time.LocalDateTime;
 import java.util.List;
 
 public record PurchaseResponse(
         Long id,
+        String orderId,
         Long userId,
         Long cinemaId,
         String cinemaName,
-        LocalDateTime purchasedAt,
-        long totalPrice,
+        LocalDateTime createdAt,
+        LocalDateTime expiresAt,
+        PurchaseStatus status,
+        long totalAmount,
         List<PurchaseItemResponse> items
 ) {
 
@@ -25,17 +29,16 @@ public record PurchaseResponse(
                         .map(PurchaseItemResponse::from)
                         .toList();
 
-        long totalPrice = itemResponses.stream()
-                .mapToLong(PurchaseItemResponse::totalPrice)
-                .sum();
-
         return new PurchaseResponse(
                 purchase.getId(),
+                purchase.getOrderId(),
                 purchase.getUserEntity().getId(),
                 purchase.getCinema().getId(),
                 purchase.getCinema().getName(),
-                purchase.getPurchasedAt(),
-                totalPrice,
+                purchase.getCreatedAt(),
+                purchase.getExpiresAt(),
+                purchase.getStatus(),
+                purchase.getTotalAmount(),
                 itemResponses
         );
     }

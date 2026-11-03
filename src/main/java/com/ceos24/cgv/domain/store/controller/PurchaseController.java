@@ -1,6 +1,7 @@
 package com.ceos24.cgv.domain.store.controller;
 
 import com.ceos24.cgv.domain.store.dto.request.PurchaseCreateRequest;
+import com.ceos24.cgv.domain.store.dto.response.PurchaseCreateResponse;
 import com.ceos24.cgv.domain.store.dto.response.PurchaseResponse;
 import com.ceos24.cgv.domain.store.service.PurchaseService;
 import com.ceos24.cgv.global.apiPayload.code.SuccessCode;
@@ -24,8 +25,8 @@ import java.net.URI;
 import java.util.List;
 
 @Tag(
-        name = "매점 구매",
-        description = "매점 상품 구매 등록과 사용자 구매 내역 조회 API"
+        name = "매점 주문",
+        description = "결제 대기 주문 생성과 사용자 주문 내역 조회 API"
 )
 @SecurityRequirement(name = "bearerAuth")
 @RestController
@@ -35,30 +36,30 @@ public class PurchaseController {
 
     private final PurchaseService purchaseService;
 
-    // 매점 상품 구매
+    // 매점 주문 생성
     @Operation(
-            summary = "매점 상품 구매",
-            description = "사용자가 영화관과 상품, 수량을 선택하여 구매합니다. 구매가 완료되면 영화관별 재고가 차감됩니다."
+            summary = "매점 주문 생성",
+            description = "서버가 주문 금액을 확정하고 재고를 확보합니다. 결제 대기 상태의 주문번호, 금액과 만료 시각을 반환하며 결제 승인은 수행하지 않습니다."
     )
     @PostMapping
-    public ResponseEntity<ApiResponse<Long>> createPurchase(
+    public ResponseEntity<ApiResponse<PurchaseCreateResponse>> createPurchase(
             @AuthenticationPrincipal UserDetails userDetails,
             @Valid @RequestBody PurchaseCreateRequest request
     ) {
-        Long purchaseId = purchaseService.createPurchase(
+        PurchaseCreateResponse purchase = purchaseService.createPurchase(
                 userDetails.getUsername(),
                 request
         );
         SuccessCode code = SuccessCode.INSERT_SUCCESS;
 
-        ApiResponse<Long> body = new ApiResponse<>(
-                purchaseId,
+        ApiResponse<PurchaseCreateResponse> body = new ApiResponse<>(
+                purchase,
                 code.getStatus(),
                 code.getMessage()
         );
 
         URI location = URI.create(
-                "/api/me/purchases/" + purchaseId
+                "/api/me/purchases/" + purchase.purchaseId()
         );
 
         return ResponseEntity.created(location).body(body);
@@ -66,8 +67,8 @@ public class PurchaseController {
 
     // 사용자의 구매 목록 조회
     @Operation(
-            summary = "사용자 구매 목록 조회",
-            description = "사용자의 모든 매점 구매 내역을 최근 구매 순서로 조회합니다."
+            summary = "사용자 주문 목록 조회",
+            description = "사용자의 모든 매점 주문을 최근 생성 순서로 조회합니다."
     )
     @GetMapping
     public ResponseEntity<ApiResponse<List<PurchaseResponse>>> getPurchases(
@@ -89,8 +90,8 @@ public class PurchaseController {
 
     // 사용자의 구매 단건 조회
     @Operation(
-            summary = "구매 상세 조회",
-            description = "구매 ID를 이용하여 구매 영화관, 상품, 수량, 구매 당시 가격과 총금액을 조회합니다."
+            summary = "주문 상세 조회",
+            description = "주문 ID로 영화관, 주문 상품, 수량, 주문 당시 가격, 확정 금액, 주문 상태와 만료 시각을 조회합니다."
     )
     @GetMapping("/{purchaseId}")
     public ResponseEntity<ApiResponse<PurchaseResponse>> getPurchase(

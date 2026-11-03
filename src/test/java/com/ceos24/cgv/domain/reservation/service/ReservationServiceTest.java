@@ -7,9 +7,10 @@ import com.ceos24.cgv.domain.cinema.entity.Cinema;
 import com.ceos24.cgv.domain.cinema.entity.Seat;
 import com.ceos24.cgv.domain.cinema.repository.SeatRepository;
 import com.ceos24.cgv.domain.movie.entity.Movie;
+import com.ceos24.cgv.domain.payment.repository.PaymentRepository;
+import com.ceos24.cgv.domain.payment.repository.PaymentOperationRepository;
 import com.ceos24.cgv.domain.reservation.dto.request.ReservationCreateRequest;
 import com.ceos24.cgv.domain.reservation.entity.Reservation;
-import com.ceos24.cgv.domain.reservation.entity.ReservationSeat;
 import com.ceos24.cgv.domain.reservation.entity.ReservationStatus;
 import com.ceos24.cgv.domain.reservation.repository.ReservationRepository;
 import com.ceos24.cgv.domain.reservation.repository.ReservationSeatRepository;
@@ -21,7 +22,6 @@ import com.ceos24.cgv.global.apiPayload.code.ErrorCode;
 import com.ceos24.cgv.global.exception.BusinessException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -58,51 +58,17 @@ class ReservationServiceTest {
     @Mock
     private SeatRepository seatRepository;
 
+    @Mock
+    private PaymentRepository paymentRepository;
+
+    @Mock
+    private PaymentOperationRepository paymentOperationRepository;
+
+    @Mock
+    private ReservationHoldService holdService;
+
     @InjectMocks
     private ReservationService reservationService;
-
-    @Test
-    void 예매하면_확정상태의_예매와_선택좌석을_저장한다() {
-        UserEntity userEntity = user(1L);
-        Auditorium auditorium = auditorium(10L, "1관");
-        Screening screening = screening(20L, auditorium);
-        Seat firstSeat = seat(100L, auditorium, 1, 1);
-        Seat secondSeat = seat(101L, auditorium, 1, 2);
-        ReservationCreateRequest request = new ReservationCreateRequest(
-                screening.getId(),
-                List.of(101L, 100L)
-        );
-
-        mockAuthenticatedUser(userEntity);
-        when(screeningRepository.findById(20L)).thenReturn(Optional.of(screening));
-        when(seatRepository.findAllByIdInForUpdate(List.of(100L, 101L)))
-                .thenReturn(List.of(firstSeat, secondSeat));
-        when(reservationSeatRepository.findSeatIdsByScreeningIdAndStatus(
-                20L,
-                ReservationStatus.CONFIRMED
-        )).thenReturn(List.of());
-        when(reservationRepository.save(any(Reservation.class))).thenAnswer(invocation -> {
-            Reservation reservation = invocation.getArgument(0);
-            ReflectionTestUtils.setField(reservation, "id", 30L);
-            return reservation;
-        });
-
-        Long result = reservationService.createReservation(userEntity.getUsername(), request);
-
-        assertEquals(30L, result);
-
-        ArgumentCaptor<Reservation> reservationCaptor =
-                ArgumentCaptor.forClass(Reservation.class);
-        verify(reservationRepository).save(reservationCaptor.capture());
-        assertEquals(ReservationStatus.CONFIRMED, reservationCaptor.getValue().getStatus());
-        assertEquals(userEntity, reservationCaptor.getValue().getUserEntity());
-        assertEquals(screening, reservationCaptor.getValue().getScreening());
-
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<ReservationSeat>> seatsCaptor = ArgumentCaptor.forClass(List.class);
-        verify(reservationSeatRepository).saveAll(seatsCaptor.capture());
-        assertEquals(2, seatsCaptor.getValue().size());
-    }
 
     @Test
     void 중복된_좌석ID가_있으면_예매하지_않는다() {
@@ -149,40 +115,16 @@ class ReservationServiceTest {
     }
 
     @Test
-    void 이미_확정된_좌석이면_예매하지_않는다() {
-        UserEntity userEntity = user(1L);
-        Auditorium auditorium = auditorium(10L, "1관");
-        Screening screening = screening(20L, auditorium);
-        Seat seat = seat(100L, auditorium, 1, 1);
-        ReservationCreateRequest request = new ReservationCreateRequest(20L, List.of(100L));
-
-        mockAuthenticatedUser(userEntity);
-        when(screeningRepository.findById(20L)).thenReturn(Optional.of(screening));
-        when(seatRepository.findAllByIdInForUpdate(List.of(100L))).thenReturn(List.of(seat));
-        when(reservationSeatRepository.findSeatIdsByScreeningIdAndStatus(
-                20L,
-                ReservationStatus.CONFIRMED
-        )).thenReturn(List.of(100L));
-
-        BusinessException exception = assertThrows(
-                BusinessException.class,
-                () -> reservationService.createReservation(userEntity.getUsername(), request)
-        );
-
-        assertEquals(ErrorCode.SEAT_ALREADY_RESERVED, exception.getErrorCode());
-        verify(reservationRepository, never()).save(any());
-    }
-
-    @Test
-    void 예매를_취소하면_취소상태와_취소시간이_기록된다() {
+    void 결제정보가없는_기존확정예매를_취소하면_취소상태와_시간이_기록된다() {
         UserEntity userEntity = user(1L);
         Reservation reservation = Reservation.create(
                 screening(20L, auditorium(10L, "1관")),
                 userEntity
         );
         ReflectionTestUtils.setField(reservation, "id", 30L);
+        reservation.confirm();
         mockAuthenticatedUser(userEntity);
-        when(reservationRepository.findById(30L)).thenReturn(Optional.of(reservation));
+        when(reservationRepository.findByIdForUpdate(30L)).thenReturn(Optional.of(reservation));
 
         reservationService.cancelReservation(userEntity.getUsername(), 30L);
 

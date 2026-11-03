@@ -2,6 +2,7 @@ package com.ceos24.cgv.domain.reservation.controller;
 
 import com.ceos24.cgv.domain.reservation.dto.request.ReservationCreateRequest;
 import com.ceos24.cgv.domain.reservation.dto.response.ReservationResponse;
+import com.ceos24.cgv.domain.reservation.dto.response.ReservationCreateResponse;
 import com.ceos24.cgv.domain.reservation.service.ReservationService;
 import com.ceos24.cgv.global.apiPayload.code.SuccessCode;
 import com.ceos24.cgv.global.apiPayload.response.ApiResponse;
@@ -38,24 +39,24 @@ public class ReservationController {
 
     // 예매 등록
     @Operation(
-            summary = "예매 등록",
-            description = "사용자가 상영 회차와 좌석을 선택하여 예매합니다. 이미 예매된 좌석은 선택할 수 없습니다."
+            summary = "결제 대기 예매 생성",
+            description = "선택 좌석을 확보하고 주문번호·서버 확정 금액·결제 ID·유효시간을 반환합니다. 토스 승인 성공 후 예매가 확정됩니다."
     )
     @PostMapping
-    public ResponseEntity<ApiResponse<Long>> createReservation(
+    public ResponseEntity<ApiResponse<ReservationCreateResponse>> createReservation(
             @AuthenticationPrincipal UserDetails userDetails,
             @Valid @RequestBody ReservationCreateRequest request
     ) {
-        Long reservationId = reservationService.createReservation(userDetails.getUsername(), request);
+        ReservationCreateResponse reservation = reservationService.createReservation(userDetails.getUsername(), request);
         SuccessCode code = SuccessCode.INSERT_SUCCESS;
 
-        ApiResponse<Long> body = new ApiResponse<>(
-                reservationId,
+        ApiResponse<ReservationCreateResponse> body = new ApiResponse<>(
+                reservation,
                 code.getStatus(),
                 code.getMessage()
         );
 
-        URI location = URI.create("/api/me/reservations/" + reservationId);
+        URI location = URI.create("/api/me/reservations/" + reservation.reservationId());
 
         return ResponseEntity.created(location).body(body);
     }
@@ -106,7 +107,7 @@ public class ReservationController {
     // 예매 취소
     @Operation(
             summary = "예매 취소",
-            description = "예매 데이터를 삭제하지 않고 예매 상태를 CANCELLED로 변경합니다."
+            description = "미결제 대기 예매를 취소합니다. 승인 처리 중에는 취소할 수 없고, 결제 완료 예매는 결제 취소 API를 사용해야 합니다."
     )
     @DeleteMapping("/{reservationId}")
     public ResponseEntity<ApiResponse<Void>> cancelReservation(

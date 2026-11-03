@@ -93,6 +93,9 @@ public class SecurityConfig {
                                 "/v3/api-docs/**"
                         ).permitAll()
 
+                        // 토스 리다이렉트는 Bearer 헤더 없이 돌아온다. 화면만 공개하고 결제 API는 인증을 유지한다.
+                        .requestMatchers(HttpMethod.GET, "/payment-demo/**").permitAll()
+
                         .requestMatchers(
                                 HttpMethod.POST,
                                 "/api/user/exist",

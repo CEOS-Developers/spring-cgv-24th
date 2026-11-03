@@ -2,6 +2,7 @@ package com.ceos24.cgv.domain.reservation.dto.response;
 
 import com.ceos24.cgv.domain.cinema.entity.Auditorium;
 import com.ceos24.cgv.domain.movie.entity.Movie;
+import com.ceos24.cgv.domain.payment.entity.Payment;
 import com.ceos24.cgv.domain.reservation.entity.Reservation;
 import com.ceos24.cgv.domain.reservation.entity.ReservationSeat;
 import com.ceos24.cgv.domain.reservation.entity.ReservationStatus;
@@ -23,15 +24,21 @@ public record ReservationResponse(
         LocalDateTime startsAt,
         LocalDateTime endsAt,
         ReservationStatus status,
-        int totalPrice,
+        long totalPrice,
         List<ReservationSeatResponse> seats,
         LocalDateTime reservedAt,
-        LocalDateTime cancelledAt
+        LocalDateTime cancelledAt,
+        Long paymentId,
+        String orderId,
+        long totalAmount,
+        LocalDateTime expiresAt,
+        LocalDateTime confirmedAt
 ) {
 
     public static ReservationResponse from(
             Reservation reservation,
-            List<ReservationSeat> reservationSeats
+            List<ReservationSeat> reservationSeats,
+            Payment payment
     ) {
         Screening screening = reservation.getScreening();
         Movie movie = screening.getMovie();
@@ -40,6 +47,9 @@ public record ReservationResponse(
         List<ReservationSeatResponse> seats = reservationSeats.stream()
                 .map(ReservationSeatResponse::from)
                 .toList();
+
+        // 결제 도입 전 예매만 현재 회차 가격으로 계산한다. 신규 예매는 확정된 결제 금액을 사용한다.
+        long amount = payment == null ? Math.multiplyExact((long) screening.getPrice(), seats.size()) : payment.getTotalAmount();
 
         return new ReservationResponse(
                 reservation.getId(),
@@ -54,10 +64,15 @@ public record ReservationResponse(
                 screening.getStartsAt(),
                 screening.getEndsAt(),
                 reservation.getStatus(),
-                screening.getPrice() * seats.size(),
+                amount,
                 seats,
                 reservation.getReservedAt(),
-                reservation.getCancelledAt()
+                reservation.getCancelledAt(),
+                payment == null ? null : payment.getId(),
+                payment == null ? null : payment.getOrderId(),
+                amount,
+                payment == null ? null : payment.getExpiresAt(),
+                reservation.getConfirmedAt()
         );
     }
 }

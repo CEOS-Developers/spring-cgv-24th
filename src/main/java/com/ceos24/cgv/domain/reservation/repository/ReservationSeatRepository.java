@@ -10,16 +10,16 @@ import java.util.List;
 
 public interface ReservationSeatRepository extends JpaRepository<ReservationSeat, Long> {
 
-    // 해당 회차에서 특정 상태인 좌석 ID만 가져옴
+    // 결제 대기와 확정 예매 모두 좌석을 점유한다. 만료 시각만으로 미확정 결제의 좌석을 해제하지 않는다.
     @Query("""
             select rs.seat.id
             from ReservationSeat rs
             where rs.reservation.screening.id = :screeningId
-              and rs.reservation.status = :status
+              and rs.reservation.status in :statuses
             """)
-    List<Long> findSeatIdsByScreeningIdAndStatus(
+    List<Long> findSeatIdsByScreeningIdAndStatuses(
             @Param("screeningId") Long screeningId,
-            @Param("status") ReservationStatus status
+            @Param("statuses") List<ReservationStatus> statuses
     );
 
     List<ReservationSeat> findAllByReservationIdOrderBySeatRowNumberAscSeatColumnNumberAsc(

@@ -2,9 +2,12 @@ package com.ceos24.cgv.domain.store.service;
 
 import com.ceos24.cgv.domain.cinema.entity.Cinema;
 import com.ceos24.cgv.domain.cinema.repository.CinemaRepository;
+import com.ceos24.cgv.domain.payment.entity.Payment;
+import com.ceos24.cgv.domain.payment.repository.PaymentRepository;
 import com.ceos24.cgv.domain.store.dto.request.PurchaseCreateRequest;
 import com.ceos24.cgv.domain.store.dto.request.PurchaseItemRequest;
 import com.ceos24.cgv.domain.store.dto.response.ProductStockResponse;
+import com.ceos24.cgv.domain.store.dto.response.PurchaseCreateResponse;
 import com.ceos24.cgv.domain.store.dto.response.PurchaseResponse;
 import com.ceos24.cgv.domain.store.entity.CinemaStock;
 import com.ceos24.cgv.domain.store.entity.Purchase;
@@ -33,6 +36,7 @@ public class PurchaseService {
     private final CinemaStockRepository cinemaStockRepository;
     private final PurchaseItemRepository purchaseItemRepository;
     private final PurchaseRepository purchaseRepository;
+    private final PaymentRepository paymentRepository;
     private final UserRepository userRepository;
     private final CinemaRepository cinemaRepository;
 
@@ -48,9 +52,9 @@ public class PurchaseService {
                 .toList();
     }
 
-    // 구매 등록
+    // 결제 대기 주문 생성 및 재고 확보
     @Transactional
-    public Long createPurchase(
+    public PurchaseCreateResponse createPurchase(
             String username,
             PurchaseCreateRequest request
     ) {
@@ -108,8 +112,10 @@ public class PurchaseService {
             }
         }
 
+        long totalAmount = calculateTotalAmount(request.items(), stockByProductId);
+
         Purchase purchase = purchaseRepository.save(
-                Purchase.create(userEntity, cinema)
+                Purchase.create(userEntity, cinema, totalAmount)
         );
 
         // 재고 차감과 PurchaseItem 생성
@@ -118,7 +124,7 @@ public class PurchaseService {
         for (PurchaseItemRequest item : request.items()) {
             CinemaStock stock = stockByProductId.get(item.productId());
 
-            // 구매 수량만큼 재고 차감
+            // 결제 전에 재고를 확보한다. 승인 시에는 다시 차감하지 않는다.
             stock.decrease(item.quantity());
 
             // 구매 상품 생성
@@ -132,22 +138,46 @@ public class PurchaseService {
         }
 
         purchaseItemRepository.saveAll(purchaseItems);
+        paymentRepository.save(Payment.create(purchase));
 
-        return purchase.getId();
+        return PurchaseCreateResponse.from(purchase);
     }
 
-    // 사용자의 구매 목록 조회
+    private long calculateTotalAmount(
+            List<PurchaseItemRequest> items,
+            Map<Long, CinemaStock> stockByProductId
+    ) {
+        long totalAmount = 0;
+
+        try {
+            for (PurchaseItemRequest item : items) {
+                int unitPrice = stockByProductId.get(item.productId()).getProduct().getPrice();
+                long itemAmount = Math.multiplyExact((long) unitPrice, item.quantity());
+                totalAmount = Math.addExact(totalAmount, itemAmount);
+            }
+        } catch (ArithmeticException exception) {
+            throw new BusinessException(ErrorCode.INVALID_PURCHASE_AMOUNT);
+        }
+
+        if (totalAmount <= 0) {
+            throw new BusinessException(ErrorCode.INVALID_PURCHASE_AMOUNT);
+        }
+
+        return totalAmount;
+    }
+
+    // 사용자의 주문 목록 조회
     public List<PurchaseResponse> getPurchases(String username) {
         UserEntity userEntity = findActiveLocalUser(username);
 
         return purchaseRepository
-                .findAllByUserEntity_IdOrderByPurchasedAtDesc(userEntity.getId())
+                .findAllByUserEntity_IdOrderByCreatedAtDesc(userEntity.getId())
                 .stream()
                 .map(this::toResponse)
                 .toList();
     }
 
-    // 사용자의 구매 단건 조회
+    // 사용자의 주문 단건 조회
     public PurchaseResponse getPurchase(String username, Long purchaseId) {
         UserEntity userEntity = findActiveLocalUser(username);
 
