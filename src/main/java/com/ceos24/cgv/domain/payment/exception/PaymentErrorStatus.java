@@ -18,7 +18,14 @@ public enum PaymentErrorStatus implements BaseErrorCode {
 	PG_RESPONSE_MISMATCH(HttpStatus.BAD_GATEWAY, "PAYMENT502_1", "결제사 응답이 주문 정보와 일치하지 않습니다."),
 	PG_RESULT_UNKNOWN(HttpStatus.BAD_GATEWAY, "PAYMENT502", "결제 결과를 확인하지 못했습니다. 잠시 후 결제 내역을 확인해주세요."),
 	PAYMENT_COMPENSATED(HttpStatus.CONFLICT, "PAYMENT409_1", "결제 승인 후 주문을 확정하지 못해 결제가 자동 취소되었습니다."),
-	PAYMENT_NOT_RECONCILABLE(HttpStatus.CONFLICT, "PAYMENT409_2", "결과 확인이 필요한 결제가 아닙니다.");
+	PAYMENT_NOT_RECONCILABLE(HttpStatus.CONFLICT, "PAYMENT409_2", "결과 확인이 필요한 결제가 아닙니다."),
+	CANCEL_AMOUNT_EXCEEDED(HttpStatus.BAD_REQUEST, "PAYMENT400_2", "취소 금액이 취소 가능 잔액을 초과합니다."),
+	PARTIAL_CANCEL_NOT_SUPPORTED(HttpStatus.BAD_REQUEST, "PAYMENT400_3", "영화 예매 결제는 전체 취소만 가능합니다."),
+	PAYMENT_NOT_CANCELABLE(HttpStatus.CONFLICT, "PAYMENT409_3", "취소할 수 없는 결제 상태입니다."),
+	ALREADY_CANCELED(HttpStatus.CONFLICT, "PAYMENT409_4", "이미 전액 취소된 결제입니다."),
+	CANCEL_IN_PROGRESS(HttpStatus.CONFLICT, "PAYMENT409_5", "같은 취소 요청이 처리 중입니다."),
+	CANCEL_ALREADY_FAILED(HttpStatus.CONFLICT, "PAYMENT409_6", "실패한 취소 요청입니다. 새 멱등키로 다시 요청해주세요."),
+	IDEMPOTENCY_KEY_CONFLICT(HttpStatus.CONFLICT, "PAYMENT409_7", "다른 결제에 사용된 멱등키입니다.");
 
 	private final HttpStatus httpStatus;
 	private final String code;

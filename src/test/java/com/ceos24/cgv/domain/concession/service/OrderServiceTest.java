@@ -158,6 +158,36 @@ class OrderServiceTest {
 	}
 
 	@Test
+	void 결제완료_주문의_취소_복구는_itemId_오름차순으로_재고를_늘리고_주문을_취소로_바꾼다() {
+		var order = order(10L, user(1L), theater(2L), 15_000);
+		order.completePayment();
+		var popcorn = item(3L, "팝콘", 5_000);
+		var cola = item(5L, "콜라", 2_500);
+		when(orderItemRepository.findByOrderIdWithItem(10L)).thenReturn(List.of(
+				orderItem(21L, order, cola, 2, 2_500), orderItem(20L, order, popcorn, 1, 5_000)
+		));
+
+		orderService.restoreCanceledOrder(order);
+
+		InOrder inOrder = inOrder(stockRepository);
+		inOrder.verify(stockRepository).increaseStock(2L, 3L, 1);
+		inOrder.verify(stockRepository).increaseStock(2L, 5L, 2);
+		assertThat(order.getStatus()).isEqualTo(OrderStatus.CANCELED);
+	}
+
+	@Test
+	void 이미_취소된_주문은_재고를_복구하지_않는다() {
+		var order = order(10L, user(1L), theater(2L), 15_000);
+		order.cancelPayment();
+
+		orderService.restoreCanceledOrder(order);
+
+		verify(stockRepository, never()).increaseStock(anyLong(), anyLong(), anyInt());
+		verifyNoInteractions(orderItemRepository);
+		assertThat(order.getStatus()).isEqualTo(OrderStatus.CANCELED);
+	}
+
+	@Test
 	void 존재하지_않는_사용자의_주문목록은_조회할_수_없다() {
 		when(userRepository.findById(999L)).thenReturn(Optional.empty());
 

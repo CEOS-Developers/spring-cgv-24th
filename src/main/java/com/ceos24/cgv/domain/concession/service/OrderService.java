@@ -155,4 +155,20 @@ public class OrderService {
 		}
 		order.completePayment();
 	}
+
+	// 결제 전액 취소 후 호출. PAID가 아니면 이미 복구됐거나 차감된 적이 없으므로 재고를 건드리지 않는다
+	@Transactional
+	public void restoreCanceledOrder(Order order) {
+		if (order.getStatus() != OrderStatus.PAID) {
+			return;
+		}
+		List<OrderItem> orderItems = orderItemRepository.findByOrderIdWithItem(order.getId()).stream()
+				.sorted(Comparator.comparing(orderItem -> orderItem.getItem().getId()))
+				.toList();
+
+		for (OrderItem orderItem : orderItems) {
+			stockRepository.increaseStock(order.getTheater().getId(), orderItem.getItem().getId(), orderItem.getQuantity());
+		}
+		order.cancelPayment();
+	}
 }

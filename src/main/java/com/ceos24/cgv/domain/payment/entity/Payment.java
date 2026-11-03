@@ -2,11 +2,15 @@ package com.ceos24.cgv.domain.payment.entity;
 
 import com.ceos24.cgv.domain.concession.entity.Order;
 import com.ceos24.cgv.domain.payment.enums.PaymentStatus;
+import com.ceos24.cgv.domain.payment.exception.PaymentErrorStatus;
 import com.ceos24.cgv.domain.user.entity.User;
+import com.ceos24.cgv.global.exception.GeneralException;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 import com.ceos24.cgv.domain.reservation.entity.Reservation;
 
 import java.util.UUID;
@@ -40,6 +44,7 @@ public class Payment {
 	private String paymentKey;
 
 	@Enumerated(EnumType.STRING)
+	@JdbcTypeCode(SqlTypes.VARCHAR)
 	@Column(nullable = false)
 	private PaymentStatus status;
 
@@ -95,6 +100,25 @@ public class Payment {
 		this.method = method;
 		this.approvedAt = approvedAt;
 		this.status = PaymentStatus.DONE;
+	}
+
+	public boolean isCancelable() {
+		return status == PaymentStatus.DONE || status == PaymentStatus.PARTIAL_CANCELED;
+	}
+
+	public void reserveCancel(int amount) {
+		if (amount <= 0 || amount > balanceAmount) {
+			throw new GeneralException(PaymentErrorStatus.CANCEL_AMOUNT_EXCEEDED);
+		}
+		this.balanceAmount -= amount;
+	}
+
+	public void restoreCancel(int amount) {
+		this.balanceAmount += amount;
+	}
+
+	public void applyCanceledStatus() {
+		this.status = (balanceAmount == 0) ? PaymentStatus.CANCELED : PaymentStatus.PARTIAL_CANCELED;
 	}
 
 	public void cancelFully() {
