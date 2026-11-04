@@ -151,3 +151,103 @@ JWT 추출
 | 일반 사용자로 관리자 API 호출 | USER 토큰으로 `GET /api/admin/check` | 403 + 공통 JSON | 통과: 403 `ACCESS_DENIED` |
 | 관리자로 관리자 API 호출 | ADMIN 로그인으로 발급받은 토큰으로 `GET /api/admin/check` | 정상 처리 | 통과: 200, 응답 본문 없음 |
 | 정상 인증 직후 토큰 없는 요청 | 정상 요청 후 같은 MockMvc에서 토큰 없이 보호 API 재호출 | 이전 인증이 유지되지 않고 401 | 통과: 401 `TOKEN_NOT_EXIST`, 요청 종료 후 인증 컨텍스트 비어 있음 |
+
+# 4주차 과제
+
+## 동시성
+### 동시성 문제란?
+- 여러 작업이 동시에 실행되면서 같은 데이터나 자원에 접근할 때, 작업의 실행 순서에 따라 예상하지 못한 결과가 발생하는 문제
+- 여러 작업이 공유 데이터를 읽고 수정하는 과정에서 서로 간섭하는 현상, 즉 경쟁 상태(Race Condition)일 때 발생할 수 있음
+- 대표 유형
+
+    | 유형 | 설명 | 예시 |
+    | --- | --- | --- |
+    | Race Condition | 실행 순서에 따라 결과가 달라짐 | 동시 출금 시 잔액 오류 |
+    | Lost Update | 한 작업의 변경이 다른 작업에 덮어써짐 | 재고 10개에서 두 주문이 각각 1개 차감했는데 최종 재고가 9개 |
+    | Dirty Read | 확정되지 않은 데이터를 읽음 | 롤백될 결제를 성공으로 인식 |
+    | Deadlock | 작업들이 서로의 잠금을 기다려 진행하지 못함 | A는 주문 잠금, B는 결제 잠금을 보유한 채 서로 대기 |
+
+- 해결 방법
+  1. 비관적 락(Pessimistic Lock)
+    - 데이터를 수정할 때 다른 요청이 접근하지 못하도록 잠금을 거는 방식
+    - 장단점
+  2. 낙관적 락(Optimistic Lock)
+    - 다른 요청과 충돌하지 않을 것이라고 가정하고, 데이터를 수정할 때 버전을 확인하는 방식
+  3. 원자적 연산(Atomic Operation)
+    - 여러 단계로 나눠진 작업을 DB에서 하나의 연산으로 처리하는 방식
+
+## 멱등성
+같은 작업을 여러 번 실행해도, 한 번 실행했을 때와 최종 결과가 동일한 성질
+### 결제 시스템에서 멱등성이 왜 중요할까?
+  - 중복 승인이나 중복 출금 가능성
+  - 주문, 결제, 환불 상태가 중복 처리로 꼬일 수 있음
+### Toss Payments에서 제공하는 멱등성 처리 방법
+  - `Idempotency-Key`라는 HTTP 요청 헤더를 이용해 멱등성을 보장하는 기능을 제공
+### 멱등성 vs. 동시성 제어
+| 구분 | 멱등성 | 동시성 제어 |
+| --- | --- | --- |
+| 핵심 문제 | 같은 요청의 반복 실행 | 여러 요청의 동시 실행 |
+| 대표 상황 | 결제 요청을 재시도 | 두 요청이 동시에 같은 잔액을 차감 |
+| 해결 방법 | Idempotency Key | 락, 트랜잭션, 원자적 연산 |
+| 목적 | 중복 처리 방지 | 데이터 일관성 보장 |
+
+## 결제 시스템 연동
+- [Toss Payments 개발자센터](https://docs.tosspayments.com/guides/v2/get-started)
+- [결제 API](https://docs.tosspayments.com/reference)
+
+#### 1. 로그인
+`POST {{baseUrl}}/auth/login` · No Auth
+```json
+{"email":"{{email}}","password":"{{password}}"}
+```
+
+#### 2. 주문 생성
+`POST {{baseUrl}}/purchases` · Bearer Token
+```json
+{"cinemaId":{{cinemaId}},"items":[{"goodsId":{{goodsId}},"quantity":1}]}
+```
+
+`201` 응답의 `status`가 `PENDING`, `approvedAt`이 `null`인지 확인
+
+#### 3. 결제 설정 조회
+`GET {{baseUrl}}/payments/config` · Bearer Token · 본문 없음
+정상 응답은 `200`과 `{"clientKey":"test_gck_..."}`
+이 API는 접두사만 검사하므로 `200`이 나와도 실제 발급된 키인지 토스에 검증한 것은 아님
+
+#### 4. 결제 전 주문 취소
+`POST {{baseUrl}}/payments/{{orderId}}/cancel` · Bearer Token · 본문 없음
+
+#### 5. 실제 인증 후 결제 승인
+`POST {{baseUrl}}/payments/confirm` · Bearer Token
+```json
+{"orderId":"{{orderId}}","paymentKey":"{{paymentKey}}","amount":{{amount}}}
+```
+
+#### API
+
+| 메서드·경로 | 요청 | 동작 |
+| --- | --- | --- |
+| `POST /purchases` | `{"cinemaId":1,"items":[{"goodsId":1,"quantity":1}]}` | 서버 가격으로 총액 계산, 재고 예약, `PENDING` 주문 생성. `orderId`, `totalPrice`, `status`, 상품 내역 반환 |
+| `GET /payments/config` | 없음 | 테스트 클라이언트 키 반환. 시크릿 키는 반환하지 않음 |
+| `POST /payments/confirm` | `{"orderId":"550e8400-e29b-41d4-a716-446655440000","paymentKey":"...","amount":6000}` | 주문 소유자·저장 금액·결제 키 검증 후 토스 승인. 승인 결과의 주문번호·키·금액·통화·상태 재검증 |
+| `POST /payments/{orderId}/cancel` | 없음 또는 `{}` | 승인 시작 전 `PENDING` 주문 취소 및 예약 재고 반환. 이미 취소되었거나 승인을 시작한 주문은 409 반환 |
+
+모든 API에 `Authorization: Bearer {accessToken}`이 필요
+
+#### 현재 구현 범위
+
+- `PENDING`: 재고를 예약한 결제 대기 주문. 결제 전 주문 취소로 재고를 반환합니다.
+- `CONFIRMING`: 승인 전에 결제 키를 저장한 상태. 외부 HTTP 요청은 DB 트랜잭션 밖에서 수행합니다.
+- `PAID`: 토스가 `DONE`과 승인 시각을 반환한 주문.
+- `WAITING_FOR_DEPOSIT`: 가상계좌 발급 상태. 구매 완료로 처리하지 않으며, 입금 확인 기능은 다음 단계로 미룹니다. 현재는 카드·간편결제로 테스트합니다.
+- `CANCELED`: 승인 전에 취소한 주문.
+
+#### TODO
+
+1. **동시성 제어**: 재고·주문 행 잠금, 잠금 순서 정렬, 동시 요청 테스트.
+2. **멱등성과 승인 복구**: 멱등키, 중복 요청에 기존 결과 반환, 응답 유실 시 결제 조회 및 재시도.
+3. **주문 수명과 후속 결제 처리**: 주문 만료·재고 회수, 승인 실패 정리, 가상계좌 입금 확인·웹훅, 결제 후 환불.
+
+- [주문서형 v2 연동 가이드](https://docs.tosspayments.com/guides/v2/payment-widget/integration)
+- [주문서형 v2 SDK](https://docs.tosspayments.com/sdk/v2/js/payment-widget)
+- [승인·조회 API](https://docs.tosspayments.com/reference)
