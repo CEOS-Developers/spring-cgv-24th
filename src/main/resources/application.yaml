@@ -26,3 +26,7 @@ jwt:
   access-token-expiration: 30m
   issuer: cgv
   audience: cgv-api
+
+toss:
+  client-key: ${TOSS_CLIENT_KEY:}
+  secret-key: ${TOSS_SECRET_KEY:}

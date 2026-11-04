@@ -6,6 +6,8 @@ import com.cgvclone.cgv.domain.user.User;
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -20,6 +22,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.UUID;
 import lombok.AccessLevel;
 import lombok.Builder;
 import lombok.Getter;
@@ -51,6 +54,36 @@ public class Purchase {
 
     @OneToMany(mappedBy = "purchase", cascade = CascadeType.PERSIST)
     private List<PurchaseGoods> purchaseGoods = new ArrayList<>();
+
+    @Column(nullable = false, unique = true, length = 64, updatable = false)
+    private String orderId = UUID.randomUUID().toString();
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    private PurchaseStatus status = PurchaseStatus.PENDING;
+
+    @Column(unique = true, length = 200)
+    private String paymentKey;
+
+    private LocalDateTime approvedAt;
+
+    public void beginConfirmation(String paymentKey) {
+        this.paymentKey = paymentKey;
+        this.status = PurchaseStatus.CONFIRMING;
+    }
+
+    public void markPaid(LocalDateTime approvedAt) {
+        this.status = PurchaseStatus.PAID;
+        this.approvedAt = approvedAt;
+    }
+
+    public void waitForDeposit() {
+        this.status = PurchaseStatus.WAITING_FOR_DEPOSIT;
+    }
+
+    public void cancel() {
+        this.status = PurchaseStatus.CANCELED;
+    }
 
     @Builder
     public Purchase(User user, Cinema cinema, Map<Goods, Integer> goodsQuantities) {

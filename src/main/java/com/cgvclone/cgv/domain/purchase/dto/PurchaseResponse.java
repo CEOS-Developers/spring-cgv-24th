@@ -1,6 +1,7 @@
 package com.cgvclone.cgv.domain.purchase.dto;
 
 import com.cgvclone.cgv.domain.purchase.Purchase;
+import com.cgvclone.cgv.domain.purchase.PurchaseStatus;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -9,7 +10,10 @@ public record PurchaseResponse(
         Long cinemaId,
         LocalDateTime purchasedAt,
         Integer totalPrice,
-        List<Item> items
+        List<Item> items,
+        String orderId,
+        PurchaseStatus status,
+        LocalDateTime approvedAt
 ) {
 
     public static PurchaseResponse from(Purchase purchase) {
@@ -21,7 +25,11 @@ public record PurchaseResponse(
                 purchase.getPurchaseGoods().stream()
                         .map(item -> new Item(item.getGoods().getGoodsId(), item.getGoodsName(), item.getUnitPrice(),
                                 item.getQuantity(), item.getTotalPrice()))
-                        .toList());
+                        .toList(),
+                purchase.getOrderId(),
+                purchase.getStatus(),
+                purchase.getApprovedAt()
+        );
     }
 
     public record Item(

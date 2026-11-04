@@ -56,6 +56,10 @@ public class PurchaseService {
         } catch (ArithmeticException exception) {
             throw new GlobalException(ErrorCode.PURCHASE_AMOUNT_EXCEEDED);
         }
+        if (purchase.getTotalPrice() <= 0) {
+            throw new GlobalException(ErrorCode.INVALID_PURCHASE_REQUEST);
+        }
+        // 결제가 진행되는 동안 재고를 예약한다. 결제 전 주문 취소 시 반환한다.
         stocks.forEach(Stock::decrease);
         Purchase savedPurchase = purchaseRepository.save(purchase);
         return PurchaseResponse.from(savedPurchase);

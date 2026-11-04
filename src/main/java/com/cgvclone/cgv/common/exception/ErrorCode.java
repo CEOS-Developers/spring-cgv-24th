@@ -7,6 +7,12 @@ import org.springframework.http.HttpStatus;
 @Getter
 @RequiredArgsConstructor
 public enum ErrorCode {
+    PAYMENT_NOT_CONFIGURED(HttpStatus.SERVICE_UNAVAILABLE, "토스 주문서형 테스트 키 설정이 필요합니다."),
+    INVALID_PAYMENT_REQUEST(HttpStatus.BAD_REQUEST, "결제 요청을 확인해주세요."),
+    PURCHASE_NOT_FOUND(HttpStatus.NOT_FOUND, "주문을 찾을 수 없습니다."),
+    PAYMENT_AMOUNT_MISMATCH(HttpStatus.BAD_REQUEST, "주문 금액과 결제 금액이 일치하지 않습니다."),
+    PAYMENT_STATE_CONFLICT(HttpStatus.CONFLICT, "현재 주문 상태 또는 결제 키로 처리할 수 없습니다."),
+    PAYMENT_UNAVAILABLE(HttpStatus.BAD_GATEWAY, "결제 결과를 확인할 수 없습니다. 토스 결제 내역을 확인해주세요."),
     ACCESS_DENIED(HttpStatus.FORBIDDEN, "접근 권한이 없습니다."),
     TOKEN_NOT_EXIST(HttpStatus.UNAUTHORIZED, "인증 토큰이 필요합니다."),
     TOKEN_EXPIRED(HttpStatus.UNAUTHORIZED, "토큰이 만료되었습니다."),
