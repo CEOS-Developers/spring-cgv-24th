@@ -60,6 +60,9 @@ class PaymentIdempotencyTest {
     @Mock
     private TossPaymentsClient tossPaymentsClient;
 
+    @Mock
+    private PaymentRecoveryService paymentRecoveryService;
+
     private Order order;
     private Payment readyPayment;
     private final String orderId = "CGV_ORDER_TEST_1001";

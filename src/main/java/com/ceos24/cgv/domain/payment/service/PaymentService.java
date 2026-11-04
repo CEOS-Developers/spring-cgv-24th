@@ -14,6 +14,7 @@ import com.ceos24.cgv.domain.payment.dto.TossPaymentResponse;
 import com.ceos24.cgv.domain.payment.entity.Payment;
 import com.ceos24.cgv.domain.payment.entity.PaymentCancelHistory;
 import com.ceos24.cgv.domain.payment.entity.PaymentStatus;
+import com.ceos24.cgv.domain.payment.exception.TossPaymentException;
 import com.ceos24.cgv.domain.payment.repository.PaymentCancelHistoryRepository;
 import com.ceos24.cgv.domain.payment.repository.PaymentRepository;
 import com.ceos24.cgv.global.exception.BusinessException;
@@ -36,6 +37,7 @@ public class PaymentService {
     private final PaymentCancelHistoryRepository paymentCancelHistoryRepository;
     private final OrderRepository orderRepository;
     private final TossPaymentsClient tossPaymentsClient;
+    private final PaymentRecoveryService paymentRecoveryService;
 
     @Transactional
     public PaymentPrepareResponse preparePayment(PaymentPrepareRequest request) {
@@ -114,19 +116,94 @@ public class PaymentService {
             tossResponse = tossPaymentsClient.confirm(
                     new TossConfirmRequest(request.paymentKey(), request.orderId(), request.amount()),
                     request.orderId());
+        } catch (TossPaymentException e) {
+            log.error(
+                    "토스 결제 승인 API 호출 실패 (TossPaymentException): orderId={}, code={}, message={}",
+                    request.orderId(),
+                    e.getTossCode(),
+                    e.getMessage());
+            if (e.isClientError()) {
+                // 4xx 에러: 결제 중단(ABORTED) 상태로 별도 트랜잭션 기록
+                paymentRecoveryService.recordAbortByOrderId(request.orderId());
+            } else {
+                // 5xx 서버 에러 또는 TimeoutException: 결제 실패(FAILED) 상태로 별도 트랜잭션 기록
+                paymentRecoveryService.recordFailByOrderId(request.orderId());
+            }
+            throw e;
         } catch (Exception e) {
-            log.error("토스 결제 승인 API 호출 실패: orderId={}, error={}", request.orderId(), e.getMessage());
-            payment.abort();
+            log.error("토스 결제 승인 API 호출 중 예기치 못한 실패: orderId={}, error={}", request.orderId(), e.getMessage());
+            paymentRecoveryService.recordFailByOrderId(request.orderId());
             throw e;
         }
 
-        // 6. 승인 성공 시 결제 정보(paymentKey, method, approvedAt) DB 영속화 및 상태 DONE 전이
-        LocalDateTime approvedAt = tossResponse.approvedAt() != null
-                ? OffsetDateTime.parse(tossResponse.approvedAt()).toLocalDateTime()
-                : LocalDateTime.now();
-        payment.complete(tossResponse.paymentKey(), tossResponse.method(), approvedAt);
+        // 6. 응답 무결성 검증 (시나리오 3: 필수 필드 누락 및 변조 검증)
+        try {
+            tossResponse.validateIntegrity(request.orderId(), request.amount());
+        } catch (BusinessException integrityEx) {
+            log.error("토스 승인 응답 무결성 검증 실패: orderId={}, error={}", request.orderId(), integrityEx.getMessage());
+            executeCompensatingCancel(
+                    request.orderId(),
+                    tossResponse.paymentKey() != null ? tossResponse.paymentKey() : request.paymentKey(),
+                    request.amount(),
+                    "비정상 승인 응답 수신으로 인한 자동 보상 취소",
+                    integrityEx);
+        }
+
+        // 7. 승인 성공 후 DB 영속화 및 후속 작업 처리 (시나리오 2: 실패 시 자동 보상 취소 방어)
+        try {
+            LocalDateTime approvedAt = tossResponse.approvedAt() != null
+                    ? OffsetDateTime.parse(tossResponse.approvedAt()).toLocalDateTime()
+                    : LocalDateTime.now();
+            payment.complete(tossResponse.paymentKey(), tossResponse.method(), approvedAt);
+        } catch (Exception dbException) {
+            log.error(
+                    "토스 결제 승인 성공 후 DB 영속화 중 치명적 오류 발생! 보상 트랜잭션을 시작합니다. orderId={}, error={}",
+                    request.orderId(),
+                    dbException.getMessage(),
+                    dbException);
+            executeCompensatingCancel(
+                    request.orderId(),
+                    tossResponse.paymentKey(),
+                    request.amount(),
+                    "시스템 오류로 인한 자동 보상 취소",
+                    new BusinessException(ErrorCode.PAYMENT_GATEWAY_ERROR, "주문 처리 중 오류가 발생하여 결제가 자동으로 취소되었습니다."));
+        }
 
         return PaymentResponse.from(payment);
+    }
+
+    private void executeCompensatingCancel(
+            String orderId, String paymentKey, Long amount, String reason, RuntimeException exceptionToThrowOnSuccess) {
+        log.warn(
+                "보상 트랜잭션(Compensating Transaction) 실행: orderId={}, paymentKey={}, amount={}, reason={}",
+                orderId,
+                paymentKey,
+                amount,
+                reason);
+        boolean cancelSucceeded = false;
+        try {
+            tossPaymentsClient.cancel(paymentKey, new TossCancelRequest(reason, amount), "COMPENSATION_" + orderId);
+            log.info("보상 취소 성공 완료: 토스 결제가 안전하게 자동 취소되었습니다. (orderId={})", orderId);
+            cancelSucceeded = true;
+            paymentRecoveryService.recordCompensatedAbort(orderId, paymentKey);
+        } catch (Exception cancelEx) {
+            handleCompensationFailure(orderId, paymentKey, cancelEx);
+        }
+
+        if (cancelSucceeded) {
+            throw exceptionToThrowOnSuccess;
+        }
+    }
+
+    private void handleCompensationFailure(String orderId, String paymentKey, Exception cancelEx) {
+        log.error(
+                "🚨 [치명적 불일치 발생] 결제 승인 후 보상 취소 API 호출마저 실패했습니다! (orderId={}, paymentKey={}) 수동 복구 기록(MANUAL_RECOVERY_REQUIRED)을 진행합니다.",
+                orderId,
+                paymentKey,
+                cancelEx);
+        paymentRecoveryService.recordManualRecoveryRequired(orderId, paymentKey);
+        throw new BusinessException(
+                ErrorCode.PAYMENT_COMPENSATION_FAILED, "주문 처리 중 시스템 오류가 발생하였으며 자동 결제 취소에도 실패했습니다. 관리자 확인이 필요합니다.");
     }
 
     @Transactional(readOnly = true)

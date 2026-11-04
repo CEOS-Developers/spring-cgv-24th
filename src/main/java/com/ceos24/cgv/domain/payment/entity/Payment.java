@@ -157,6 +157,19 @@ public class Payment {
         }
     }
 
+    public void fail() {
+        if (this.status == PaymentStatus.READY) {
+            this.status = PaymentStatus.FAILED;
+        }
+    }
+
+    public void markManualRecoveryRequired(String paymentKey) {
+        if (paymentKey != null && !paymentKey.isBlank()) {
+            this.paymentKey = paymentKey;
+        }
+        this.status = PaymentStatus.MANUAL_RECOVERY_REQUIRED;
+    }
+
     public List<PaymentCancelHistory> getCancelHistories() {
         return Collections.unmodifiableList(cancelHistories);
     }

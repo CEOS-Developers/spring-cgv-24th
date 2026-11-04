@@ -53,7 +53,11 @@ public enum ErrorCode {
     PAYMENT_ALREADY_PROCESSED(400, "이미 완료되었거나 처리 불가능한 결제입니다."),
     PAYMENT_CANCEL_AMOUNT_EXCEEDED(400, "취소 요청 금액이 남은 결제 잔액을 초과했습니다."),
     PAYMENT_ALREADY_CANCELED(400, "이미 전액 취소된 결제입니다."),
-    PAYMENT_GATEWAY_ERROR(502, "외부 결제 대행사(PG) 통신 중 오류가 발생했습니다.");
+    PAYMENT_GATEWAY_CLIENT_ERROR(400, "결제 대행사 승인 요청이 거절되었습니다."),
+    PAYMENT_GATEWAY_TIMEOUT(504, "결제 대행사 통신 중 시간 초과가 발생했습니다."),
+    PAYMENT_INVALID_RESPONSE(502, "결제 대행사의 응답 정보가 올바르지 않습니다."),
+    PAYMENT_GATEWAY_ERROR(502, "외부 결제 대행사(PG) 통신 중 오류가 발생했습니다."),
+    PAYMENT_COMPENSATION_FAILED(500, "시스템 오류 발생 후 자동 보상 취소 처리에 실패했습니다. 운영자 확인이 필요합니다.");
 
     private final int status;
     private final String message;
