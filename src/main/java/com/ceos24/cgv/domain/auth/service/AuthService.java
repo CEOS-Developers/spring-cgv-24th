@@ -12,6 +12,7 @@ import com.ceos24.cgv.global.exception.BusinessException;
 import com.ceos24.cgv.global.exception.ErrorCode;
 import com.ceos24.cgv.global.security.CustomUserDetails;
 import com.ceos24.cgv.global.security.jwt.JwtProvider;
+import java.time.Duration;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -25,6 +26,8 @@ import org.springframework.transaction.annotation.Transactional;
 @Slf4j
 @Service
 public class AuthService {
+
+    private static final Duration GRACE_PERIOD = Duration.ofSeconds(10);
 
     private final String adminToken;
     private final MemberRepository memberRepository;
@@ -111,11 +114,15 @@ public class AuthService {
                     .orElseThrow(() -> new BusinessException(ErrorCode.AUTH_INVALID_TOKEN));
 
             if (storedToken.isUsed()) {
+                if (storedToken.isWithinGracePeriod(GRACE_PERIOD)) {
+                    log.info("[유예 기간 내 재발급] memberId: {} 동시 요청으로 직전 발급 토큰 반환", memberIdStr);
+                    return new TokenResponse(
+                            storedToken.getReissuedAccessToken(), storedToken.getReissuedRefreshToken());
+                }
+
                 refreshTokenRepository.deleteAllByMemberId(Long.parseLong(memberIdStr));
-                log.error("[재사용 탐지] memberId: {} 의 토큰 탈취 의심", memberIdStr);
+                log.error("[재사용 탐지] memberId: {} 의 토큰 탈취 의심 (유예 기간 만료)", memberIdStr);
                 throw new BusinessException(ErrorCode.AUTH_HIJACK_DETECTED);
-            } else {
-                storedToken.useToken();
             }
 
             Member member = memberRepository
@@ -125,6 +132,8 @@ public class AuthService {
             String newAccessToken =
                     jwtProvider.createAccessToken(memberIdStr, member.getRole().getKey());
             String newRefreshToken = jwtProvider.createRefreshToken(memberIdStr);
+
+            storedToken.useToken(newAccessToken, newRefreshToken);
             refreshTokenRepository.save(new RefreshToken(newRefreshToken, Long.parseLong(memberIdStr)));
 
             return new TokenResponse(newAccessToken, newRefreshToken);
