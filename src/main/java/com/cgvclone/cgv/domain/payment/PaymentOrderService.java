@@ -7,6 +7,7 @@ import com.cgvclone.cgv.domain.purchase.PurchaseRepository;
 import com.cgvclone.cgv.domain.purchase.PurchaseStatus;
 import com.cgvclone.cgv.domain.purchase.dto.PurchaseResponse;
 import com.cgvclone.cgv.domain.stock.StockRepository;
+import java.util.Comparator;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -28,10 +29,9 @@ public class PaymentOrderService {
         if (!purchase.getTotalPrice().equals(request.amount())) {
             throw new GlobalException(ErrorCode.PAYMENT_AMOUNT_MISMATCH);
         }
-        if (purchase.getStatus() != PurchaseStatus.PENDING) {
+        if (purchases.beginConfirmation(request.orderId(), userId, request.amount(), request.paymentKey()) != 1) {
             throw new GlobalException(ErrorCode.PAYMENT_STATE_CONFLICT);
         }
-        purchase.beginConfirmation(request.paymentKey());
     }
 
     public PurchaseResponse complete(Long userId, PaymentConfirmRequest request, TossPayment payment) {
@@ -40,31 +40,29 @@ public class PaymentOrderService {
         if (!paid && !"WAITING_FOR_DEPOSIT".equals(payment.status())) {
             throw new GlobalException(ErrorCode.PAYMENT_UNAVAILABLE);
         }
-        Purchase purchase = owned(userId, request.orderId());
-        if (!request.paymentKey().equals(purchase.getPaymentKey())
-                || purchase.getStatus() != PurchaseStatus.CONFIRMING) {
+        owned(userId, request.orderId());
+        PurchaseStatus status = paid ? PurchaseStatus.PAID : PurchaseStatus.WAITING_FOR_DEPOSIT;
+        if (purchases.completeConfirmation(request.orderId(), userId, request.paymentKey(), request.amount(), status,
+                paid ? payment.approvedAt().toLocalDateTime() : null) != 1) {
             throw new GlobalException(ErrorCode.PAYMENT_STATE_CONFLICT);
         }
-        if (paid) {
-            purchase.markPaid(payment.approvedAt().toLocalDateTime());
-        } else {
-            purchase.waitForDeposit();
-        }
-        return PurchaseResponse.from(purchase);
+        return PurchaseResponse.from(owned(userId, request.orderId()));
     }
 
     public PurchaseResponse cancel(Long userId, String orderId) {
-        Purchase purchase = owned(userId, orderId);
-        // 승인 요청을 시작한 주문은 결과 확인 전 재고를 반환하지 않는다.
-        if (purchase.getStatus() != PurchaseStatus.PENDING) {
+        owned(userId, orderId);
+        if (purchases.cancelPending(orderId, userId) != 1) {
             throw new GlobalException(ErrorCode.PAYMENT_STATE_CONFLICT);
         }
-        purchase.getPurchaseGoods()
-                .forEach(i -> stocks.findByCinema_CinemaIdAndGoods_GoodsId(purchase.getCinema().getCinemaId(),
-                                i.getGoods().getGoodsId()).orElseThrow(() -> new GlobalException(ErrorCode.STOCK_NOT_FOUND))
-                        .increase(i.getQuantity()));
-        purchase.cancel();
-        return PurchaseResponse.from(purchase);
+        PurchaseResponse response = PurchaseResponse.from(owned(userId, orderId));
+        response.items().stream()
+                .sorted(Comparator.comparing(PurchaseResponse.Item::goodsId))
+                .forEach(item -> {
+                    if (stocks.restoreQuantity(response.cinemaId(), item.goodsId(), item.quantity()) != 1) {
+                        throw new GlobalException(ErrorCode.STOCK_RESTORE_FAILED);
+                    }
+                });
+        return response;
     }
 
     private Purchase owned(Long userId, String orderId) {

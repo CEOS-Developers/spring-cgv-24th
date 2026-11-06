@@ -8,12 +8,12 @@ import com.cgvclone.cgv.domain.goods.Goods;
 import com.cgvclone.cgv.domain.purchase.dto.PurchaseCreateRequest;
 import com.cgvclone.cgv.domain.purchase.dto.PurchaseItemRequest;
 import com.cgvclone.cgv.domain.purchase.dto.PurchaseResponse;
-import com.cgvclone.cgv.domain.stock.Stock;
 import com.cgvclone.cgv.domain.stock.StockRepository;
 import com.cgvclone.cgv.domain.user.User;
 import com.cgvclone.cgv.domain.user.UserService;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.TreeMap;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -33,17 +33,11 @@ public class PurchaseService {
         Map<Long, Integer> quantities = validate(request);
         User user = userService.getUser(userId);
         Cinema cinema = cinemaService.getCinemaEntity(request.cinemaId());
-        Map<Stock, Integer> stocks = new HashMap<>();
         Map<Goods, Integer> goodsQuantities = new HashMap<>();
-
         quantities.forEach((goodsId, quantity) -> {
-            Stock stock = stockRepository.findByCinema_CinemaIdAndGoods_GoodsId(request.cinemaId(), goodsId)
+            Goods goods = stockRepository.findGoodsForSale(request.cinemaId(), goodsId)
                     .orElseThrow(() -> new GlobalException(ErrorCode.STOCK_NOT_FOUND));
-            if (stock.getQuantity() < quantity) {
-                throw new GlobalException(ErrorCode.INSUFFICIENT_STOCK);
-            }
-            stocks.put(stock, quantity);
-            goodsQuantities.put(stock.getGoods(), quantity);
+            goodsQuantities.put(goods, quantity);
         });
 
         Purchase purchase;
@@ -60,7 +54,11 @@ public class PurchaseService {
             throw new GlobalException(ErrorCode.INVALID_PURCHASE_REQUEST);
         }
         // 결제가 진행되는 동안 재고를 예약한다. 결제 전 주문 취소 시 반환한다.
-        stocks.forEach(Stock::decrease);
+        quantities.forEach((goodsId, quantity) -> {
+            if (stockRepository.decreaseIfAvailable(request.cinemaId(), goodsId, quantity) != 1) {
+                throw new GlobalException(ErrorCode.INSUFFICIENT_STOCK);
+            }
+        });
         Purchase savedPurchase = purchaseRepository.save(purchase);
         return PurchaseResponse.from(savedPurchase);
     }
@@ -70,7 +68,7 @@ public class PurchaseService {
                 || request.items().isEmpty()) {
             throw new GlobalException(ErrorCode.INVALID_PURCHASE_REQUEST);
         }
-        Map<Long, Integer> quantities = new HashMap<>();
+        Map<Long, Integer> quantities = new TreeMap<>();
         for (PurchaseItemRequest item : request.items()) {
             if (item == null || item.goodsId() == null || item.goodsId() <= 0
                     || item.quantity() == null || item.quantity() <= 0

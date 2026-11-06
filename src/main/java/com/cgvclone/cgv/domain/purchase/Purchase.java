@@ -67,24 +67,6 @@ public class Purchase {
 
     private LocalDateTime approvedAt;
 
-    public void beginConfirmation(String paymentKey) {
-        this.paymentKey = paymentKey;
-        this.status = PurchaseStatus.CONFIRMING;
-    }
-
-    public void markPaid(LocalDateTime approvedAt) {
-        this.status = PurchaseStatus.PAID;
-        this.approvedAt = approvedAt;
-    }
-
-    public void waitForDeposit() {
-        this.status = PurchaseStatus.WAITING_FOR_DEPOSIT;
-    }
-
-    public void cancel() {
-        this.status = PurchaseStatus.CANCELED;
-    }
-
     @Builder
     public Purchase(User user, Cinema cinema, Map<Goods, Integer> goodsQuantities) {
         this.user = Objects.requireNonNull(user, "구매자는 필수입니다.");
