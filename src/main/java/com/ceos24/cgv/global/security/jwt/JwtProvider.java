@@ -7,6 +7,7 @@ import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.io.Decoders;
 import io.jsonwebtoken.security.Keys;
 import java.util.Date;
+import java.util.UUID;
 import javax.crypto.SecretKey;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -32,6 +33,7 @@ public class JwtProvider {
     public String createAccessToken(String memberId, String role) {
         Date now = new Date();
         return Jwts.builder()
+                .id(UUID.randomUUID().toString())
                 .issuer("http://localhost:8080")
                 .subject(memberId)
                 .claim("role", role)
@@ -45,6 +47,7 @@ public class JwtProvider {
     public String createRefreshToken(String memberId) {
         Date now = new Date();
         return Jwts.builder()
+                .id(UUID.randomUUID().toString())
                 .issuer("http://localhost:8080")
                 .subject(memberId)
                 .claim("type", "refresh")

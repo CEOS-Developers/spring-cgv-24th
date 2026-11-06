@@ -120,9 +120,11 @@ class AuthReissueConcurrencyTest {
         TokenResponse reissuedResponse = authService.reissue(originalRefreshToken);
         assertThat(reissuedResponse).isNotNull();
 
-        // DB에 저장된 originalRefreshToken 엔티티의 usedAt 시간을 11초 전으로 조작 (유예 기간 10초 만료 시뮬레이션)
-        RefreshToken storedToken =
-                refreshTokenRepository.findByToken(originalRefreshToken).orElseThrow();
+        // DB에 저장된 originalRefreshToken 엔티티의 usedAt 시간을 11초 전으로 변경 (유예 기간 10초 만료 시뮬레이션)
+        RefreshToken storedToken = refreshTokenRepository.findAll().stream()
+                .filter(rt -> rt.getToken().equals(originalRefreshToken))
+                .findFirst()
+                .orElseThrow();
         Field usedAtField = RefreshToken.class.getDeclaredField("usedAt");
         usedAtField.setAccessible(true);
         usedAtField.set(storedToken, LocalDateTime.now().minusSeconds(11));
@@ -134,9 +136,7 @@ class AuthReissueConcurrencyTest {
                 .isInstanceOf(BusinessException.class)
                 .hasFieldOrPropertyWithValue("errorCode", ErrorCode.AUTH_HIJACK_DETECTED);
 
-        // 해당 회원의 모든 RefreshToken이 삭제되었는지 확인 (새로 발급되었던 토큰도 삭제됨)
-        assertThat(refreshTokenRepository.findByToken(reissuedResponse.refreshToken()))
-                .isEmpty();
+        // 해당 회원의 모든 RefreshToken이 삭제되었는지 확인
         assertThat(refreshTokenRepository.findAll()).isEmpty();
     }
 }

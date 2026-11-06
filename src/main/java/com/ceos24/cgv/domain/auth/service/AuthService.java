@@ -104,7 +104,7 @@ public class AuthService {
         }
     }
 
-    @Transactional
+    @Transactional(noRollbackFor = BusinessException.class)
     public TokenResponse reissue(String refreshToken) {
         try {
             String memberIdStr = jwtProvider.validateRefreshToken(refreshToken);
