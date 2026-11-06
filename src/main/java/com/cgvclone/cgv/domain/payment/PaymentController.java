@@ -2,6 +2,7 @@ package com.cgvclone.cgv.domain.payment;
 
 import com.cgvclone.cgv.domain.auth.CustomUserDetails;
 import com.cgvclone.cgv.domain.purchase.dto.PurchaseResponse;
+import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -27,7 +28,10 @@ public class PaymentController {
     public PurchaseResponse confirm(@AuthenticationPrincipal CustomUserDetails user,
                                     @RequestBody PaymentConfirmRequest request) {
         tossPaymentClient.clientKey();
-        paymentOrderService.prepare(user.getUserId(), request);
+        Optional<PurchaseResponse> completed = paymentOrderService.prepare(user.getUserId(), request);
+        if (completed.isPresent()) {
+            return completed.get();
+        }
         TossPayment payment = tossPaymentClient.confirm(request);
         return paymentOrderService.complete(user.getUserId(), request, payment);
     }

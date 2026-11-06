@@ -49,6 +49,7 @@ public class TossPaymentClient {
         TossPayment payment;
         try {
             payment = client.post().uri("/v1/payments/confirm")
+                    .header("Idempotency-Key", "payment-confirm:" + request.orderId())
                     .contentType(MediaType.APPLICATION_JSON).body(request).retrieve().body(TossPayment.class);
         } catch (RestClientException exception) {
             throw new GlobalException(ErrorCode.PAYMENT_UNAVAILABLE);
