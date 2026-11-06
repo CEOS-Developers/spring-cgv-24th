@@ -17,5 +17,6 @@ public interface MenuStockRepository extends JpaRepository<MenuStock, Long> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     List<MenuStock> findAllByStoreIdAndMenuIdIn(Long storeId, List<Long> menuIds);
 
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
     Optional<MenuStock> findByStoreIdAndMenuId(Long storeId, Long menuId);
 }

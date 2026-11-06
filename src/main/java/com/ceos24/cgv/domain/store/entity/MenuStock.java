@@ -38,4 +38,11 @@ public class MenuStock {
         }
         this.stock -= quantity;
     }
+
+    public void increaseStock(Long quantity) {
+        if (quantity == null || quantity <= 0) {
+            throw new IllegalArgumentException("복구할 재고 수량은 1개 이상이어야 합니다.");
+        }
+        this.stock += quantity;
+    }
 }

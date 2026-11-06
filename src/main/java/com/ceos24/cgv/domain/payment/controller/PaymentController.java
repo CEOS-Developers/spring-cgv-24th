@@ -35,7 +35,7 @@ public class PaymentController {
         return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.success(response));
     }
 
-    @Operation(summary = "결제 최종 승인", description = "서버 측 3단계 무결성 검증을 거친 후 토스페이먼츠에 결제 승인을 요청합니다.")
+    @Operation(summary = "결제 최종 승인", description = "주문 및 결제 금액을 검증한 후 토스페이먼츠에 결제 승인을 요청합니다.")
     @PostMapping("/confirm")
     public ResponseEntity<ApiResponse<PaymentResponse>> confirmPayment(@RequestBody PaymentConfirmRequest request) {
         PaymentResponse response = paymentService.confirmPayment(request);

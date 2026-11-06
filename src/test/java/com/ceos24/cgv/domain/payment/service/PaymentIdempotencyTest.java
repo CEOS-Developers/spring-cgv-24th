@@ -27,6 +27,7 @@ import com.ceos24.cgv.domain.payment.repository.PaymentCancelHistoryRepository;
 import com.ceos24.cgv.domain.payment.repository.PaymentRepository;
 import com.ceos24.cgv.domain.store.entity.Menu;
 import com.ceos24.cgv.domain.store.entity.Store;
+import com.ceos24.cgv.domain.store.repository.MenuStockRepository;
 import com.ceos24.cgv.domain.theater.entity.Theater;
 import com.ceos24.cgv.global.exception.BusinessException;
 import com.ceos24.cgv.global.exception.ErrorCode;
@@ -56,6 +57,9 @@ class PaymentIdempotencyTest {
 
     @Mock
     private OrderRepository orderRepository;
+
+    @Mock
+    private MenuStockRepository menuStockRepository;
 
     @Mock
     private TossPaymentsClient tossPaymentsClient;
@@ -116,14 +120,14 @@ class PaymentIdempotencyTest {
         assertThat(firstResponse.balanceAmount()).isEqualTo(totalAmount);
         verify(tossPaymentsClient, times(1)).confirm(any(), eq(orderId));
 
-        // 2. 네트워크 지연/재시도로 동일한 결제 승인 요청 2차 인입
+        // 2. 네트워크 지연/재시도로 동일한 결제 승인 요청 2차 유입
         PaymentResponse secondResponse = paymentService.confirmPayment(request);
 
-        // then: 상태와 결과는 동일하며, 토스 승인 API는 추가 호출되지 않고(호출 횟수 1회 유지) 멱등하게 반환됨
+        // then: 상태와 결과는 동일하며, 토스 승인 API는 추가 호출되지 않음
         assertThat(secondResponse.status()).isEqualTo(PaymentStatus.DONE);
         assertThat(secondResponse.paymentKey()).isEqualTo(paymentKey);
         assertThat(secondResponse.balanceAmount()).isEqualTo(totalAmount);
-        verify(tossPaymentsClient, times(1)).confirm(any(), eq(orderId)); // 2차에는 토스 호출 0회!
+        verify(tossPaymentsClient, times(1)).confirm(any(), eq(orderId));
     }
 
     @Test
@@ -174,17 +178,16 @@ class PaymentIdempotencyTest {
         assertThat(firstCancelResponse.status()).isEqualTo(PaymentStatus.PARTIAL_CANCELED);
         verify(tossPaymentsClient, times(1)).cancel(eq(paymentKey), any(), eq(cancelRequestId));
 
-        // 2. 취소 완료 후 네트워크 타임아웃으로 클라이언트가 동일한 cancelRequestId로 2차 재시도
-        // (가맹점 DB에는 cancelRequestId가 이미 기록된 상태를 모킹)
+        // 2. 취소 완료 후 네트워크 타임아웃으로 클라이언트가 동일한 cancelRequestId로 재시도
         PaymentCancelHistory existingHistory = mock(PaymentCancelHistory.class);
         given(paymentCancelHistoryRepository.findByCancelRequestId(cancelRequestId))
                 .willReturn(Optional.of(existingHistory));
 
         PaymentResponse secondCancelResponse = paymentService.cancelPayment(paymentKey, cancelRequest);
 
-        // then: 잔액이 5,000원으로 또 깎이지 않고 10,000원으로 안전하게 유지되며, 토스 취소 호출도 1회로 유지됨 (과환불 원천 차단)
+        // then: 잔액이 중복 차감되지 않고 10,000원으로 유지되며 토스 취소 호출도 1회로 유지됨
         assertThat(secondCancelResponse.balanceAmount()).isEqualTo(10000L);
-        verify(tossPaymentsClient, times(1)).cancel(eq(paymentKey), any(), eq(cancelRequestId)); // 추가 호출 0회!
+        verify(tossPaymentsClient, times(1)).cancel(eq(paymentKey), any(), eq(cancelRequestId));
     }
 
     @Test

@@ -128,25 +128,14 @@ class OrderConcurrencyTest {
             });
         }
 
-        readyLatch.await(); // 100개 스레드 준비 완료 대기
+        readyLatch.await();
 
-        long startTime = System.currentTimeMillis();
-        startLatch.countDown(); // 동시 출발 신호!
-        doneLatch.await(); // 100개 작업 완료 대기
-        long endTime = System.currentTimeMillis();
-        long totalDurationMs = endTime - startTime;
+        startLatch.countDown();
+        doneLatch.await();
 
         executorService.shutdown();
 
         MenuStock finalStock = menuStockRepository.findById(targetStockId).orElseThrow();
-        System.out.println("==================================================");
-        System.out.println("🟢 [비관적 락 적용 후 100개 동시 요청 정합성 검증]");
-        System.out.println("요청 스레드 수: " + threadCount);
-        System.out.println("성공 횟수: " + successCount.get());
-        System.out.println("실패 횟수: " + failCount.get());
-        System.out.println("최종 남은 재고 (정상 기대치: 0개): " + finalStock.getStock() + "개");
-        System.out.println("총 테스트 실행 시간: " + totalDurationMs + " ms");
-        System.out.println("==================================================");
 
         assertThat(successCount.get()).isEqualTo(threadCount);
         assertThat(failCount.get()).isEqualTo(0);
@@ -191,23 +180,12 @@ class OrderConcurrencyTest {
 
         readyLatch.await();
 
-        long startTime = System.currentTimeMillis();
         startLatch.countDown();
         doneLatch.await();
-        long endTime = System.currentTimeMillis();
-        long totalDurationMs = endTime - startTime;
 
         executorService.shutdown();
 
         MenuStock finalStock = menuStockRepository.findById(targetStockId).orElseThrow();
-        System.out.println("==================================================");
-        System.out.println("🟢 [비관적 락 적용 후 초과 주문 방어 검증 (재고 10개 vs 요청 50개)]");
-        System.out.println("요청 스레드 수: " + threadCount);
-        System.out.println("성공 횟수 (기대치: 10회): " + successCount.get());
-        System.out.println("실패 횟수 (기대치: 40회): " + failCount.get());
-        System.out.println("최종 남은 재고 (기대치: 0개): " + finalStock.getStock() + "개");
-        System.out.println("총 테스트 실행 시간: " + totalDurationMs + " ms");
-        System.out.println("==================================================");
 
         assertThat(successCount.get()).isEqualTo(10);
         assertThat(failCount.get()).isEqualTo(40);

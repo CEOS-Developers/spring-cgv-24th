@@ -17,6 +17,7 @@ import com.ceos24.cgv.domain.payment.entity.PaymentStatus;
 import com.ceos24.cgv.domain.payment.exception.TossPaymentException;
 import com.ceos24.cgv.domain.payment.repository.PaymentCancelHistoryRepository;
 import com.ceos24.cgv.domain.payment.repository.PaymentRepository;
+import com.ceos24.cgv.domain.store.repository.MenuStockRepository;
 import com.ceos24.cgv.global.exception.BusinessException;
 import com.ceos24.cgv.global.exception.ErrorCode;
 import java.time.LocalDateTime;
@@ -36,6 +37,7 @@ public class PaymentService {
     private final PaymentRepository paymentRepository;
     private final PaymentCancelHistoryRepository paymentCancelHistoryRepository;
     private final OrderRepository orderRepository;
+    private final MenuStockRepository menuStockRepository;
     private final TossPaymentsClient tossPaymentsClient;
     private final PaymentRecoveryService paymentRecoveryService;
 
@@ -70,19 +72,18 @@ public class PaymentService {
 
     @Transactional
     public PaymentResponse confirmPayment(PaymentConfirmRequest request) {
-        // 1. 주문/결제 데이터 존재성 검증
+        // 1. 결제 데이터 조회
         Payment payment = paymentRepository
                 .findByOrderId(request.orderId())
                 .orElseThrow(() -> new BusinessException(ErrorCode.PAYMENT_NOT_FOUND));
 
-        // 2. 이미 결제 완료(DONE) 상태인 경우 멱등 반환 처리 (네트워크 재시도, 중복 호출 안전 보장)
+        // 2. 이미 승인 완료(DONE)된 경우 멱등 반환
         if (payment.getStatus() == PaymentStatus.DONE) {
-            // 위변조 검증: 파라미터(amount, paymentKey) 일치 확인
             if (!payment.getTotalAmount().equals(request.amount())
                     || (payment.getPaymentKey() != null
                             && !payment.getPaymentKey().equals(request.paymentKey()))) {
                 log.error(
-                        "이미 승인 완료된 결제에 대한 위변조 파라미터 재요청 감지: orderId={}, DB amount={}, req amount={}, DB key={}, req key={}",
+                        "승인 완료된 결제에 대한 파라미터 불일치 요청: orderId={}, DB amount={}, req amount={}, DB key={}, req key={}",
                         request.orderId(),
                         payment.getTotalAmount(),
                         request.amount(),
@@ -90,27 +91,27 @@ public class PaymentService {
                         request.paymentKey());
                 throw new BusinessException(ErrorCode.PAYMENT_AMOUNT_MISMATCH, "이미 승인 완료된 결제의 정보와 일치하지 않습니다.");
             }
-            log.info("결제 승인 멱등성 응답 (Idempotent OK): 이미 승인 완료된 요청입니다. (orderId={})", request.orderId());
+            log.info("결제 승인 멱등 응답: 이미 승인 완료된 요청 (orderId={})", request.orderId());
             return PaymentResponse.from(payment);
         }
 
-        // 3. 중복 승인 방어 (상태 검증: READY 상태에서만 최초 승인 가능)
+        // 3. 결제 상태 검증 (READY 상태에서만 승인 가능)
         if (payment.getStatus() != PaymentStatus.READY) {
-            log.warn("결제 승인 거절: 처리할 수 없는 결제 상태입니다. orderId={}, status={}", request.orderId(), payment.getStatus());
+            log.warn("결제 승인 거절: 승인 가능한 상태가 아님. orderId={}, status={}", request.orderId(), payment.getStatus());
             throw new BusinessException(ErrorCode.PAYMENT_ALREADY_PROCESSED);
         }
 
-        // 4. 1원 단위 금액 무결성 검증 (위변조 차단)
+        // 4. 결제 금액 검증
         if (!payment.getTotalAmount().equals(request.amount())) {
             log.error(
-                    "결제 금액 위변조 감지! DB 금액: {}원, 요청 금액: {}원 (orderId={})",
+                    "결제 금액 불일치: DB 금액={}원, 요청 금액={}원 (orderId={})",
                     payment.getTotalAmount(),
                     request.amount(),
                     request.orderId());
             throw new BusinessException(ErrorCode.PAYMENT_AMOUNT_MISMATCH);
         }
 
-        // 5. 모든 무결성 검증 통과 후 비로소 토스페이먼츠 승인 API 호출 (orderId를 Idempotency-Key로 주입)
+        // 5. 토스페이먼츠 승인 API 호출 (orderId를 Idempotency-Key로 전달)
         TossPaymentResponse tossResponse;
         try {
             tossResponse = tossPaymentsClient.confirm(
@@ -118,29 +119,27 @@ public class PaymentService {
                     request.orderId());
         } catch (TossPaymentException e) {
             log.error(
-                    "토스 결제 승인 API 호출 실패 (TossPaymentException): orderId={}, code={}, message={}",
+                    "토스 결제 승인 API 호출 실패: orderId={}, code={}, message={}",
                     request.orderId(),
                     e.getTossCode(),
                     e.getMessage());
             if (e.isClientError()) {
-                // 4xx 에러: 결제 중단(ABORTED) 상태로 별도 트랜잭션 기록
                 paymentRecoveryService.recordAbortByOrderId(request.orderId());
             } else {
-                // 5xx 서버 에러 또는 TimeoutException: 결제 실패(FAILED) 상태로 별도 트랜잭션 기록
                 paymentRecoveryService.recordFailByOrderId(request.orderId());
             }
             throw e;
         } catch (Exception e) {
-            log.error("토스 결제 승인 API 호출 중 예기치 못한 실패: orderId={}, error={}", request.orderId(), e.getMessage());
+            log.error("토스 결제 승인 API 호출 중 예외 발생: orderId={}, error={}", request.orderId(), e.getMessage());
             paymentRecoveryService.recordFailByOrderId(request.orderId());
             throw e;
         }
 
-        // 6. 응답 무결성 검증 (시나리오 3: 필수 필드 누락 및 변조 검증)
+        // 6. 응답 필수 필드 및 금액 검증
         try {
             tossResponse.validateIntegrity(request.orderId(), request.amount());
         } catch (BusinessException integrityEx) {
-            log.error("토스 승인 응답 무결성 검증 실패: orderId={}, error={}", request.orderId(), integrityEx.getMessage());
+            log.error("토스 승인 응답 검증 실패: orderId={}, error={}", request.orderId(), integrityEx.getMessage());
             executeCompensatingCancel(
                     request.orderId(),
                     tossResponse.paymentKey() != null ? tossResponse.paymentKey() : request.paymentKey(),
@@ -149,15 +148,16 @@ public class PaymentService {
                     integrityEx);
         }
 
-        // 7. 승인 성공 후 DB 영속화 및 후속 작업 처리 (시나리오 2: 실패 시 자동 보상 취소 방어)
+        // 7. 승인 완료 상태 반영 (실패 시 자동 보상 취소)
         try {
             LocalDateTime approvedAt = tossResponse.approvedAt() != null
                     ? OffsetDateTime.parse(tossResponse.approvedAt()).toLocalDateTime()
                     : LocalDateTime.now();
             payment.complete(tossResponse.paymentKey(), tossResponse.method(), approvedAt);
+            paymentRepository.saveAndFlush(payment);
         } catch (Exception dbException) {
             log.error(
-                    "토스 결제 승인 성공 후 DB 영속화 중 치명적 오류 발생! 보상 트랜잭션을 시작합니다. orderId={}, error={}",
+                    "결제 승인 후 DB 반영 중 오류 발생으로 보상 취소 진행: orderId={}, error={}",
                     request.orderId(),
                     dbException.getMessage(),
                     dbException);
@@ -174,16 +174,11 @@ public class PaymentService {
 
     private void executeCompensatingCancel(
             String orderId, String paymentKey, Long amount, String reason, RuntimeException exceptionToThrowOnSuccess) {
-        log.warn(
-                "보상 트랜잭션(Compensating Transaction) 실행: orderId={}, paymentKey={}, amount={}, reason={}",
-                orderId,
-                paymentKey,
-                amount,
-                reason);
+        log.warn("보상 취소 실행: orderId={}, paymentKey={}, amount={}, reason={}", orderId, paymentKey, amount, reason);
         boolean cancelSucceeded = false;
         try {
             tossPaymentsClient.cancel(paymentKey, new TossCancelRequest(reason, amount), "COMPENSATION_" + orderId);
-            log.info("보상 취소 성공 완료: 토스 결제가 안전하게 자동 취소되었습니다. (orderId={})", orderId);
+            log.info("보상 취소 완료 (orderId={})", orderId);
             cancelSucceeded = true;
             paymentRecoveryService.recordCompensatedAbort(orderId, paymentKey);
         } catch (Exception cancelEx) {
@@ -197,7 +192,7 @@ public class PaymentService {
 
     private void handleCompensationFailure(String orderId, String paymentKey, Exception cancelEx) {
         log.error(
-                "🚨 [치명적 불일치 발생] 결제 승인 후 보상 취소 API 호출마저 실패했습니다! (orderId={}, paymentKey={}) 수동 복구 기록(MANUAL_RECOVERY_REQUIRED)을 진행합니다.",
+                "결제 승인 후 보상 취소 API 호출 실패 (orderId={}, paymentKey={}). MANUAL_RECOVERY_REQUIRED 상태로 기록합니다.",
                 orderId,
                 paymentKey,
                 cancelEx);
@@ -226,9 +221,7 @@ public class PaymentService {
             Optional<PaymentCancelHistory> existingCancel =
                     paymentCancelHistoryRepository.findByCancelRequestId(request.cancelRequestId());
             if (existingCancel.isPresent()) {
-                log.info(
-                        "결제 취소 멱등성 응답 (Idempotent OK): 이미 처리된 취소 요청입니다. (cancelRequestId={})",
-                        request.cancelRequestId());
+                log.info("결제 취소 멱등 응답: 이미 처리된 취소 요청 (cancelRequestId={})", request.cancelRequestId());
                 return PaymentResponse.from(payment);
             }
         }
@@ -243,7 +236,7 @@ public class PaymentService {
         String itemName = "전체 취소";
         Long cancelAmount;
 
-        // 4. 품목 기반 부분 취소인 경우 vs 전체/금액 기반 취소인 경우
+        // 4. 품목 기반 부분 취소 vs 전체/금액 기반 취소
         if (request.orderItemId() != null) {
             targetItem = payment.getOrder().getOrderItems().stream()
                     .filter(oi -> oi.getId().equals(request.orderItemId()))
@@ -253,16 +246,16 @@ public class PaymentService {
             cancelQty = request.cancelQuantity() != null ? request.cancelQuantity() : 1L;
             itemName = targetItem.getMenu().getName();
 
-            // OrderItem 잔여 수량 검증 및 환불 금액 자동 산출
             cancelAmount = targetItem.cancelQuantity(cancelQty);
+            restoreMenuStock(payment.getOrder(), targetItem, cancelQty);
         } else {
-            // orderItemId가 없으면 금액 기반 취소 또는 잔액 전액 취소
             cancelAmount = request.cancelAmount() != null ? request.cancelAmount() : payment.getBalanceAmount();
-            // 전액 취소 시 모든 품목 잔여 수량도 일괄 취소 처리
             if (cancelAmount.equals(payment.getBalanceAmount())) {
                 for (OrderItem oi : payment.getOrder().getOrderItems()) {
-                    if (oi.getCancelableQuantity() > 0) {
-                        oi.cancelQuantity(oi.getCancelableQuantity());
+                    Long remainingQty = oi.getCancelableQuantity();
+                    if (remainingQty > 0) {
+                        oi.cancelQuantity(remainingQty);
+                        restoreMenuStock(payment.getOrder(), oi, remainingQty);
                     }
                 }
             }
@@ -273,7 +266,7 @@ public class PaymentService {
             throw new BusinessException(ErrorCode.PAYMENT_CANCEL_AMOUNT_EXCEEDED);
         }
 
-        // 6. 토스페이먼츠 취소 API 호출 (cancelRequestId를 Idempotency-Key로 주입)
+        // 6. 토스페이먼츠 취소 API 호출 (cancelRequestId를 Idempotency-Key로 전달)
         try {
             tossPaymentsClient.cancel(
                     paymentKey, new TossCancelRequest(request.cancelReason(), cancelAmount), request.cancelRequestId());
@@ -283,7 +276,7 @@ public class PaymentService {
             throw e;
         }
 
-        // 7. 도메인 잔액 차감 & 상태 전이 & 취소 이력(cancelRequestId 포함) 영속화
+        // 7. 도메인 잔액 차감, 상태 변경 및 취소 이력 저장
         payment.cancel(
                 request.cancelRequestId(),
                 targetItem,
@@ -294,6 +287,21 @@ public class PaymentService {
                 LocalDateTime.now());
 
         return PaymentResponse.from(payment);
+    }
+
+    private void restoreMenuStock(Order order, OrderItem orderItem, Long quantity) {
+        if (order == null
+                || order.getStore() == null
+                || order.getStore().getId() == null
+                || orderItem == null
+                || orderItem.getMenu() == null
+                || orderItem.getMenu().getId() == null) {
+            return;
+        }
+        menuStockRepository
+                .findByStoreIdAndMenuId(
+                        order.getStore().getId(), orderItem.getMenu().getId())
+                .ifPresent(menuStock -> menuStock.increaseStock(quantity));
     }
 
     private String createOrderName(Order order) {

@@ -52,7 +52,7 @@ public class OrderService {
 
     private Map<Long, MenuStock> findAndValidateMenuStocks(Long storeId, List<OrderItemRequest> items) {
         List<Long> menuIds =
-                items.stream().map(OrderItemRequest::menuId).distinct().toList();
+                items.stream().map(OrderItemRequest::menuId).distinct().sorted().toList();
 
         List<MenuStock> menuStocks = menuStockRepository.findAllByStoreIdAndMenuIdIn(storeId, menuIds);
 
