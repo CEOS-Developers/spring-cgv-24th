@@ -154,100 +154,114 @@ JWT 추출
 
 # 4주차 과제
 
-## 동시성
-### 동시성 문제란?
-- 여러 작업이 동시에 실행되면서 같은 데이터나 자원에 접근할 때, 작업의 실행 순서에 따라 예상하지 못한 결과가 발생하는 문제
-- 여러 작업이 공유 데이터를 읽고 수정하는 과정에서 서로 간섭하는 현상, 즉 경쟁 상태(Race Condition)일 때 발생할 수 있음
-- 대표 유형
+## 1. 구현 범위와 리팩토링
 
-    | 유형 | 설명 | 예시 |
-    | --- | --- | --- |
-    | Race Condition | 실행 순서에 따라 결과가 달라짐 | 동시 출금 시 잔액 오류 |
-    | Lost Update | 한 작업의 변경이 다른 작업에 덮어써짐 | 재고 10개에서 두 주문이 각각 1개 차감했는데 최종 재고가 9개 |
-    | Dirty Read | 확정되지 않은 데이터를 읽음 | 롤백될 결제를 성공으로 인식 |
-    | Deadlock | 작업들이 서로의 잠금을 기다려 진행하지 못함 | A는 주문 잠금, B는 결제 잠금을 보유한 채 서로 대기 |
+매점 구매에 **주문 생성 → 재고 예약 → 토스 결제 승인 → 결과 저장** 흐름을 구현했습니다. 현재 취소 API는 **결제 전 주문 취소**이며, 결제 완료 후 환불과 결제 조회 API는 아직 구현하지 않았습니다.
 
-- 해결 방법
-  1. 비관적 락(Pessimistic Lock)
-    - 데이터를 수정할 때 다른 요청이 접근하지 못하도록 잠금을 거는 방식
-    - 장단점
-  2. 낙관적 락(Optimistic Lock)
-    - 다른 요청과 충돌하지 않을 것이라고 가정하고, 데이터를 수정할 때 버전을 확인하는 방식
-  3. 원자적 연산(Atomic Operation)
-    - 여러 단계로 나눠진 작업을 DB에서 하나의 연산으로 처리하는 방식
+| 변경 내용 | 이유 |
+| --- | --- |
+| `PurchaseService` / `PaymentOrderService` / `TossPaymentClient` 역할 분리 | 주문 생성, 결제 상태 관리, 외부 HTTP 통신의 책임을 구분 |
+| `PurchaseGoods`에 구매 당시 상품명·단가 저장 | 상품 정보가 바뀌어도 주문 내역과 결제 금액 유지 |
+| 서버 가격으로 총액 계산, 양수 수량·중복 상품·정수 오버플로 검증 | 클라이언트의 금액 조작과 잘못된 주문 방지 |
+| 승인 준비·완료 트랜잭션 분리, `open-in-view=false` | PG 응답을 기다리는 동안 DB 잠금을 잡지 않고, 트랜잭션 안에서 최신 상태로 DTO 생성 |
 
-## 멱등성
-같은 작업을 여러 번 실행해도, 한 번 실행했을 때와 최종 결과가 동일한 성질
-### 결제 시스템에서 멱등성이 왜 중요할까?
-  - 중복 승인이나 중복 출금 가능성
-  - 주문, 결제, 환불 상태가 중복 처리로 꼬일 수 있음
-### Toss Payments에서 제공하는 멱등성 처리 방법
-  - `Idempotency-Key`라는 HTTP 요청 헤더를 이용해 멱등성을 보장하는 기능을 제공
-### 멱등성 vs. 동시성 제어
-| 구분 | 멱등성 | 동시성 제어 |
+## 2. 동시성 문제와 해결 방법
+
+- 동시성 문제
+  - 여러 요청이 같은 데이터를 읽고 변경할 때 실행 순서에 따라 결과가 달라지는 문제 
+  - 예를 들어 재고 1개를 두 요청이 동시에 읽으면 둘 다 구매할 수 있다고 판단할 수 있음. `@Transactional`만으로 이런 확인·변경 사이의 경쟁이 모두 막히지는 않음.
+
+| 방법 | 원리·장점 | 한계·적합한 상황 |
 | --- | --- | --- |
-| 핵심 문제 | 같은 요청의 반복 실행 | 여러 요청의 동시 실행 |
-| 대표 상황 | 결제 요청을 재시도 | 두 요청이 동시에 같은 잔액을 차감 |
-| 해결 방법 | Idempotency Key | 락, 트랜잭션, 원자적 연산 |
-| 목적 | 중복 처리 방지 | 데이터 일관성 보장 |
+| `synchronized` / `ReentrantLock` | JVM 안에서 임계 구역을 직렬화, 구현이 비교적 단순 | 여러 서버 간에는 공유되지 않음. 단일 JVM의 공유 자원에 적합 |
+| 낙관적 락 | 버전으로 변경 충돌을 감지 | 충돌 시 재시도 필요. 충돌이 드문 수정에 적합 |
+| 비관적 락 | DB 행을 잠가 다른 변경을 대기시킴 | 잠금 대기·데드락 가능. 같은 주문의 상태 확인과 변경에 적합 |
+| 조건부 원자적 UPDATE | 조건 검사와 변경을 한 SQL에서 처리 | 복잡한 규칙 표현에는 한계. 재고·잔액 차감에 적합 |
+| Redis 분산 락 | 여러 서버가 같은 락을 공유 | 별도 인프라와 만료·장애 처리 필요. 여러 자원에 걸친 작업에 적합 |
+| 메시지 큐 | 같은 자원의 작업을 순서대로 소비하도록 구성 | 응답 지연·중복 소비 처리 필요. 비동기 처리에 적합 |
 
-## 결제 시스템 연동
-- [Toss Payments 개발자센터](https://docs.tosspayments.com/guides/v2/get-started)
-- [결제 API](https://docs.tosspayments.com/reference)
+### 서비스에서 발견한 지점과 선택 이유
 
-#### 1. 로그인
-`POST {{baseUrl}}/auth/login` · No Auth
-```json
-{"email":"{{email}}","password":"{{password}}"}
-```
-
-#### 2. 주문 생성
-`POST {{baseUrl}}/purchases` · Bearer Token
-```json
-{"cinemaId":{{cinemaId}},"items":[{"goodsId":{{goodsId}},"quantity":1}]}
-```
-
-`201` 응답의 `status`가 `PENDING`, `approvedAt`이 `null`인지 확인
-
-#### 3. 결제 설정 조회
-`GET {{baseUrl}}/payments/config` · Bearer Token · 본문 없음
-정상 응답은 `200`과 `{"clientKey":"test_gck_..."}`
-이 API는 접두사만 검사하므로 `200`이 나와도 실제 발급된 키인지 토스에 검증한 것은 아님
-
-#### 4. 결제 전 주문 취소
-`POST {{baseUrl}}/payments/{{orderId}}/cancel` · Bearer Token · 본문 없음
-
-#### 5. 실제 인증 후 결제 승인
-`POST {{baseUrl}}/payments/confirm` · Bearer Token
-```json
-{"orderId":"{{orderId}}","paymentKey":"{{paymentKey}}","amount":{{amount}}}
-```
-
-#### API
-
-| 메서드·경로 | 요청 | 동작 |
+| 지점 | 제어가 없을 때의 문제 | 적용한 방법과 이유 |
 | --- | --- | --- |
-| `POST /purchases` | `{"cinemaId":1,"items":[{"goodsId":1,"quantity":1}]}` | 서버 가격으로 총액 계산, 재고 예약, `PENDING` 주문 생성. `orderId`, `totalPrice`, `status`, 상품 내역 반환 |
-| `GET /payments/config` | 없음 | 테스트 클라이언트 키 반환. 시크릿 키는 반환하지 않음 |
-| `POST /payments/confirm` | `{"orderId":"550e8400-e29b-41d4-a716-446655440000","paymentKey":"...","amount":6000}` | 주문 소유자·저장 금액·결제 키 검증 후 토스 승인. 승인 결과의 주문번호·키·금액·통화·상태 재검증 |
-| `POST /payments/{orderId}/cancel` | 없음 또는 `{}` | 승인 시작 전 `PENDING` 주문 취소 및 예약 재고 반환. 이미 취소되었거나 승인을 시작한 주문은 409 반환 |
+| 같은 상품의 동시 구매·재고 반환 | 초과 판매, 수량 변경 유실 | 조건부 UPDATE로 DB의 현재 수량을 직접 계산. 단순 수량 연산에 적합하고 별도 인프라가 필요 없음 |
+| 같은 주문의 승인·취소 | 결제를 승인하면서 재고까지 반환 | 상태 조건부 UPDATE로 가능한 전이를 제한. 승인 준비·완료에는 비관적 락을 함께 사용해 상태 확인과 중복 결과 반환을 직렬화 |
+| 같은 주문의 중복 취소 | 예약 재고를 두 번 반환 | `PENDING → CANCELED` 변경에 성공한 요청만 재고 반환 |
+| 같은 회차·좌석의 동시 예매 | 같은 좌석을 중복 판매 | 기존 `schema.sql`의 활성 좌석 UNIQUE 제약으로 DB에서 차단. 충돌은 `SEAT_ALREADY_BOOKED`로 변환 |
 
-모든 API에 `Authorization: Bearer {accessToken}`이 필요
+**예) 재고 차감**
 
-#### 현재 구현 범위
+변경 행 수가 `1`이 아니면 재고 부족으로 처리합니다.
 
-- `PENDING`: 재고를 예약한 결제 대기 주문. 결제 전 주문 취소로 재고를 반환합니다.
-- `CONFIRMING`: 승인 전에 결제 키를 저장한 상태. 외부 HTTP 요청은 DB 트랜잭션 밖에서 수행합니다.
-- `PAID`: 토스가 `DONE`과 승인 시각을 반환한 주문.
-- `WAITING_FOR_DEPOSIT`: 가상계좌 발급 상태. 구매 완료로 처리하지 않으며, 입금 확인 기능은 다음 단계로 미룹니다. 현재는 카드·간편결제로 테스트합니다.
-- `CANCELED`: 승인 전에 취소한 주문.
+```sql
+UPDATE stocks SET quantity = quantity - :quantity
+WHERE cinema_id = :cinemaId AND goods_id = :goodsId
+  AND :quantity > 0 AND quantity >= :quantity;
+```
 
-#### TODO
+- 재고 예약과 주문 저장은 한 트랜잭션으로 묶어 일부 상품이 부족하면 모두 롤백합니다. 취소·재고 반환도 함께 성공하거나 롤백합니다.
+- 구매·반환 모두 상품 ID 오름차순으로 갱신해 교차 잠금 가능성을 줄입니다. 원자적 UPDATE도 DB 잠금을 사용하므로 데드락 가능성이 없어지는 것은 아닙니다.
+- 벌크 UPDATE에 `flushAutomatically`·`clearAutomatically`를 적용하고 상태를 재조회해 영속성 컨텍스트의 오래된 값이 응답에 사용되지 않도록 합니다.
 
-1. **동시성 제어**: 재고·주문 행 잠금, 잠금 순서 정렬, 동시 요청 테스트.
-2. **멱등성과 승인 복구**: 멱등키, 중복 요청에 기존 결과 반환, 응답 유실 시 결제 조회 및 재시도.
-3. **주문 수명과 후속 결제 처리**: 주문 만료·재고 회수, 승인 실패 정리, 가상계좌 입금 확인·웹훅, 결제 후 환불.
+## 3. 주문·결제 흐름과 검증
 
-- [주문서형 v2 연동 가이드](https://docs.tosspayments.com/guides/v2/payment-widget/integration)
-- [주문서형 v2 SDK](https://docs.tosspayments.com/sdk/v2/js/payment-widget)
-- [승인·조회 API](https://docs.tosspayments.com/reference)
+```text
+주문 생성·재고 예약 → PENDING → 승인 준비·결제 키 저장 → CONFIRMING
+                      │                               ├─ DONE + 승인 시각 → PAID
+                      │                               └─ 가상계좌 발급 → WAITING_FOR_DEPOSIT
+                      └─ 결제 전 취소·재고 반환 → CANCELED
+```
+
+- `CONFIRMING`: 승인 결과를 확정하기 전 상태로, 외부 호출 오류 시에도 유지
+- `WAITING_FOR_DEPOSIT`: 입금 전 상태이며, 현재 입금 확인 후 `PAID`로 전환하는 로직은 없음
+- `CANCELED`: 서비스의 결제 전 취소 상태
+
+| API | 역할 |
+| --- | --- |
+| `POST /purchases` | 영화관·상품·수량을 받아 서버 가격으로 총액 계산, 재고 예약, UUID 주문번호 생성 |
+| `GET /payments/config` | 테스트 클라이언트 키 반환 |
+| `POST /payments/confirm` | `orderId`, `paymentKey`, `amount` 검증 → 토스 승인 → 상태 저장 |
+| `POST /payments/{orderId}/cancel` | `PENDING` 주문만 취소하고 재고 반환. 이미 취소되었거나 승인 시작 후라면 409 |
+
+## 4. 멱등성
+
+- 같은 작업을 반복해도 한 번 처리한 것과 같은 최종 상태를 유지하는 성질
+- 결제 응답이 유실되어 사용자가 재시도해도 중복 결제가 발생하지 않도록 필요
+- **동시성 제어는 여러 요청이 공유 데이터를 망가뜨리지 않게 하고, 멱등성은 같은 요청을 여러 번 처리해도 효과가 중복되지 않게 함.** 결제에는 둘 다 필요!
+
+
+- Toss Payments의 방법: 승인 요청마다 `Idempotency-Key: payment-confirm:{orderId}`를 사용해 서버 재시작·재요청에도 같은 키를 유지합니다.
+- `CONFIRMING`에서는 같은 결제 키·금액으로 재시도할 수 있습니다. `PAID`·`WAITING_FOR_DEPOSIT`이면 소유자와 요청을 검증한 뒤 저장된 결과를 반환합니다.
+
+[//]: # (- 동시 요청이 PG까지 전달될 수 있으므로 DB 제어와 PG 멱등키를 함께 사용합니다. 토스 멱등키는 최초 요청부터 15일간 유효하며, 이전 요청 처리 중에는 충돌 오류가 날 수 있습니다. 현재는 이를 `PAYMENT_UNAVAILABLE`로 반환하고 자동 재시도하지 않습니다. [토스 멱등키 문서]&#40;https://docs.tosspayments.com/reference/using-api/authorization#멱등키-헤더&#41;)
+
+[//]: # (- 결제 전 중복 취소는 409로 거절해 재고의 중복 반환을 막습니다. 향후 PG 부분 취소에는 **취소 건별 고유 키**를 저장하고, 같은 취소의 재시도에만 재사용해야 합니다.)
+
+## 5. HTTP Client 선택과 외부 API 오류 처리
+
+| 방식 | 특징·장점 | 단점·적합한 상황 |
+| --- | --- | --- |
+| Feign Client | 인터페이스 선언으로 호출 코드를 간결하게 관리 | 의존성·설정 추가. 여러 외부 API의 계약 관리에 적합 |
+| RestClient | 동기식이며 호출·오류 흐름을 순서대로 읽기 쉬움 | 응답 대기 중 스레드 점유. Spring MVC의 단순 요청·응답에 적합 |
+| WebClient | 비동기·논블로킹, 스트리밍 지원 | 리액티브 흐름 학습·운영 부담. 많은 동시 I/O에 적합 |
+
+현재 Spring MVC·JPA 기반에서 승인 결과를 받아 순차 처리하므로 **RestClient**를 선택했습니다. 반응형 처리가 필요하지 않고, 적은 수의 PG 호출을 별도 클라이언트로 관리하기에 충분하다고 판단했습니다. [Spring REST Clients](https://docs.spring.io/spring-framework/reference/integration/rest-clients.html), [OpenFeign](https://docs.spring.io/spring-cloud-openfeign/docs/current/reference/html/)
+
+- 연결 5초·응답 읽기 15초 타임아웃을 설정하고, HTTP·통신·역직렬화 오류를 `502 PAYMENT_UNAVAILABLE`로 변환합니다. 응답 누락이나 필드·상태 불일치도 같은 오류로 처리합니다.
+- PG 성공 여부를 모르는 상황에서 주문을 실패로 확정하거나 재고를 반환하면, 결제된 상품을 다시 팔 수 있습니다. 따라서 `CONFIRMING`과 재고 예약을 유지하고 동일 요청 재시도를 허용합니다.
+- PG 승인 후 DB 저장이 실패해도 외부 결제까지 롤백되지는 않습니다. 현재는 동일 요청 재시도로 복구를 시도할 수 있지만, **PG 조회를 통한 상태 대조·자동 복구와 확정 실패 분류는 미구현**입니다.
+
+## 6. Webhook의 역할
+
+- Webhook: 이벤트가 발생했을 때 제공자가 등록된 URL로 알림을 보내는 방식
+- 토스는 결제 상태 변경·가상계좌 입금 등의 이벤트를 제공하고 전송 실패 시 재전송 [토스 Webhook 가이드](https://docs.tosspayments.com/guides/v2/webhook)
+- CGV에 적용한다면?
+  - **가상계좌 입금 후 상태 갱신, 승인 응답 유실 시 상태 복구, 취소 내역 동기화**를 맡길 수 있음
+
+## TODO
+
+- [ ] **결제 조회:** 소유자를 검증하는 DB 기반 조회 API 구현, 결제수단 등 추가 저장 필드 결정.
+- [ ] **전체·부분 취소:** 토스 취소 API 연동, 취소 이력·잔여액·환불 상태 관리, 초과 취소·이미 취소된 결제·PG 실패 처리.
+- [ ] **취소 멱등성·동시성:** 취소 건별 멱등키와 결과 저장, 중복·동시 부분 취소 시 이중 환불과 잔액 오류 방지 및 테스트.
+- [ ] **승인 복구·주문 만료:** 확정 실패와 결과 불명을 구분하고 PG 조회로 상태 대조. 장기 `CONFIRMING`·멱등키 유효기간 경과·미결제 주문의 재고 회수 정책 구현.
+- [ ] **선택 — Webhook:** 이벤트 검증·중복 방어를 포함해 가상계좌 입금, 승인 누락, 취소 결과 동기화.
