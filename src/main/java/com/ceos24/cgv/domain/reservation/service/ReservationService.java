@@ -57,6 +57,7 @@ public class ReservationService {
             List.of(PaymentStatus.DONE, PaymentStatus.PARTIAL_CANCELED);
     // 토스 결제 내역에 남는 사유다. 회원이 취소한 것이 아니라는 점이 드러나야 한다.
     private static final String LOST_HOLD_REFUND_REASON = "좌석 선점 만료로 자동 환불";
+    private static final String SCREENING_STARTED_REFUND_REASON = "상영 시작 후 결제 확인으로 자동 환불";
 
     private final ReservationRepository reservationRepository;
     private final ScreeningRepository screeningRepository;
@@ -166,8 +167,9 @@ public class ReservationService {
                 payment.getOrderId(), payment.getPaymentKey(), payment.getAmount());
     }
 
-    // 토스가 승인한 것으로 확인됐다. 결제를 확정하고, 좌석이 남아 있으면 예매를 확정한다.
-    // 좌석을 잃었으면(선점 만료 후 다른 요청이 EXPIRED로 바꿈) 전액 환불 요청을 같은 트랜잭션에서 저장해 돌려준다.
+    // 토스가 승인한 것으로 확인됐다. 결제를 확정하고, 좌석이 남아 있고 상영 전이면 예매를 확정한다.
+    // 좌석을 잃었거나(선점 만료 후 다른 요청이 EXPIRED로 바꿈) 상영이 이미 시작됐으면
+    // 전액 환불 요청을 같은 트랜잭션에서 저장해 돌려준다.
     // 승인 확정과 환불 요청을 함께 커밋해야, 토스 취소 전에 서버가 죽어도 남은 취소 요청을 재시도로 마칠 수 있다.
     // 예매 잠금이 첫 쿼리다. 원래 요청의 T2나 다른 정리와 겹쳐도 결제 상태를 다시 확인해 한 번만 반영한다.
     @Transactional
@@ -179,14 +181,19 @@ public class ReservationService {
         payment.verifyRecoverable(now);
 
         payment.approve(approved.method(), approved.approvedAtIn(clock.getZone(), now));
+        String refundReason = LOST_HOLD_REFUND_REASON;
         if (reservation.isPending()) {
-            reservation.confirmAfterRecovery(now);
-            return Optional.empty();
+            if (!reservation.isScreeningStarted(now)) {
+                reservation.confirmAfterRecovery(now);
+                return Optional.empty();
+            }
+            reservation.expireAfterScreeningStarted(now);
+            refundReason = SCREENING_STARTED_REFUND_REASON;
         }
         PaymentCancel cancel = paymentCancelRepository.save(PaymentCancel.builder()
                 .payment(payment)
                 .amount(payment.getAmount())
-                .reason(LOST_HOLD_REFUND_REASON)
+                .reason(refundReason)
                 .now(now)
                 .build());
         return Optional.of(attemptOf(cancel, reservation.getId(), target.userId()));

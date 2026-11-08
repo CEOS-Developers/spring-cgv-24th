@@ -131,6 +131,19 @@ public class Reservation extends BaseTimeEntity {
         return this.status == ReservationStatus.PENDING;
     }
 
+    public boolean isScreeningStarted(LocalDateTime now) {
+        return !now.isBefore(screening.getStartAt());
+    }
+
+    // 결과를 몰랐던 결제가 상영 시작 뒤에야 승인으로 확인됐을 때 부른다. 확정하면 볼 수 없는 회차에 돈만 받고
+    // 취소 기한도 지나 회원이 환불받을 길이 없다. 좌석을 잃은 자동 환불과 같이 EXPIRED로 두고 좌석을 놓는다.
+    // 벌크 expireIfPending은 만료 시각이 지난 선점만 바꾸는데, 이 경우는 늘린 선점 시간이 남아 있을 수 있다.
+    public void expireAfterScreeningStarted(LocalDateTime now) {
+        requirePending();
+        this.status = ReservationStatus.EXPIRED;
+        this.seats.forEach(seat -> seat.cancel(this.id, now));
+    }
+
     // 결제 전 선점 취소와 결제된 예매의 환불 취소(전체·부분)가 같은 검사를 거친다.
     public void verifyCancellable(LocalDateTime now) {
         if (this.status == ReservationStatus.CANCELLED) {

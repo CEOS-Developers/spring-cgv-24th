@@ -158,6 +158,27 @@ class ReservationAdminControllerTest extends ControllerIntegrationTest {
     }
 
     @Test
+    void 상영이_시작된_뒤에_승인이_확인되면_확정하지_않고_전액_환불한다() throws Exception {
+        // 정리가 늦게 돌아 좌석은 남아 있지만 이미 볼 수 없는 회차다. 확정하면 취소 기한도 지나 환불받을 길이 없다
+        String orderId = 결과불명결제();
+        setNow(START.plusMinutes(1));
+        토스조회결과_승인(orderId);
+        given(tossPaymentsClient.cancel(anyString(), anyString(), anyInt(), anyString()))
+                .willAnswer(TestFixtures.tossCancelsFrom(14000));
+
+        정리요청(orderId)
+                .andExpect(jsonPath("$.data.outcome").value("REFUNDED"))
+                .andExpect(jsonPath("$.data.detail").value("상영 시작 후 결제 확인으로 자동 환불"));
+        flushAndClear();
+
+        verify(tossPaymentsClient).cancel(eq(PAYMENT_KEY), anyString(), eq(14000), eq("상영 시작 후 결제 확인으로 자동 환불"));
+        assertThat(결제조회(orderId).getStatus()).isEqualTo(PaymentStatus.CANCELED);
+        Reservation expired = 예매조회(orderId);
+        assertThat(expired.getStatus()).isEqualTo(ReservationStatus.EXPIRED);
+        assertThat(expired.getSeats()).noneMatch(seat -> seat.isOccupied());
+    }
+
+    @Test
     void 자동_환불_결과를_모르면_스케줄러가_같은_멱등키로_다시_보내_마친다() throws Exception {
         String orderId = 결과불명결제();
         setNow(NOW.plusMinutes(11));

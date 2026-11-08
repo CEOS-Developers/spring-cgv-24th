@@ -92,7 +92,7 @@ public class ReservationPaymentRecoveryService {
     private PaymentRecoveryResponse refundLostSeats(ReservationRecoveryTarget target, ReservationCancelAttempt attempt) {
         try {
             reservationCancelService.refund(attempt);
-            return PaymentRecoveryResponse.of(target.orderId(), Outcome.REFUNDED, "선점이 만료되어 좌석을 잃음, 전액 환불");
+            return PaymentRecoveryResponse.of(target.orderId(), Outcome.REFUNDED, attempt.reason());
         } catch (CustomException e) {
             if (e.getErrorCode() == ErrorCode.PAYMENT_CANCEL_REJECTED) {
                 // 돈은 빠졌고 좌석은 없는데 환불이 거절됐다. 자동으로 풀 방법이 없다.
