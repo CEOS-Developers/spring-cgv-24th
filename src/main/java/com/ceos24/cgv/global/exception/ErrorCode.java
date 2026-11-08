@@ -8,6 +8,7 @@ import lombok.RequiredArgsConstructor;
 public enum ErrorCode {
 
     // Common
+    INVALID_INPUT_VALUE(400, "잘못된 입력값입니다."),
     FORBIDDEN_ERROR(409, "허용되지 않는 요청입니다."),
 
     // Member
@@ -27,15 +28,20 @@ public enum ErrorCode {
     // Store / Order
     STORE_NOT_FOUND(404, "존재하지 않는 매장입니다."),
     MENU_NOT_FOUND(404, "해당 매장에 존재하지 않는 메뉴입니다."),
-    OUT_OF_STOCK(400, "재고가 부족합니다."),
+    ORDER_OUT_OF_STOCK(400, "재고가 부족합니다."),
+    ORDER_INVALID_QUANTITY(400, "주문 수량이 유효하지 않습니다."),
     ORDER_NOT_FOUND(404, "존재하지 않는 주문입니다."),
     ORDER_ITEM_NOT_FOUND(404, "존재하지 않는 주문 품목입니다."),
     ORDER_ITEM_CANCEL_QUANTITY_EXCEEDED(400, "취소 요청 수량이 남은 주문 수량을 초과했습니다."),
 
     // Reservation / Theater / FavoriteTheater
-    ALREADY_RESERVED(409, "이미 예매된 좌석입니다."),
+    ALREADY_RESERVED(409, "이미 예매되거나 결제 대기 중인 좌석입니다."),
     THEATER_NOT_FOUND(404, "존재하지 않는 영화관입니다."),
     RESERVATION_NOT_FOUND(404, "존재하지 않는 예매이거나 권한이 없습니다."),
+    RESERVATION_SEAT_NOT_FOUND(404, "해당 예매 내역에 존재하지 않는 좌석입니다."),
+    RESERVATION_EXPIRED(400, "예매 점유 시간이 만료되었습니다. 다시 좌석을 선택해 주세요."),
+    RESERVATION_ALREADY_PROCESSED(400, "이미 확정되었거나 취소된 예매입니다."),
+    RESERVATION_PAYMENT_CANCEL_REQUIRED(400, "결제가 완료된 예매는 결제 취소를 통해 취소해 주세요."),
     SEAT_NOT_FOUND(404, "존재하지 않는 좌석입니다."),
     SCREENING_NOT_FOUND(404, "존재하지 않는 상영 일정입니다."),
     SCREEN_NOT_FOUND(404, "존재하지 않는 상영관입니다."),

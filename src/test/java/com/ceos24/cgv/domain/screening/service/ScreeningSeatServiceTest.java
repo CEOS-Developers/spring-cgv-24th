@@ -1,15 +1,15 @@
-package com.ceos24.cgv.domain.theater.service;
+package com.ceos24.cgv.domain.screening.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.*;
 
+import com.ceos24.cgv.domain.screening.dto.response.GetScreeningSeatResponse;
 import com.ceos24.cgv.domain.screening.entity.Screening;
-import com.ceos24.cgv.domain.theater.dto.response.GetSeatResponse;
+import com.ceos24.cgv.domain.screening.entity.ScreeningSeat;
+import com.ceos24.cgv.domain.screening.repository.ScreeningSeatRepository;
 import com.ceos24.cgv.domain.theater.entity.Screen;
-import com.ceos24.cgv.domain.theater.entity.Seat;
-import com.ceos24.cgv.domain.theater.repository.SeatRepository;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -19,26 +19,26 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 @ExtendWith(MockitoExtension.class)
-class SeatServiceTest {
+class ScreeningSeatServiceTest {
 
     @InjectMocks
-    private SeatService seatService;
+    private ScreeningSeatService seatService;
 
     @Mock
-    private SeatRepository seatRepository;
+    private ScreeningSeatRepository seatRepository;
 
     @Test
     @DisplayName("좌석 목록 조회 성공")
     void getSeats_Success() {
         // given
         Long screeningId = 1L;
-        Seat seat1 = mock(Seat.class);
-        Seat seat2 = mock(Seat.class);
+        ScreeningSeat seat1 = mock(ScreeningSeat.class);
+        ScreeningSeat seat2 = mock(ScreeningSeat.class);
 
         when(seatRepository.findByScreeningId(screeningId)).thenReturn(List.of(seat1, seat2));
 
         // when
-        GetSeatResponse response = seatService.getSeats(screeningId);
+        GetScreeningSeatResponse response = seatService.getSeats(screeningId);
 
         // then
         assertNotNull(response);

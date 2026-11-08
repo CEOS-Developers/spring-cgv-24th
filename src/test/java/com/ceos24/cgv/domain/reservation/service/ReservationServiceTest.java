@@ -13,8 +13,8 @@ import com.ceos24.cgv.domain.member.repository.MemberRepository;
 import com.ceos24.cgv.domain.reservation.entity.Reservation;
 import com.ceos24.cgv.domain.reservation.repository.ReservationRepository;
 import com.ceos24.cgv.domain.screening.entity.Screening;
-import com.ceos24.cgv.domain.theater.entity.Seat;
-import com.ceos24.cgv.domain.theater.repository.SeatRepository;
+import com.ceos24.cgv.domain.screening.entity.ScreeningSeat;
+import com.ceos24.cgv.domain.screening.repository.ScreeningSeatRepository;
 import com.ceos24.cgv.global.exception.BusinessException;
 import com.ceos24.cgv.global.exception.ErrorCode;
 import java.util.Optional;
@@ -29,7 +29,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 class ReservationServiceTest {
 
     @Mock
-    private SeatRepository seatRepository;
+    private ScreeningSeatRepository seatRepository;
 
     @Mock
     private MemberRepository memberRepository;
@@ -49,7 +49,7 @@ class ReservationServiceTest {
         Long seatNumber = 10L;
 
         Screening screening = new Screening(null, null, null, null);
-        Seat seat = Seat.create(screening, seatNumber);
+        ScreeningSeat seat = ScreeningSeat.create(screening, seatNumber);
         Member member = mock(Member.class);
         lenient().when(member.getId()).thenReturn(memberId);
 
@@ -91,7 +91,7 @@ class ReservationServiceTest {
         Long seatNumber = 10L;
 
         Screening screening = new Screening(null, null, null, null);
-        Seat seat = Seat.create(screening, seatNumber);
+        ScreeningSeat seat = ScreeningSeat.create(screening, seatNumber);
 
         given(seatRepository.findByScreeningIdAndSeatNumber(screeningId, seatNumber))
                 .willReturn(Optional.of(seat));
@@ -112,7 +112,7 @@ class ReservationServiceTest {
         Long seatNumber = 10L;
 
         Screening screening = new Screening(null, null, null, null);
-        Seat seat = Seat.create(screening, seatNumber);
+        ScreeningSeat seat = ScreeningSeat.create(screening, seatNumber);
         seat.reserveSeat(); // 예약된 상태로 설정
         Member member = mock(Member.class);
         lenient().when(member.getId()).thenReturn(memberId);

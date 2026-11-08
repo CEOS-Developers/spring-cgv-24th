@@ -5,6 +5,7 @@ import com.ceos24.cgv.domain.theater.service.TheaterAdminService;
 import com.ceos24.cgv.global.common.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -25,7 +26,7 @@ public class TheaterAdminController {
 
     @Operation(summary = "영화관 생성", description = "새로운 영화관을 생성합니다.")
     @PostMapping("/theaters")
-    public ResponseEntity<ApiResponse<Void>> createTheater(@RequestBody CreateTheaterRequest request) {
+    public ResponseEntity<ApiResponse<Void>> createTheater(@Valid @RequestBody CreateTheaterRequest request) {
         theaterAdminService.createTheater(request);
         return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.success(null));
     }

@@ -2,7 +2,11 @@ package com.ceos24.cgv.global.exception;
 
 import com.ceos24.cgv.global.common.ApiResponse;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.support.DefaultMessageSourceResolvable;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
@@ -17,6 +21,25 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(errorCode.getStatus())
                 .body(ApiResponse.error(
                         errorCode.getStatus(), e.getMessage() != null ? e.getMessage() : errorCode.getMessage()));
+    }
+
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    protected ResponseEntity<ApiResponse<Void>> handleMethodArgumentNotValidException(
+            MethodArgumentNotValidException e) {
+        log.warn("MethodArgumentNotValidException: {}", e.getMessage());
+        String errorMessage = e.getBindingResult().getFieldErrors().stream()
+                .findFirst()
+                .map(DefaultMessageSourceResolvable::getDefaultMessage)
+                .orElse("유효하지 않은 입력값입니다.");
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(ApiResponse.error(400, errorMessage));
+    }
+
+    @ExceptionHandler(AccessDeniedException.class)
+    protected ResponseEntity<ApiResponse<Void>> handleAccessDeniedException(AccessDeniedException e) {
+        log.warn("AccessDeniedException: {}", e.getMessage());
+        return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                .body(ApiResponse.error(
+                        ErrorCode.AUTH_FORBIDDEN_USER.getStatus(), ErrorCode.AUTH_FORBIDDEN_USER.getMessage()));
     }
 
     @ExceptionHandler(org.springframework.dao.DataIntegrityViolationException.class)

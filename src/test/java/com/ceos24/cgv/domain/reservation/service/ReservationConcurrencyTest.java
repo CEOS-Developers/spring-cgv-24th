@@ -9,13 +9,13 @@ import com.ceos24.cgv.domain.movie.entity.Movie;
 import com.ceos24.cgv.domain.movie.repository.MovieRepository;
 import com.ceos24.cgv.domain.reservation.repository.ReservationRepository;
 import com.ceos24.cgv.domain.screening.entity.Screening;
+import com.ceos24.cgv.domain.screening.entity.ScreeningSeat;
 import com.ceos24.cgv.domain.screening.repository.ScreeningRepository;
+import com.ceos24.cgv.domain.screening.repository.ScreeningSeatRepository;
 import com.ceos24.cgv.domain.theater.entity.Screen;
 import com.ceos24.cgv.domain.theater.entity.ScreenType;
-import com.ceos24.cgv.domain.theater.entity.Seat;
 import com.ceos24.cgv.domain.theater.entity.Theater;
 import com.ceos24.cgv.domain.theater.repository.ScreenRepository;
-import com.ceos24.cgv.domain.theater.repository.SeatRepository;
 import com.ceos24.cgv.domain.theater.repository.TheaterRepository;
 import java.time.LocalDateTime;
 import java.util.concurrent.CountDownLatch;
@@ -39,7 +39,7 @@ class ReservationConcurrencyTest {
     private ReservationRepository reservationRepository;
 
     @Autowired
-    private SeatRepository seatRepository;
+    private ScreeningSeatRepository seatRepository;
 
     @Autowired
     private ScreeningRepository screeningRepository;
@@ -83,7 +83,7 @@ class ReservationConcurrencyTest {
                 LocalDateTime.now().plusHours(3)));
         screeningId = screening.getId();
 
-        seatRepository.save(Seat.create(screening, seatNumber));
+        seatRepository.save(ScreeningSeat.create(screening, seatNumber));
     }
 
     @AfterEach

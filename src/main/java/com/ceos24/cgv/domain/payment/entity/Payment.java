@@ -2,6 +2,7 @@ package com.ceos24.cgv.domain.payment.entity;
 
 import com.ceos24.cgv.domain.order.entity.Order;
 import com.ceos24.cgv.domain.order.entity.OrderItem;
+import com.ceos24.cgv.domain.reservation.entity.Reservation;
 import com.ceos24.cgv.global.exception.BusinessException;
 import com.ceos24.cgv.global.exception.ErrorCode;
 import jakarta.persistence.*;
@@ -30,8 +31,12 @@ public class Payment {
     private String orderId;
 
     @OneToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "order_id", nullable = false)
+    @JoinColumn(name = "order_id")
     private Order order;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "reservation_id")
+    private Reservation reservation;
 
     @Column(nullable = false)
     private Long totalAmount;
@@ -62,26 +67,55 @@ public class Payment {
         this.createdAt = LocalDateTime.now();
     }
 
+    protected Payment(Reservation reservation, String orderId, Long totalAmount) {
+        this.reservation = reservation;
+        this.orderId = orderId;
+        this.totalAmount = totalAmount;
+        this.balanceAmount = totalAmount;
+        this.status = PaymentStatus.READY;
+        this.createdAt = LocalDateTime.now();
+    }
+
     public static Payment createReady(Order order, String orderId, Long amount) {
         validateCreate(order, orderId, amount);
         return new Payment(order, orderId, amount);
+    }
+
+    public static Payment createReady(Reservation reservation, String orderId, Long amount) {
+        validateCreate(reservation, orderId, amount);
+        return new Payment(reservation, orderId, amount);
     }
 
     private static void validateCreate(Order order, String orderId, Long amount) {
         if (order == null) {
             throw new BusinessException(ErrorCode.ORDER_NOT_FOUND, "주문 정보는 필수입니다.");
         }
+        validateCommonCreate(orderId, amount, order.getTotalPrice(), "주문 금액");
+    }
+
+    private static void validateCreate(Reservation reservation, String orderId, Long amount) {
+        if (reservation == null) {
+            throw new BusinessException(ErrorCode.RESERVATION_NOT_FOUND, "예매 정보는 필수입니다.");
+        }
+        validateCommonCreate(orderId, amount, reservation.getTotalPrice(), "예매 금액");
+    }
+
+    private static void validateCommonCreate(String orderId, Long amount, Long targetPrice, String priceLabel) {
         if (orderId == null || orderId.isBlank()) {
             throw new IllegalArgumentException("주문 번호(orderId)는 필수입니다.");
         }
         if (amount == null || amount <= 0) {
             throw new IllegalArgumentException("결제 요청 금액은 0보다 커야 합니다.");
         }
-        if (!amount.equals(order.getTotalPrice())) {
+        if (!amount.equals(targetPrice)) {
             throw new BusinessException(
                     ErrorCode.PAYMENT_AMOUNT_MISMATCH,
-                    "결제 요청 금액(" + amount + "원)이 주문 금액(" + order.getTotalPrice() + "원)과 일치하지 않습니다.");
+                    "결제 요청 금액(" + amount + "원)이 " + priceLabel + "(" + targetPrice + "원)과 일치하지 않습니다.");
         }
+    }
+
+    public boolean isReservationPayment() {
+        return this.reservation != null;
     }
 
     public void complete(String paymentKey, String method, LocalDateTime approvedAt) {

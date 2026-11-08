@@ -13,7 +13,6 @@ import com.ceos24.cgv.domain.screening.entity.Screening;
 import com.ceos24.cgv.domain.screening.repository.ScreeningRepository;
 import com.ceos24.cgv.domain.theater.entity.Screen;
 import com.ceos24.cgv.domain.theater.repository.ScreenRepository;
-import com.ceos24.cgv.domain.theater.service.SeatService;
 import com.ceos24.cgv.global.exception.BusinessException;
 import com.ceos24.cgv.global.exception.ErrorCode;
 import java.time.LocalDateTime;
@@ -39,7 +38,7 @@ class ScreeningAdminServiceTest {
     private ScreeningRepository screeningRepository;
 
     @Mock
-    private SeatService seatService;
+    private ScreeningSeatService seatService;
 
     @InjectMocks
     private ScreeningAdminService screeningAdminService;

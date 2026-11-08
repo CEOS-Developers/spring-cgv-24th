@@ -62,7 +62,6 @@ public class JwtProvider {
         if (!"access".equals(payload.get("type", String.class))) {
             throw new io.jsonwebtoken.JwtException("Invalid token type");
         }
-
         Long memberId = Long.parseLong(payload.getSubject());
         String roleStr = payload.get("role", String.class);
         Role role = Role.valueOf(roleStr.replace("ROLE_", ""));

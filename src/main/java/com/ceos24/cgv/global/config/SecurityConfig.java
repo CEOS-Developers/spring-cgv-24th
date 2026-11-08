@@ -69,7 +69,9 @@ public class SecurityConfig {
                 .exceptionHandling(exception -> exception
                         .authenticationEntryPoint(jwtAuthenticationEntryPoint)
                         .accessDeniedHandler(jwtAccessDeniedHandler))
-                .authorizeHttpRequests(auth -> auth.requestMatchers("/api/auth/**")
+                .authorizeHttpRequests(auth -> auth.requestMatchers("/error")
+                        .permitAll()
+                        .requestMatchers("/api/auth/**")
                         .permitAll()
                         .requestMatchers("/api/payments/**")
                         .permitAll() // 결제 API 허용

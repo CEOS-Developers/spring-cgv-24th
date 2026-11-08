@@ -82,6 +82,7 @@ class OrderServiceTest {
 
         // then
         assertEquals(8L, menuStock.getStock());
+        verify(menuStockRepository).findAllByStoreIdAndMenuIdIn(storeId, List.of(menuId));
         ArgumentCaptor<Order> orderCaptor = ArgumentCaptor.forClass(Order.class);
         verify(orderRepository).save(orderCaptor.capture());
         Order savedOrder = orderCaptor.getValue();

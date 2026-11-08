@@ -7,7 +7,6 @@ import com.ceos24.cgv.domain.screening.entity.Screening;
 import com.ceos24.cgv.domain.screening.repository.ScreeningRepository;
 import com.ceos24.cgv.domain.theater.entity.Screen;
 import com.ceos24.cgv.domain.theater.repository.ScreenRepository;
-import com.ceos24.cgv.domain.theater.service.SeatService;
 import com.ceos24.cgv.global.exception.BusinessException;
 import com.ceos24.cgv.global.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
@@ -21,7 +20,6 @@ public class ScreeningAdminService {
     private final MovieRepository movieRepository;
     private final ScreenRepository screenRepository;
     private final ScreeningRepository screeningRepository;
-    private final SeatService seatService;
 
     @Transactional
     public void createScreening(CreateScreeningRequest request) {
@@ -33,6 +31,5 @@ public class ScreeningAdminService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.SCREEN_NOT_FOUND));
         Screening screening = new Screening(movie, screen, request.startTime(), request.endTime());
         screeningRepository.save(screening);
-        seatService.createSeats(screening);
     }
 }

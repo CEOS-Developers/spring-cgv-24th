@@ -9,6 +9,7 @@ import com.ceos24.cgv.domain.payment.service.PaymentService;
 import com.ceos24.cgv.global.common.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -27,17 +28,20 @@ public class PaymentController {
 
     private final PaymentService paymentService;
 
-    @Operation(summary = "결제 준비", description = "주문에 대한 결제 준비(READY) 데이터를 생성하고 토스 연동용 주문번호를 발급합니다.")
+    @Operation(
+            summary = "결제 준비",
+            description = "주문(orderId) 또는 예매(reservationId)에 대한 결제 준비(READY) 데이터를 생성하고 토스 연동용 주문번호를 발급합니다.")
     @PostMapping("/prepare")
     public ResponseEntity<ApiResponse<PaymentPrepareResponse>> preparePayment(
-            @RequestBody PaymentPrepareRequest request) {
+            @Valid @RequestBody PaymentPrepareRequest request) {
         PaymentPrepareResponse response = paymentService.preparePayment(request);
         return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.success(response));
     }
 
     @Operation(summary = "결제 최종 승인", description = "주문 및 결제 금액을 검증한 후 토스페이먼츠에 결제 승인을 요청합니다.")
     @PostMapping("/confirm")
-    public ResponseEntity<ApiResponse<PaymentResponse>> confirmPayment(@RequestBody PaymentConfirmRequest request) {
+    public ResponseEntity<ApiResponse<PaymentResponse>> confirmPayment(
+            @Valid @RequestBody PaymentConfirmRequest request) {
         PaymentResponse response = paymentService.confirmPayment(request);
         return ResponseEntity.ok(ApiResponse.success(response));
     }
@@ -49,10 +53,12 @@ public class PaymentController {
         return ResponseEntity.ok(ApiResponse.success(response));
     }
 
-    @Operation(summary = "결제 취소 (전체 / 품목별 부분 취소)", description = "토스 결제를 전체 또는 품목 단위로 부분 취소하고 남은 잔액을 차감합니다.")
+    @Operation(
+            summary = "결제 취소 (전체 / 품목·좌석별 부분 취소)",
+            description = "토스 결제를 전체 또는 품목(orderItemId)/좌석(seatNumbers) 단위로 부분 취소하고 남은 잔액을 차감합니다.")
     @PostMapping("/{paymentKey}/cancel")
     public ResponseEntity<ApiResponse<PaymentResponse>> cancelPayment(
-            @PathVariable String paymentKey, @RequestBody PaymentCancelRequest request) {
+            @PathVariable String paymentKey, @Valid @RequestBody PaymentCancelRequest request) {
         PaymentResponse response = paymentService.cancelPayment(paymentKey, request);
         return ResponseEntity.ok(ApiResponse.success(response));
     }

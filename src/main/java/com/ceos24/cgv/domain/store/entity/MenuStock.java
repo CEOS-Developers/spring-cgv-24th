@@ -34,7 +34,9 @@ public class MenuStock {
 
     public void decreaseStock(Long quantity) {
         if (this.stock < quantity) {
-            throw new BusinessException(ErrorCode.OUT_OF_STOCK);
+            throw new BusinessException(ErrorCode.ORDER_OUT_OF_STOCK);
+        } else if (quantity <= 0) {
+            throw new BusinessException(ErrorCode.ORDER_INVALID_QUANTITY);
         }
         this.stock -= quantity;
     }
