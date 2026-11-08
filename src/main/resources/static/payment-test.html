@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="referrer" content="no-referrer">
+    <title>영화와 매점 결제 테스트</title>
+
+    <!-- 토스 SDK를 먼저 불러온 뒤 우리 코드를 실행한다. -->
+    <script
+            src="https://js.tosspayments.com/v2/standard"
+            defer>
+    </script>
+    <script src="/payment-test.js" defer></script>
+</head>
+<body>
+<h1>영화와 매점 주문서</h1>
+
+<div id="checkout">
+    <div id="inputs">
+        <p>
+            <label for="clientKey">주문서형 테스트 클라이언트 키</label>
+            <input id="clientKey" placeholder="test_gck로 시작하는 키">
+        </p>
+
+        <p>
+            <label for="token">로그인 accessToken</label>
+            <input id="token" type="password" autocomplete="off">
+        </p>
+
+        <p>
+            <label for="targetType">구매 종류</label>
+            <select id="targetType">
+                <option value="RESERVATION">영화 예매</option>
+                <option value="STORE_ORDER">매점 주문</option>
+            </select>
+        </p>
+
+        <p>
+            <label for="targetId">예매 또는 매점 주문 ID</label>
+            <input id="targetId" type="number" min="1">
+        </p>
+
+        <button id="prepareButton" type="button">
+            주문서 불러오기
+        </button>
+    </div>
+
+    <p id="orderSummary"></p>
+
+    <!-- 토스 SDK가 결제수단 UI를 표시하는 위치 -->
+    <div id="payment-method"></div>
+
+    <!-- 토스 SDK가 약관 UI를 표시하는 위치 -->
+    <div id="agreement"></div>
+
+    <button id="payButton" type="button" disabled>
+        결제하기
+    </button>
+</div>
+
+<div id="confirmSection" hidden>
+    <p>인증이 완료되었습니다. 서버 승인을 진행하세요.</p>
+
+    <label for="confirmToken">로그인 accessToken</label>
+    <input
+            id="confirmToken"
+            type="password"
+            autocomplete="off">
+
+    <button id="confirmButton" type="button">
+        서버 승인 / 결과 재확인
+    </button>
+</div>
+
+<pre id="result"></pre>
+</body>
+</html>

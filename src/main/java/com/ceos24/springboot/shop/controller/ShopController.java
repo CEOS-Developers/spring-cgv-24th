@@ -85,7 +85,7 @@ public class ShopController {
     // 매점 주문
     @Operation(
             summary = "매점 주문",
-            description = "특정 영화관의 매점 메뉴를 주문합니다."
+            description = "매점 주문을 결제 대기 상태로 생성하고 재고를 10분간 확보합니다."
     )
     @PostMapping("/orders")
     public ResponseEntity<StoreOrderResponse> createOrder(
@@ -122,5 +122,14 @@ public class ShopController {
                         orderId
                 )
         );
+    }
+
+    @Operation(summary = "미결제 매점 주문 취소", description = "대기 주문을 취소하고 재고를 복구합니다. 결제 중이거나 완료된 주문은 취소할 수 없습니다.")
+    @PatchMapping("/orders/{orderId}/cancel")
+    public ResponseEntity<StoreOrderResponse> cancelOrder(
+            @AuthenticationPrincipal CustomUserDetails userDetails,
+            @PathVariable Long orderId
+    ) {
+        return ResponseEntity.ok(shopService.cancelOrder(userDetails.getUserId(), orderId));
     }
 }

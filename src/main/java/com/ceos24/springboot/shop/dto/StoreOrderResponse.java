@@ -2,6 +2,7 @@ package com.ceos24.springboot.shop.dto;
 
 import com.ceos24.springboot.shop.domain.OrderItem;
 import com.ceos24.springboot.shop.domain.StoreOrder;
+import com.ceos24.springboot.shop.domain.StoreOrderStatus;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -11,7 +12,10 @@ public record StoreOrderResponse(
         Long theaterId,
         Integer totalAmount,
         LocalDateTime orderAt,
-        List<OrderItemResponse> items
+        List<OrderItemResponse> items,
+        StoreOrderStatus status,
+        LocalDateTime expiresAt,
+        boolean paymentProcessing
 ) {
 
     public static StoreOrderResponse from(
@@ -25,7 +29,10 @@ public record StoreOrderResponse(
                 order.getOrderAt(),
                 items.stream()
                         .map(OrderItemResponse::from)
-                        .toList()
+                        .toList(),
+                order.getStatus(),
+                order.getExpiresAt(),
+                order.isPaymentProcessing()
         );
     }
 }

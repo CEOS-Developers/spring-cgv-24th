@@ -17,6 +17,7 @@ import com.ceos24.springboot.theater.domain.Screen;
 import com.ceos24.springboot.theater.domain.ScreenType;
 import com.ceos24.springboot.theater.domain.Screening;
 import com.ceos24.springboot.theater.domain.ScreeningType;
+import com.ceos24.springboot.theater.domain.ScreeningSeat;
 import com.ceos24.springboot.theater.domain.Seat;
 import com.ceos24.springboot.theater.domain.Theater;
 import com.ceos24.springboot.user.domain.User;
@@ -127,11 +128,17 @@ class ReservationAccessIntegrationTest {
         newSeatTwo = persist(Seat.create(screen, "A", 3));
         otherUserSeat = persist(Seat.create(screen, "A", 4));
         availableSeat = persist(Seat.create(screen, "A", 5));
+        for (Seat seat : List.of(oldSeat, newSeatOne, newSeatTwo, otherUserSeat, availableSeat)) {
+            persist(ScreeningSeat.create(screening, seat));
+        }
 
-        LocalDateTime base = LocalDateTime.of(2026, 1, 1, 12, 0);
+        LocalDateTime base = LocalDateTime.now().minusDays(2);
         olderA = createReservation(userA, base, List.of(oldSeat));
         reservationB = createReservation(userB, base.plusDays(1), List.of(otherUserSeat));
         newerA = createReservation(userA, base.plusDays(2), List.of(newSeatOne, newSeatTwo));
+        // This reservation is unpaid: only Pending reservations can be canceled.
+        jdbcTemplate.update("update reservation set status = 'Pending', expires_at = ? where reservation_id = ?",
+                LocalDateTime.now().plusMinutes(10), newerA.getReservationId());
         entityManager.flush();
 
         String dayType = screening.getScreeningDate().getDayOfWeek().getValue() >= 6
@@ -229,7 +236,7 @@ class ReservationAccessIntegrationTest {
         mockMvc.perform(patch("/api/reservations/{id}/cancel", newerA.getReservationId())
                         .header("Authorization", "Bearer " + tokenA))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("canceled"));
+                .andExpect(jsonPath("$.status").value("Canceled"));
 
         entityManager.flush();
         entityManager.clear();
@@ -255,7 +262,7 @@ class ReservationAccessIntegrationTest {
         entityManager.flush();
         entityManager.clear();
         assertThat(reservationRepository.findById(newerA.getReservationId())
-                .orElseThrow().getStatus()).isEqualTo(ReservationStatus.Reserved);
+                .orElseThrow().getStatus()).isEqualTo(ReservationStatus.Pending);
         assertThat(reservationSeatRepository
                 .findAllByReservation_ReservationId(newerA.getReservationId()))
                 .extracting(reservationSeat -> reservationSeat.getSeat().getSeatId())

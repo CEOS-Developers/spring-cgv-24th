@@ -33,6 +33,7 @@ public interface ReservationSeatRepository extends JpaRepository<ReservationSeat
             where rs.screening.screeningId = :screeningId
               and rs.seat.seatId in :seatIds
               and r.status = :status and r.expiresAt <= :now
+              and r.paymentProcessing = false
             order by r.reservationId
             """)
     List<Long> findExpiredReservationIdsBySeats(

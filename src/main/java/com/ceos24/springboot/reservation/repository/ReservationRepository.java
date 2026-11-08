@@ -34,7 +34,7 @@ public interface ReservationRepository
 
     @Query("""
             select r.reservationId from Reservation r
-            where r.status = :status and r.expiresAt <= :now
+            where r.status = :status and r.expiresAt <= :now and r.paymentProcessing = false
             order by r.reservationId
             """)
     List<Long> findExpiredReservationIds(
@@ -45,7 +45,7 @@ public interface ReservationRepository
 
     @Query("""
             select r.reservationId from Reservation r
-            where r.user.id = :userId and r.status = :status and r.expiresAt <= :now
+            where r.user.id = :userId and r.status = :status and r.expiresAt <= :now and r.paymentProcessing = false
             order by r.reservationId
             """)
     List<Long> findExpiredReservationIdsByUser(

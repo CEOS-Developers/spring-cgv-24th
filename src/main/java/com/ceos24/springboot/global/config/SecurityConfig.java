@@ -101,8 +101,8 @@ public class SecurityConfig {
                         // 매점 재고 추가 API
                         .requestMatchers(HttpMethod.PATCH, "/api/shop/*/inventories/*/addStock").hasRole("ADMIN")
 
-
-
+                        // 로컬 주문서형 결제 테스트 화면
+                        .requestMatchers(HttpMethod.GET, "/payment-test.html", "/payment-test.js").permitAll()
 
                         // 그 외 요청은 인증 필요
                         .anyRequest().authenticated()

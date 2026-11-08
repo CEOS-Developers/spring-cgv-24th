@@ -25,7 +25,7 @@ public class ReservationController {
     // 영화 티켓 예매
     @Operation(
             summary = "영화 예매 대기",
-            description = "선택한 좌석을 10분간 점유합니다. 만료 전에 예매 확정 API를 호출해야 합니다."
+            description = "결제 화면으로 이동하기 전에 호출합니다. 회차별 좌석을 잠그고 10분간 점유한 뒤, 결제 준비·인증·승인을 진행합니다."
     )
     @PostMapping
     public ResponseEntity<ReservationResponse> createReservation(
@@ -44,16 +44,7 @@ public class ReservationController {
                 .body(response);
     }
 
-    @Operation(summary = "예매 확정", description = "10분 이내의 본인 대기 예매를 확정합니다.")
-    @PatchMapping("/{reservationId}/confirm")
-    public ResponseEntity<ReservationResponse> confirmReservation(
-            @AuthenticationPrincipal CustomUserDetails userDetails,
-            @PathVariable Long reservationId
-    ) {
-        return ResponseEntity.ok(reservationService.confirmReservation(
-                userDetails.getUserId(), reservationId
-        ));
-    }
+
 
     // 예매 확인
     @Operation(

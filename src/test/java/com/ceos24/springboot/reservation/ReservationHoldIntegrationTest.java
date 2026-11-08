@@ -5,6 +5,12 @@ import com.ceos24.springboot.global.exception.ErrorCode;
 import com.ceos24.springboot.global.exception.GlobalException;
 import com.ceos24.springboot.movie.domain.AgeRating;
 import com.ceos24.springboot.movie.domain.Movie;
+import com.ceos24.springboot.payment.domain.PaymentStatus;
+import com.ceos24.springboot.payment.dto.*;
+import com.ceos24.springboot.payment.service.PaymentConfirmService;
+import com.ceos24.springboot.payment.service.PaymentConfirmTransactionService;
+import com.ceos24.springboot.payment.service.PaymentService;
+import com.ceos24.springboot.payment.toss.TossPaymentClient;
 import com.ceos24.springboot.reservation.domain.Reservation;
 import com.ceos24.springboot.reservation.domain.ReservationStatus;
 import com.ceos24.springboot.reservation.dto.ReservationCreateRequest;
@@ -15,6 +21,9 @@ import com.ceos24.springboot.reservation.service.ReservationExpirationScheduler;
 import com.ceos24.springboot.reservation.service.ReservationExpirationService;
 import com.ceos24.springboot.reservation.service.ReservationService;
 import com.ceos24.springboot.theater.domain.*;
+import com.ceos24.springboot.theater.repository.ScreeningSeatRepository;
+import com.ceos24.springboot.theater.service.ScreeningService;
+import com.ceos24.springboot.theater.dto.ScreeningCreateRequest;
 import com.ceos24.springboot.user.domain.User;
 import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.AfterEach;
@@ -27,15 +36,19 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -44,7 +57,9 @@ import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -62,6 +77,13 @@ class ReservationHoldIntegrationTest {
     @Autowired private JdbcTemplate jdbc;
     @Autowired private MockMvc mockMvc;
     @Autowired private JwtProvider jwtProvider;
+    @Autowired private JsonMapper jsonMapper;
+    @Autowired private PaymentService paymentService;
+    @Autowired private PaymentConfirmService paymentConfirmService;
+    @Autowired private PaymentConfirmTransactionService paymentTransactions;
+    @MockitoBean(enforceOverride = true) private TossPaymentClient tossPaymentClient;
+    @Autowired private ScreeningSeatRepository screeningSeats;
+    @Autowired private ScreeningService screeningService;
 
     private TransactionTemplate transaction;
     private Long userId;
@@ -76,7 +98,11 @@ class ReservationHoldIntegrationTest {
     private Long priceId;
 
     @BeforeEach
-    void setUp() {
+    void setUp() throws Exception {
+        try (var connection = jdbc.getDataSource().getConnection()) {
+            assertThat(connection.getMetaData().getDatabaseProductName())
+                    .isEqualTo(System.getenv().getOrDefault("SEAT_LOCK_TEST_DB", "H2"));
+        }
         transaction = new TransactionTemplate(transactionManager);
         transaction.executeWithoutResult(ignored -> {
             String suffix = UUID.randomUUID().toString();
@@ -100,6 +126,12 @@ class ReservationHoldIntegrationTest {
                     .build()).getScreeningId();
             firstSeatId = persist(Seat.create(screen, "A", 1)).getSeatId();
             secondSeatId = persist(Seat.create(screen, "A", 2)).getSeatId();
+            for (Long id : List.of(screeningId, otherScreeningId)) {
+                for (Long seatId : List.of(firstSeatId, secondSeatId)) {
+                    persist(ScreeningSeat.create(entityManager.find(Screening.class, id),
+                            entityManager.find(Seat.class, seatId)));
+                }
+            }
             jdbc.update("""
                     insert into price (audience_type, day_type, time_type, screen_category, ticket_price)
                     values ('Adult', ?, 'Normal', 'General', 12345)
@@ -111,8 +143,10 @@ class ReservationHoldIntegrationTest {
     @AfterEach
     void cleanUp() {
         transaction.executeWithoutResult(ignored -> {
+            jdbc.update("delete from payment where user_id in (?, ?)", userId, otherUserId);
             jdbc.update("delete from reservation_seat where screening_id in (?, ?)", screeningId, otherScreeningId);
             jdbc.update("delete from reservation where screening_id in (?, ?)", screeningId, otherScreeningId);
+            jdbc.update("delete from screening_seat where screening_id in (?, ?)", screeningId, otherScreeningId);
             jdbc.update("delete from screening where screening_id in (?, ?)", screeningId, otherScreeningId);
             jdbc.update("delete from seat where screen_id = ?", screenId);
             jdbc.update("delete from screen where screen_id = ?", screenId);
@@ -147,18 +181,31 @@ class ReservationHoldIntegrationTest {
     }
 
     @Test
-    void confirmEndpointIsOwnedAndIdempotentAndKeepsSeatsOccupied() throws Exception {
+    void paymentApprovalIsOwnedAndIdempotentAndKeepsSeatsOccupied() throws Exception {
         ReservationResponse pending = create(userId, screeningId, firstSeatId);
-        mockMvc.perform(patch("/api/reservations/{id}/confirm", pending.reservationId())
-                        .header("Authorization", "Bearer " + jwtProvider.createAccessToken(otherUserId)))
-                .andExpect(status().isNotFound());
-        mockMvc.perform(patch("/api/reservations/{id}/confirm", pending.reservationId()))
+        PaymentConfirmRequest request = prepareApproval(userId, pending.reservationId());
+        mockMvc.perform(post("/api/payments/confirm")
+                        .header("Authorization", "Bearer " + jwtProvider.createAccessToken(otherUserId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(jsonMapper.writeValueAsString(request)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("PAYMENT_NOT_FOUND"));
+        mockMvc.perform(post("/api/payments/confirm")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(jsonMapper.writeValueAsString(request)))
                 .andExpect(status().isUnauthorized());
-        mockMvc.perform(patch("/api/reservations/{id}/confirm", pending.reservationId())
-                        .header("Authorization", "Bearer " + jwtProvider.createAccessToken(userId)))
+        verifyNoInteractions(tossPaymentClient);
+        mockMvc.perform(post("/api/payments/confirm")
+                        .header("Authorization", "Bearer " + jwtProvider.createAccessToken(userId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(jsonMapper.writeValueAsString(request)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("Reserved"));
-        assertThat(service.confirmReservation(userId, pending.reservationId()).status()).isEqualTo(ReservationStatus.Reserved);
+                .andExpect(jsonPath("$.status").value("DONE"))
+                .andExpect(jsonPath("$.reservationStatus").value("Reserved"));
+        assertThat(paymentConfirmService.confirm(userId, request).reservationStatus())
+                .isEqualTo(ReservationStatus.Reserved);
+        verify(tossPaymentClient, times(1)).confirm(any(), anyString());
+        verifyNoMoreInteractions(tossPaymentClient);
         backdateExpiry(pending.reservationId());
         expirationService.expireReservation(pending.reservationId());
         assertThat(savedStatus(pending.reservationId())).isEqualTo(ReservationStatus.Reserved);
@@ -171,21 +218,28 @@ class ReservationHoldIntegrationTest {
         mockMvc.perform(patch("/api/reservations/{id}/cancel", pending.reservationId())
                         .header("Authorization", "Bearer " + jwtProvider.createAccessToken(userId)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("canceled"));
+                .andExpect(jsonPath("$.status").value("Canceled"));
         assertThat(savedStatus(pending.reservationId())).isEqualTo(ReservationStatus.Canceled);
         assertThat(reservationSeats.findAllByReservation_ReservationId(pending.reservationId())).isEmpty();
-        assertConflict(() -> service.confirmReservation(userId, pending.reservationId()), ErrorCode.INVALID_RESERVATION_STATUS);
+        assertConflict(() -> prepareApproval(userId, pending.reservationId()), ErrorCode.RESERVATION_NOT_PAYABLE);
         assertThat(create(otherUserId, screeningId, firstSeatId).status()).isEqualTo(ReservationStatus.Pending);
     }
 
     @Test
-    void expiredConfirmationCommitsExpirationAndSeatReleaseDespiteConflictResponse() throws Exception {
+    void expiredApprovalIsRejectedBeforeTossAndCleanupReleasesSeats() throws Exception {
         ReservationResponse pending = create(userId, screeningId, firstSeatId);
+        PaymentConfirmRequest request = prepareApproval(userId, pending.reservationId());
         backdateExpiry(pending.reservationId());
-        mockMvc.perform(patch("/api/reservations/{id}/confirm", pending.reservationId())
-                        .header("Authorization", "Bearer " + jwtProvider.createAccessToken(userId)))
+        mockMvc.perform(post("/api/payments/confirm")
+                        .header("Authorization", "Bearer " + jwtProvider.createAccessToken(userId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(jsonMapper.writeValueAsString(request)))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("RESERVATION_EXPIRED"));
+        verifyNoInteractions(tossPaymentClient);
+        // Approval rejects the request; the expiration service owns seat cleanup.
+        assertThat(savedStatus(pending.reservationId())).isEqualTo(ReservationStatus.Pending);
+        expirationService.expireReservation(pending.reservationId());
         assertThat(savedStatus(pending.reservationId())).isEqualTo(ReservationStatus.Expired);
         assertThat(reservationSeats.findAllByReservation_ReservationId(pending.reservationId())).isEmpty();
         create(otherUserId, screeningId, firstSeatId);
@@ -207,7 +261,7 @@ class ReservationHoldIntegrationTest {
     void scheduledCleanupExpiresOnlyPendingReservations() {
         ReservationResponse pending = create(userId, screeningId, firstSeatId);
         ReservationResponse confirmed = create(userId, screeningId, secondSeatId);
-        service.confirmReservation(userId, confirmed.reservationId());
+        confirmReservation(userId, confirmed.reservationId());
         backdateExpiry(pending.reservationId());
         backdateExpiry(confirmed.reservationId());
         scheduler.expirePendingReservations();
@@ -225,14 +279,9 @@ class ReservationHoldIntegrationTest {
         assertThat(service.getMyReservations(userId).getFirst().seats()).isEmpty();
     }
 
-    @ParameterizedTest
-    @EnumSource(value = ReservationStatus.class, names = {"Pending", "Reserved"})
-    void canceledReservationCanBeRebookedAndConfirmedByAnotherUser(ReservationStatus initialStatus) {
+    @Test
+    void canceledPendingReservationCanBeRebookedAndPaidByAnotherUser() {
         ReservationResponse original = create(userId, screeningId, firstSeatId, secondSeatId);
-        if (initialStatus == ReservationStatus.Reserved) {
-            service.confirmReservation(userId, original.reservationId());
-        }
-
         service.cancelReservation(userId, original.reservationId());
 
         assertThat(savedStatus(original.reservationId())).isEqualTo(ReservationStatus.Canceled);
@@ -240,16 +289,61 @@ class ReservationHoldIntegrationTest {
         assertRebookedByOtherUser(original.reservationId());
     }
 
+    @Test
+    void paidReservationCannotBeCanceledWithoutRefundAndKeepsSeats() {
+        ReservationResponse original = create(userId, screeningId, firstSeatId, secondSeatId);
+        confirmReservation(userId, original.reservationId());
+
+        assertConflict(() -> service.cancelReservation(userId, original.reservationId()),
+                ErrorCode.PAID_RESERVATION_CANCEL_NOT_SUPPORTED);
+
+        assertThat(savedStatus(original.reservationId())).isEqualTo(ReservationStatus.Reserved);
+        assertThat(reservationSeats.findAllByReservation_ReservationId(original.reservationId())).hasSize(2);
+        assertConflict(() -> create(otherUserId, screeningId, firstSeatId), ErrorCode.SEAT_UNAVAILABLE);
+    }
+
     @ParameterizedTest
-    @ValueSource(strings = {"scheduler", "confirmation", "new-selection"})
+    @EnumSource(value = PaymentStatus.class, names = {"PROCESSING", "UNKNOWN"})
+    void unresolvedPaymentPreventsExpirationCancellationAndSeatReassignment(PaymentStatus paymentStatus) {
+        ReservationResponse pending = create(userId, screeningId, firstSeatId);
+        PaymentConfirmRequest request = prepareApproval(userId, pending.reservationId());
+        var context = paymentTransactions.begin(userId, request);
+        if (paymentStatus == PaymentStatus.UNKNOWN) {
+            assertThat(paymentTransactions.finish(context, null).status()).isEqualTo(PaymentStatus.UNKNOWN);
+        }
+        backdateExpiry(pending.reservationId());
+
+        scheduler.expirePendingReservations();
+        expirationService.expireReservation(pending.reservationId());
+
+        assertThat(savedStatus(pending.reservationId())).isEqualTo(ReservationStatus.Pending);
+        assertThat(reservations.findById(pending.reservationId()).orElseThrow().isPaymentProcessing()).isTrue();
+        assertThat(reservationSeats.findAllByReservation_ReservationId(pending.reservationId())).hasSize(1);
+        assertConflict(() -> service.cancelReservation(userId, pending.reservationId()), ErrorCode.PAYMENT_IN_PROGRESS);
+        assertConflict(() -> create(otherUserId, screeningId, firstSeatId), ErrorCode.SEAT_UNAVAILABLE);
+        verifyNoInteractions(tossPaymentClient);
+    }
+
+    @Test
+    void removedDirectConfirmationEndpointCannotBypassPayment() throws Exception {
+        ReservationResponse pending = create(userId, screeningId, firstSeatId);
+        mockMvc.perform(patch("/api/reservations/{id}/confirm", pending.reservationId())
+                        .header("Authorization", "Bearer " + jwtProvider.createAccessToken(userId)))
+                .andExpect(status().isNotFound());
+        assertThat(savedStatus(pending.reservationId())).isEqualTo(ReservationStatus.Pending);
+        verifyNoInteractions(tossPaymentClient);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"scheduler", "payment-preparation", "new-selection"})
     void expiredReservationCanBeRebookedAndConfirmedByAnotherUser(String expirationTrigger) {
         ReservationResponse original = create(userId, screeningId, firstSeatId, secondSeatId);
         backdateExpiry(original.reservationId());
 
         switch (expirationTrigger) {
             case "scheduler" -> scheduler.expirePendingReservations();
-            case "confirmation" -> assertConflict(
-                    () -> service.confirmReservation(userId, original.reservationId()),
+            case "payment-preparation" -> assertConflict(
+                    () -> prepareApproval(userId, original.reservationId()),
                     ErrorCode.RESERVATION_EXPIRED
             );
             case "new-selection" -> { /* 아래의 재선택 요청에서 만료 처리를 검증한다. */ }
@@ -265,7 +359,7 @@ class ReservationHoldIntegrationTest {
         ReservationResponse replacement = create(otherUserId, screeningId, firstSeatId, secondSeatId);
         assertThat(replacement.reservationId()).isNotEqualTo(originalReservationId);
         assertThat(replacement.status()).isEqualTo(ReservationStatus.Pending);
-        assertThat(service.confirmReservation(otherUserId, replacement.reservationId()).status())
+        assertThat(confirmReservation(otherUserId, replacement.reservationId()).status())
                 .isEqualTo(ReservationStatus.Reserved);
 
         // 이전 예매의 만료 처리가 새 예매의 좌석을 해제하면 안 된다.
@@ -328,10 +422,140 @@ class ReservationHoldIntegrationTest {
         }
     }
 
+    @Test
+    void contenderWaitsForScreeningSeatLockThenSeesCommittedWinningHold() throws Exception {
+        CountDownLatch locked = new CountDownLatch(1);
+        CountDownLatch finishWinner = new CountDownLatch(1);
+        CountDownLatch contenderStarted = new CountDownLatch(1);
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var winner = executor.submit(() -> transaction.execute(ignored -> {
+                screeningSeats.findWithLock(screeningId, firstSeatId).orElseThrow();
+                locked.countDown();
+                await(finishWinner);
+                return create(userId, screeningId, firstSeatId);
+            }));
+            assertThat(locked.await(5, TimeUnit.SECONDS)).isTrue();
+            var contender = executor.submit(() -> {
+                contenderStarted.countDown();
+                return selectAfter(new CountDownLatch(0), otherUserId);
+            });
+            try {
+                assertThat(contenderStarted.await(5, TimeUnit.SECONDS)).isTrue();
+                assertThatThrownBy(() -> contender.get(200, TimeUnit.MILLISECONDS))
+                        .isInstanceOf(java.util.concurrent.TimeoutException.class);
+            } finally {
+                finishWinner.countDown();
+            }
+            assertThat(winner.get(10, TimeUnit.SECONDS).status()).isEqualTo(ReservationStatus.Pending);
+            assertThat(contender.get(10, TimeUnit.SECONDS)).isFalse();
+        }
+        assertThat(reservationSeats.findAllByScreening_ScreeningIdAndSeat_SeatIdIn(screeningId, List.of(firstSeatId)))
+                .hasSize(1);
+        assertThat(reservations.findAllByUser_IdOrderByReservationAtDesc(otherUserId)).isEmpty();
+    }
+
+    @Test
+    void screeningSeatLockDoesNotBlockOtherSeatOrAnotherScreening() throws Exception {
+        CountDownLatch locked = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        try (var executor = Executors.newFixedThreadPool(3)) {
+            var locker = executor.submit(() -> transaction.executeWithoutResult(ignored -> {
+                screeningSeats.findWithLock(screeningId, firstSeatId).orElseThrow();
+                locked.countDown();
+                await(release);
+            }));
+            try {
+                assertThat(locked.await(5, TimeUnit.SECONDS)).isTrue();
+                var otherSeat = executor.submit(() -> create(userId, screeningId, secondSeatId));
+                var otherScreening = executor.submit(() -> create(otherUserId, otherScreeningId, firstSeatId));
+                assertThat(otherSeat.get(5, TimeUnit.SECONDS).status()).isEqualTo(ReservationStatus.Pending);
+                assertThat(otherScreening.get(5, TimeUnit.SECONDS).status()).isEqualTo(ReservationStatus.Pending);
+            } finally {
+                release.countDown();
+            }
+            locker.get(5, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
+    void reversedMultiSeatRequestsLockInSameOrderAndHaveOneWinner() throws Exception {
+        CountDownLatch start = new CountDownLatch(1);
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var first = executor.submit(() -> selectManyAfter(start, userId, firstSeatId, secondSeatId));
+            var second = executor.submit(() -> selectManyAfter(start, otherUserId, secondSeatId, firstSeatId));
+            start.countDown();
+            assertThat(List.of(first.get(10, TimeUnit.SECONDS), second.get(10, TimeUnit.SECONDS)))
+                    .containsExactlyInAnyOrder(true, false);
+        }
+        assertThat(reservationSeats.findAllByScreening_ScreeningIdAndSeat_SeatIdIn(
+                screeningId, List.of(firstSeatId, secondSeatId))).hasSize(2);
+    }
+
+    private boolean selectManyAfter(CountDownLatch start, Long owner, Long... seats) throws InterruptedException {
+        start.await();
+        try {
+            create(owner, screeningId, seats);
+            return true;
+        } catch (GlobalException e) {
+            assertThat(e.getErrorCode()).isEqualTo(ErrorCode.SEAT_UNAVAILABLE);
+            return false;
+        }
+    }
+
+    @Test
+    void registeringScreeningCreatesAllLockRowsInSameTransaction() {
+        transaction.executeWithoutResult(tx -> {
+            var registered = screeningService.createScreening(new ScreeningCreateRequest(
+                    screenId, movieId, LocalDate.now().plusDays(8), LocalTime.of(18, 0),
+                    LocalTime.of(20, 0), ScreeningType.Original));
+            assertThat(jdbc.queryForObject("select count(*) from screening_seat where screening_id = ?",
+                    Long.class, registered.screeningId())).isEqualTo(2);
+            assertThat(screeningSeats.findWithLock(registered.screeningId(), firstSeatId)).isPresent();
+            assertThat(screeningSeats.findWithLock(registered.screeningId(), secondSeatId)).isPresent();
+            tx.setRollbackOnly();
+        });
+    }
+
+    @Test
+    void duplicateScreeningSeatRowIsRejectedByUniqueConstraint() {
+        assertThatThrownBy(() -> transaction.executeWithoutResult(ignored ->
+                screeningSeats.saveAndFlush(ScreeningSeat.create(entityManager.find(Screening.class, screeningId),
+                        entityManager.find(Seat.class, firstSeatId)))))
+                .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+    }
+
+    private void await(CountDownLatch latch) {
+        try {
+            if (!latch.await(10, TimeUnit.SECONDS)) throw new IllegalStateException("seat lock wait timed out");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(e);
+        }
+    }
+
     private ReservationResponse create(Long selectingUserId, Long targetScreeningId, Long... seatIds) {
         return service.createReservation(selectingUserId, new ReservationCreateRequest(
                 targetScreeningId, 0, 0, seatIds.length, 0, List.of(seatIds)
         ));
+    }
+
+    private PaymentConfirmRequest prepareApproval(Long payingUserId, Long targetReservationId) {
+        PaymentPrepareResponse prepared = paymentService.prepareReservation(payingUserId,
+                new ReservationPaymentPrepareRequest(targetReservationId));
+        String paymentKey = "test_" + UUID.randomUUID();
+        when(tossPaymentClient.confirm(
+                eq(new TossPaymentConfirmRequest(paymentKey, prepared.orderId(), prepared.amount())),
+                anyString()
+        )).thenReturn(new TossPaymentConfirmResponse(
+                paymentKey, prepared.orderId(), prepared.amount(), prepared.orderName(),
+                "DONE", "카드", OffsetDateTime.now().withNano(0), "KRW"
+        ));
+        return new PaymentConfirmRequest(paymentKey, prepared.orderId(), prepared.amount());
+    }
+
+    private ReservationResponse confirmReservation(Long payingUserId, Long targetReservationId) {
+        paymentConfirmService.confirm(payingUserId, prepareApproval(payingUserId, targetReservationId));
+        return service.getReservation(payingUserId, targetReservationId);
     }
 
     private void backdateExpiry(Long reservationId) {

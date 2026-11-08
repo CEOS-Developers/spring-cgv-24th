@@ -7,6 +7,8 @@ import java.util.List;
 
 public interface SeatRepository extends JpaRepository<Seat, Long> {
 
+    List<Seat> findAllByScreenId_ScreenIdOrderBySeatIdAsc(Long screenId);
+
 //  예매할 좌석이 실제 그 상영관에 속하는 좌석인지 검증
     List<Seat> findAllBySeatIdInAndScreenId_ScreenId(
             List<Long> seatIds,
