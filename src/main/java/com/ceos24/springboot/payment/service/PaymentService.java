@@ -19,12 +19,14 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
 public class PaymentService {
+    private final Clock clock;
 
     private final PaymentRepository paymentRepository;
     private final ReservationRepository reservationRepository;
@@ -39,7 +41,7 @@ public class PaymentService {
         storeOrderExpirationService.releaseExpiredForUser(userId);
         StoreOrder order = storeOrderRepository.findMyOrderWithLock(request.storeOrderId(), userId)
                 .orElseThrow(() -> new GlobalException(ErrorCode.STORE_ORDER_NOT_FOUND));
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now(clock);
         order.validatePayable(now);
         if (order.getTotalAmount() == null || order.getTotalAmount() <= 0) {
             throw new GlobalException(ErrorCode.INVALID_PAYMENT_AMOUNT);
@@ -71,7 +73,7 @@ public class PaymentService {
                 );
 
         // 잠금을 기다리는 동안 시간이 지날 수 있으므로 조회 후 측정한다.
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now(clock);
 
         validateReservation(reservation, now);
 

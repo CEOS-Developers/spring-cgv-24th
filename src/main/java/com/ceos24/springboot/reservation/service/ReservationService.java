@@ -25,6 +25,7 @@ import com.ceos24.springboot.user.repository.UserRepository;
 
 import java.time.DayOfWeek;
 import java.time.LocalDate;
+import java.time.Clock;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.List;
@@ -36,6 +37,7 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class ReservationService {
+    private final Clock clock;
 
     private static final int HOLD_MINUTES = 10;
 
@@ -157,7 +159,7 @@ public class ReservationService {
         );
 
         // Reservation 생성
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now(clock);
         Reservation reservation = Reservation.builder()
                 .user(user)
                 .screening(screening)

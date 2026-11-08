@@ -19,13 +19,14 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import java.time.Clock;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
 import java.util.*;
 
 @Service
 @RequiredArgsConstructor
 public class PaymentCancelTransactionService {
+    private final Clock clock;
     private final PaymentRepository payments;
     private final PaymentCancellationRepository cancellations;
     private final ReservationRepository reservations;
@@ -65,7 +66,8 @@ public class PaymentCancelTransactionService {
         if (request.cancelAmount() != null && request.cancelAmount() > payment.getBalanceAmount()) {
             throw new GlobalException(ErrorCode.PAYMENT_CANCEL_AMOUNT_EXCEEDED);
         }
-        PaymentCancellation cancellation = cancellations.save(PaymentCancellation.start(payment, requestId, request));
+        PaymentCancellation cancellation = cancellations.save(
+                PaymentCancellation.start(payment, requestId, request, LocalDateTime.now(clock)));
         return context(userId, payment, cancellation, null);
     }
 
@@ -92,7 +94,7 @@ public class PaymentCancelTransactionService {
             var approved = additions.getFirst();
             payment.applyCancellation(cancellation.getCancelAmount());
             cancellation.complete(approved.transactionKey(), approved.canceledAt()
-                    .atZoneSameInstant(ZoneId.of("Asia/Seoul")).toLocalDateTime());
+                    .atZoneSameInstant(clock.getZone()).toLocalDateTime());
             if (payment.getBalanceAmount() == 0) {
                 if (target.reservation() != null) {
                     target.reservation().cancelAfterRefund();
@@ -115,7 +117,7 @@ public class PaymentCancelTransactionService {
     private CancelContext context(Long userId, Payment payment, PaymentCancellation cancellation,
                                   PaymentCancelResponse completed) {
         // PG 멱등키는 15일 유효하다. 오래된 미확정 요청은 재전송하지 않고 조회만 한다.
-        boolean lookupOnly = !cancellation.getCreatedAt().isAfter(LocalDateTime.now().minusDays(14));
+        boolean lookupOnly = !cancellation.getCreatedAt().isAfter(LocalDateTime.now(clock).minusDays(14));
         return new CancelContext(userId, payment.getId(), payment.getTargetType(), payment.getTargetId(),
                 cancellation.getId(), payment.getPaymentKey(), cancellation.getPgIdempotencyKey(),
                 new TossPaymentCancelRequest(cancellation.getCancelReason(), cancellation.getCancelAmount()),

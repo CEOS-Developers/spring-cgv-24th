@@ -17,13 +17,14 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Clock;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
 import java.util.Objects;
 
 @Service
 @RequiredArgsConstructor
 public class PaymentConfirmTransactionService {
+    private final Clock clock;
     private final PaymentRepository paymentRepository;
     private final ReservationRepository reservationRepository;
     private final ReservationSeatRepository reservationSeatRepository;
@@ -60,7 +61,7 @@ public class PaymentConfirmTransactionService {
 
         switch (payment.getStatus()) {
             case READY -> {
-                LocalDateTime now = LocalDateTime.now();
+                LocalDateTime now = LocalDateTime.now(clock);
                 if (payment.getExpiresAt() == null || !payment.getExpiresAt().isAfter(now)) {
                     throw new GlobalException(target.expiredError());
                 }
@@ -94,7 +95,7 @@ public class PaymentConfirmTransactionService {
             payment.markUnknown();
         } else if ("DONE".equals(remote.status()) && remote.approvedAt() != null) {
             LocalDateTime approvedAt = remote.approvedAt()
-                    .atZoneSameInstant(ZoneId.of("Asia/Seoul")).toLocalDateTime();
+                    .atZoneSameInstant(clock.getZone()).toLocalDateTime();
             payment.complete(approvedAt, remote.method());
             target.complete();
         } else if ("ABORTED".equals(remote.status()) || "EXPIRED".equals(remote.status())) {
@@ -102,11 +103,11 @@ public class PaymentConfirmTransactionService {
             if (target.reservation() != null) {
                 Reservation reservation = target.reservation();
                 reservation.endPaymentProcessing();
-                if (reservation.expireIfPending(LocalDateTime.now())) {
+                if (reservation.expireIfPending(LocalDateTime.now(clock))) {
                     reservationSeatRepository.deleteAllByReservation_ReservationId(reservation.getReservationId());
                 }
             } else {
-                storeOrderLifecycle.failPaymentLocked(target.storeOrder(), LocalDateTime.now());
+                storeOrderLifecycle.failPaymentLocked(target.storeOrder(), LocalDateTime.now(clock));
             }
         } else {
             // Never release stock/seats based only on a timeout or an unsupported state.

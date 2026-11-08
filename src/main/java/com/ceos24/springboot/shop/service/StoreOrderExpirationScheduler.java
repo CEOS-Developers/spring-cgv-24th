@@ -8,18 +8,20 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import java.time.Clock;
 import java.time.LocalDateTime;
 
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class StoreOrderExpirationScheduler {
+    private final Clock clock;
     private final StoreOrderRepository orders;
     private final StoreOrderExpirationService expiration;
 
     @Scheduled(fixedDelay = 60_000, initialDelay = 60_000)
     public void expirePendingOrders() {
-        for (Long id : orders.findExpiredOrderIds(StoreOrderStatus.PENDING, LocalDateTime.now(),
+        for (Long id : orders.findExpiredOrderIds(StoreOrderStatus.PENDING, LocalDateTime.now(clock),
                 null, null, PageRequest.of(0, 100))) {
             try {
                 expiration.expireOrder(id);

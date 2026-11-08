@@ -57,4 +57,7 @@ dependencies {
 
 tasks.named('test') {
     useJUnitPlatform()
+
+    // Business time must remain Asia/Seoul even when the server runs in UTC.
+    systemProperty 'user.timezone', 'UTC'
 }

@@ -54,6 +54,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @ActiveProfiles("test")
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 class PaymentCancelIntegrationTest {
+    @Autowired private Clock clock;
     // 실제 MySQL 검증은 별도로 만든 빈 DB에서만 허용한다. 기본 실행은 H2다.
     @DynamicPropertySource
     static void optionalMySql(DynamicPropertyRegistry registry) {
@@ -97,9 +98,9 @@ class PaymentCancelIntegrationTest {
             Screen screen = persist(Screen.create(theater, "1관", ScreenType.General, 1, 1));
             Movie movie = persist(Movie.builder().titleKr("취소 테스트").runtimeMinutes(120).ageRating(AgeRating.ALL).build());
             Screening screening = persist(Screening.builder().screen(screen).movie(movie)
-                    .screeningDate(LocalDate.now().plusDays(1)).startTime(LocalTime.of(14, 0))
+                    .screeningDate(LocalDate.now(clock).plusDays(1)).startTime(LocalTime.of(14, 0))
                     .endTime(LocalTime.of(16, 0)).screeningType(ScreeningType.Original).build());
-            LocalDateTime now = LocalDateTime.now();
+            LocalDateTime now = LocalDateTime.now(clock);
             Reservation reservation = persist(Reservation.builder().user(owner).screening(screening)
                     .childCount(0).youthCount(0).adultCount(1).seniorCount(0).totalPrice(28000)
                     .status(ReservationStatus.Pending).reservationAt(now).expiresAt(now.plusMinutes(10)).build());
@@ -316,7 +317,7 @@ class PaymentCancelIntegrationTest {
         when(toss.cancel(eq(ticket.key()), any(), anyString())).thenThrow(new ResourceAccessException("timeout"));
         when(toss.findForCancellation(ticket.key())).thenThrow(new ResourceAccessException("offline"));
         postCancel(ticket, "old", 8000L).andExpect(status().isServiceUnavailable());
-        jdbc.update("update payment_cancellation set created_at=?", LocalDateTime.now().minusDays(16));
+        jdbc.update("update payment_cancellation set created_at=?", LocalDateTime.now(clock).minusDays(16));
         doReturn(remote(ticket, entry("late", 8000))).when(toss).findForCancellation(ticket.key());
         postCancel(ticket, "old", 8000L).andExpect(status().isOk());
         verify(toss, times(1)).cancel(anyString(), any(), anyString());
@@ -418,7 +419,7 @@ class PaymentCancelIntegrationTest {
     }
 
     private Fixture paid(User owner, PaymentTargetType type, Long id, long amount) {
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now(clock);
         Payment payment = persist(Payment.prepare(owner, type, id, amount, now, now.plusMinutes(10)));
         payment.startProcessing("cancel-test-" + payment.getId());
         payment.complete(now, "카드");
@@ -432,9 +433,9 @@ class PaymentCancelIntegrationTest {
             jdbc.update("insert into menu(menu_name, menu_price) values ('cancel-test', 6000)");
             Menu menu = em.find(Menu.class, jdbc.queryForObject("select menu_id from menu where menu_name='cancel-test'", Long.class));
             persist(StoreInventory.builder().theater(theater).menu(menu).stock(8).build());
-            StoreOrder order = persist(StoreOrder.builder().user(owner).theater(theater).totalAmount(12000).build());
+            StoreOrder order = persist(StoreOrder.builder().user(owner).theater(theater).totalAmount(12000).now(LocalDateTime.now(clock)).build());
             persist(OrderItem.builder().order(order).menu(menu).quantity(2).build());
-            order.beginPayment(LocalDateTime.now());
+            order.beginPayment(LocalDateTime.now(clock));
             order.completePayment();
             return paid(owner, PaymentTargetType.STORE_ORDER, order.getOrderId(), 12000);
         });

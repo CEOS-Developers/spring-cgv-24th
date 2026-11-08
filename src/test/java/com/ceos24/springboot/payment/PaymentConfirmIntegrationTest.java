@@ -48,6 +48,7 @@ import org.springframework.web.client.ResourceAccessException;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.time.LocalDate;
+import java.time.Clock;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
@@ -73,6 +74,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @ActiveProfiles("test")
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 class PaymentConfirmIntegrationTest {
+    @Autowired private Clock clock;
 
     private static final String PAYMENT_KEY = "test_payment_key_for_duplicate_approval";
     private static final long AMOUNT = 28000L;
@@ -118,10 +120,10 @@ class PaymentConfirmIntegrationTest {
             Movie movie = persist(Movie.builder().titleKr("결제테스트")
                     .runtimeMinutes(120).ageRating(AgeRating.ALL).build());
             Screening screening = persist(Screening.builder().screen(screen).movie(movie)
-                    .screeningDate(LocalDate.now().plusDays(1))
+                    .screeningDate(LocalDate.now(clock).plusDays(1))
                     .startTime(LocalTime.of(14, 0)).endTime(LocalTime.of(16, 0))
                     .screeningType(ScreeningType.Original).build());
-            LocalDateTime now = LocalDateTime.now();
+            LocalDateTime now = LocalDateTime.now(clock);
             Reservation reservation = persist(Reservation.builder().user(user).screening(screening)
                     .childCount(0).youthCount(0).adultCount(2).seniorCount(0)
                     .totalPrice((int) AMOUNT).status(ReservationStatus.Pending)
@@ -174,7 +176,7 @@ class PaymentConfirmIntegrationTest {
         assertStoredCompletion();
 
         if (deadlinePassed) {
-            LocalDateTime expiredAt = LocalDateTime.now().minusMinutes(1);
+            LocalDateTime expiredAt = LocalDateTime.now(clock).minusMinutes(1);
             jdbc.update("update reservation set expires_at = ? where reservation_id = ?", expiredAt, reservationId);
             jdbc.update("update payment set expires_at = ? where payment_id = ?", expiredAt, prepared.paymentId());
         }
@@ -339,8 +341,8 @@ class PaymentConfirmIntegrationTest {
     }
 
     private void backdateExpiry() {
-        jdbc.update("update reservation set expires_at = ? where reservation_id = ?", LocalDateTime.now().minusMinutes(1), reservationId);
-        jdbc.update("update payment set expires_at = ? where payment_id = ?", LocalDateTime.now().minusMinutes(1), prepared.paymentId());
+        jdbc.update("update reservation set expires_at = ? where reservation_id = ?", LocalDateTime.now(clock).minusMinutes(1), reservationId);
+        jdbc.update("update payment set expires_at = ? where payment_id = ?", LocalDateTime.now(clock).minusMinutes(1), prepared.paymentId());
     }
 
     private void assertError(Runnable action, ErrorCode code) {

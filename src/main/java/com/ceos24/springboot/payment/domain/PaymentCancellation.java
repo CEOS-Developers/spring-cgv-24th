@@ -63,7 +63,7 @@ public class PaymentCancellation {
     @Column(name = "canceled_at")
     private LocalDateTime canceledAt;
 
-    public static PaymentCancellation start(Payment payment, String requestId, PaymentCancelRequest request) {
+    public static PaymentCancellation start(Payment payment, String requestId, PaymentCancelRequest request, LocalDateTime now) {
         PaymentCancellation result = new PaymentCancellation();
         result.payment = payment;
         result.requestId = requestId;
@@ -73,7 +73,7 @@ public class PaymentCancellation {
         result.balanceBefore = payment.getBalanceAmount();
         result.cancelReason = request.cancelReason();
         result.status = PaymentCancellationStatus.PROCESSING;
-        result.createdAt = LocalDateTime.now();
+        result.createdAt = Objects.requireNonNull(now, "now");
         return result;
     }
 
