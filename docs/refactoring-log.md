@@ -3097,3 +3097,62 @@ A안은 바로 처리한다. 원래 요청의 T2와 겹쳐도 행 잠금 + `IN_P
 |---|---|
 | `README.md` | `## 결제` 절 신설, 비밀값 표 제목·토스 키 2행·공용 키 설명 |
 | `docs/refactoring-log.md` | 이 기록 |
+
+## 4주차 PR(#25) 코드 리뷰 반영
+
+리뷰 10건(Wannys26 5건, zzulYH-11 5건)을 코드와 대조했다. 실제 결함 6건은 고치고, 1건은 일부만 반영하고, 설계 제안 1건과 칭찬 2건은 답글로 설명한다.
+
+### 결정 1 — 승인 T2도 예매·구매 행 잠금을 첫 쿼리로 한다 (Wannys26)
+
+- `completePayment`/`failPayment`가 결제를 일반 SELECT로 먼저 읽었다. InnoDB 스냅샷이 잠금 전에 잡혀, 정리가 먼저 커밋해도 옛 `IN_PROGRESS`를 보고 덮어쓸 수 있었다
+- 정리는 승인 시작 2분 뒤에만 돌아 평소에는 겹치지 않지만, T2가 늦어지면 열리는 틈이다. 예매·매점 모두 잠금 → 결제 조회 순서로 바꿨다. 이미 정리된 결제는 `requireStatus`가 `INVALID_PAYMENT_STATUS`로 막는다
+
+### 결정 2 — 상영이 시작된 뒤 확인된 승인은 확정하지 않고 환불한다 (zzulYH-11)
+
+- `confirmAfterRecovery`는 만료·상영 시각을 보지 않았다. 정리가 늦어지면 지난 회차가 `RESERVED`가 되고 취소 기한도 지나 환불받을 길이 없다
+- `Reservation.expireAfterScreeningStarted` 추가(엔티티 변경, 확인받음). PENDING → EXPIRED, 좌석 해제 후 전액 환불, 사유 "상영 시작 후 결제 확인으로 자동 환불"
+- 벌크 `expireIfPending`을 쓰지 않은 이유: `expiresAt <= now` 조건이라 T1이 늘린 선점 시간이 남은 이 경우를 바꾸지 못한다
+
+### 결정 3 — 결과 불명 결제의 자동 정리를 승인 시작 후 1일로 제한한다 (Wannys26)
+
+- stale 조회에 하한이 없어, 토스 조회가 계속 실패하거나 토스에서 직접 취소된 결제는 1분마다 영원히 다시 물었다. 매점은 재고가 차감된 채 묶인다
+- `PaymentRepository.AUTO_RECOVERY_PERIOD = 1일`. 그 뒤는 매일 09시 `reportAbandoned`가 주문번호 목록을 error 로그로 남기고, 관리자 정리 API로 맞춘다
+- 상태 컬럼을 두지 않고 "기간이 지난 IN_PROGRESS"를 관리 대상으로 본다. 엔티티 변경 없이 같은 정보를 얻는다. 매분 error 로그를 남기면 하루 1440번 쌓여 다른 오류가 묻힌다
+
+### 결정 4 — 승인의 결과 불명 코드에 `IDEMPOTENT_REQUEST_PROCESSING`을 더한다. 허용 목록 방식으로는 바꾸지 않는다 (Wannys26)
+
+- 취소 목록과 가이드 문서에는 있었는데 승인 목록에서 빠져 있었다
+- "확정 거절만 거절" 방식은 채택하지 않았다. 카드 한도 초과 같은 흔한 거절이 전부 결과 불명이 되어 회원이 정리 때까지 다시 결제하지 못하고, 수십 개의 거절 코드를 빠짐없이 관리해야 해서 누락하면 반대 방향 오류가 생긴다. 새 코드는 "이미 처리됨·처리 중·일시 오류" 계열이면 결과 불명에 더하는 기준을 주석에 적었다
+
+### 결정 5 — 토스 호출 오류 사유를 "예외 종류 + HTTP 상태 + 토스 코드"로 요약한다. paymentKey는 남긴다 (Wannys26)
+
+- `e.getMessage()`에는 5xx 응답 본문 전체나 요청 URL이 들어가, 로그·결제 실패 사유·관리자 정리 응답까지 흘러갔다. `describe()`로 바꿨다
+- paymentKey는 비밀값이 아니다. successUrl 쿼리로 브라우저에 이미 노출되고 시크릿 키 없이는 쓸 수 없으며, paymentKey 조회에서는 클라이언트가 아는 유일한 추적 키다
+
+### 결정 6 — 다른 결제에 쓰인 paymentKey는 409로 응답한다 (zzulYH-11)
+
+- 유니크 위반이 T1 커밋 시점에 나서 500이 됐다. 토스 호출 전이라 돈 문제는 없었다
+- 승인 시작 직후 flush하고 `DataIntegrityViolationException`을 `PAYMENT_KEY_ALREADY_USED`(409)로 바꾼다(`saveHold`와 같은 방식). 사전 조회 대신 제약을 쓰면 동시 요청까지 한 번에 막는다. 매점은 재고 잠금 전에 flush한다
+
+### 결정 7 — `PaymentCancel.transactionKey`에 유니크 제약 (zzulYH-11, 엔티티 변경 확인받음)
+
+- 지금도 `requireInProgress`와 행 잠금이 막지만, 엔티티를 거치지 않는 쓰기와 응답 해석 실수까지 DB가 막는다. 확정 전 NULL은 여러 행 허용
+
+### 반영하지 않은 것 — 예매·매점 결제 흐름 공통화 (Wannys26)
+
+- 공통 흐름을 두면 payment 서비스가 예매·매점 서비스를 부르게 되어 "service는 같은 도메인 것만" 규칙과 충돌한다
+- 겹치는 것은 T1 → 토스 → T2를 잇는 몇 줄이고, 보상 규칙(좌석 유지 vs 재고 복구, 1:N vs 1:1, 상영 시작 판단)은 도메인마다 다르다. 웹훅을 붙여 결과 반영 진입점이 늘면 다시 본다
+
+### 변경 파일
+
+| 파일 | 내용 |
+|---|---|
+| `ReservationService`, `PurchaseService` | T2 잠금 순서, 상영 시작 후 환불, 정리 기간, paymentKey flush |
+| `Reservation` | `isScreeningStarted`, `expireAfterScreeningStarted` |
+| `PaymentCancel` | `transactionKey` unique |
+| `PaymentRepository` | `AUTO_RECOVERY_PERIOD`, `...StartedBetween` 조회 |
+| `ReservationPaymentRecoveryService`, `PurchasePaymentRecoveryService` | `reportAbandoned`, 환불 상세 문구 |
+| `TossPaymentsClient` | 승인 결과 불명 코드, `describe()` |
+| `ErrorCode` | `PAYMENT_KEY_ALREADY_USED` |
+| 테스트 | `ReservationServiceTest` 1, `ReservationAdminControllerTest` 2, `ReservationControllerTest` 1, `TossPaymentsClientTest` 3 추가. 전체 490개 통과 |
+| `README.md`, `docs/toss-payments-guide.md` | 분류 표 갱신 |
