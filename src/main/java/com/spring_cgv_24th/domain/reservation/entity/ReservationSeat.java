@@ -43,10 +43,17 @@ public class ReservationSeat {
     @Column(name = "price", nullable = false, updatable = false)
     private int price;
 
+    @Column(nullable = false, columnDefinition = "boolean default false")
+    private boolean cancelled;
+
     @Builder
     public ReservationSeat(Reservation reservation, ScreeningSeat screeningSeat, int price) {
         this.reservation = reservation;
         this.screeningSeat = screeningSeat;
         this.price = price;
+    }
+
+    public void cancel() {
+        cancelled = true;
     }
 }

@@ -96,9 +96,9 @@ class AuthenticationFlowIntegrationTest {
         assertFailure(mockMvc.perform(get("/api/movies/favorites")), 401, "TOKEN_NOT_EXIST401");
     }
 
-    // 만료·변조·다른 키로 서명한 토큰과 잘못된 인증 헤더의 401 응답을 확인한다.
+    // 보호 API는 잘못된 토큰에 공통 401을 반환하고, 공개 API는 인증 없이 접근을 허용한다.
     @Test
-    void expiredTamperedAndWrongKeyTokensAreRejectedWithCommonJson() throws Exception {
+    void invalidTokensAreRejectedOnProtectedApiButPublicApiAllowsAnonymousAccess() throws Exception {
         Instant now = Instant.now();
         SecretKey configuredKey = Keys.hmacShaKeyFor(Decoders.BASE64.decode(jwtProperties.secret()));
         String expired = signedToken(configuredKey,
@@ -118,8 +118,10 @@ class AuthenticationFlowIntegrationTest {
                 .header(HttpHeaders.AUTHORIZATION, bearer(wrongKey))), 401, "TOKEN_INVALID401");
         assertFailure(mockMvc.perform(get("/api/admin/check")
                 .header(HttpHeaders.AUTHORIZATION, "Basic abc")), 401, "TOKEN_INVALID401");
-        assertFailure(mockMvc.perform(get("/api/movies")
-                .header(HttpHeaders.AUTHORIZATION, bearer(tampered))), 401, "TOKEN_INVALID401");
+        mockMvc.perform(get("/api/movies")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(tampered)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
     }
 
     // 실제 로그인 토큰으로 USER의 관리자 접근은 거부하고 ADMIN의 접근은 허용한다.

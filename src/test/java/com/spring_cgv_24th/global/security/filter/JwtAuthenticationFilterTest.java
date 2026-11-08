@@ -1,8 +1,6 @@
 package com.spring_cgv_24th.global.security.filter;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -51,9 +49,7 @@ import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.InsufficientAuthenticationException;
 import org.springframework.security.core.Authentication;
-import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -66,7 +62,6 @@ class JwtAuthenticationFilterTest {
     private static final JsonMapper JSON_MAPPER = JsonMapper.builder().build();
 
     @Mock private JwtProvider jwtProvider;
-    @Mock private AuthenticationEntryPoint authenticationEntryPoint;
     @Mock private FilterChain filterChain;
 
     private JwtAuthenticationFilter filter;
@@ -74,7 +69,7 @@ class JwtAuthenticationFilterTest {
 
     @BeforeEach
     void setUp() {
-        filter = new JwtAuthenticationFilter(jwtProvider, authenticationEntryPoint);
+        filter = new JwtAuthenticationFilter(jwtProvider);
         response = new MockHttpServletResponse();
         SecurityContextHolder.clearContext();
     }
@@ -121,7 +116,7 @@ class JwtAuthenticationFilterTest {
         verify(filterChain).doFilter(request, response);
     }
 
-    // 실제로 발급한 Refresh JWT를 일반 보호 API에 보내도 인증을 만들지 않고 실패 처리한다.
+    // Refresh JWT는 Access 인증을 만들지 않고 실패 원인만 저장해 다음 필터로 넘긴다.
     @Test
     @DisplayName("Refresh Token으로 보호 API에 접근하면 인증 실패로 처리한다")
     void rejectsRealRefreshTokenOnProtectedApi() throws Exception {
@@ -129,7 +124,7 @@ class JwtAuthenticationFilterTest {
                 Encoders.BASE64.encode(Jwts.SIG.HS256.key().build().getEncoded()),
                 "spring-cgv-24th", "spring-cgv-api", Duration.ofMinutes(15), Duration.ofDays(7));
         JwtProvider realProvider = new JwtProvider(properties, Clock.systemUTC());
-        JwtAuthenticationFilter realFilter = new JwtAuthenticationFilter(realProvider, authenticationEntryPoint);
+        JwtAuthenticationFilter realFilter = new JwtAuthenticationFilter(realProvider);
         MockHttpServletRequest request = request("/api/reservations");
         request.addHeader(HttpHeaders.AUTHORIZATION, "Bearer " + realProvider.createRefreshToken(1L));
 
@@ -138,14 +133,12 @@ class JwtAuthenticationFilterTest {
         assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
         assertThat(request.getAttribute(JwtAuthenticationFilter.AUTH_ERROR_ATTRIBUTE))
                 .isEqualTo(ErrorCode.TOKEN_INVALID);
-        verify(authenticationEntryPoint).commence(
-                eq(request), eq(response), any(AuthenticationException.class));
-        verifyNoInteractions(filterChain);
+        verify(filterChain).doFilter(request, response);
     }
 
-    // 만료된 토큰은 실패 원인을 보관하고 EntryPoint에서 응답한 뒤 체인을 멈춘다.
+    // 만료된 토큰은 인증을 비우고 실패 원인을 보관한 뒤 다음 필터로 넘긴다.
     @Test
-    @DisplayName("검증 실패 원인을 요청에 저장하고 EntryPoint에서 응답을 처리한다")
+    @DisplayName("검증 실패 원인을 요청에 저장하고 인증 없이 체인을 진행한다")
     void invalidToken() throws Exception {
         MockHttpServletRequest request = request("/api/reservations");
         request.addHeader(HttpHeaders.AUTHORIZATION, "Bearer expired-token");
@@ -157,9 +150,7 @@ class JwtAuthenticationFilterTest {
         assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
         assertThat(request.getAttribute(JwtAuthenticationFilter.AUTH_ERROR_ATTRIBUTE))
                 .isEqualTo(ErrorCode.TOKEN_EXPIRED);
-        verify(authenticationEntryPoint).commence(
-                eq(request), eq(response), any(AuthenticationException.class));
-        verifyNoInteractions(filterChain);
+        verify(filterChain).doFilter(request, response);
     }
 
     // Bearer가 아닌 인증 방식은 토큰 누락이 아닌 무효한 헤더로 취급한다.
@@ -173,14 +164,14 @@ class JwtAuthenticationFilterTest {
 
         assertThat(request.getAttribute(JwtAuthenticationFilter.AUTH_ERROR_ATTRIBUTE))
                 .isEqualTo(ErrorCode.TOKEN_INVALID);
-        verifyNoInteractions(jwtProvider, filterChain);
-        verify(authenticationEntryPoint).commence(
-                eq(request), eq(response), any(AuthenticationException.class));
+        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+        verifyNoInteractions(jwtProvider);
+        verify(filterChain).doFilter(request, response);
     }
 
-    // 공개 API라도 잘못된 JWT가 명시되면 인증 실패로 즉시 응답한다.
+    // 공개 API의 잘못된 JWT는 인증을 만들지 않으며, 익명 접근 여부는 뒤의 Security 체인이 결정한다.
     @Test
-    @DisplayName("공개 API라도 잘못된 토큰이 있으면 EntryPoint에서 요청을 종료한다")
+    @DisplayName("공개 API의 잘못된 토큰은 인증 없이 다음 필터로 넘긴다")
     void invalidTokenOnPublicApi() throws Exception {
         MockHttpServletRequest request = request("/api/movies");
         request.addHeader(HttpHeaders.AUTHORIZATION, "Bearer invalid-token");
@@ -191,9 +182,9 @@ class JwtAuthenticationFilterTest {
 
         assertThat(request.getAttribute(JwtAuthenticationFilter.AUTH_ERROR_ATTRIBUTE))
                 .isEqualTo(ErrorCode.TOKEN_INVALID);
-        verify(authenticationEntryPoint).commence(
-                eq(request), eq(response), any(AuthenticationException.class));
-        verifyNoInteractions(filterChain);
+        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+        assertThat(response.getContentAsString()).isEmpty();
+        verify(filterChain).doFilter(request, response);
     }
 
     // 실제 EntryPoint와 공통 예외 처리기를 연결해 토큰 오류의 JSON 코드와 401 상태를 검증한다.
@@ -238,17 +229,22 @@ class JwtAuthenticationFilterTest {
         assertThat(json.has("data")).isFalse();
     }
 
-    // 로그인 POST는 JWT 필터의 검사 대상에서 제외되어 헤더와 무관하게 다음 필터로 간다.
-    @Test
-    @DisplayName("로그인 POST 경로에서는 JWT 필터를 실행하지 않는다")
-    void skipLoginPath() throws Exception {
-        MockHttpServletRequest request = request("/api/auth/login");
+    // 인증 API도 필터를 실행하지만 잘못된 Access 헤더 때문에 공개 POST 처리를 중단하지 않는다.
+    @ParameterizedTest
+    @ValueSource(strings = {"/api/auth/signup", "/api/auth/login", "/api/auth/refresh", "/api/auth/logout"})
+    void publicAuthPathRecordsTokenFailureAndContinues(String path) throws Exception {
+        MockHttpServletRequest request = request(path);
         request.setMethod("POST");
-        request.addHeader(HttpHeaders.AUTHORIZATION, "Bearer access-token");
+        request.addHeader(HttpHeaders.AUTHORIZATION, "Bearer expired-token");
+        when(jwtProvider.parseAccessToken("expired-token"))
+                .thenThrow(new CustomException(ErrorCode.TOKEN_EXPIRED));
 
         filter.doFilter(request, response, filterChain);
 
-        verifyNoInteractions(jwtProvider);
+        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+        assertThat(request.getAttribute(JwtAuthenticationFilter.AUTH_ERROR_ATTRIBUTE))
+                .isEqualTo(ErrorCode.TOKEN_EXPIRED);
+        verify(jwtProvider).parseAccessToken("expired-token");
         verify(filterChain).doFilter(request, response);
     }
 
@@ -264,7 +260,7 @@ class JwtAuthenticationFilterTest {
         JwtProvider realProvider = new JwtProvider(properties, Clock.fixed(now, ZoneOffset.UTC));
         JwtProvider oldIssuer = new JwtProvider(properties,
                 Clock.fixed(now.minus(Duration.ofMinutes(16)), ZoneOffset.UTC));
-        JwtAuthenticationFilter realFilter = new JwtAuthenticationFilter(realProvider, authenticationEntryPoint);
+        JwtAuthenticationFilter realFilter = new JwtAuthenticationFilter(realProvider);
         AuthService authService = mock(AuthService.class);
         AuthReqDTO.RefreshReqDTO request = new AuthReqDTO.RefreshReqDTO(realProvider.createRefreshToken(1L));
         String newAccessToken = realProvider.createAccessToken(1L, MemberRole.USER);
@@ -285,11 +281,10 @@ class JwtAuthenticationFilterTest {
                 .andExpect(jsonPath("$.data.refreshToken").doesNotExist());
 
         verify(authService).refresh(request);
-        verifyNoInteractions(authenticationEntryPoint);
         assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
     }
 
-    // Access 헤더 검사를 생략해도 본문 Refresh Token의 검증 실패는 공통 JSON 401로 반환한다.
+    // Access 헤더의 만료 오류가 있어도 본문 Refresh Token 검증 실패의 코드로 공통 JSON 401을 반환한다.
     @ParameterizedTest
     @CsvSource({
             "REFRESH_TOKEN_EXPIRED, REFRESH_TOKEN_EXPIRED401",
@@ -299,6 +294,8 @@ class JwtAuthenticationFilterTest {
         AuthService authService = mock(AuthService.class);
         AuthReqDTO.RefreshReqDTO request = new AuthReqDTO.RefreshReqDTO("invalid-refresh-token");
         when(authService.refresh(request)).thenThrow(new CustomException(errorCode));
+        when(jwtProvider.parseAccessToken("expired-access-token"))
+                .thenThrow(new CustomException(ErrorCode.TOKEN_EXPIRED));
 
         authMvc(filter, authService).perform(post("/api/auth/refresh")
                         .header(HttpHeaders.AUTHORIZATION, "Bearer expired-access-token")
@@ -311,7 +308,7 @@ class JwtAuthenticationFilterTest {
                 .andExpect(jsonPath("$.data").doesNotExist());
 
         verify(authService).refresh(request);
-        verifyNoInteractions(jwtProvider, authenticationEntryPoint);
+        verify(jwtProvider).parseAccessToken("expired-access-token");
     }
 
     // Access 인증을 요구하지 않는 재발급 API도 Refresh Token 필수 입력 검증은 서비스 실행 전에 적용한다.
@@ -328,7 +325,7 @@ class JwtAuthenticationFilterTest {
                 .andExpect(jsonPath("$.success").value(false))
                 .andExpect(jsonPath("$.code").value("COMMON400"));
 
-        verifyNoInteractions(authService, jwtProvider, authenticationEntryPoint);
+        verifyNoInteractions(authService, jwtProvider);
     }
 
     // 로그아웃도 본문으로 자격 증명을 전달하므로 Access 헤더 누락·만료와 무관하게 서비스로 진행한다.
@@ -343,7 +340,7 @@ class JwtAuthenticationFilterTest {
         JwtProvider realProvider = new JwtProvider(properties, Clock.fixed(now, ZoneOffset.UTC));
         JwtProvider oldIssuer = new JwtProvider(properties,
                 Clock.fixed(now.minus(Duration.ofMinutes(16)), ZoneOffset.UTC));
-        JwtAuthenticationFilter realFilter = new JwtAuthenticationFilter(realProvider, authenticationEntryPoint);
+        JwtAuthenticationFilter realFilter = new JwtAuthenticationFilter(realProvider);
         AuthService authService = mock(AuthService.class);
         AuthReqDTO.LogoutReqDTO request = new AuthReqDTO.LogoutReqDTO(realProvider.createRefreshToken(1L));
         MockHttpServletRequestBuilder apiRequest = post("/api/auth/logout")
@@ -361,11 +358,10 @@ class JwtAuthenticationFilterTest {
                 .andExpect(jsonPath("$.data").doesNotExist());
 
         verify(authService).logout(request);
-        verifyNoInteractions(authenticationEntryPoint);
         assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
     }
 
-    // Access 헤더 검사에서 제외해도 로그아웃 본문 토큰의 만료·무효 오류는 공통 JSON 401로 반환한다.
+    // Access 헤더의 만료 오류가 있어도 로그아웃 본문 토큰의 만료·무효 코드로 공통 JSON 401을 반환한다.
     @ParameterizedTest
     @CsvSource({
             "REFRESH_TOKEN_EXPIRED, REFRESH_TOKEN_EXPIRED401",
@@ -375,6 +371,8 @@ class JwtAuthenticationFilterTest {
         AuthService authService = mock(AuthService.class);
         AuthReqDTO.LogoutReqDTO request = new AuthReqDTO.LogoutReqDTO("invalid-refresh-token");
         doThrow(new CustomException(errorCode)).when(authService).logout(request);
+        when(jwtProvider.parseAccessToken("expired-access-token"))
+                .thenThrow(new CustomException(ErrorCode.TOKEN_EXPIRED));
 
         authMvc(filter, authService).perform(post("/api/auth/logout")
                         .header(HttpHeaders.AUTHORIZATION, "Bearer expired-access-token")
@@ -387,7 +385,7 @@ class JwtAuthenticationFilterTest {
                 .andExpect(jsonPath("$.data").doesNotExist());
 
         verify(authService).logout(request);
-        verifyNoInteractions(jwtProvider, authenticationEntryPoint);
+        verify(jwtProvider).parseAccessToken("expired-access-token");
     }
 
     // 로그아웃의 Refresh Token 누락·공백 입력은 필수 값 검증으로 서비스 실행 전에 공통 400으로 거부한다.
@@ -404,7 +402,7 @@ class JwtAuthenticationFilterTest {
                 .andExpect(jsonPath("$.success").value(false))
                 .andExpect(jsonPath("$.code").value("COMMON400"));
 
-        verifyNoInteractions(authService, jwtProvider, authenticationEntryPoint);
+        verifyNoInteractions(authService, jwtProvider);
     }
 
     private HandlerExceptionResolver exceptionResolver() {

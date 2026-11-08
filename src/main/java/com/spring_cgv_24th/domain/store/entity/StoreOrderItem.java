@@ -30,6 +30,9 @@ public class StoreOrderItem {
     @Column(name = "quantity", nullable = false)
     private int quantity;
 
+    @Column(nullable = false, columnDefinition = "integer default 0")
+    private int cancelledQuantity;
+
     @Column(name = "unit_price", nullable = false, updatable = false)
     private int unitPrice;
 
@@ -39,5 +42,17 @@ public class StoreOrderItem {
         this.product = product;
         this.quantity = quantity;
         this.unitPrice = product.getPrice();
+    }
+
+    public long getTotalPrice() {
+        return (long) unitPrice * quantity;
+    }
+
+    public int getRemainingQuantity() {
+        return quantity - cancelledQuantity;
+    }
+
+    public void cancelQuantity(int quantity) {
+        cancelledQuantity += quantity;
     }
 }

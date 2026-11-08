@@ -26,6 +26,9 @@ jwt:
   access-token-expiration: ${JWT_ACCESS_TOKEN_EXPIRATION}
   refresh-token-expiration: ${REFRESH_TOKEN_EXPIRATION}
 
+toss:
+  secret-key: ${TOSS_SECRET_KEY}
+
 logging:
   level:
     org.hibernate.SQL: debug

@@ -2,6 +2,7 @@ package com.spring_cgv_24th.domain.store.dto;
 
 import com.spring_cgv_24th.domain.store.entity.StoreOrder;
 import com.spring_cgv_24th.domain.store.entity.StoreOrderItem;
+import com.spring_cgv_24th.domain.store.enums.StoreOrderStatus;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -11,7 +12,10 @@ public record StoreOrderResDTO(
         Long theaterId,
         LocalDateTime purchasedAt,
         List<OrderItemDTO> items,
-        long totalPrice
+        long totalPrice,
+        StoreOrderStatus status,
+        LocalDateTime expiresAt,
+        String paymentOrderId
 ) {
 
     public static StoreOrderResDTO from(StoreOrder order, List<StoreOrderItem> items) {
@@ -21,7 +25,10 @@ public record StoreOrderResDTO(
                 order.getTheater().getId(),
                 order.getPurchasedAt(),
                 items.stream().map(OrderItemDTO::from).toList(),
-                items.stream().mapToLong(item -> (long) item.getUnitPrice() * item.getQuantity()).sum());
+                items.stream().mapToLong(StoreOrderItem::getTotalPrice).sum(),
+                order.getStatus(),
+                order.getExpiresAt(),
+                order.getPaymentOrderId());
     }
 
     public record OrderItemDTO(

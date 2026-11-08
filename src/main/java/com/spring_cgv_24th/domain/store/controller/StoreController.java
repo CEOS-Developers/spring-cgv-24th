@@ -57,7 +57,7 @@ public class StoreController {
         return ApiResponse.onSuccess(storeService.replenishStock(theaterId, productId, request));
     }
 
-    @Operation(summary = "매점 구매")
+    @Operation(summary = "매점 결제 대기 주문 생성")
     @SecurityRequirement(name = "bearerAuth")
     @PostMapping("/theaters/{theaterId}/store/orders")
     @ResponseStatus(HttpStatus.CREATED)

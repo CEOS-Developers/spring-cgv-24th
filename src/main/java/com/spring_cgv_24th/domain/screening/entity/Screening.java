@@ -2,6 +2,8 @@ package com.spring_cgv_24th.domain.screening.entity;
 
 import com.spring_cgv_24th.domain.movie.entity.Movie;
 import com.spring_cgv_24th.domain.auditorium.entity.Auditorium;
+import com.spring_cgv_24th.global.exception.CustomException;
+import com.spring_cgv_24th.global.exception.ErrorCode;
 import jakarta.persistence.*;
 
 import java.time.LocalDateTime;
@@ -42,5 +44,19 @@ public class Screening {
         this.auditorium = auditorium;
         this.startsAt = startsAt;
         this.endsAt = endsAt;
+    }
+
+    public void validateReservationTime(LocalDateTime now) {
+        requireBeforeStart(now, ErrorCode.SCREENING_ALREADY_STARTED);
+    }
+
+    public void validateCancellationTime(LocalDateTime now) {
+        requireBeforeStart(now, ErrorCode.RESERVATION_CANCELLATION_CLOSED);
+    }
+
+    private void requireBeforeStart(LocalDateTime now, ErrorCode errorCode) {
+        if (!now.isBefore(startsAt)) {
+            throw new CustomException(errorCode);
+        }
     }
 }

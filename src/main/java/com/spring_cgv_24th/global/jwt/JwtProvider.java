@@ -93,24 +93,7 @@ public class JwtProvider {
     public RefreshTokenClaims parseRefreshToken(String token) {
         try {
             Claims claims = refreshTokenParser.parseSignedClaims(token).getPayload();
-            if (claims.getExpiration() == null || claims.getIssuedAt() == null
-                    || claims.getId() == null || claims.getId().isBlank()) {
-                throw new IllegalArgumentException("필수 Refresh Token Claim이 없습니다.");
-            }
-            Instant issuedAt = claims.getIssuedAt().toInstant();
-            Instant expiresAt = claims.getExpiration().toInstant();
-            if (issuedAt.isAfter(clock.instant()) || !expiresAt.isAfter(issuedAt)) {
-                throw new IllegalArgumentException("Refresh Token 시간 Claim이 올바르지 않습니다.");
-            }
-            // JWT 만료 시각과 현재 시각이 정확히 같아도 이미 만료된 것으로 처리한다.
-            if (!expiresAt.isAfter(clock.instant())) {
-                throw new CustomException(ErrorCode.REFRESH_TOKEN_EXPIRED);
-            }
-            Long memberId = Long.valueOf(claims.getSubject());
-            if (memberId <= 0) {
-                throw new IllegalArgumentException("회원 ID가 올바르지 않습니다.");
-            }
-            return new RefreshTokenClaims(memberId, expiresAt);
+            return toRefreshTokenClaims(claims);
         } catch (ExpiredJwtException e) {
             throw new CustomException(ErrorCode.REFRESH_TOKEN_EXPIRED);
         } catch (JwtException | IllegalArgumentException e) {
@@ -134,10 +117,10 @@ public class JwtProvider {
 
     private AccessTokenClaims toAccessTokenClaims(Claims claims) {
         if (claims.getExpiration() == null || claims.getIssuedAt() == null) {
-            throw new IllegalArgumentException("필수 시간 Claim이 없습니다.");
+            throw new CustomException(ErrorCode.TOKEN_INVALID);
         }
 
-        // Refresh Token과 동일하게 현재 시각이 만료 시각에 도달한 경우부터 거부한다.
+        // 라이브러리 검사와 별도로 exp == now 및 밀리초 미만의 만료 경계도 Clock 기준으로 거부한다.
         if (!claims.getExpiration().toInstant().isAfter(clock.instant())) {
             throw new CustomException(ErrorCode.TOKEN_EXPIRED);
         }
@@ -145,16 +128,44 @@ public class JwtProvider {
         String subject = claims.getSubject();
         String roleClaim = claims.get(ROLE_CLAIM, String.class);
         if (subject == null || roleClaim == null) {
-            throw new IllegalArgumentException("필수 사용자 Claim이 없습니다.");
+            throw new CustomException(ErrorCode.TOKEN_INVALID);
         }
 
         Long memberId = Long.valueOf(subject);
         if (memberId <= 0) {
-            throw new IllegalArgumentException("회원 ID가 올바르지 않습니다.");
+            throw new CustomException(ErrorCode.TOKEN_INVALID);
         }
 
         MemberRole role = MemberRole.valueOf(roleClaim);
         return new AccessTokenClaims(memberId, role);
+    }
+
+    private RefreshTokenClaims toRefreshTokenClaims(Claims claims) {
+        if (claims.getExpiration() == null || claims.getIssuedAt() == null
+                || claims.getId() == null || claims.getId().isBlank()) {
+            throw new CustomException(ErrorCode.REFRESH_TOKEN_INVALID);
+        }
+
+        Instant issuedAt = claims.getIssuedAt().toInstant();
+        Instant expiresAt = claims.getExpiration().toInstant();
+        if (issuedAt.isAfter(clock.instant()) || !expiresAt.isAfter(issuedAt)) {
+            throw new CustomException(ErrorCode.REFRESH_TOKEN_INVALID);
+        }
+
+        // Access Token과 동일하게 exp == now 및 밀리초 미만의 만료 경계도 직접 확인한다.
+        if (!expiresAt.isAfter(clock.instant())) {
+            throw new CustomException(ErrorCode.REFRESH_TOKEN_EXPIRED);
+        }
+
+        String subject = claims.getSubject();
+        if (subject == null) {
+            throw new CustomException(ErrorCode.REFRESH_TOKEN_INVALID);
+        }
+        Long memberId = Long.valueOf(subject);
+        if (memberId <= 0) {
+            throw new CustomException(ErrorCode.REFRESH_TOKEN_INVALID);
+        }
+        return new RefreshTokenClaims(memberId, expiresAt);
     }
 
     private SecretKey createSigningKey(String secret) {

@@ -14,6 +14,10 @@ spring:
         format_sql: true
 jwt:
   refresh-token-expiration: 7d
+payment:
+  expiration-enabled: false
+toss:
+  secret-key: test_sk_automated_tests
 logging:
   level:
     org.hibernate.SQL: debug

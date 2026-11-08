@@ -10,13 +10,10 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
-import java.util.Set;
 import org.springframework.http.HttpHeaders;
-import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
 import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
@@ -26,18 +23,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     public static final String AUTH_ERROR_ATTRIBUTE = "AUTH_ERROR_CODE";
 
     private static final String BEARER_PREFIX = "Bearer ";
-    private static final Set<String> EXCLUDED_PATHS = Set.of(
-            "/api/auth/login",
-            "/api/auth/signup",
-            "/api/auth/refresh",
-            "/api/auth/logout");
-
     private final JwtProvider jwtProvider;
-    private final AuthenticationEntryPoint authenticationEntryPoint;
 
-    public JwtAuthenticationFilter(JwtProvider jwtProvider, AuthenticationEntryPoint authenticationEntryPoint) {
+    public JwtAuthenticationFilter(JwtProvider jwtProvider) {
         this.jwtProvider = jwtProvider;
-        this.authenticationEntryPoint = authenticationEntryPoint;
     }
 
     @Override
@@ -53,17 +42,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         } catch (CustomException e) {
             SecurityContextHolder.clearContext();
             request.setAttribute(AUTH_ERROR_ATTRIBUTE, e.getErrorCode());
-            authenticationEntryPoint.commence(
-                    request, response, new BadCredentialsException(e.getMessage(), e));
-            return;
+            // 공개 API는 익명 접근을 허용하고, 보호 API의 401 응답은 Security 체인에 맡긴다.
         }
 
         filterChain.doFilter(request, response);
-    }
-
-    @Override
-    protected boolean shouldNotFilter(HttpServletRequest request) {
-        return "POST".equals(request.getMethod()) && EXCLUDED_PATHS.contains(request.getRequestURI());
     }
 
     private String resolveToken(HttpServletRequest request) {

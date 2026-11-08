@@ -19,6 +19,7 @@ import com.spring_cgv_24th.domain.store.dto.TheaterStockResDTO;
 import com.spring_cgv_24th.domain.store.entity.Product;
 import com.spring_cgv_24th.domain.store.entity.StoreOrder;
 import com.spring_cgv_24th.domain.store.entity.TheaterStock;
+import com.spring_cgv_24th.domain.store.enums.StoreOrderStatus;
 import com.spring_cgv_24th.domain.store.repository.ProductRepository;
 import com.spring_cgv_24th.domain.store.repository.StoreOrderItemRepository;
 import com.spring_cgv_24th.domain.store.repository.StoreOrderRepository;
@@ -27,17 +28,23 @@ import com.spring_cgv_24th.domain.theater.entity.Theater;
 import com.spring_cgv_24th.domain.theater.repository.TheaterRepository;
 import com.spring_cgv_24th.global.exception.CustomException;
 import com.spring_cgv_24th.global.exception.ErrorCode;
+import java.time.Clock;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.PlatformTransactionManager;
 
 @ExtendWith(MockitoExtension.class)
 class StoreServiceTest {
+
+    private static final LocalDateTime NOW = LocalDateTime.of(2026, 10, 30, 12, 0);
 
     @Mock private ProductRepository productRepository;
     @Mock private TheaterStockRepository theaterStockRepository;
@@ -45,7 +52,15 @@ class StoreServiceTest {
     @Mock private MemberRepository memberRepository;
     @Mock private StoreOrderRepository storeOrderRepository;
     @Mock private StoreOrderItemRepository storeOrderItemRepository;
-    @InjectMocks private StoreService storeService;
+    @Mock private PlatformTransactionManager transactionManager;
+    private StoreService storeService;
+
+    @BeforeEach
+    void setUp() {
+        Clock clock = Clock.fixed(NOW.toInstant(ZoneOffset.UTC), ZoneOffset.UTC);
+        storeService = new StoreService(productRepository, theaterStockRepository, theaterRepository,
+                memberRepository, storeOrderRepository, storeOrderItemRepository, clock, transactionManager);
+    }
 
     @Test
     void sameMenuHasDifferentStockByTheater() {
@@ -136,7 +151,7 @@ class StoreServiceTest {
     }
 
     @Test
-    void purchaseSavesPriceAndReducesStock() {
+    void pendingOrderSavesPriceAndReservesStockForTenMinutes() {
         Product product = mock(Product.class);
         when(product.getId()).thenReturn(1L);
         when(product.getName()).thenReturn("팝콘");
@@ -158,6 +173,8 @@ class StoreServiceTest {
         assertEquals(1, stock.getQuantity());
         assertEquals(18000L, response.totalPrice());
         assertEquals(9000, response.items().getFirst().unitPrice());
+        assertEquals(StoreOrderStatus.PENDING_PAYMENT, response.status());
+        assertEquals(NOW.plusMinutes(10), response.expiresAt());
         verify(storeOrderRepository).save(org.mockito.ArgumentMatchers.any(StoreOrder.class));
         verify(storeOrderItemRepository).saveAll(anyList());
     }

@@ -1,6 +1,8 @@
 package com.spring_cgv_24th.domain.screening.entity;
 
 import com.spring_cgv_24th.domain.reservation.entity.Reservation;
+import com.spring_cgv_24th.global.exception.CustomException;
+import com.spring_cgv_24th.global.exception.ErrorCode;
 import jakarta.persistence.*;
 
 import lombok.AccessLevel;
@@ -47,7 +49,14 @@ public class ScreeningSeat {
     }
 
     public void occupy(Reservation reservation) {
+        validateAvailable();
         this.reservation = reservation;
+    }
+
+    public void validateAvailable() {
+        if (reservation != null) {
+            throw new CustomException(ErrorCode.SEAT_ALREADY_RESERVED);
+        }
     }
 
     public void release() {
