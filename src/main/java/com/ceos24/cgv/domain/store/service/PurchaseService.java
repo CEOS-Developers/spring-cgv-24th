@@ -38,6 +38,7 @@ import com.ceos24.cgv.global.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.ConcurrencyFailureException;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -107,6 +108,7 @@ public class PurchaseService {
         // 차감보다 먼저 한다. 이미 승인 중인 주문의 중복 요청이 재고 행을 잠갔다가 롤백하는 일이 없다.
         // 차감이 실패하면 이 상태 변경도 함께 롤백된다.
         payment.startApproval(req.paymentKey(), LocalDateTime.now(clock));
+        flushApprovalStart();
 
         deductStocks(purchase);
 
@@ -383,6 +385,16 @@ public class PurchaseService {
     private Payment findPayment(Long paymentId) {
         return paymentRepository.findById(paymentId)
                 .orElseThrow(() -> new CustomException(ErrorCode.PAYMENT_NOT_FOUND));
+    }
+
+    // 커밋 시점의 paymentKey 유니크 위반은 500이 된다. 예매 승인 시작과 같은 이유로 여기서 flush해 잡는다.
+    // 재고 행을 잠그기 전에 해서, 막힐 요청이 재고 락을 잡았다가 롤백하지 않게 한다.
+    private void flushApprovalStart() {
+        try {
+            paymentRepository.flush();
+        } catch (DataIntegrityViolationException e) {
+            throw new CustomException(ErrorCode.PAYMENT_KEY_ALREADY_USED);
+        }
     }
 
     private void deductStocks(Purchase purchase) {

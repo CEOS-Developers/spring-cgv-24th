@@ -53,6 +53,8 @@ public enum ErrorCode {
     PAYMENT_AMOUNT_MISMATCH(HttpStatus.BAD_REQUEST, "결제 금액이 주문 금액과 다릅니다."),
     PAYMENT_IN_PROGRESS(HttpStatus.CONFLICT, "이미 진행 중인 결제가 있습니다. 잠시 후 결제 결과를 확인해 주세요."),
     INVALID_PAYMENT_STATUS(HttpStatus.CONFLICT, "현재 상태에서 처리할 수 없는 결제입니다. 결제를 다시 시작해 주세요."),
+    // 승인 요청의 paymentKey가 다른 결제에 이미 쓰였다. 토스를 부르기 전에 막혀 돈은 빠지지 않았다.
+    PAYMENT_KEY_ALREADY_USED(HttpStatus.CONFLICT, "이미 다른 결제에 사용된 결제 정보입니다. 결제를 다시 시작해 주세요."),
     PAYMENT_REJECTED(HttpStatus.PAYMENT_REQUIRED, "결제가 승인되지 않았습니다. 다른 결제수단으로 다시 시도해 주세요."),
     // 토스가 결제를 판단하지 않은 거절(키 오류, 호출 한도, 연결 실패)이다. 돈은 빠지지 않았지만 결제수단을 바꿔도 소용없다.
     PAYMENT_SERVICE_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "결제 서비스에 일시적인 문제가 있어 결제하지 못했습니다. 잠시 후 다시 시도해 주세요."),

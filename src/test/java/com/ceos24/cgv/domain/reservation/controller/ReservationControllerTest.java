@@ -320,6 +320,24 @@ class ReservationControllerTest extends ControllerIntegrationTest {
         verify(tossPaymentsClient, times(1)).confirm(anyString(), anyString(), anyInt());
     }
 
+    @Test
+    void 다른_결제에_쓰인_paymentKey로_승인하면_500이_아니라_409이고_토스를_부르지_않는다() throws Exception {
+        Long paid = 선점(1, 1);
+        결제완료(paid);
+        Long id = 선점(1, 2);
+        Order order = 주문(id);
+
+        // 승인요청은 늘 같은 PAYMENT_KEY를 싣는다. 이미 승인된 결제의 키다
+        승인요청(id, user, order.orderId(), order.amount())
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("PAYMENT_KEY_ALREADY_USED"));
+        // 유니크 위반으로 flush에 실패한 변경이 영속성 컨텍스트에 남아 있어 flush 없이 비운다
+        em.clear();
+
+        verify(tossPaymentsClient, times(1)).confirm(anyString(), anyString(), anyInt());
+        assertThat(결제조회(order.orderId()).getStatus()).isEqualTo(PaymentStatus.READY);
+    }
+
     // ─── 결제 조회 ────────────────────────────────────────────────────────────
 
     @Test

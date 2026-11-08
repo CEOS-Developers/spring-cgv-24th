@@ -119,6 +119,7 @@ public class ReservationService {
         LocalDateTime expiresAtBeforePayment = reservation.getExpiresAt();
         reservation.holdForPayment(now);
         payment.startApproval(req.paymentKey(), now);
+        flushApprovalStart();
 
         return new ReservationPaymentAttempt(payment.getId(), id, userId, req.paymentKey(),
                 payment.getOrderId(), payment.getAmount(), expiresAtBeforePayment);
@@ -377,6 +378,16 @@ public class ReservationService {
                 .map(ReservationSeat::getLabel)
                 .collect(Collectors.joining(", "));
         return (all ? "예매 전체 취소: " : "예매 부분 취소: ") + labels;
+    }
+
+    // paymentKey 유니크 위반은 커밋 시점에 나면 500이 된다. 여기서 flush해 잡는다. 사전 조회 대신 제약을 쓰는 것은
+    // 같은 키로 동시에 온 두 요청까지 한 번에 막기 위해서다. 토스를 부르기 전이라 돈은 빠지지 않았다.
+    private void flushApprovalStart() {
+        try {
+            paymentRepository.flush();
+        } catch (DataIntegrityViolationException e) {
+            throw new CustomException(ErrorCode.PAYMENT_KEY_ALREADY_USED);
+        }
     }
 
     private void ensureNoPaymentInProgress(Long reservationId) {

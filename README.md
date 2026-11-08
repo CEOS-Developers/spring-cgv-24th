@@ -3076,6 +3076,7 @@ em.createNativeQuery("alter table branch_like add index ix_tmp (user_id), "
 | 토스 응답이 타임아웃·5xx | 실패로 단정하지 않고 `IN_PROGRESS`로 남김 | 504 `PAYMENT_RESULT_UNKNOWN`. 같은 예매의 새 결제·취소가 막혀 이중 결제가 생기지 않음. 2분 뒤 스케줄러가 토스 조회로 정리 | `ReservationControllerTest.결과를_모르면_504이고_결제는_승인중으로_남아_취소도_새_결제도_막힌다` |
 | 토스가 `ALREADY_PROCESSED_PAYMENT` | 거절이 아니라 결과 불명으로 분류 | 위와 같음 | `TossPaymentsClientTest.이미_승인된_결제라는_응답은_거절이_아니라_결과_불명이다` |
 | 토스가 `IDEMPOTENT_REQUEST_PROCESSING` (같은 주문의 첫 승인이 처리 중) | 거절이 아니라 결과 불명으로 분류 | 위와 같음 | `TossPaymentsClientTest.같은_주문의_첫_승인_요청이_처리_중이면_결과_불명이다` |
+| 다른 결제에 이미 쓰인 `paymentKey`로 승인 | 승인 시작 직후 flush해 유니크 위반을 잡음 | 409 `PAYMENT_KEY_ALREADY_USED`. 토스를 부르지 않음 | `ReservationControllerTest.다른_결제에_쓰인_paymentKey로_승인하면_500이_아니라_409이고_토스를_부르지_않는다` |
 
 승인 요청의 `orderId` 멱등키는 연결 실패 재시도의 안전망입니다. 연결 거부·연결 타임아웃이면 같은 키로 한 번만 다시 보내는데, 첫 요청이 혹시 토스에 닿았더라도 두 번 결제되지 않습니다. 읽기 타임아웃 뒤에는 승인을 다시 보내지 않고 조회로 맞춥니다(「외부 API 통신과 예외 처리」).
 
