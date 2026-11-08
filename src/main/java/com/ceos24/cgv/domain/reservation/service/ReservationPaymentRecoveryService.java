@@ -17,6 +17,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 
@@ -55,6 +56,16 @@ public class ReservationPaymentRecoveryService {
                 log.warn("[Recovery] 예매 취소 재시도 미완료 paymentCancelId={} reason={}",
                         target.paymentCancelId(), e.getMessage());
             }
+        }
+    }
+
+    // 자동 정리 기간이 지난 결제를 하루 한 번 알린다. 상태 컬럼을 따로 두지 않고 "기간이 지난 IN_PROGRESS"를
+    // 관리 대상으로 본다. 매분 정리할 때마다 남기면 같은 건이 하루 1440번 쌓여 다른 오류가 묻힌다.
+    @Scheduled(cron = "0 0 9 * * *")
+    public void reportAbandoned() {
+        List<String> orderIds = reservationService.findAbandonedApprovalOrderIds();
+        if (!orderIds.isEmpty()) {
+            log.error("[Recovery] 자동 정리 기간이 지난 예매 결제 {}건, 관리자 정리 필요 orderIds={}", orderIds.size(), orderIds);
         }
     }
 

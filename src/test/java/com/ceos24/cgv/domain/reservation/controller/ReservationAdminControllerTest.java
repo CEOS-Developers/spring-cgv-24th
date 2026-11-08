@@ -10,7 +10,9 @@ import com.ceos24.cgv.domain.payment.entity.PaymentCancelStatus;
 import com.ceos24.cgv.domain.payment.entity.PaymentStatus;
 import com.ceos24.cgv.domain.reservation.entity.Reservation;
 import com.ceos24.cgv.domain.reservation.entity.ReservationStatus;
+import com.ceos24.cgv.domain.payment.repository.PaymentRepository;
 import com.ceos24.cgv.domain.reservation.service.ReservationPaymentRecoveryService;
+import com.ceos24.cgv.domain.reservation.service.ReservationService;
 import com.ceos24.cgv.domain.screening.entity.Screening;
 import com.ceos24.cgv.domain.user.entity.User;
 import com.ceos24.cgv.global.client.TossCancelResult;
@@ -64,6 +66,7 @@ class ReservationAdminControllerTest extends ControllerIntegrationTest {
     @MockitoBean TossPaymentsClient tossPaymentsClient;
 
     @Autowired ReservationPaymentRecoveryService recoveryService;
+    @Autowired ReservationService reservationService;
 
     private Screening screening;
     private User user;
@@ -176,6 +179,20 @@ class ReservationAdminControllerTest extends ControllerIntegrationTest {
         Reservation expired = 예매조회(orderId);
         assertThat(expired.getStatus()).isEqualTo(ReservationStatus.EXPIRED);
         assertThat(expired.getSeats()).noneMatch(seat -> seat.isOccupied());
+    }
+
+    @Test
+    void 자동_정리_기간이_지난_결제는_스케줄러가_묻지_않고_관리_대상으로_남는다() throws Exception {
+        String orderId = 결과불명결제();
+        setNow(NOW.plus(PaymentRepository.AUTO_RECOVERY_PERIOD).plusSeconds(1));
+
+        recoveryService.recoverStale();
+        flushAndClear();
+
+        verify(tossPaymentsClient, never()).findByPaymentKey(anyString());
+        assertThat(결제조회(orderId).getStatus()).isEqualTo(PaymentStatus.IN_PROGRESS);
+        assertThat(reservationService.findAbandonedApprovalOrderIds()).containsExactly(orderId);
+        assertThat(reservationService.findStaleApprovalOrderIds()).isEmpty();
     }
 
     @Test

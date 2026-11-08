@@ -14,6 +14,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 // 결과를 모르는 매점 결제(IN_PROGRESS)를 토스 조회로 정리한다. 그동안 T1이 차감한 재고는 차감된 채로 묶여 있다.
@@ -48,6 +49,16 @@ public class PurchasePaymentRecoveryService {
                 log.warn("[Recovery] 매점 환불 재시도 미완료 paymentCancelId={} reason={}",
                         target.paymentCancelId(), e.getMessage());
             }
+        }
+    }
+
+    // 자동 정리 기간이 지난 결제를 하루 한 번 알린다. 이유는 ReservationPaymentRecoveryService.reportAbandoned와 같다.
+    @Scheduled(cron = "0 0 9 * * *")
+    public void reportAbandoned() {
+        List<String> orderIds = purchaseService.findAbandonedApprovalOrderIds();
+        if (!orderIds.isEmpty()) {
+            log.error("[Recovery] 자동 정리 기간이 지난 매점 결제 {}건, 재고가 묶여 있어 관리자 정리 필요 orderIds={}",
+                    orderIds.size(), orderIds);
         }
     }
 

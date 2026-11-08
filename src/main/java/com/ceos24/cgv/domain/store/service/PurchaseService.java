@@ -143,9 +143,17 @@ public class PurchaseService {
     }
 
     // 승인을 시작한 지 RECOVERY_DELAY가 지났는데 아직 승인 중인 결제. 원래 요청의 T2가 실패했거나 서버가 그 사이 죽었다.
+    // 자동 정리 기간이 지난 결제는 빠진다(findAbandonedApprovalOrderIds).
     public List<String> findStaleApprovalOrderIds() {
-        return paymentRepository.findPurchaseOrderIdsByStatusStartedBefore(
-                PaymentStatus.IN_PROGRESS, LocalDateTime.now(clock).minus(Payment.RECOVERY_DELAY));
+        LocalDateTime now = LocalDateTime.now(clock);
+        return paymentRepository.findPurchaseOrderIdsByStatusStartedBetween(PaymentStatus.IN_PROGRESS,
+                now.minus(PaymentRepository.AUTO_RECOVERY_PERIOD), now.minus(Payment.RECOVERY_DELAY));
+    }
+
+    // 자동 정리 기간 안에 풀리지 않은 결제. 재고가 차감된 채 묶여 있어 관리자가 정리 API로 맞춰야 한다.
+    public List<String> findAbandonedApprovalOrderIds() {
+        return paymentRepository.findPurchaseOrderIdsByStatusStartedBefore(PaymentStatus.IN_PROGRESS,
+                LocalDateTime.now(clock).minus(PaymentRepository.AUTO_RECOVERY_PERIOD));
     }
 
     // 토스에 묻기 전에 정리해도 되는 결제인지 확인한다. 관리자 요청도 이 검사를 거친다.
