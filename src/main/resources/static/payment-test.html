@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>결제 승인 테스트</title>
+    <script src="https://js.tosspayments.com/v2/standard"></script>
+</head>
+<body>
+<h2>영화 예매 테스트 결제</h2>
+
+<p>
+    <label>
+        테스트 클라이언트 키
+        <input id="clientKey" placeholder="test_ck_...">
+    </label>
+</p>
+<p>
+    <label>
+        주문번호
+        <input id="orderId" placeholder="예매 응답의 orderId">
+    </label>
+</p>
+<p>
+    <label>
+        결제 금액
+        <input id="amount" type="number" value="15000">
+    </label>
+</p>
+
+<button id="payButton">테스트 결제창 열기</button>
+
+<h3>Swagger 승인 요청에 사용할 값</h3>
+<pre id="result"></pre>
+
+<script>
+    const result = document.getElementById("result");
+    const params = new URLSearchParams(window.location.search);
+
+    if (params.has("paymentKey")) {
+        result.textContent = JSON.stringify({
+            paymentKey: params.get("paymentKey"),
+            orderId: params.get("orderId"),
+            amount: Number(params.get("amount"))
+        }, null, 2);
+    } else if (params.has("code")) {
+        result.textContent =
+            params.get("code") + "\n" + params.get("message");
+    }
+
+    document.getElementById("payButton").addEventListener("click", async () => {
+        try {
+            const clientKey = document.getElementById("clientKey").value.trim();
+            const orderId = document.getElementById("orderId").value.trim();
+            const amount = Number(document.getElementById("amount").value);
+
+            if (!clientKey.startsWith("test_ck_")) {
+                throw new Error("API 개별 연동용 테스트 클라이언트 키를 입력하세요.");
+            }
+            if (!orderId || !Number.isInteger(amount) || amount <= 0) {
+                throw new Error("주문번호와 올바른 금액을 입력하세요.");
+            }
+
+            const tossPayments = TossPayments(clientKey);
+            const payment = tossPayments.payment({
+                customerKey: TossPayments.ANONYMOUS
+            });
+
+            const returnUrl =
+                window.location.origin + "/payment-test.html";
+
+            await payment.requestPayment({
+                method: "CARD",
+                amount: { currency: "KRW", value: amount },
+                orderId: orderId,
+                orderName: "영화 예매 테스트",
+                successUrl: returnUrl,
+                failUrl: returnUrl
+            });
+        } catch (error) {
+            result.textContent = error.message;
+        }
+    });
+</script>
+</body>
+</html>

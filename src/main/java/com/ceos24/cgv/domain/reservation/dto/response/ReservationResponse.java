@@ -9,13 +9,16 @@ public record ReservationResponse(
         Long reservationId,
         Long userId,
         Long screeningId,
+        String orderId,
         Integer totalPrice,
         ReservationStatus status,
         List<ReservationSeatResponse> seats
 ) {
 
+    // 결제 주문번호를 포함하는 응답
     public static ReservationResponse from(
-            Reservation reservation
+            Reservation reservation,
+            String orderId
     ) {
         List<ReservationSeatResponse> seatResponses =
                 reservation.getReservationSeats()
@@ -27,9 +30,15 @@ public record ReservationResponse(
                 reservation.getId(),
                 reservation.getUser().getId(),
                 reservation.getScreening().getId(),
+                orderId,
                 reservation.getTotalPrice(),
                 reservation.getStatus(),
                 seatResponses
         );
+    }
+
+
+    public static ReservationResponse from(Reservation reservation) {
+        return from(reservation, null);
     }
 }

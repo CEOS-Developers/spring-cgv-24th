@@ -21,3 +21,7 @@ jwt:
   secret: ${JWT_SECRET}
   access-token-expiration-seconds: 1800000
   issuer: cgv-api
+
+toss:
+  secret-key: ${TOSS_SECRET_KEY}
+  base-url: https://api.tosspayments.com

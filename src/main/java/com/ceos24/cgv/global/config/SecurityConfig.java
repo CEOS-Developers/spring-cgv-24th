@@ -110,6 +110,10 @@ public class SecurityConfig {
                                 "/api/movies/{movieId}"
                         ).hasRole("ADMIN")
 
+                        .requestMatchers(
+                                HttpMethod.GET,
+                                "/payment-test.html"
+                        ).permitAll()
                         // 나머지 요청은 인증 필요
                         .anyRequest().authenticated()
                 )
