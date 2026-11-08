@@ -34,3 +34,11 @@ jwt:
   access-token-expiration: ${JWT_ACCESS_EXPIRATION}
   refresh-token-expiration: ${JWT_REFRESH_EXPIRATION}
   issuer: cgv-api
+
+toss:
+  payments:
+    client-key: ${TOSS_CLIENT_KEY}
+    secret-key: ${TOSS_SECRET_KEY}
+    base-url: https://api.tosspayments.com
+    connect-timeout: 5s
+    read-timeout: 60s

@@ -42,9 +42,12 @@ public class JwtTokenProvider {
         }
 
         this.jwtParser = Jwts.parser()
+                .sig()
+                    .clear().add(Jwts.SIG.HS256).and() // HS256 이외의 알고리즘으로 서명된 토큰 거부
                 .verifyWith(secretKey)
                 .requireIssuer(properties.issuer())
                 .build();
+
     }
 
     // Access Token 발급
@@ -112,6 +115,11 @@ public class JwtTokenProvider {
         );
 
         return toTokenClaims(claims);
+    }
+
+    // 검증한 Refresh Token의 실제 만료 시각을 DB 저장에 사용한다.
+    public Instant getRefreshTokenExpiresAt(String token) {
+        return parseToken(token, TokenType.REFRESH).getExpiration().toInstant();
     }
 
     // 토큰 검증 및 정보 추출

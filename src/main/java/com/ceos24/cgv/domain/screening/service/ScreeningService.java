@@ -9,6 +9,7 @@ import com.ceos24.cgv.domain.movie.entity.Movie;
 import com.ceos24.cgv.domain.movie.repository.MovieRepository;
 import com.ceos24.cgv.domain.reservation.entity.ReservationStatus;
 import com.ceos24.cgv.domain.reservation.repository.ReservationSeatRepository;
+import com.ceos24.cgv.domain.reservation.service.ReservationHoldService;
 import com.ceos24.cgv.domain.screening.dto.request.ScreeningCreateRequest;
 import com.ceos24.cgv.domain.screening.dto.response.ScreeningResponse;
 import com.ceos24.cgv.domain.screening.dto.response.SeatResponse;
@@ -19,6 +20,7 @@ import com.ceos24.cgv.global.exception.BusinessException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Isolation;
 
 import java.time.LocalDateTime;
 import java.util.HashSet;
@@ -36,6 +38,7 @@ public class ScreeningService {
     private final CinemaRepository cinemaRepository;
     private final SeatRepository seatRepository;
     private final ReservationSeatRepository reservationSeatRepository;
+    private final ReservationHoldService holdService;
 
     // 상영 정보 등록
     @Transactional
@@ -113,7 +116,10 @@ public class ScreeningService {
     }
 
     // 상영회차의 상영관 좌석 상태 조회
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public List<SeatResponse> getSeatsByScreening(Long screeningId) {
+
+        holdService.expireForScreening(screeningId);
 
         // 상영 정보 조회
         Screening screening = screeningRepository.findById(screeningId)
@@ -124,10 +130,10 @@ public class ScreeningService {
         List<Seat> seats = seatRepository.
                 findAllByAuditoriumIdOrderByRowNumberAscColumnNumberAsc(auditoriumId);
 
-        // 해당 상영 회차에서 CONFIRMED 상태인 좌석 ID 조회
+        // 결제 대기 좌석도 선택할 수 없도록 표시한다.
         List<Long> reservedSeatIdList =
                 reservationSeatRepository.
-                        findSeatIdsByScreeningIdAndStatus(screeningId, ReservationStatus.CONFIRMED);
+                        findSeatIdsByScreeningIdAndStatuses(screeningId, ReservationStatus.seatHoldingStatuses());
 
         // 좌석마다 reserved 여부 계산
         Set<Long> reservedSeatIds = new HashSet<>(reservedSeatIdList);
