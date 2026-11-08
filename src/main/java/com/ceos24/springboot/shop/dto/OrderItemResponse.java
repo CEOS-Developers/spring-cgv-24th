@@ -16,9 +16,9 @@ public record OrderItemResponse(
         return new OrderItemResponse(
                 orderItem.getMenu().getMenuId(),
                 orderItem.getMenu().getMenuName(),
-                orderItem.getMenu().getMenuPrice(),
+                orderItem.getUnitPrice(),
                 orderItem.getQuantity(),
-                orderItem.getMenu().getMenuPrice()
+                orderItem.getUnitPrice()
                         * orderItem.getQuantity()
         );
     }

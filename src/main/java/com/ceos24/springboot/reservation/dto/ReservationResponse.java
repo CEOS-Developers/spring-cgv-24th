@@ -20,7 +20,8 @@ public record ReservationResponse(
 
         Integer totalPrice,
         ReservationStatus status,
-        LocalDateTime reservationAt
+        LocalDateTime reservationAt,
+        LocalDateTime expiresAt
 ) {
 
     public static ReservationResponse from(Reservation reservation, List<Seat> seats) {
@@ -36,7 +37,8 @@ public record ReservationResponse(
                 reservation.getSeniorCount(),
                 reservation.getTotalPrice(),
                 reservation.getStatus(),
-                reservation.getReservationAt()
+                reservation.getReservationAt(),
+                reservation.getExpiresAt()
         );
     }
 }

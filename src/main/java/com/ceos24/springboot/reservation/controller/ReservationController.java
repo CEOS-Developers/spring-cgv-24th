@@ -12,6 +12,8 @@ import org.springframework.web.bind.annotation.*;
 import com.ceos24.springboot.user.security.CustomUserDetails;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 
+import java.util.List;
+
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/api/reservations")
@@ -20,10 +22,10 @@ public class ReservationController {
 
     private final ReservationService reservationService;
 
-    // 티켓 예매
+    // 영화 티켓 예매
     @Operation(
-            summary = "영화 예매",
-            description = "상영회차와 관람 인원, 좌석을 선택하여 영화를 예매합니다."
+            summary = "영화 예매 대기",
+            description = "결제 화면으로 이동하기 전에 호출합니다. 회차별 좌석을 잠그고 10분간 점유한 뒤, 결제 준비·인증·승인을 진행합니다."
     )
     @PostMapping
     public ResponseEntity<ReservationResponse> createReservation(
@@ -42,6 +44,8 @@ public class ReservationController {
                 .body(response);
     }
 
+
+
     // 예매 확인
     @Operation(
             summary = "예매 확인",
@@ -49,11 +53,13 @@ public class ReservationController {
     )
     @GetMapping("/{reservationId}")
     public ResponseEntity<ReservationResponse> getReservation(
+            @AuthenticationPrincipal CustomUserDetails userDetails,
             @PathVariable Long reservationId
     ) {
-
         return ResponseEntity.ok(
-                reservationService.getReservation(reservationId)
+                reservationService.getReservation(
+                        userDetails.getUserId(), reservationId
+                )
         );
     }
 
@@ -77,5 +83,20 @@ public class ReservationController {
         );
     }
 
+    // 본인 예매 목록 조회
+    @Operation(
+            summary = "본인 예매 목록 조회",
+            description = "로그인한 사용자의 전체 예매 내역을 조회합니다."
+    )
+    @GetMapping
+    public ResponseEntity<List<ReservationResponse>> getMyReservations(
+            @AuthenticationPrincipal CustomUserDetails userDetails
+    ) {
+        return ResponseEntity.ok(
+                reservationService.getMyReservations(
+                        userDetails.getUserId()
+                )
+        );
+    }
 
 }

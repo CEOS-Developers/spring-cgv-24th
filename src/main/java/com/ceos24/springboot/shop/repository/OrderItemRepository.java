@@ -11,4 +11,6 @@ public interface OrderItemRepository
 
     //    주문에 포함된 메뉴 저장 및 조회
     List<OrderItem> findAllByOrder(StoreOrder order);
+
+    List<OrderItem> findAllByOrderOrderByMenu_MenuIdAsc(StoreOrder order);
 }

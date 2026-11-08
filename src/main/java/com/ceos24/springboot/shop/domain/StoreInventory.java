@@ -1,6 +1,8 @@
 package com.ceos24.springboot.shop.domain;
 
 import com.ceos24.springboot.theater.domain.Theater;
+import com.ceos24.springboot.global.exception.ErrorCode;
+import com.ceos24.springboot.global.exception.GlobalException;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Builder;
@@ -10,7 +12,8 @@ import lombok.NoArgsConstructor;
 
 @Entity
 @Getter
-@Table(name = "store_inventory")
+@Table(name = "store_inventory", uniqueConstraints = @UniqueConstraint(
+        name = "uk_inventory_theater_menu", columnNames = {"theater_id", "menu_id"}))
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class StoreInventory {
 //  영화관 당 매점의 재고 수량을 나타냄
@@ -18,7 +21,7 @@ public class StoreInventory {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     @Column(name = "inventory_id")
-    private Long InventoryId;
+    private Long inventoryId;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "theater_id")
@@ -46,15 +49,11 @@ public class StoreInventory {
     public void decreaseStock(Integer quantity) {
 
         if (quantity == null || quantity <= 0) {
-            throw new IllegalArgumentException(
-                    "주문 수량은 1개 이상이어야 합니다."
-            );
+            throw new GlobalException(ErrorCode.INVALID_STORE_ORDER_REQUEST);
         }
 
         if (stock < quantity) {
-            throw new IllegalArgumentException(
-                    "재고가 부족합니다."
-            );
+            throw new GlobalException(ErrorCode.INSUFFICIENT_STOCK);
         }
 
         this.stock -= quantity;
@@ -68,7 +67,7 @@ public class StoreInventory {
             );
         }
 
-        this.stock += addQuantity;
+        this.stock = Math.addExact(stock, addQuantity);
     }
 
 }

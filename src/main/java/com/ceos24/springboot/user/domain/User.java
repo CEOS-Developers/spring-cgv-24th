@@ -10,7 +10,8 @@ import java.time.LocalDateTime;
 
 @Entity
 @Getter
-@Table(name = "cgv_user")
+@Table(name = "cgv_user", uniqueConstraints = {
+@UniqueConstraint(name = "uk_users_email",columnNames = "email")})
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class User {
 
@@ -27,7 +28,7 @@ public class User {
     private Role role;
 
 //  사용자 로그인 아이디로 email을 사용(중복 막음)
-    @Column(name = "email", nullable = false, unique = true)
+    @Column(name = "email", nullable = false)
     private String email;
 
     @Column(name = "password", nullable = false, length = 255)
@@ -54,6 +55,7 @@ public class User {
         this.role = Role.USER; // 자동으로 회원으로 지정
     }
 
+    // 일반 회원 생성
     public static User create(
             String name,
             String email,
@@ -61,5 +63,17 @@ public class User {
             String phone
     ) {
         return new User(name, email, password, phone);
+    }
+
+    // 관리자 생성
+    public static User createAdmin(
+            String name,
+            String email,
+            String encodedPassword,
+            String phone
+    ) {
+        User admin = new User(name, email, encodedPassword, phone);
+        admin.role = Role.ADMIN;
+        return admin;
     }
 }

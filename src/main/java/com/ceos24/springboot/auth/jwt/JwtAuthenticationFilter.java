@@ -8,6 +8,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.web.filter.OncePerRequestFilter;
 import lombok.RequiredArgsConstructor;
 import com.ceos24.springboot.user.security.CustomUserDetailsService;
@@ -42,43 +43,18 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             return;
         }
 
-        // JWT 검증 로직
+        CustomUserDetails userDetails;
+        // getUserId()에서 서명과 만료를 검증하도록 수정
         try {
-            jwtProvider.validateToken(token);
+            Long userId = jwtProvider.getUserId(token);
+            userDetails = customUserDetailsService.loadUserById(userId);
         } catch (ExpiredJwtException e) {
-
-            request.setAttribute("errorCode", ErrorCode.TOKEN_EXPIRED);
-
-            jwtAuthenticationEntryPoint.commence(
-                    request,
-                    response,
-                    new InsufficientAuthenticationException(
-                            "토큰이 만료되었습니다.",
-                            e
-                    )
-            );
+            handleAuthenticationFailure(request, response, ErrorCode.TOKEN_EXPIRED, e);
             return;
-
-        } catch (JwtException | IllegalArgumentException e) {
-
-            request.setAttribute("errorCode", ErrorCode.TOKEN_INVALID);
-
-            jwtAuthenticationEntryPoint.commence(
-                    request,
-                    response,
-                    new InsufficientAuthenticationException(
-                            "유효하지 않은 토큰입니다.",
-                            e
-                    )
-            );
+        } catch (JwtException | IllegalArgumentException | UsernameNotFoundException e) {
+            handleAuthenticationFailure(request, response, ErrorCode.TOKEN_INVALID, e);
             return;
         }
-
-        // JWT에서 userId 추출
-        Long userId = jwtProvider.getUserId(token);
-
-        // userId로 사용자 조회
-        CustomUserDetails userDetails = customUserDetailsService.loadUserById(userId);
 
 
         UsernamePasswordAuthenticationToken authentication =
@@ -94,6 +70,21 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         SecurityContextHolder.setContext(context);
 
         filterChain.doFilter(request, response);
+    }
+
+    private void handleAuthenticationFailure(
+            HttpServletRequest request,
+            HttpServletResponse response,
+            ErrorCode errorCode,
+            RuntimeException cause
+    ) throws ServletException, IOException {
+        SecurityContextHolder.clearContext();
+        request.setAttribute("errorCode", errorCode);
+        jwtAuthenticationEntryPoint.commence(
+                request,
+                response,
+                new InsufficientAuthenticationException(errorCode.getMessage(), cause)
+        );
     }
 
     private String getAccessToken(String authorizationHeader) {

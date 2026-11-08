@@ -1,14 +1,22 @@
 package com.ceos24.springboot.global.exception;
 
-import com.ceos24.springboot.auth.exception.LoginFailedException;
 import org.springframework.http.HttpStatus;
+import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.bind.MethodArgumentNotValidException;
+import java.util.stream.Collectors;
 
 // Controller에서 예외가 발생하면 여기서 공통으로 처리
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    @ExceptionHandler(PessimisticLockingFailureException.class)
+    public ResponseEntity<ErrorResponse> handleLockFailure(PessimisticLockingFailureException e) {
+        ErrorCode errorCode = ErrorCode.RESOURCE_BUSY;
+        return ResponseEntity.status(errorCode.getStatus()).body(ErrorResponse.of(errorCode));
+    }
 
     // 우리가 직접 정의한 GlobalException 처리
     @ExceptionHandler(GlobalException.class)
@@ -40,19 +48,21 @@ public class GlobalExceptionHandler {
                 .body(response);
     }
 
-    // 로그인 인증 실패 예외 처리
-    @ExceptionHandler(LoginFailedException.class)
-    public ResponseEntity<ErrorResponse> handleLoginFailed(
-            LoginFailedException e
+    // 검증 실패 응답 통일
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public ResponseEntity<ErrorResponse> handleValidation(
+            MethodArgumentNotValidException e
     ) {
+        String message = e.getBindingResult()
+                .getFieldErrors()
+                .stream()
+                .map(error ->
+                        error.getField() + ": " + error.getDefaultMessage()
+                )
+                .sorted()
+                .collect(Collectors.joining(", "));
 
-        ErrorResponse response = ErrorResponse.of(
-                HttpStatus.UNAUTHORIZED,
-                e.getMessage()
-        );
-
-        return ResponseEntity
-                .status(HttpStatus.UNAUTHORIZED)
-                .body(response);
+        return ResponseEntity.badRequest()
+                .body(ErrorResponse.of(HttpStatus.BAD_REQUEST, message));
     }
 }

@@ -18,8 +18,10 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import com.ceos24.springboot.auth.jwt.JwtAuthenticationEntryPoint;
 import com.ceos24.springboot.auth.jwt.JwtAccessDeniedHandler;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 
 @Configuration
+@EnableMethodSecurity
 public class SecurityConfig {
 
     @Bean
@@ -76,15 +78,31 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         // 로그인
                         .requestMatchers("/api/auth/login").permitAll()
+                        // 회원가입
+                        .requestMatchers(HttpMethod.POST, "/api/auth/signup").permitAll()
 
                         // 공개 조회 API
                         .requestMatchers(HttpMethod.GET, "/api/movies","/api/movies/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/theaters", "/api/theaters/**").permitAll()
 
 
-                        // 관리자 전용 API
-                        .requestMatchers("/api/admin/**").hasRole("ADMIN") // ROLE_ADMIN
 
+
+                        // 관리자 전용 API
+                        .requestMatchers("/api/admin/**").hasRole("ADMIN") // 관리자 가입이 여기에 해당함.
+                        // 영화 등록 API
+                        .requestMatchers(HttpMethod.POST, "/api/movies").hasRole("ADMIN")
+                        // 영화관 등록 API
+                        .requestMatchers(HttpMethod.POST, "/api/theaters"). hasRole("ADMIN")
+                        // 영화 상영회차 등록 API
+                        .requestMatchers(HttpMethod.POST, "/api/screenings").hasRole("ADMIN")
+                        // 매점 재고 등록 API
+                        .requestMatchers(HttpMethod.POST, "/api/shop/*/inventories").hasRole("ADMIN")
+                        // 매점 재고 추가 API
+                        .requestMatchers(HttpMethod.PATCH, "/api/shop/*/inventories/*/addStock").hasRole("ADMIN")
+
+                        // 로컬 주문서형 결제 테스트 화면
+                        .requestMatchers(HttpMethod.GET, "/payment-test.html", "/payment-test.js").permitAll()
 
                         // 그 외 요청은 인증 필요
                         .anyRequest().authenticated()

@@ -2,9 +2,10 @@ package com.ceos24.springboot.auth.service;
 
 import com.ceos24.springboot.auth.dto.LoginRequest;
 import com.ceos24.springboot.auth.dto.LoginResponse;
-import com.ceos24.springboot.auth.exception.LoginFailedException;
 import com.ceos24.springboot.auth.jwt.JwtProvider;
 import com.ceos24.springboot.user.security.CustomUserDetails;
+import com.ceos24.springboot.global.exception.ErrorCode;
+import com.ceos24.springboot.global.exception.GlobalException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -41,7 +42,7 @@ public class AuthService {
             return LoginResponse.of(accessToken);
 
         } catch (AuthenticationException e) {
-            throw new LoginFailedException();
+        throw new GlobalException(ErrorCode.LOGIN_FAILED);
         }
     }
 }

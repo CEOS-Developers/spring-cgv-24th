@@ -1,14 +1,10 @@
 package com.ceos24.springboot.shop.service;
 
-import com.ceos24.springboot.shop.domain.Menu;
-import com.ceos24.springboot.shop.domain.OrderItem;
-import com.ceos24.springboot.shop.domain.StoreInventory;
-import com.ceos24.springboot.shop.domain.StoreOrder;
+import com.ceos24.springboot.global.exception.ErrorCode;
+import com.ceos24.springboot.global.exception.GlobalException;
+import com.ceos24.springboot.shop.domain.*;
 import com.ceos24.springboot.shop.dto.*;
-import com.ceos24.springboot.shop.repository.MenuRepository;
-import com.ceos24.springboot.shop.repository.OrderItemRepository;
-import com.ceos24.springboot.shop.repository.StoreInventoryRepository;
-import com.ceos24.springboot.shop.repository.StoreOrderRepository;
+import com.ceos24.springboot.shop.repository.*;
 import com.ceos24.springboot.theater.domain.Theater;
 import com.ceos24.springboot.theater.repository.TheaterRepository;
 import com.ceos24.springboot.user.domain.User;
@@ -17,257 +13,135 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Clock;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class ShopService {
-
+    private final Clock clock;
     private final StoreInventoryRepository storeInventoryRepository;
     private final MenuRepository menuRepository;
     private final StoreOrderRepository storeOrderRepository;
     private final OrderItemRepository orderItemRepository;
-
     private final TheaterRepository theaterRepository;
     private final UserRepository userRepository;
+    private final StoreOrderExpirationService expirationService;
+    private final StoreOrderLifecycleService lifecycle;
 
-
-    // 영화관 매점 재고 초기 등록
     @Transactional
-    public InventoryResponse createInventory(
-            Long theaterId,
-            InventoryCreateRequest request
-    ) {
-
+    public InventoryResponse createInventory(Long theaterId, InventoryCreateRequest request) {
         Theater theater = theaterRepository.findById(theaterId)
-                .orElseThrow(() ->
-                        new IllegalArgumentException(
-                                "해당 영화관을 찾을 수 없습니다."
-                        )
-                );
-
+                .orElseThrow(() -> new GlobalException(ErrorCode.THEATER_NOT_FOUND));
         Menu menu = menuRepository.findById(request.menuId())
-                .orElseThrow(() ->
-                        new IllegalArgumentException(
-                                "해당 메뉴를 찾을 수 없습니다."
-                        )
-                );
-
+                .orElseThrow(() -> new GlobalException(ErrorCode.STORE_INVENTORY_NOT_FOUND));
         if (request.stock() == null || request.stock() <= 0) {
-            throw new IllegalArgumentException(
-                    "재고 수량은 1개 이상이어야 합니다."
-            );
+            throw new GlobalException(ErrorCode.INVALID_STORE_ORDER_REQUEST);
         }
-
-        if (storeInventoryRepository
-                .existsByTheaterAndMenu(theater, menu)) {
-            throw new IllegalArgumentException(
-                    "이미 등록된 매점 메뉴입니다."
-            );
+        if (storeInventoryRepository.existsByTheaterAndMenu(theater, menu)) {
+            throw new IllegalArgumentException("이미 등록된 매점 메뉴입니다.");
         }
-
-        StoreInventory inventory = StoreInventory.builder()
-                .theater(theater)
-                .menu(menu)
-                .stock(request.stock())
-                .build();
-
-        StoreInventory savedInventory =
-                storeInventoryRepository.save(inventory);
-
-        return InventoryResponse.from(savedInventory);
+        return InventoryResponse.from(storeInventoryRepository.save(StoreInventory.builder()
+                .theater(theater).menu(menu).stock(request.stock()).build()));
     }
 
-
-    // 특정 영화관의 매점 재고 조회
-    public List<InventoryResponse> getInventories(
-            Long theaterId
-    ) {
-
+    public List<InventoryResponse> getInventories(Long theaterId) {
+        expirationService.releaseExpiredForTheater(theaterId);
         Theater theater = theaterRepository.findById(theaterId)
-                .orElseThrow(() ->
-                        new IllegalArgumentException(
-                                "해당 영화관을 찾을 수 없습니다."
-                        )
-                );
-
-        return storeInventoryRepository.findAllByTheater(theater)
-                .stream()
-                .map(InventoryResponse::from)
-                .toList();
+                .orElseThrow(() -> new GlobalException(ErrorCode.THEATER_NOT_FOUND));
+        return storeInventoryRepository.findAllByTheater(theater).stream()
+                .map(InventoryResponse::from).toList();
     }
 
-    // 매점 재고 추가
     @Transactional
-    public InventoryResponse addStock(
-            Long theaterId,
-            Long inventoryId,
-            Integer quantity
-    ) {
-
+    public InventoryResponse addStock(Long theaterId, Long inventoryId, Integer quantity) {
         Theater theater = theaterRepository.findById(theaterId)
-                .orElseThrow(() ->
-                        new IllegalArgumentException(
-                                "해당 영화관을 찾을 수 없습니다."
-                        )
-                );
-
-        StoreInventory inventory =
-                storeInventoryRepository
-                        .findByInventoryIdAndTheater(inventoryId, theater)
-                        .orElseThrow(() ->
-                                new IllegalArgumentException(
-                                        "해당 영화관의 재고를 찾을 수 없습니다."
-                                )
-                        );
-
+                .orElseThrow(() -> new GlobalException(ErrorCode.THEATER_NOT_FOUND));
+        StoreInventory inventory = storeInventoryRepository.findByInventoryIdAndTheater(inventoryId, theater)
+                .orElseThrow(() -> new GlobalException(ErrorCode.STORE_INVENTORY_NOT_FOUND));
         inventory.increaseStock(quantity);
-
         return InventoryResponse.from(inventory);
     }
 
-
-    // 매점 주문
     @Transactional
-    public StoreOrderResponse createOrder(
-            Long userId,
-            StoreOrderCreateRequest request
-    ) {
-
+    public StoreOrderResponse createOrder(Long userId, StoreOrderCreateRequest request) {
+        Map<Long, Integer> quantities = validatedQuantities(request);
+        // Finish expired holds before taking any inventory locks.
+        expirationService.releaseExpiredForTheater(request.theaterId());
         User user = userRepository.findById(userId)
-                .orElseThrow(() ->
-                        new IllegalArgumentException(
-                                "해당 사용자를 찾을 수 없습니다."
-                        )
-                );
-
-        Theater theater =
-                theaterRepository.findById(request.theaterId())
-                        .orElseThrow(() ->
-                                new IllegalArgumentException(
-                                        "해당 영화관을 찾을 수 없습니다."
-                                )
-                        );
-
-        if (request.items() == null
-                || request.items().isEmpty()) {
-
-            throw new IllegalArgumentException(
-                    "주문할 메뉴가 없습니다."
-            );
-        }
-
-//      사용자가 주문할 메뉴의 총 가격
-        int totalAmount = 0;
+                .orElseThrow(() -> new GlobalException(ErrorCode.PAYMENT_USER_REQUIRED));
+        Theater theater = theaterRepository.findById(request.theaterId())
+                .orElseThrow(() -> new GlobalException(ErrorCode.THEATER_NOT_FOUND));
 
         List<OrderMenu> orderMenus = new ArrayList<>();
-
-        for (OrderItemRequest itemRequest : request.items()) {
-
-            Menu menu =
-                    menuRepository.findById(itemRequest.menuId())
-                            .orElseThrow(() ->
-                                    new IllegalArgumentException(
-                                            "해당 메뉴를 찾을 수 없습니다."
-                                    )
-                            );
-
-            StoreInventory inventory =
-                    storeInventoryRepository
-                            .findByTheaterAndMenu(theater, menu)
-                            .orElseThrow(() ->
-                                    new IllegalArgumentException(
-                                            "해당 영화관에서 판매하지 않는 메뉴입니다."
-                                    )
-                            );
-
-            // 재고 확인 + 차감
-            inventory.decreaseStock(
-                    itemRequest.quantity()
-            );
-
-            totalAmount +=
-                    menu.getMenuPrice()
-                            * itemRequest.quantity();
-
-            orderMenus.add(
-                    new OrderMenu(
-                            menu,
-                            itemRequest.quantity()
-                    )
-            );
+        int totalAmount = 0;
+        try {
+            // Sorted, merged IDs prevent reverse lock order and duplicate order lines.
+            for (var entry : quantities.entrySet()) {
+                StoreInventory inventory = storeInventoryRepository
+                        .findWithLock(theater.getTheaterId(), entry.getKey())
+                        .orElseThrow(() -> new GlobalException(ErrorCode.STORE_INVENTORY_NOT_FOUND));
+                Menu menu = inventory.getMenu();
+                if (menu.getMenuPrice() == null || menu.getMenuPrice() <= 0) {
+                    throw new GlobalException(ErrorCode.INVALID_PAYMENT_AMOUNT);
+                }
+                inventory.decreaseStock(entry.getValue());
+                totalAmount = Math.addExact(totalAmount,
+                        Math.multiplyExact(menu.getMenuPrice(), entry.getValue()));
+                orderMenus.add(new OrderMenu(menu, entry.getValue()));
+            }
+        } catch (ArithmeticException e) {
+            throw new GlobalException(ErrorCode.INVALID_STORE_ORDER_REQUEST);
         }
 
-        // 주문 저장
-        StoreOrder order = StoreOrder.builder()
-                .user(user)
-                .theater(theater)
-                .totalAmount(totalAmount)
-                .build();
-
-        StoreOrder savedOrder =
-                storeOrderRepository.save(order);
-
-        // 주문 상품 저장
-        List<OrderItem> savedItems = new ArrayList<>();
-
-        for (OrderMenu orderMenu : orderMenus) {
-
-            OrderItem orderItem = OrderItem.builder()
-                    .order(savedOrder)
-                    .menu(orderMenu.menu())
-                    .quantity(orderMenu.quantity())
-                    .build();
-
-            savedItems.add(
-                    orderItemRepository.save(orderItem)
-            );
-        }
-
-        return StoreOrderResponse.from(
-                savedOrder,
-                savedItems
-        );
+        StoreOrder order = storeOrderRepository.save(StoreOrder.builder()
+                .user(user).theater(theater).totalAmount(totalAmount)
+                .now(LocalDateTime.now(clock)).build());
+        List<OrderItem> items = orderMenus.stream().map(item -> OrderItem.builder()
+                .order(order).menu(item.menu()).quantity(item.quantity()).build()).toList();
+        return StoreOrderResponse.from(order, orderItemRepository.saveAll(items));
     }
 
-
-    // 매점 주문 내역 조회
     public StoreOrderResponse getOrder(Long userId, Long orderId) {
+        expirationService.releaseExpiredForUser(userId);
+        StoreOrder order = storeOrderRepository.findByOrderIdAndUser_Id(orderId, userId)
+                .orElseThrow(() -> new GlobalException(ErrorCode.STORE_ORDER_NOT_FOUND));
+        return StoreOrderResponse.from(order, orderItemRepository.findAllByOrderOrderByMenu_MenuIdAsc(order));
+    }
 
-        User user = userRepository.findById(userId)
-                .orElseThrow(() ->
-                        new IllegalArgumentException(
-                                "해당 사용자를 찾을 수 없습니다."
-                        )
-                );
+    @Transactional
+    public StoreOrderResponse cancelOrder(Long userId, Long orderId) {
+        StoreOrder order = storeOrderRepository.findMyOrderWithLock(orderId, userId)
+                .orElseThrow(() -> new GlobalException(ErrorCode.STORE_ORDER_NOT_FOUND));
+        lifecycle.expireLocked(order, LocalDateTime.now(clock));
+        lifecycle.cancelLocked(order);
+        return StoreOrderResponse.from(order, orderItemRepository.findAllByOrderOrderByMenu_MenuIdAsc(order));
+    }
 
-        StoreOrder order = storeOrderRepository.findById(orderId)
-                            .orElseThrow(() ->
-                                    new IllegalArgumentException(
-                                        "해당 주문을 찾을 수 없습니다."
-                                    )
-                            );
-
-        // 로그인한 사용자의 주문인지 확인
-        if (!order.getUser().getId().equals(user.getId())) {
-            throw new IllegalArgumentException(
-                    "본인의 주문만 조회할 수 있습니다."
-            );
+    private Map<Long, Integer> validatedQuantities(StoreOrderCreateRequest request) {
+        if (request == null || request.theaterId() == null || request.theaterId() <= 0
+                || request.items() == null || request.items().isEmpty()) {
+            throw new GlobalException(ErrorCode.INVALID_STORE_ORDER_REQUEST);
         }
-
-        List<OrderItem> items =
-                orderItemRepository.findAllByOrder(order);
-
-        return StoreOrderResponse.from(order, items);
+        Map<Long, Integer> quantities = new TreeMap<>();
+        try {
+            for (OrderItemRequest item : request.items()) {
+                if (item == null || item.menuId() == null || item.menuId() <= 0
+                        || item.quantity() == null || item.quantity() <= 0) {
+                    throw new GlobalException(ErrorCode.INVALID_STORE_ORDER_REQUEST);
+                }
+                quantities.merge(item.menuId(), item.quantity(), Math::addExact);
+            }
+        } catch (ArithmeticException e) {
+            throw new GlobalException(ErrorCode.INVALID_STORE_ORDER_REQUEST);
+        }
+        return quantities;
     }
 
-
-    // 주문 처리 중 메뉴와 수량을 임시 보관
-    private record OrderMenu(
-            Menu menu,
-            Integer quantity
-    ) {
-    }
+    private record OrderMenu(Menu menu, Integer quantity) {}
 }

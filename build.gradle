@@ -31,6 +31,7 @@ dependencies {
     // TEST
     testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    testRuntimeOnly 'com.h2database:h2'
 
     // Lombok
     compileOnly 'org.projectlombok:lombok'
@@ -49,8 +50,14 @@ dependencies {
     implementation 'io.jsonwebtoken:jjwt-api:0.12.7'
     runtimeOnly 'io.jsonwebtoken:jjwt-impl:0.12.7'
     runtimeOnly 'io.jsonwebtoken:jjwt-jackson:0.12.7'
+
+    // 외부 API 호출용 RestClient
+    implementation 'org.springframework.boot:spring-boot-starter-restclient'
 }
 
 tasks.named('test') {
     useJUnitPlatform()
+
+    // Business time must remain Asia/Seoul even when the server runs in UTC.
+    systemProperty 'user.timezone', 'UTC'
 }
