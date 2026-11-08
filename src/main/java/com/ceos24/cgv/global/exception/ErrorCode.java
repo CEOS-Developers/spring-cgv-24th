@@ -8,6 +8,7 @@ import lombok.RequiredArgsConstructor;
 public enum ErrorCode {
 
     // Common
+    INVALID_INPUT_VALUE(400, "잘못된 입력값입니다."),
     FORBIDDEN_ERROR(409, "허용되지 않는 요청입니다."),
 
     // Member

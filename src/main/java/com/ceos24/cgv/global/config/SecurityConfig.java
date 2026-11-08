@@ -69,10 +69,12 @@ public class SecurityConfig {
                 .exceptionHandling(exception -> exception
                         .authenticationEntryPoint(jwtAuthenticationEntryPoint)
                         .accessDeniedHandler(jwtAccessDeniedHandler))
-                .authorizeHttpRequests(auth -> auth.requestMatchers("/api/auth/**")
+                .authorizeHttpRequests(auth -> auth.requestMatchers("/error")
                         .permitAll()
-                        .requestMatchers("/api/payments/**")
-                        .permitAll() // 결제 API 허용
+                        .requestMatchers("/api/auth/signup", "/api/auth/login", "/api/auth/reissue")
+                        .permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/payments/webhook")
+                        .permitAll() // 토스 웹훅 수신 엔드포인트 허용 (시그니처 및 단건 조회로 검증)
                         .requestMatchers(HttpMethod.GET, "/api/movies")
                         .permitAll() // 전체 영화 조회
                         .requestMatchers(HttpMethod.GET, "/api/screenings/{screeningId}")
@@ -82,7 +84,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/theaters/{theaterId}/screens")
                         .permitAll() // 상영관 목록 조회
                         .requestMatchers(HttpMethod.GET, "/api/theaters/{theaterId}/screenings")
-                        .permitAll() // 영화관별 상영 시간표 조
+                        .permitAll() // 영화관별 상영 시간표 조회
                         .requestMatchers(HttpMethod.GET, "/api/theaters/{theaterId}/movies")
                         .permitAll() // 영화관별 영화 조회
                         .requestMatchers(HttpMethod.GET, "/api/theaters")
