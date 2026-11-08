@@ -11,6 +11,7 @@ import com.ceos24.springboot.reservation.repository.ReservationRepository;
 import com.ceos24.springboot.reservation.repository.ReservationSeatRepository;
 import com.ceos24.springboot.theater.domain.ScreenType;
 import com.ceos24.springboot.theater.domain.Screening;
+import com.ceos24.springboot.theater.domain.ScreeningSeat;
 import com.ceos24.springboot.theater.domain.Seat;
 import com.ceos24.springboot.theater.repository.ScreeningRepository;
 import com.ceos24.springboot.theater.repository.SeatRepository;
@@ -62,9 +63,10 @@ public class ReservationService {
         // 첫 DB 조회 전에 별도 트랜잭션에서 만료된 점유를 해제한다.
         expirationService.releaseExpiredSeats(request.screeningId(), request.seatIds());
 
-        for (Long seatId : request.seatIds().stream().sorted().toList()) {
-            screeningSeatRepository.findWithLock(request.screeningId(), seatId)
-                    .orElseThrow(() -> new GlobalException(ErrorCode.SCREENING_SEAT_NOT_FOUND));
+        List<ScreeningSeat> lockedSeats = screeningSeatRepository.findAllWithLock(
+                request.screeningId(), request.seatIds());
+        if (lockedSeats.size() != request.seatIds().size()) {
+            throw new GlobalException(ErrorCode.SCREENING_SEAT_NOT_FOUND);
         }
 
         // 로그인 사용자 조회

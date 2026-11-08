@@ -7,13 +7,17 @@ import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
-import java.util.Optional;
+import java.util.List;
 
 public interface ScreeningSeatRepository extends JpaRepository<ScreeningSeat, Long> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("""
             select ss from ScreeningSeat ss
-            where ss.screening.screeningId = :screeningId and ss.seat.seatId = :seatId
+            where ss.screening.screeningId = :screeningId and ss.seat.seatId in :seatIds
+            order by ss.seat.seatId
             """)
-    Optional<ScreeningSeat> findWithLock(@Param("screeningId") Long screeningId, @Param("seatId") Long seatId);
+    List<ScreeningSeat> findAllWithLock(
+            @Param("screeningId") Long screeningId,
+            @Param("seatIds") List<Long> seatIds
+    );
 }
