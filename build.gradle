@@ -37,6 +37,7 @@ dependencies {
 	testImplementation 'org.springframework.boot:spring-boot-starter-data-jpa-test'
 	testImplementation 'org.springframework.boot:spring-boot-starter-validation-test'
 	testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
+	testImplementation 'org.testcontainers:testcontainers-mysql'
 	testCompileOnly 'org.projectlombok:lombok'
 	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 	testAnnotationProcessor 'org.projectlombok:lombok'
@@ -44,4 +45,28 @@ dependencies {
 
 tasks.named('test') {
 	useJUnitPlatform()
+	systemProperty 'cgv.test.database', 'h2'
+}
+
+tasks.register('mysqlTest', Test) {
+	description = 'Runs reservation and payment integrity tests against disposable MySQL (requires Docker).'
+	group = 'verification'
+	testClassesDirs = sourceSets.test.output.classesDirs
+	classpath = sourceSets.test.runtimeClasspath
+	useJUnitPlatform()
+	systemProperty 'cgv.test.database', 'mysql'
+	filter {
+		includeTestsMatching 'com.ceos.cgv.domain.reservation.service.ScreeningSeatNowaitIntegrationTest'
+		includeTestsMatching 'com.ceos.cgv.domain.reservation.service.hold.SeatHoldConcurrencyIntegrationTest'
+		includeTestsMatching 'com.ceos.cgv.domain.reservation.service.payment.ReservationPaymentIntegrationTest'
+		includeTestsMatching 'com.ceos.cgv.domain.payment.service.PaymentWorkflowIntegrationTest'
+		includeTestsMatching 'com.ceos.cgv.domain.payment.service.PaymentConcurrencyIntegrationTest'
+		includeTestsMatching 'com.ceos.cgv.domain.payment.service.PaymentConcurrencyComparisonTest'
+		includeTestsMatching 'com.ceos.cgv.domain.payment.schema.PaymentSchemaUpgradeIntegrationTest'
+	}
+	// Every invocation verifies a fresh database rather than reuse an earlier result.
+	outputs.upToDateWhen { false }
+	testLogging {
+		events 'passed', 'failed'
+	}
 }

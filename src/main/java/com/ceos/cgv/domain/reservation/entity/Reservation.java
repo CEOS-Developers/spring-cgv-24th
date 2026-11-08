@@ -76,6 +76,9 @@ public class Reservation extends BaseTimeEntity {
     }
 
     public static Reservation hold(User user, Screening screening, UUID requestKey, Instant expiresAt) {
+        if (user == null || screening == null || requestKey == null || expiresAt == null) {
+            throw new BusinessException(ErrorCode.INVALID_REQUEST);
+        }
         Reservation reservation = new Reservation(user, screening);
         reservation.status = ReservationStatus.HELD;
         reservation.requestKey = requestKey.toString();
@@ -87,17 +90,43 @@ public class Reservation extends BaseTimeEntity {
         return status == ReservationStatus.HELD && !now.isBefore(expiresAt);
     }
 
-    public void confirm(Instant now) {
-        if (status == ReservationStatus.RESERVED) {
-            return;
-        }
+    public void startPayment(Instant now) {
         if (status != ReservationStatus.HELD) {
             throw new BusinessException(ErrorCode.HOLD_NOT_ACTIVE);
         }
         if (isExpiredAt(now)) {
             throw new BusinessException(ErrorCode.HOLD_EXPIRED);
         }
+        status = ReservationStatus.PAYMENT_PENDING;
+    }
+
+    public void confirmPayment() {
+        if (status == ReservationStatus.RESERVED) {
+            return;
+        }
+        if (status != ReservationStatus.PAYMENT_PENDING) {
+            throw new BusinessException(ErrorCode.HOLD_NOT_ACTIVE);
+        }
         status = ReservationStatus.RESERVED;
+    }
+
+    public void releaseFailedPayment() {
+        if (status == ReservationStatus.RELEASED) {
+            return;
+        }
+        if (status != ReservationStatus.PAYMENT_PENDING) {
+            throw new BusinessException(ErrorCode.HOLD_NOT_ACTIVE);
+        }
+        status = ReservationStatus.RELEASED;
+    }
+
+    public void completeSeatCancellation() {
+        if (status != ReservationStatus.RESERVED) {
+            throw new BusinessException(ErrorCode.HOLD_NOT_ACTIVE);
+        }
+        if (reservedSeats.stream().allMatch(ReservedSeat::isCanceled)) {
+            status = ReservationStatus.CANCELED;
+        }
     }
 
     public void release() {

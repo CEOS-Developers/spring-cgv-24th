@@ -2,7 +2,6 @@ package com.ceos.cgv.domain.reservation.service.hold;
 
 import com.ceos.cgv.domain.reservation.config.SeatHoldProperties;
 import com.ceos.cgv.domain.reservation.dto.SeatHoldCreateRequest;
-import com.ceos.cgv.domain.reservation.dto.SeatHoldResponse;
 import com.ceos.cgv.domain.reservation.service.exception.ExpiredHoldEncountered;
 import com.ceos.cgv.domain.reservation.service.result.HoldCreationResult;
 import com.ceos.cgv.global.exception.BusinessException;
@@ -32,10 +31,6 @@ public class SeatHoldService {
             }
         }
         throw new BusinessException(ErrorCode.SEAT_BUSY);
-    }
-
-    public SeatHoldResponse confirm(Long reservationId, Long userId) {
-        return transitionService.confirm(reservationId, userId).responseOrThrow();
     }
 
     public void release(Long reservationId, Long userId) {

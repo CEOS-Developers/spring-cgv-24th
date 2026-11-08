@@ -24,7 +24,7 @@ public final class SeatOccupancyGuard {
                 throw new ExpiredHoldEncountered(occupant.getId(), false);
             }
             ErrorCode error = switch (occupant.getStatus()) {
-                case HELD -> ErrorCode.SEAT_HELD;
+                case HELD, PAYMENT_PENDING -> ErrorCode.SEAT_HELD;
                 case RESERVED -> ErrorCode.SEAT_ALREADY_RESERVED;
                 case EXPIRED, RELEASED, CANCELED -> ErrorCode.SCREENING_SEATS_NOT_READY;
             };

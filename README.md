@@ -2,6 +2,386 @@
 
 CEOS 24기 백엔드 스터디 - CGV 클론 코딩 프로젝트
 
+## 4주차 구현 및 개선
+
+**목차**
+
+- [1. 리팩토링](#1-코드-리팩토링과-리뷰-반영) / [2. 결제 흐름](#2-결제-시스템-설계)
+- [3. 동시성](#3-동시성-문제-재현과-해결) / [4. 멱등성, 복구](#4-멱등성과-장애-복구)
+- [5. 외부 연동](#5-외부-api-통신과-webhook) / [6. 실행](#6-로컬-실행-방법)
+- [7. 검증](#7-테스트-결과와-스키마-적용) / [8. 회고](#8-구현하며-확인한-점)
+
+### 1. 코드 리팩토링과 리뷰 반영
+
+**설계 방향:** 엔티티는 생성 규칙과 상태 전이를, 서비스는 권한 검증과 처리 순서를, 인프라는 외부 HTTP 통신을 담당하도록 했습니다.
+기존 `domain/{도메인}` 구조와 `ApiResponse`, `BusinessException`/`ErrorCode`, `ErrorResponse`,
+`GlobalExceptionHandler`, `BaseTimeEntity`는 유지했습니다.
+
+| 코드 | 책임과 분리 이유 |
+| --- | --- |
+| [PaymentWorkflowService](src/main/java/com/ceos/cgv/domain/payment/service/PaymentWorkflowService.java) | 승인, 취소, 복구 순서 조정. `Propagation.NEVER`로 외부 호출 중 DB 트랜잭션 유지 방지 |
+| [PaymentTransactionService](src/main/java/com/ceos/cgv/domain/payment/service/transaction/PaymentTransactionService.java) | 짧은 claim/finalize 트랜잭션, 소유권, 상태, 금액, 멱등성 검증 |
+| [ReservationPaymentService](src/main/java/com/ceos/cgv/domain/reservation/service/payment/ReservationPaymentService.java) | 선점의 결제 시작, 확정, 취소, 해제, 기존 좌석 잠금과 점유 검증 재사용 |
+| [PaymentGateway](src/main/java/com/ceos/cgv/domain/payment/gateway/PaymentGateway.java) | 승인, 조회, 취소의 프로젝트 소유 계약. 서비스가 토스 전용 DTO에 의존하지 않도록 분리 |
+| [TossPaymentGateway](src/main/java/com/ceos/cgv/domain/payment/infrastructure/toss/TossPaymentGateway.java) | 토스 HTTP 요청, 응답 변환 및 오류 분류 |
+
+**리뷰에서 지적된 문제는 다음과 같이 수정했습니다.**
+
+| 문제 | 개선 내용 |
+| --- | --- |
+| 필수값이 없는 선점 객체 생성 가능성 | `Reservation.hold()`에서 사용자, 상영, 요청 키, 만료 시각을 검증하고, 서비스도 조회, 잠금 전에 null 요청 키를 거부 |
+| 경로 문자열 비교에 따른 보안 규칙 불명확성 | `PathPatternRequestMatcher`로 HTTP 메서드와 경로를 명시. JWT 필터와 인가 설정이 같은 공개 경로를 사용 |
+| 다좌석 선점 중 뒷좌석 잠금 실패 | 전체 트랜잭션 롤백. MySQL에서 A2 충돌 후 A1 점유, 잠금이 남지 않음을 검증 |
+| 결제 없이 확정되는 우회 경로 | 직접 예매 `POST /api/v1/reservations`와 무료 확정 `POST /api/v1/seat-holds/{reservationId}/confirm` 제거 |
+
+공개 조회에서 잘못되거나 만료된 JWT를 검사하지 않는 기존 정책은 유지했습니다.
+신규 DTO, 엔티티에는 `@Builder`를 적용하되 생성 ID와 감사 시각은 입력에서 제외하고, `Reservation.hold()`처럼 의미 있는 생성 경로를 유지했습니다.
+예약과 결제가 같은 시간을 사용하도록 `Clock`만 [공통 설정](src/main/java/com/ceos/cgv/global/config/ClockConfig.java)으로 이동했습니다.
+
+### 2. 결제 시스템 설계
+
+**범위와 가정**
+
+- 학습용 CGV 클론이며 실제 CGV 내부 구현을 설명하지 않습니다.
+  **단일 서버, 단일 MySQL DB**를 가정합니다.
+- 영화 예매의 카드, 간편결제를 우선 구현했습니다.
+  **토스페이먼츠 API 개별 연동 TEST 키와 SDK v2 통합결제창**을 사용합니다.
+  매점 결제, 가상계좌, 자동결제는 범위 밖입니다.
+- 좌석당 **10,000원(KRW)**, 금액은 원 단위 `long`/`Long`입니다.
+  선점은 **최대 8석, 5분, 연장 불가**입니다.
+- 주문 당시 단가, 총액, 좌석을 snapshot으로 저장합니다.
+  결제 승인 및 환불 금액을 클라이언트 입력에 맡기지 않습니다.
+
+#### 주문부터 예매 확정까지
+
+```mermaid
+sequenceDiagram
+    participant U as 브라우저
+    participant S as Spring 서버
+    participant D as MySQL
+    participant P as 토스페이먼츠
+    U->>S: 좌석 선점 및 주문 생성
+    S->>D: 선점, 가격, 좌석 snapshot 저장
+    U->>P: 통합결제창에서 결제수단 인증
+    P-->>U: paymentKey, orderId, amount
+    U->>S: 결제 승인 + Idempotency-Key
+    S->>D: claim: 처리 권한 저장, PAYMENT_PENDING
+    S->>P: 승인 API (DB 트랜잭션 없음)
+    P-->>S: 승인 결과
+    S->>D: finalize: 검증 후 결제, 예매 확정
+    S-->>U: 완료 또는 진행 작업 응답
+```
+
+**왜 단계를 나눴나요?** `claim → PG 호출 → finalize`를 한 트랜잭션으로 묶으면 느린 외부 API를 기다리는 동안 DB 락과 커넥션을 점유합니다.
+반대로 작업을 먼저 커밋하면 외부 승인 직후 서버가 중단되어도 저장된 작업 ID로 복구할 수 있습니다.
+PG와 DB는 하나의 원자적 트랜잭션이 아닙니다.
+
+토스 인증 성공 redirect는 **예매 확정이 아닙니다.** 서버가 `paymentKey`, `orderId`, `amount`를 검증하고 토스 승인 결과까지
+확인해야 확정합니다.
+`orderName`은 영화 제목과 ` N석`을 조합하며 UTF-16 길이 100 이하로, Unicode 서로게이트 쌍을 끊지 않고 생성합니다.
+[토스 통합결제창 가이드](https://docs.tosspayments.com/guides/v2/payment-window/integration)
+
+#### 무엇을 DB에 저장하나요?
+
+| 모델 | 저장 목적 |
+| --- | --- |
+| `PaymentOrder` | 선점/회원, 외부 주문 ID, 주문명, 당시 단가, 총액, 기한 |
+| `PaymentOrderSeat` | 주문 당시 좌석 ID, 좌표, 좌석별 취소 시각 |
+| `Payment` | PG 결제 키, 확정 상태, 잔액, 결제수단, 승인 시각, 영수증 URL, 누적 취소 이력, `activeOperationId` |
+| `PaymentOperation` | 승인/취소 요청 UUID, 지문, PG 멱등키, 금액, 대상 좌석, 처리 상태와 당시 완료 응답 |
+
+**결제 상태와 개별 요청 상태를 구분**한 것이 핵심입니다.
+예를 들어 부분취소 결과가 불명확해도 `Payment`는 마지막 확정 상태인 `DONE`, 해당 `PaymentOperation`은 `UNKNOWN`으로
+유지할 수 있습니다.
+
+```mermaid
+stateDiagram-v2
+    [*] --> HELD
+    HELD --> PAYMENT_PENDING: 승인 처리 시작
+    HELD --> RELEASED: 선점 해제 또는 만료
+    PAYMENT_PENDING --> RESERVED: 결제 승인 및 DB 확정
+    PAYMENT_PENDING --> RELEASED: 승인 실패 또는 보상 완료
+    RESERVED --> CANCELED: 잔여 좌석 전체 취소
+```
+
+| 상태 주체 | 핵심 상태 |
+| --- | --- |
+| `Reservation` | `HELD → PAYMENT_PENDING → RESERVED`; 해제 시 `RELEASED`, 잔여 좌석 전부 취소 시 `CANCELED` |
+| `Payment` | `READY → PROCESSING → DONE → PARTIALLY_CANCELED → CANCELED`; 확정 거절 `FAILED`, 보상취소 중 `COMPENSATING` |
+| `PaymentOperation` | `PROCESSING`(권한 확보), `UNKNOWN`(결과 불명확), `COMPENSATING`(보상 확인 중), `SUCCEEDED`/`FAILED`(완료) |
+
+`PAYMENT_PENDING`은 선점 TTL 만료 대상에서 제외하지만 회원의 활성 선점 한도에는 포함합니다.
+**결제 중 좌석이 다른 사용자에게 넘어가지 않게 하려는 정책**입니다.
+대신 결과 불명확 상태가 오래 남을 수 있으므로 명시적인 복구 경로가 필요합니다.
+
+#### 승인 전 검증
+
+1. **소유권:** 인증 회원이 주문과 선점의 주인인지 확인합니다.
+2. **선점 유효성:** 새 승인에서 `HELD`, 기한 미만료, 영화 공개 여부, 모든 좌석의 점유자를 확인합니다.
+3. **금액과 식별자:** 요청 금액과 서버 주문 총액을 비교하고 `paymentKey`의 기존 연결, 다른 주문과의 중복을 검증합니다.
+4. **중복 요청:** 요청 UUID, 지문, 진행 작업, 이미 승인/취소된 상태를 확인합니다.
+5. **PG 응답:** 결제 키, 주문 ID, 원금, 잔액, 상태, 승인 시각, 취소 이력을 검증한 뒤 확정합니다.
+
+claim 이전에 선점이 만료되었거나 영화가 비공개면 PG를 호출하지 않습니다.
+`HELD` 정리는 기존 lazy expiry/선점 해제로 처리하며, 이미 `PAYMENT_PENDING`인 선점에는 같은 만료 로직을 적용하지 않습니다.
+
+#### 전체 취소와 좌석 부분취소
+
+| 방식 | 요청 | 서버 계산 |
+| --- | --- | --- |
+| 부분취소 | `reservedSeatIds`에 취소할 좌석 ID 목록 | 주문 당시 단가 × 선택 좌석 수 |
+| 전체 취소 | `reservedSeatIds: null` | 요청 시점의 남은 좌석 전체와 잔액 |
+
+빈 목록, 중복, 이미 취소된 좌석, 타인, 다른 주문의 좌석, 잔액 초과 요청은 거부합니다.
+남은 좌석이 없는데 새로운 키로 전체 취소를 요청하면 PG 호출 없이 **409 `RESERVATION_ALREADY_CANCELED`**를 반환합니다.
+
+취소 성공 뒤에는 **결제 잔액, 주문/예매 좌석의 취소 시각, 좌석 점유를 같은 DB 트랜잭션**에서 변경합니다.
+PG 결과가 불명확하면 변경하지 않습니다.
+PG의 식별자, 원금, 예상 잔액, 취소 거래 키, 완료 여부 및 누적 합계(`원금 - 잔액`)도 검증합니다.
+누적 취소 후 잔액이 0원인데 PG 상태가 `PARTIAL_CANCELED`여도 검증을 통과하면 내부 상태를 `CANCELED`로 정리합니다.
+
+#### 제공 API
+
+| 영역 | API | 용도 |
+| --- | --- | --- |
+| 선점 | `POST /api/v1/seat-holds` | 좌석 선점, UUID `Idempotency-Key` |
+| 선점 | `DELETE /api/v1/seat-holds/{reservationId}` | 결제 전 선점 해제 |
+| 주문 | `POST /api/v1/payment-orders` | 선점 ID로 주문 생성, 신규 201 / 재사용 200 |
+| 주문 | `GET /api/v1/payment-orders/{orderId}` | 저장된 주문 조회 |
+| 결제 | `POST /api/v1/payments/confirm` | 결제 승인, UUID `Idempotency-Key` |
+| 결제 | `GET /api/v1/payments/{paymentId}` | 최신 DB 상태, 잔액, 좌석 및 진행 작업 조회 |
+| 취소 | `POST /api/v1/payments/{paymentId}/cancellations` | 전체 또는 좌석별 취소, UUID `Idempotency-Key` |
+| 복구 | `GET /api/v1/payment-operations/{operationId}` | 저장된 작업 상태 조회 |
+| 복구 | `POST /api/v1/payment-operations/{operationId}/reconcile` | PG 조회 후 미완료 작업 복구 |
+| 예매 | `DELETE /api/v1/reservations/{reservationId}` | 유료 예매의 잔여 전체 취소, 성공 시 204 |
+
+주문, 결제, 작업 API는 JWT와 소유권 검증을 사용합니다.
+진행 중인 `PROCESSING`, `UNKNOWN`, `COMPENSATING`은 **HTTP 202 + 작업 조회 `Location`**, 완료된 작업은
+**HTTP 200**입니다.
+단, HTTP 200의 작업 본문도 `status=FAILED`일 수 있습니다.
+일반 조회 GET은 200, 성공한 예매 DELETE는 본문 없는 204이며, 잘못된 숫자 ID는 400 `INVALID_REQUEST`입니다.
+
+결제 정보가 없는 과거 `RESERVED` 예매에 한해서는 기존 취소 동작을 유지합니다.
+새로 취소할 때는 좌석별 취소 시각을 기록하되, 과거에 기록되지 않은 시각을 임의로 만들지 않습니다.
+
+### 3. 동시성 문제 재현과 해결
+
+#### 어떤 문제가 발생할 수 있나요?
+
+같은 주문에 대한 승인 요청 2개가 동시에 `READY`를 읽으면 **PG 승인 API를 중복 호출**할 수 있습니다.
+같은 좌석의 취소 요청 2개도 동일한 과거 잔액을 읽으면 **중복 환불과 DB/PG 잔액 불일치**를 일으킬 수 있습니다.
+좌석 선점에서는 두 요청이 같은 좌석을 동시에 점유하려는 경쟁도 발생합니다.
+
+#### 어떤 방법을 비교했나요?
+
+| 방법 | 원리와 장점 | 이 프로젝트에서의 판단 |
+| --- | --- | --- |
+| `synchronized` / JVM 락 | 한 JVM 안의 임계 구역 직렬화 | DB 처리 이력과 여러 인스턴스까지 일관되게 보호하지 못함 |
+| 낙관적 락 | 버전 비교로 충돌 감지, 낮은 경합에 유리 | 외부 PG 호출 후 충돌하면 부작용 복구가 복잡함 |
+| 비관적 락 | DB 행을 먼저 잠그고 최신 상태 확인 | 현재 선택. 대기, 교착을 줄이도록 트랜잭션을 짧게 유지 |
+| 조건부 `UPDATE` | 상태가 맞을 때만 원자적으로 갱신 | 단순 상태 변경에 좋지만 다좌석/이력 처리엔 추가 설계 필요 |
+| unique 제약 | DB가 중복 식별자 저장 거부 | 다른 주문의 동일 PG 키 등 최종 방어선으로 함께 사용 |
+| 분산 락 | 여러 서버가 공유하는 락 | 현재 단일 DB 행 잠금으로 충분하여 별도 인프라 도입 안 함 |
+
+**선택한 방법:** 좌석은 기존 `FOR UPDATE NOWAIT`를 유지하여 충돌 시 즉시 `SEAT_BUSY`를 반환합니다.
+결제는 **짧은 `PESSIMISTIC_WRITE` 잠금 + 처리 작업 커밋 + unique 제약**을 사용합니다.
+`READ_COMMITTED`에서 결제 → 예매 → 정렬된 좌석 순으로 잠그고 필요한 객체를 잠금 후 refresh합니다.
+**PG 호출 중에는 DB 트랜잭션을 열어두지 않습니다.** [MySQL 잠금 조회](https://dev.mysql.com/doc/refman/8.4/en/innodb-locking-reads.html)
+
+#### 어떻게 재현하고 검증했나요?
+
+**주의:** 적용 전 결과는 과거 운영 코드의 이중 과금 사례가 아니라, **잠금 없이 `조회 → PG 요청 → 저장`을 수행하는 테스트용 단순 구현**과 비교한 것입니다.
+동일 초기 데이터에서 요청 2개의 조회를 barrier로 맞추고, 실제 서비스 쪽은 첫 PG 호출을 latch로 멈춰 경쟁을 재현했습니다.
+실제 PG 대신 `PaymentGateway` 대역을 사용했습니다.
+
+| 동일한 요청 2개, MySQL 8.4.8 | 잠금 없는 비교 구현 | 현재 구현 |
+| --- | --- | --- |
+| 같은 주문 승인 | PG 대역 호출 **2회** | **1회**, 예매 확정 1회 |
+| 같은 좌석 부분환불 | PG 대역 취소 **2회**. DB 잔액 10,000원 / PG 대역 잔액 0원 | **1회**. DB, PG 대역 잔액 모두 10,000원 |
+| 취소 이후 좌석 | 중복 환불 발생 | 취소 좌석만 해제, 다른 좌석 점유 유지 |
+
+근거: [PaymentConcurrencyComparisonTest](src/test/java/com/ceos/cgv/domain/payment/service/PaymentConcurrencyComparisonTest.java), [PaymentConcurrencyIntegrationTest](src/test/java/com/ceos/cgv/domain/payment/service/PaymentConcurrencyIntegrationTest.java). 같은/다른 요청 키, 서로 다른 주문에서 같은 PG 키, 부분/전체 취소 중첩, 동시 reconcile, 느린 PG 중 만료와 DB
+오류도 확인했습니다.
+PG 대역 호출 시 실제 DB 트랜잭션이 비활성인지 검사했습니다.
+
+추가로 [SeatHoldConcurrencyIntegrationTest](src/test/java/com/ceos/cgv/domain/reservation/service/hold/SeatHoldConcurrencyIntegrationTest.java)에서 **A2를 잠근 채 A1, A2 선점을 시도**해 NOWAIT 충돌을 만들었습니다.
+실패 뒤 A1 점유와 좌석 이력이 남지 않았고, A2 잠금이 유지되는 동안에도 A1을 다시 잠글 수 있었습니다.
+MySQL 실측으로 확인했으며 H2 결과만으로 NOWAIT를 판단하지 않았습니다.
+
+### 4. 멱등성과 장애 복구
+
+**동시성 제어와 멱등성의 차이**
+
+- **동시성 제어:** 지금 동시에 실행 중인 요청끼리 같은 데이터를 잘못 변경하지 않도록 막습니다.
+- **멱등성:** 네트워크 응답을 잃어버려 **나중에 동일한 의도의 요청이 재전송되어도** 효과를 한 번만 적용합니다.
+
+락만으로 과거 완료 요청을 알아볼 수 없고, 멱등키만으로 서로 다른 키의 동시 요청을 막을 수 없으므로 **둘 다 필요**합니다.
+
+#### 중복 요청을 어떻게 구분하나요?
+
+1. 주문은 `reservationId` unique로 같은 선점당 하나만 만듭니다.
+2. 승인, 취소 작업은 `(userId, type, requestUUID)` unique와 SHA-256 요청 지문을 저장합니다.
+  **같은 키로 다른 금액, 좌석, 사유**를 보내면 거부합니다.
+3. 전체 취소의 지문은 원래 의도인 `FULL + 사유`를 보존하고, 실제 대상 좌석, 금액은 claim 시점 snapshot에 저장합니다.
+4. PG용 멱등 UUID는 요청 키와 별도로 한 번 생성해 저장합니다.
+  취소 재전송이나 보상취소에도 **각 작업의 고정 키**를 사용합니다.
+5. 완료 요청의 재전송에는 **당시 저장한 응답**을 반환합니다.
+  현재 잔액은 결제 GET으로 별도 조회합니다.
+  이미 승인된 주문은 다른 승인 키가 와도 PG를 다시 호출하지 않습니다.
+6. 진행 작업이 있다면 새 요청 키에도 해당 작업을 알려주고, 완료 여부를 확인한 다음 새 취소를 판단하도록 합니다.
+
+토스 POST에도 `Idempotency-Key`를 보냅니다.
+공식 문서상 키 유효기간은 처음 사용한 날부터 **15일**이며 처리 중 중복 요청에는 `IDEMPOTENT_REQUEST_PROCESSING`이 올 수 있습니다.
+우리 DB의 처리 이력은 별도로 보존합니다.
+[토스 멱등성 문서](https://docs.tosspayments.com/reference/using-api/authorization)
+
+#### 토스 응답이 없거나 DB 저장이 실패하면?
+
+**타임아웃은 결제 실패의 증거가 아닙니다.** PG가 처리했지만 응답만 유실됐을 수 있으므로, 바로 새로운 요청 키로 재승인, 재취소하지 않습니다.
+일반 주문, 결제, 작업 GET은 **DB만 조회**하며, `POST /api/v1/payment-operations/{operationId}/reconcile`에서만 PG를 조회해 복구합니다.
+
+| 상황 | 처리 정책 |
+| --- | --- |
+| 공식 오류 코드와 HTTP 상태가 일치하는 확정 승인 거절 | `FAILED` 처리 후 pending 선점 해제 |
+| 확정 취소 거절 | 작업 `FAILED`, 마지막 확정 잔액, 좌석 점유 유지 |
+| 네트워크 오류, 타임아웃, 5xx, 예상 못 한 응답 | 작업 `UNKNOWN`, 기존 잔액, 점유 보존 |
+| PG 성공 후 DB finalize 일시 실패 | 작업 보존 후 PG 조회 결과로 finalize 재실행 |
+| finalize 중 `SEAT_BUSY` | 새 트랜잭션으로 최대 3회 재시도, 계속 충돌하면 `UNKNOWN` |
+| 취소 `UNKNOWN`, PG 잔액, 이력이 claim 이전과 동일 | 저장된 **동일 PG 멱등키**로 취소 재전송 |
+| 승인 `UNKNOWN`, PG에서 결제 `NOT_FOUND` | 선점 만료 + 기본 30분 유예 전에는 대기, 이후 확정 실패로 정리 |
+| 승인 성공 뒤 좌석 소유권 상실 등 영구 확정 실패 | 별도 고정 키로 보상취소, 확인 전 `COMPENSATING`과 점유 유지 |
+| 보상취소 완료 확인 | 결제 `CANCELED`, 작업 `FAILED`; 본인이 아직 점유한 좌석만 해제 |
+
+취소 오류 `EXCEED_CANCEL_AMOUNT_DISCOUNT_AMOUNT`는 **취소 경로에서 공식 HTTP 400과 일치할 때만** 확정 거절로 분류합니다.
+다른 상태 코드나 승인 경로라면 `UNKNOWN`입니다.
+부분취소가 최종 `FAILED`이면 새 UUID로 잔여 전체취소를 요청할 수 있습니다.
+복구 때도 주문, 금액, 취소 이력을 재검증하며 완료 작업에는 PG 조회나 좌석 변경을 반복하지 않습니다.
+DB 데이터를 수동 훼손해 예매 정리가 불가능하면 보상 완료 후에도 작업이 남을 수 있습니다.
+
+### 5. 외부 API 통신과 Webhook
+
+#### HTTP Client 선택
+
+| 선택지 | 장점 | 판단 |
+| --- | --- | --- |
+| `RestClient` | Spring의 동기 HTTP API, fluent 방식 | **선택:** 현재 Spring MVC/JPA의 블로킹 흐름과 잘 맞음 |
+| `WebClient` | 비동기, 논블로킹, 스트리밍에 강점 | JPA가 블로킹이고 `.block()`만으로 논블로킹 구조가 되지 않음 |
+| `Feign Client` | 인터페이스로 외부 API 계약 선언 | 이번 승인, 조회, 취소 3개 호출에 Spring Cloud 의존성 추가 필요성 낮음 |
+
+`RestClient`와 JDK `HttpClient`를 사용합니다.
+**연결 3초, 응답 10초는 과제용 설정**이며 토스 권장값이 아닙니다.
+외부 주소는 토스 API로 고정하고 리다이렉트를 따르지 않습니다.
+응답의 식별자, 상태, 정수 금액, 취소 이력, 시각을 검증하며, 공식 오류 코드와 HTTP 상태 조합만 확정 거절로 판단합니다.
+그 외는 `UNKNOWN`으로 취급합니다.
+[Spring REST Clients](https://docs.spring.io/spring-framework/reference/integration/rest-clients.html), [OpenFeign](https://docs.spring.io/spring-cloud-openfeign/reference/index.html)
+
+키는 `TOSS_CLIENT_KEY`, `TOSS_SECRET_KEY` 환경변수로 주입하고 TEST 키 조합만 허용합니다.
+PG의 원문 오류, 실제 키, 인증 헤더를 응답, 로그에 노출하지 않습니다.
+
+#### Webhook을 추가한다면?
+
+Webhook은 PG가 상태 변화를 **우리 서버에 HTTP POST로 알리는 방식**입니다.
+토스는 개발자센터에서 이벤트와 수신 URL을 등록하며, 10초 안에 200 응답이 없으면 최대 7회 재전송합니다.
+[토스 Webhook 가이드](https://docs.tosspayments.com/guides/v2/webhook)
+
+현재 구현에는 Webhook 수신 API가 **없습니다(과제 필수 구현 아님)**. 도입한다면 **결과 유실을 알아채는 신호**로만 쓰겠습니다.
+
+`Webhook 수신 → PG 현재 상태 조회 → 주문/금액 검증 → 기존 멱등 finalize`
+
+이벤트 중복, 역순 도착, 재전송을 고려해 알림만으로 바로 좌석이나 잔액을 수정하지 않고, 이벤트별 공식 검증 방식도 확인해야 합니다.
+
+### 6. 로컬 실행 방법
+
+Java 21과 Node.js가 필요합니다.
+MySQL 통합 테스트에는 Docker가 필요하지만 **결제 데모 자체는 전용 H2 메모리 DB**로 실행됩니다.
+
+```sh
+# 토스 개발자센터의 'API 개별 연동' TEST 키를 같은 터미널에 등록
+export TOSS_CLIENT_KEY="본인의_테스트_클라이언트키"
+export TOSS_SECRET_KEY="본인의_테스트_시크릿키"
+
+# 결제 데모 실행 (포트 8088)
+./gradlew bootRun --args='--spring.profiles.active=payment-demo --server.port=8088'
+```
+
+[http://localhost:8088/payment-demo.html](http://localhost:8088/payment-demo.html) 접속 후 데모 계정 **`paymentdemo` / `DemoPayment123!`**로 로그인합니다.
+
+`A1,A2 선점 → 주문 생성 → 결제창 인증 → 서버 승인 → A1 부분취소 → 잔여 전체취소` 순서로 확인할 수 있습니다.
+테스트 키에서는 실제 금액이 출금되지 않지만 인증 과정에서 결제 앱이나 본인 인증 화면이 나올 수 있습니다.
+[토스 테스트 환경](https://docs.tosspayments.com/guides/v2/get-started/environment)
+
+- 데모 페이지(`payment-demo.html`, 성공/실패 페이지 및 JS, CSS)는 `payment-demo` 프로필에서만 공개됩니다.
+  다른 프로필에서는 익명 접근이 **401**입니다.
+- 데모 전용 H2 DB는 종료 시 삭제되며, 다른 DB URL을 넣으면 JPA 초기화 전 차단합니다.
+  MySQL 테스트도 별도 일회용 컨테이너를 사용하므로 기존 DB를 초기화하지 않습니다.
+- `GET /api/v1/payment-config`는 **로그인한 사용자에게만** 클라이언트 키와 통화를 반환하고, 시크릿 키는 반환하지 않습니다.
+  키가 없거나 부적절하면 claim 전에 거부합니다.
+- 선점/주문이 만료되어 409 `HOLD_EXPIRED`, `HOLD_NOT_ACTIVE`를 받으면 데모가 이전 상태를 정리하고 새 UUID로 다시 선점하도록 합니다.
+  결과 불명확 오류에서는 기존 UUID를 유지합니다.
+  미확정 작업 중에는 계정 전환을 막습니다.
+- 재시작 후 브라우저의 이전 상태가 남으면 데모에서 로그아웃하고 다시 시작합니다.
+
+### 7. 테스트 결과와 스키마 적용
+
+#### 실행 명령
+
+```sh
+./gradlew test
+./gradlew mysqlTest
+node --test src/test/js/payment-demo.test.js
+./gradlew assemble
+```
+
+**2026-10-13 최종 통합 결과(README 작성 당시의 기록)**
+
+| 검증 | 결과 |
+| --- | --- |
+| 기본 Java/H2 | **387건 중 386건 통과, skip 1**, 실패, 오류 0 |
+| 실제 MySQL 8.4.8, `mysql-test` | **83건 통과**, 실패, 오류, skip 0 |
+| JavaScript 데모 | **49건 통과**, 실패, skip 0 |
+| `assemble` | 빌드 성공 |
+
+Java의 skip 1건은 MySQL 전용 `PaymentSchemaUpgradeIntegrationTest` 분리로 인한 것이며, 스키마 2개 케이스는 MySQL에서 실행했습니다.
+추가 회귀 테스트로 환불 제한 오류 분류, 긴 Unicode 주문명, 만료 복구, 계정 전환, 과거 예매 취소 이력, 보안/Swagger, PG 취소 재전송, 거절, `NOT_FOUND` 유예,
+`SEAT_BUSY` 재시도, 전체 취소 후 재취소 409, DTO 취소 시각 일치 등을 확인했습니다.
+**자동화 테스트의 PG는 대역**이며 전체 부하, 멀티서버 운영 성능을 검증한 것은 아닙니다.
+
+**실제 토스 TEST 검증:** 카카오페이 인증 → **20,000원 승인, 2석 확정** → A1 **10,000원 부분취소** → 남은 **10,000원 취소**를 수행했습니다.
+마지막 PG 응답은 `PARTIAL_CANCELED`인데 잔액이 0원이라 기존 로직이 `UNKNOWN`으로 보류했습니다.
+금액, 취소 이력 검증을 유지하며 처리 기준을 보완한 뒤 **기존 데이터로 `reconcile`을 한 번 실행**해 `SUCCEEDED`, 결제/예매 `CANCELED`,
+잔액 0원, 두 좌석 `AVAILABLE`을 확인했습니다.
+새 PG 취소 요청을 보내지 않았고, 같은 전체취소 UUID 및 이전 부분취소 UUID를 재전송하면 각각 **당시 완료 응답**이 재사용됐습니다.
+할인 제한 응답 회귀 테스트는 공식 HTTP 모의응답 기반이며 실제 토스 거래로 다시 실행하지 않았습니다.
+
+#### 기존 MySQL DB에 적용할 때
+
+스키마는 [수동 SQL](src/main/resources/db/manual/week-04-payment.sql)로 제공합니다.
+**애플리케이션 중지, 백업 후**, `SHOW CREATE TABLE`로 기존 `reservations.status` ENUM과 `reserved_seats` 구조를 대조하고 **한 번만** 적용해야 합니다.
+`ddl-auto: update`만으로는 `PAYMENT_PENDING` ENUM이 추가되지 않습니다.
+이미 Hibernate가 일부 신규 테이블/컬럼을 생성했다면 SQL 전체를 재실행하지 말고 ENUM 변경과 나머지 구조를 각각 비교해야 합니다.
+MySQL DDL은 암묵적 커밋이 발생하므로 부분 실패 시 실제 스키마를 확인해야 하며 자동 DROP 롤백은 제공하지 않습니다.
+
+[PaymentSchemaUpgradeIntegrationTest](src/test/java/com/ceos/cgv/domain/payment/schema/PaymentSchemaUpgradeIntegrationTest.java)에서 기존 ENUM 순서 2개와 기존 예매, 좌석 이력 각 5행을 유지한 채 스키마 업그레이드와 ORM 승인/부분취소를 검증했습니다.
+새 결제 테이블의 unique와 엔티티 연관 FK도 확인했습니다.
+다만 일부 snapshot ID 및 `activeOperationId`는 scalar라 FK로 존재를 보장하지 않으며, 모든 과거 DB 변형이나 별도 schema validate까지 검증한 것은 아닙니다.
+
+### 8. 구현하며 확인한 점
+
+- **락의 대상과 길이가 중요합니다.** 좌석 단위 `NOWAIT`과 결제 행의 짧은 잠금은 다르게 설계했고, PG 대기 시간에는 DB 락을 잡지 않도록 분리했습니다.
+- **동시성 제어만으로 중복 결제를 막을 수 없습니다.** 동시에 실행되는 요청과 나중에 다시 오는 요청은 다른 문제여서, 저장된 작업 이력과 멱등키를 함께 사용했습니다.
+- **외부 API의 성공과 우리 DB의 성공은 별개입니다.** 타임아웃이나 DB 저장 실패를 결제 실패로 단정하지 않고, `UNKNOWN`과 PG 조회 복구를 도입했습니다.
+- **상태 이름만 믿으면 안 됩니다.** 실제 TEST 거래에서 PG 상태가 `PARTIAL_CANCELED`여도 잔액은 0원이었습니다.
+  금액과 누적 취소 이력을 검증해 최종 상태를 결정하도록 보완했습니다.
+- **남은 범위:** Webhook 자동 수신, 백그라운드 복구 스케줄러, 매점, 가상계좌, 자동결제, 멀티서버/부하 검증은 이번 구현에 포함하지 않았습니다.
+
+---
+
+<details>
+<summary>이전 과제 내용</summary>
+
+<details>
+<summary>3주차</summary>
+
 ## 3주차 구현 및 개선
 
 ### 인증, 인가
@@ -127,10 +507,9 @@ H2 기반 자동화 테스트로 아래 결과를 확인했습니다. Payload를
 
 ---
 
-<details>
-<summary>이전 과제내용</summary>
+</details>
 
-아래는 이전 과제 작성 당시의 내용입니다.
+아래는 1~2주차 과제 작성 당시의 기록입니다.
 
 ## spring-cgv-24th
 

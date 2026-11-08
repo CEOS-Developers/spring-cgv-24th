@@ -1,9 +1,10 @@
 package com.ceos.cgv.domain.movie.service;
 
 import com.ceos.cgv.domain.movie.repository.MovieRepository;
-import com.ceos.cgv.domain.reservation.dto.ReservationCreateRequest;
+import com.ceos.cgv.domain.reservation.dto.SeatHoldCreateRequest;
 import com.ceos.cgv.domain.reservation.dto.ReservedSeatRequest;
-import com.ceos.cgv.domain.reservation.service.ReservationService;
+import com.ceos.cgv.domain.reservation.service.hold.SeatHoldService;
+import java.util.UUID;
 import com.ceos.cgv.global.exception.BusinessException;
 import com.ceos.cgv.global.exception.ErrorCode;
 import org.junit.jupiter.api.AfterEach;
@@ -29,7 +30,7 @@ class MovieVisibilityConcurrencyIntegrationTest {
     private static final long MOVIE = 9504, SCREENING = 9505;
     @Autowired MovieRepository movieRepository;
     @Autowired MovieService movieService;
-    @Autowired ReservationService reservationService;
+    @Autowired SeatHoldService reservationService;
     @Autowired JdbcTemplate jdbc;
     @Autowired PlatformTransactionManager transactionManager;
 
@@ -110,8 +111,8 @@ class MovieVisibilityConcurrencyIntegrationTest {
             CountDownLatch started = new CountDownLatch(1);
             Future<?> reserve = pool.submit(() -> {
                 started.countDown();
-                return reservationService.create(new ReservationCreateRequest(
-                        USER, SCREENING, List.of(new ReservedSeatRequest("A", 1))));
+                return reservationService.create(USER, UUID.randomUUID(), new SeatHoldCreateRequest(
+                        SCREENING, List.of(new ReservedSeatRequest("A", 1))));
             });
             assertThat(started.await(2, TimeUnit.SECONDS)).isTrue();
             assertThrows(TimeoutException.class, () -> reserve.get(300, TimeUnit.MILLISECONDS));

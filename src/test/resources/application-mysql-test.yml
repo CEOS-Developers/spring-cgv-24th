@@ -1,0 +1,15 @@
+spring:
+  datasource:
+    # Connection and temporary credentials are provided only by the test container.
+    embedded-database-connection: none
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      maximum-pool-size: 10
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+
+cgv:
+  jwt:
+    secret-base64: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+    access-token-seconds: 1800

@@ -1,0 +1,28 @@
+:root { color-scheme: light; font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", sans-serif; color: #243044; background: #f4f6fa; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+main { max-width: 850px; padding: 40px 20px 64px; margin: auto; }
+header { margin-bottom: 24px; }
+h1 { font-size: clamp(1.6rem, 4vw, 2.3rem); margin: 8px 0 16px; }
+h2 { font-size: 1.2rem; margin-top: 0; }
+p { line-height: 1.65; }
+.eyebrow { color: #8b2034; font-weight: 700; }
+section { background: white; border: 1px solid #dce2ec; border-radius: 14px; padding: 24px; margin: 18px 0; }
+.notice { padding: 16px 20px; background: #e7eefc; border: 1px solid #b6c8ef; border-radius: 10px; white-space: pre-line; overflow-wrap: anywhere; }
+label { display: flex; flex-direction: column; gap: 8px; font-weight: 600; }
+input { font: inherit; border: 1px solid #bdc7d6; border-radius: 7px; padding: 11px 12px; min-width: 0; }
+button { font: inherit; font-weight: 600; background: #234a93; border: 1px solid #234a93; color: white; padding: 11px 15px; border-radius: 7px; cursor: pointer; }
+button.secondary { background: white; color: #234a93; }
+button:disabled { opacity: .45; cursor: default; }
+button:focus-visible, input:focus-visible, a:focus-visible { outline: 3px solid #749cf0; outline-offset: 3px; }
+a { color: #234a93; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); align-items: end; gap: 14px; }
+.row, .actions { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin: 16px 0; }
+.row p { margin: auto 0; }
+.summary { padding: 14px; background: #f5f7fa; border-radius: 7px; white-space: pre-line; overflow-wrap: anywhere; }
+.hint { font-size: .9rem; color: #5e6b80; }
+details { margin-top: 20px; }
+summary { cursor: pointer; color: #234a93; margin-bottom: 14px; }
+.seat-list { display: flex; flex-wrap: wrap; gap: 12px; margin: 18px 0; }
+.seat-list label { flex-direction: row; align-items: center; padding: 10px 12px; border: 1px solid #dce2ec; border-radius: 7px; }
+@media (max-width: 500px) { main { padding: 24px 12px; } section { padding: 20px 16px; } .actions button { width: 100%; } }

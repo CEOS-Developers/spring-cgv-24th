@@ -1,15 +1,12 @@
 package com.ceos.cgv.domain.reservation.service;
 
 import com.ceos.cgv.domain.movie.entity.ScreeningSeat;
-import com.ceos.cgv.domain.reservation.dto.ReservationCreateRequest;
 import com.ceos.cgv.domain.reservation.dto.ReservationResponse;
 import com.ceos.cgv.domain.reservation.dto.ReservationSnapshot;
 import com.ceos.cgv.domain.reservation.entity.Reservation;
 import com.ceos.cgv.domain.reservation.entity.ReservedSeat;
 import com.ceos.cgv.domain.reservation.enums.ReservationStatus;
 import com.ceos.cgv.domain.reservation.repository.ReservationRepository;
-import com.ceos.cgv.domain.reservation.service.exception.ExpiredHoldEncountered;
-import com.ceos.cgv.domain.reservation.service.hold.SeatHoldExpiryService;
 import com.ceos.cgv.domain.reservation.service.seat.ReservationSeatLifecycle;
 import com.ceos.cgv.domain.reservation.service.seat.ScreeningSeatLockService;
 import com.ceos.cgv.domain.reservation.value.SeatCoordinate;
@@ -26,23 +23,9 @@ import java.util.List;
 @Service
 @RequiredArgsConstructor
 public class ReservationService {
-    private final ReservationCreationService creationService;
     private final ReservationRepository reservationRepository;
     private final ScreeningSeatLockService screeningSeatLockService;
-    private final SeatHoldExpiryService seatHoldExpiryService;
     private final Clock seatHoldClock;
-
-    public ReservationResponse create(ReservationCreateRequest request) {
-        int maxCleanups = request.seats() == null ? 0 : request.seats().size();
-        for (int attempt = 0; attempt <= maxCleanups; attempt++) {
-            try {
-                return creationService.create(request);
-            } catch (ExpiredHoldEncountered expired) {
-                seatHoldExpiryService.expireIfElapsed(expired.reservationId());
-            }
-        }
-        throw new BusinessException(ErrorCode.SEAT_BUSY);
-    }
 
     @Transactional(readOnly = true)
     public ReservationResponse findById(Long reservationId, Long userId) {
@@ -83,10 +66,10 @@ public class ReservationService {
             if (current.status() != ReservationStatus.RESERVED) {
                 throw new BusinessException(ErrorCode.HOLD_NOT_ACTIVE);
             }
-            ReservationSeatLifecycle.cancel(reservation, locked);
+            ReservationSeatLifecycle.cancel(reservation, locked, seatHoldClock.instant());
             return;
         }
-        reservation.cancel();
+        ReservationSeatLifecycle.cancel(reservation, List.of(), seatHoldClock.instant());
     }
 
 }

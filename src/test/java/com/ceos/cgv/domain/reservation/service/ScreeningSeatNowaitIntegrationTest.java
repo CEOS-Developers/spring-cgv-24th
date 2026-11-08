@@ -2,6 +2,7 @@ package com.ceos.cgv.domain.reservation.service;
 
 import com.ceos.cgv.domain.reservation.service.seat.ScreeningSeatLockService;
 import com.ceos.cgv.domain.reservation.value.SeatCoordinate;
+import com.ceos.cgv.domain.reservation.support.ReservationDatabaseIntegrationTest;
 import com.ceos.cgv.global.exception.BusinessException;
 import com.ceos.cgv.global.exception.ErrorCode;
 import org.junit.jupiter.api.Test;
@@ -9,7 +10,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.annotation.DirtiesContext;
-import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -24,9 +24,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 @SpringBootTest
-@ActiveProfiles("test")
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
-class ScreeningSeatNowaitIntegrationTest {
+class ScreeningSeatNowaitIntegrationTest extends ReservationDatabaseIntegrationTest {
     @Autowired JdbcTemplate jdbc;
     @Autowired PlatformTransactionManager transactionManager;
     @Autowired ScreeningSeatLockService lockService;

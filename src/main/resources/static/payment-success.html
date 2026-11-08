@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>테스트 결제 결과</title>
+  <link rel="stylesheet" href="/payment-demo.css">
+  <script src="/payment-demo.js" defer></script>
+</head>
+<body data-screen="success">
+<main>
+  <header><p class="eyebrow">학습용 · 테스트 결제</p><h1>결제 결과 확인</h1>
+    <p>결제 인증 결과를 주문 금액과 비교하고 서버 승인을 요청합니다.</p></header>
+  <p id="notice" class="notice" role="status" aria-live="polite">승인 결과를 확인하고 있습니다.</p>
+  <section><h2>주문</h2><p id="auth-state"></p><p id="order-summary" class="summary"></p>
+    <a href="/payment-demo.html">로그인 · 새 주문 화면</a></section>
+  <section>
+    <h2>결제와 좌석 취소</h2>
+    <div class="row"><label>결제 번호<input id="payment-id" type="number" min="1" inputmode="numeric"></label>
+      <button id="load-payment" class="secondary" type="button">결제 조회</button></div>
+    <p id="payment-summary" class="summary">서버 승인 결과를 기다립니다.</p>
+    <div id="payment-seats" class="seat-list"></div>
+    <label>취소 사유<input id="cancel-reason" maxlength="200" value="테스트 결제 취소"></label>
+    <div class="actions"><button id="cancel-selected" type="button">선택 좌석 부분 취소</button>
+      <button id="cancel-remaining" class="secondary" type="button">남은 좌석 전체 취소</button></div>
+  </section>
+  <section><h2>처리 상태 확인</h2><p id="operation-summary" class="summary"></p>
+    <div class="actions"><button id="refresh-operation" class="secondary" type="button">처리 상태 조회</button>
+      <button id="reconcile-operation" class="secondary" type="button">조회해서 복구</button>
+      <button id="retry-request" class="secondary" type="button">같은 요청 다시 확인</button>
+      <button id="retry-confirm" class="secondary" type="button">같은 승인 다시 확인</button></div>
+    <p class="hint">처리 중이거나 결과가 불확실하면 새 취소를 진행할 수 없습니다. 조회 또는 복구로 먼저 확인해주세요.</p>
+  </section>
+</main>
+</body>
+</html>

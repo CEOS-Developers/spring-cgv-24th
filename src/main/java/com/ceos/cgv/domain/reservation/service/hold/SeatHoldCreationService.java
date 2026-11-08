@@ -56,6 +56,9 @@ public class SeatHoldCreationService {
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public HoldCreationResult create(
             Long userId, UUID requestKey, SeatHoldCreateRequest request) {
+        if (requestKey == null) {
+            throw new BusinessException(ErrorCode.INVALID_REQUEST);
+        }
         if (request.seats() == null || request.seats().isEmpty()
                 || request.seats().size() > properties.maxSeats()) {
             throw new BusinessException(ErrorCode.INVALID_REQUEST);
@@ -79,6 +82,7 @@ public class SeatHoldCreationService {
                 throw new ExpiredHoldEncountered(reservation.getId(), true);
             }
             if (reservation.getStatus() != ReservationStatus.HELD
+                    && reservation.getStatus() != ReservationStatus.PAYMENT_PENDING
                     && reservation.getStatus() != ReservationStatus.RESERVED) {
                 throw new BusinessException(ErrorCode.HOLD_NOT_ACTIVE);
             }
