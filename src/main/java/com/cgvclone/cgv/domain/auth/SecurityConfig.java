@@ -34,12 +34,13 @@ public class SecurityConfig {
                 .authorizeHttpRequests(authorize -> authorize
                         .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
                         .requestMatchers(HttpMethod.POST, "/auth/login").permitAll()
+                        .requestMatchers("/payments/**").hasAnyRole("USER", "ADMIN")
                         .requestMatchers("/api/admin/**").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.GET, "/movies", "/movies/{movieId}",
                                 "/cinemas", "/cinemas/{cinemaId}").permitAll()
                         .requestMatchers(HttpMethod.GET, "/swagger-ui.html", "/swagger-ui/**", "/v3/api-docs",
                                 "/v3/api-docs/**").permitAll()
-                        .requestMatchers(HttpMethod.POST, "/bookings", "/bookings/{bookingId}/cancel",
+                        .requestMatchers(HttpMethod.POST, "/purchases", "/bookings", "/bookings/{bookingId}/cancel",
                                 "/movies/{movieId}/keep", "/cinemas/{cinemaId}/keep").hasAnyRole("USER", "ADMIN")
                         .requestMatchers(HttpMethod.DELETE, "/movies/{movieId}/keep",
                                 "/cinemas/{cinemaId}/keep").hasAnyRole("USER", "ADMIN")
