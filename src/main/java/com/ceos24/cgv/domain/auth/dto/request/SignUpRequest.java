@@ -11,6 +11,6 @@ public record SignUpRequest(
                 @Email(message = "올바른 이메일 형식이 아닙니다.")
                 @Schema(description = "이메일", example = "hong@example.com")
                 String email,
-        @NotBlank(message = "로그인 아이디는 필수입니다.") @Schema(description = "로그인 아이디", example = "hong123") String loginId,
+        @NotBlank(message = "아이디는 필수입니다.") @Schema(description = "로그인 아이디", example = "hong123") String loginId,
         @NotBlank(message = "비밀번호는 필수입니다.") @Schema(description = "비밀번호", example = "password123!") String password,
         @Schema(description = "어드민 가입용 시크릿 토큰") String adminToken) {}

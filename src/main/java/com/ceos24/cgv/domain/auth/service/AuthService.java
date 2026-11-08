@@ -12,6 +12,7 @@ import com.ceos24.cgv.global.exception.BusinessException;
 import com.ceos24.cgv.global.exception.ErrorCode;
 import com.ceos24.cgv.global.security.CustomUserDetails;
 import com.ceos24.cgv.global.security.jwt.JwtProvider;
+import io.jsonwebtoken.JwtException;
 import java.time.Duration;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -139,9 +140,24 @@ public class AuthService {
             return new TokenResponse(newAccessToken, newRefreshToken);
         } catch (BusinessException e) {
             throw e;
-        } catch (Exception e) {
+        } catch (JwtException | IllegalArgumentException e) {
+            log.warn("[토큰 재발급 실패] 유효하지 않은 리프레시 토큰: {}", e.getMessage());
             throw new BusinessException(ErrorCode.AUTH_INVALID_TOKEN);
         }
+    }
+
+    @Transactional
+    public void logout(Long memberId, String refreshToken) {
+        RefreshToken storedToken = refreshTokenRepository
+                .findByToken(refreshToken)
+                .orElseThrow(() -> new BusinessException(ErrorCode.AUTH_INVALID_TOKEN));
+
+        if (!storedToken.getMemberId().equals(memberId)) {
+            log.warn("[로그아웃 실패] 토큰 소유자 불일치: 요청 memberId={}, 토큰 소유 memberId={}", memberId, storedToken.getMemberId());
+            throw new BusinessException(ErrorCode.AUTH_INVALID_TOKEN);
+        }
+
+        refreshTokenRepository.delete(storedToken);
     }
 
     @Transactional

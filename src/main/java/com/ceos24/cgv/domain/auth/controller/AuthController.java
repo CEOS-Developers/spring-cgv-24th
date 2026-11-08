@@ -5,12 +5,16 @@ import com.ceos24.cgv.domain.auth.dto.request.SignUpRequest;
 import com.ceos24.cgv.domain.auth.dto.response.TokenResponse;
 import com.ceos24.cgv.domain.auth.service.AuthService;
 import com.ceos24.cgv.global.common.ApiResponse;
+import com.ceos24.cgv.global.exception.BusinessException;
+import com.ceos24.cgv.global.exception.ErrorCode;
+import com.ceos24.cgv.global.security.ApiUserDetails;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 @Tag(name = "인증", description = "회원가입 및 로그인 관련 API")
@@ -42,9 +46,12 @@ public class AuthController {
 
     @Operation(summary = "로그아웃", description = "Refresh Token을 폐기합니다.")
     @PostMapping("/logout")
-    public ResponseEntity<ApiResponse<Void>> logout(@RequestHeader("Refresh-Token") String refreshToken) {
-        // 주의: SecurityContext에 유저 정보가 있어야 하므로 Header에 Access Token을 넣고 요청해야 합니다.
-        authService.logout(refreshToken);
+    public ResponseEntity<ApiResponse<Void>> logout(
+            @AuthenticationPrincipal ApiUserDetails userDetails, @RequestHeader("Refresh-Token") String refreshToken) {
+        if (userDetails == null) {
+            throw new BusinessException(ErrorCode.AUTH_UNAUTHORIZED_USER);
+        }
+        authService.logout(userDetails.memberId(), refreshToken);
         return ResponseEntity.ok(ApiResponse.success(null));
     }
 }
