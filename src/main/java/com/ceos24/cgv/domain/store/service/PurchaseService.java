@@ -116,9 +116,11 @@ public class PurchaseService {
 
     // 승인 T2 (성공). 토스는 이미 승인했으므로 여기서 실패하면 돈은 빠졌는데 구매가 확정되지 않는다.
     // 롤백되면 결제가 IN_PROGRESS로 남아, 결제 조회로 실제 상태를 맞출 단서가 된다.
+    // 구매 잠금이 첫 쿼리다. T2가 늦어져 정리가 먼저 반영했으면 결제 상태 검사에서 막혀 덮어쓰지 않는다.
     @Transactional
     public PurchaseResponse completePayment(PurchasePaymentAttempt attempt, TossPayment approved) {
         LocalDateTime now = LocalDateTime.now(clock);
+        findForUpdate(attempt.purchaseId());
         Payment payment = findPayment(attempt.paymentId());
         Purchase purchase = purchaseRepository.findWithDetails(attempt.purchaseId())
                 .orElseThrow(() -> new CustomException(ErrorCode.PURCHASE_NOT_FOUND));
@@ -129,10 +131,11 @@ public class PurchaseService {
     }
 
     // 승인 T2 (거절). T1이 차감한 재고를 되돌린다. 예매와 달리 붙잡아 둘 것이 없어 주문도 실패로 끝낸다.
+    // 정리와 겹쳐 재고를 두 번 복구하지 않도록 구매 잠금이 첫 쿼리다.
     @Transactional
     public void failPayment(PurchasePaymentAttempt attempt, String failureCode, String failureMessage) {
+        Purchase purchase = findForUpdate(attempt.purchaseId());
         Payment payment = findPayment(attempt.paymentId());
-        Purchase purchase = payment.getPurchase();
 
         payment.fail(failureCode, failureMessage);
         purchase.fail();

@@ -125,11 +125,12 @@ public class ReservationService {
 
     // 승인 T2 (성공). 토스는 이미 승인했으므로 여기서 실패하면 돈은 빠졌는데 예매가 확정되지 않는다.
     // 롤백되면 결제가 IN_PROGRESS로 남아, 결제 조회로 실제 상태를 맞출 단서가 된다.
+    // 예매 잠금이 첫 쿼리다. T2가 늦어져 정리가 먼저 반영했으면 결제 상태 검사에서 막혀 덮어쓰지 않는다.
     @Transactional
     public ReservationResponse completePayment(ReservationPaymentAttempt attempt, TossPayment approved) {
         LocalDateTime now = LocalDateTime.now(clock);
-        Payment payment = paymentRepository.findById(attempt.paymentId())
-                .orElseThrow(() -> new CustomException(ErrorCode.PAYMENT_NOT_FOUND));
+        findOwnedForUpdate(attempt.reservationId(), attempt.userId());
+        Payment payment = findPayment(attempt.paymentId());
         Reservation reservation = findOwnedWithDetails(attempt.reservationId(), attempt.userId());
 
         payment.approve(approved.method(), approved.approvedAtIn(clock.getZone(), now));
@@ -138,14 +139,14 @@ public class ReservationService {
     }
 
     // 승인 T2 (거절). 좌석은 놓지 않는다. 카드 한도 초과처럼 다른 수단으로 바꾸면 되는 거절이 많고,
-    // 다시 시도할 시간은 선점 만료가 제한한다.
+    // 다시 시도할 시간은 선점 만료가 제한한다. 성공 T2와 같은 이유로 예매 잠금이 첫 쿼리다.
     @Transactional
     public void failPayment(ReservationPaymentAttempt attempt, String failureCode, String failureMessage) {
-        Payment payment = paymentRepository.findById(attempt.paymentId())
-                .orElseThrow(() -> new CustomException(ErrorCode.PAYMENT_NOT_FOUND));
+        Reservation reservation = findOwnedForUpdate(attempt.reservationId(), attempt.userId());
+        Payment payment = findPayment(attempt.paymentId());
 
         payment.fail(failureCode, failureMessage);
-        payment.getReservation().endPaymentHold(attempt.expiresAtBeforePayment());
+        reservation.endPaymentHold(attempt.expiresAtBeforePayment());
     }
 
     // 승인을 시작한 지 RECOVERY_DELAY가 지났는데 아직 승인 중인 결제. 원래 요청의 T2가 실패했거나 서버가 그 사이 죽었다.

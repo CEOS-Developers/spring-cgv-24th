@@ -422,6 +422,7 @@ class ReservationServiceTest {
         Reservation hold = holdWithId(1L, NOW, 1, 1);
         Payment payment = paymentWithId(hold, 50L);
         payment.startApproval("tgen_test_key", NOW);
+        given(reservationRepository.findOwnedForUpdate(1L, 2L)).willReturn(Optional.of(hold));
         given(paymentRepository.findById(50L)).willReturn(Optional.of(payment));
         given(reservationRepository.findOwnedWithDetails(1L, 2L)).willReturn(Optional.of(hold));
         // 토스는 +09:00으로 준다. 우리 시각대로 바꿔 저장한다
@@ -430,6 +431,10 @@ class ReservationServiceTest {
 
         ReservationResponse response = service.completePayment(attemptOf(payment, hold, NOW.plusMinutes(10)), approved);
 
+        // 잠금보다 먼저 읽으면 InnoDB 스냅샷이 그때 잡혀, 정리가 커밋한 결제 상태를 보지 못한다
+        InOrder order = inOrder(reservationRepository, paymentRepository);
+        order.verify(reservationRepository).findOwnedForUpdate(1L, 2L);
+        order.verify(paymentRepository).findById(50L);
         assertThat(response.status()).isEqualTo(ReservationStatus.RESERVED);
         assertThat(hold.getConfirmedAt()).isEqualTo(NOW);
         assertThat(payment.getStatus()).isEqualTo(PaymentStatus.DONE);
@@ -445,16 +450,39 @@ class ReservationServiceTest {
         LocalDateTime before = hold.getExpiresAt();
         hold.holdForPayment(NOW);
         payment.startApproval("tgen_test_key", NOW);
+        given(reservationRepository.findOwnedForUpdate(1L, 2L)).willReturn(Optional.of(hold));
         given(paymentRepository.findById(50L)).willReturn(Optional.of(payment));
 
         service.failPayment(attemptOf(payment, hold, before), "REJECT_CARD_COMPANY", "카드사 거절");
 
+        InOrder order = inOrder(reservationRepository, paymentRepository);
+        order.verify(reservationRepository).findOwnedForUpdate(1L, 2L);
+        order.verify(paymentRepository).findById(50L);
         assertThat(payment.getStatus()).isEqualTo(PaymentStatus.FAILED);
         assertThat(payment.getFailureCode()).isEqualTo("REJECT_CARD_COMPANY");
         assertThat(hold.getStatus()).isEqualTo(ReservationStatus.PENDING);
         assertThat(hold.getSeats()).allMatch(ReservationSeat::isOccupied);
         // 거절을 반복해 좌석을 붙잡지 못하도록 원래 만료 시각으로 돌아간다
         assertThat(hold.getExpiresAt()).isEqualTo(before);
+    }
+
+    @Test
+    void 정리가_먼저_반영한_결제는_늦게_온_승인_반영이_덮어쓰지_않는다() {
+        Reservation hold = holdWithId(1L, NOW, 1, 1);
+        Payment payment = paymentWithId(hold, 50L);
+        payment.startApproval("tgen_test_key", NOW);
+        payment.fail("NOT_FOUND_PAYMENT", "정리가 실패로 확정");
+        given(reservationRepository.findOwnedForUpdate(1L, 2L)).willReturn(Optional.of(hold));
+        given(paymentRepository.findById(50L)).willReturn(Optional.of(payment));
+        given(reservationRepository.findOwnedWithDetails(1L, 2L)).willReturn(Optional.of(hold));
+        TossPayment approved = TestFixtures.approvedToss("tgen_test_key", payment.getOrderId(), 14000,
+                NOW.atZone(ZONE).toOffsetDateTime());
+
+        assertThatThrownBy(() -> service.completePayment(attemptOf(payment, hold, NOW.plusMinutes(10)), approved))
+                .isInstanceOf(CustomException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.INVALID_PAYMENT_STATUS);
+        assertThat(payment.getStatus()).isEqualTo(PaymentStatus.FAILED);
+        assertThat(hold.getStatus()).isEqualTo(ReservationStatus.PENDING);
     }
 
     // ─── getById ──────────────────────────────────────────────────────────────
