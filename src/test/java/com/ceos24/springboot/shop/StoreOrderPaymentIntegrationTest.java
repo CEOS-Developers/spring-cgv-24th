@@ -36,6 +36,9 @@ import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.client.ResourceAccessException;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneId;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -57,6 +60,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @ActiveProfiles("test")
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 class StoreOrderPaymentIntegrationTest {
+    @MockitoBean(enforceOverride = true) private Clock clock;
     @Autowired private ShopService shop;
     @Autowired private PaymentService preparation;
     @Autowired private PaymentConfirmService approval;
@@ -80,6 +84,8 @@ class StoreOrderPaymentIntegrationTest {
 
     @BeforeEach
     void setUp() {
+        when(clock.getZone()).thenReturn(ZoneId.of("Asia/Seoul"));
+        when(clock.instant()).thenAnswer(ignored -> Instant.now());
         new TransactionTemplate(transactionManager).executeWithoutResult(ignored -> {
             userId = persist(User.create("구매자", UUID.randomUUID() + "@shop.test", "unused", "01012345678")).getId();
             otherUserId = persist(User.create("다른 구매자", UUID.randomUUID() + "@shop.test", "unused", "01012345679")).getId();
@@ -104,11 +110,34 @@ class StoreOrderPaymentIntegrationTest {
     }
 
     @Test
+    void orderAndPaymentShareSeoulClockAndExpireAtExactDeadline() {
+        Instant created = Instant.parse("2026-11-08T14:59:00Z");
+        when(clock.instant()).thenReturn(created);
+        StoreOrderResponse response = shop.createOrder(userId, request(1));
+        StoreOrder saved = orders.findById(response.orderId()).orElseThrow();
+        assertThat(saved.getOrderAt()).isEqualTo(LocalDateTime.of(2026, 11, 8, 23, 59));
+        assertThat(saved.getExpiresAt()).isEqualTo(LocalDateTime.of(2026, 11, 9, 0, 9));
+        var payment = preparation.prepareStoreOrder(userId,
+                new StoreOrderPaymentPrepareRequest(response.orderId()));
+        assertThat(payment.expiresAt()).isEqualTo(saved.getExpiresAt());
+
+        when(clock.instant()).thenReturn(created.plusSeconds(599));
+        scheduler.expirePendingOrders();
+        assertThat(orders.findById(response.orderId()).orElseThrow().getStatus())
+                .isEqualTo(StoreOrderStatus.PENDING);
+
+        when(clock.instant()).thenReturn(created.plusSeconds(600));
+        scheduler.expirePendingOrders();
+        assertThat(orders.findById(response.orderId()).orElseThrow().getStatus())
+                .isEqualTo(StoreOrderStatus.EXPIRED);
+    }
+
+    @Test
     void orderCreationHoldsStockAndSnapshotsPricesAndMergesDuplicateMenus() {
         StoreOrderResponse order = shop.createOrder(userId, new StoreOrderCreateRequest(theaterId, List.of(
                 new OrderItemRequest(drinkId, 1), new OrderItemRequest(popcornId, 1), new OrderItemRequest(popcornId, 2))));
         assertThat(order.status()).isEqualTo(StoreOrderStatus.PENDING);
-        assertThat(order.expiresAt()).isAfter(LocalDateTime.now());
+        assertThat(order.expiresAt()).isAfter(LocalDateTime.now(clock));
         assertThat(order.items()).hasSize(2);
         assertThat(order.totalAmount()).isEqualTo(21000);
         assertThat(stock(popcornId)).isEqualTo(7);
@@ -348,9 +377,9 @@ class StoreOrderPaymentIntegrationTest {
     }
 
     private void backdate(Long id) {
-        jdbc.update("update store_order set expires_at = ? where order_id = ?", LocalDateTime.now().minusMinutes(1), id);
+        jdbc.update("update store_order set expires_at = ? where order_id = ?", LocalDateTime.now(clock).minusMinutes(1), id);
         jdbc.update("update payment set expires_at = ? where target_type = 'STORE_ORDER' and target_id = ?",
-                LocalDateTime.now().minusMinutes(1), id);
+                LocalDateTime.now(clock).minusMinutes(1), id);
     }
 
     private int stock(Long menuId) {

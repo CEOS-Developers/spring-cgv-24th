@@ -20,6 +20,7 @@ import com.ceos24.springboot.reservation.repository.ReservationSeatRepository;
 import com.ceos24.springboot.reservation.service.ReservationExpirationScheduler;
 import com.ceos24.springboot.reservation.service.ReservationExpirationService;
 import com.ceos24.springboot.reservation.service.ReservationService;
+import com.ceos24.springboot.reservation.service.ReservationCreateService;
 import com.ceos24.springboot.theater.domain.*;
 import com.ceos24.springboot.theater.repository.ScreeningSeatRepository;
 import com.ceos24.springboot.theater.service.ScreeningService;
@@ -46,6 +47,9 @@ import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Duration;
 import java.time.LocalDate;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneId;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
@@ -67,7 +71,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
 class ReservationHoldIntegrationTest {
+    @MockitoBean(enforceOverride = true) private Clock clock;
     @Autowired private ReservationService service;
+    @Autowired private ReservationCreateService createService;
     @Autowired private ReservationExpirationService expirationService;
     @Autowired private ReservationExpirationScheduler scheduler;
     @Autowired private ReservationRepository reservations;
@@ -99,6 +105,8 @@ class ReservationHoldIntegrationTest {
 
     @BeforeEach
     void setUp() throws Exception {
+        when(clock.getZone()).thenReturn(ZoneId.of("Asia/Seoul"));
+        when(clock.instant()).thenAnswer(ignored -> Instant.now());
         try (var connection = jdbc.getDataSource().getConnection()) {
             assertThat(connection.getMetaData().getDatabaseProductName())
                     .isEqualTo(System.getenv().getOrDefault("SEAT_LOCK_TEST_DB", "H2"));
@@ -115,7 +123,7 @@ class ReservationHoldIntegrationTest {
             Movie movie = persist(Movie.builder().titleKr("점유테스트")
                     .runtimeMinutes(120).ageRating(AgeRating.ALL).build());
             movieId = movie.getMovieId();
-            LocalDate date = LocalDate.now().plusDays(7);
+            LocalDate date = LocalDate.now(clock).plusDays(7);
             screeningId = persist(Screening.builder().screen(screen).movie(movie)
                     .screeningDate(date).startTime(LocalTime.NOON)
                     .endTime(LocalTime.of(14, 0)).screeningType(ScreeningType.Original)
@@ -155,6 +163,30 @@ class ReservationHoldIntegrationTest {
             jdbc.update("delete from cgv_user where user_id in (?, ?)", userId, otherUserId);
             jdbc.update("delete from price where price_id = ?", priceId);
         });
+    }
+
+    @Test
+    void seoulMidnightHoldExpiresExactlyAtDeadlineUsingInjectedClock() {
+        Instant created = Instant.parse("2026-11-08T14:59:00Z");
+        when(clock.instant()).thenReturn(created);
+        ReservationResponse held = create(userId, screeningId, firstSeatId);
+        assertThat(held.reservationAt()).isEqualTo(LocalDateTime.of(2026, 11, 8, 23, 59));
+        assertThat(held.expiresAt()).isEqualTo(LocalDateTime.of(2026, 11, 9, 0, 9));
+        var prepared = paymentService.prepareReservation(userId,
+                new ReservationPaymentPrepareRequest(held.reservationId()));
+        assertThat(prepared.expiresAt()).isEqualTo(held.expiresAt());
+
+        when(clock.instant()).thenReturn(created.plusSeconds(599));
+        scheduler.expirePendingReservations();
+        assertThat(savedStatus(held.reservationId())).isEqualTo(ReservationStatus.Pending);
+
+        when(clock.instant()).thenReturn(created.plusSeconds(600));
+        assertConflict(() -> paymentService.prepareReservation(userId,
+                new ReservationPaymentPrepareRequest(held.reservationId())), ErrorCode.RESERVATION_EXPIRED);
+        scheduler.expirePendingReservations();
+        assertThat(savedStatus(held.reservationId())).isEqualTo(ReservationStatus.Expired);
+        assertThat(reservationSeats.findAllByReservation_ReservationId(held.reservationId())).isEmpty();
+        assertThat(create(otherUserId, screeningId, firstSeatId).status()).isEqualTo(ReservationStatus.Pending);
     }
 
     @Test
@@ -368,6 +400,29 @@ class ReservationHoldIntegrationTest {
         assertConflict(() -> create(userId, screeningId, firstSeatId), ErrorCode.SEAT_UNAVAILABLE);
     }
 
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void incompleteLockSelectionRejectsWholeReservation(boolean allMissing) {
+        transaction.executeWithoutResult(ignored -> {
+            jdbc.update("delete from screening_seat where screening_id = ? and seat_id = ?",
+                    screeningId, secondSeatId);
+            if (allMissing) {
+                jdbc.update("delete from screening_seat where screening_id = ? and seat_id = ?",
+                        screeningId, firstSeatId);
+            }
+        });
+
+        assertConflict(() -> create(userId, screeningId, firstSeatId, secondSeatId),
+                ErrorCode.SCREENING_SEAT_NOT_FOUND);
+        assertThat(reservations.findAllByUser_IdOrderByReservationAtDesc(userId)).isEmpty();
+        assertThat(reservationSeats.findAllByScreening_ScreeningIdAndSeat_SeatIdIn(
+                screeningId, List.of(firstSeatId, secondSeatId))).isEmpty();
+        if (!allMissing) {
+            assertThat(create(otherUserId, screeningId, firstSeatId).status())
+                    .isEqualTo(ReservationStatus.Pending);
+        }
+    }
+
     @Test
     void concurrentSelectionOfSameSeatHasOneWinnerAndNoOrphanReservation() throws Exception {
         CountDownLatch start = new CountDownLatch(1);
@@ -429,10 +484,11 @@ class ReservationHoldIntegrationTest {
         CountDownLatch contenderStarted = new CountDownLatch(1);
         try (var executor = Executors.newFixedThreadPool(2)) {
             var winner = executor.submit(() -> transaction.execute(ignored -> {
-                screeningSeats.findWithLock(screeningId, firstSeatId).orElseThrow();
+                assertThat(screeningSeats.findAllWithLock(screeningId, List.of(firstSeatId))).hasSize(1);
                 locked.countDown();
                 await(finishWinner);
-                return create(userId, screeningId, firstSeatId);
+                return createService.createReservation(userId, new ReservationCreateRequest(
+                        screeningId, 0, 0, 1, 0, List.of(firstSeatId)));
             }));
             assertThat(locked.await(5, TimeUnit.SECONDS)).isTrue();
             var contender = executor.submit(() -> {
@@ -460,7 +516,7 @@ class ReservationHoldIntegrationTest {
         CountDownLatch release = new CountDownLatch(1);
         try (var executor = Executors.newFixedThreadPool(3)) {
             var locker = executor.submit(() -> transaction.executeWithoutResult(ignored -> {
-                screeningSeats.findWithLock(screeningId, firstSeatId).orElseThrow();
+                assertThat(screeningSeats.findAllWithLock(screeningId, List.of(firstSeatId))).hasSize(1);
                 locked.countDown();
                 await(release);
             }));
@@ -478,7 +534,7 @@ class ReservationHoldIntegrationTest {
     }
 
     @Test
-    void reversedMultiSeatRequestsLockInSameOrderAndHaveOneWinner() throws Exception {
+    void reversedMultiSeatRequestsHaveOneWinner() throws Exception {
         CountDownLatch start = new CountDownLatch(1);
         try (var executor = Executors.newFixedThreadPool(2)) {
             var first = executor.submit(() -> selectManyAfter(start, userId, firstSeatId, secondSeatId));
@@ -506,12 +562,13 @@ class ReservationHoldIntegrationTest {
     void registeringScreeningCreatesAllLockRowsInSameTransaction() {
         transaction.executeWithoutResult(tx -> {
             var registered = screeningService.createScreening(new ScreeningCreateRequest(
-                    screenId, movieId, LocalDate.now().plusDays(8), LocalTime.of(18, 0),
+                    screenId, movieId, LocalDate.now(clock).plusDays(8), LocalTime.of(18, 0),
                     LocalTime.of(20, 0), ScreeningType.Original));
             assertThat(jdbc.queryForObject("select count(*) from screening_seat where screening_id = ?",
                     Long.class, registered.screeningId())).isEqualTo(2);
-            assertThat(screeningSeats.findWithLock(registered.screeningId(), firstSeatId)).isPresent();
-            assertThat(screeningSeats.findWithLock(registered.screeningId(), secondSeatId)).isPresent();
+            assertThat(screeningSeats.findAllWithLock(registered.screeningId(), List.of(secondSeatId, firstSeatId)))
+                    .extracting(slot -> slot.getSeat().getSeatId())
+                    .containsExactly(firstSeatId, secondSeatId);
             tx.setRollbackOnly();
         });
     }
@@ -560,7 +617,7 @@ class ReservationHoldIntegrationTest {
 
     private void backdateExpiry(Long reservationId) {
         jdbc.update("update reservation set expires_at = ? where reservation_id = ?",
-                LocalDateTime.now().minusSeconds(1), reservationId);
+                LocalDateTime.now(clock).minusSeconds(1), reservationId);
     }
 
     private ReservationStatus savedStatus(Long reservationId) {
