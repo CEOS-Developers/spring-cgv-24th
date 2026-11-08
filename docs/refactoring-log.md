@@ -1986,3 +1986,1173 @@ README 테이블 정의의 "회원" 표기는 유지한다. 코드 식별자는 
 ### 확인
 
 `./gradlew test` 273개 통과(세션 5의 260 + 신규 15 − `revoke()` 테스트 2). 테이블은 `ddl-auto: create`라 이관 작업이 없다.
+
+---
+
+## 3주차 PR 리뷰 반영
+
+리뷰 한 건을 커밋 하나로 반영했다. 코드 변경이 없는 리뷰(권한 회수가 액세스 토큰 만료 전까지 반영되지 않는 문제)는 리뷰 답변으로만 정리했다.
+
+### 회원가입 무결성 위반 로그 (`AuthService.signup`)
+
+- `saveAndFlush`의 `DataIntegrityViolationException`을 `DUPLICATE_LOGIN_ID`로 바꾸기 전에 `getMostSpecificCause()` 메시지를 `warn`으로 남긴다
+- 지금은 users의 unique 제약이 `login_id`뿐이라 응답은 맞다. 제약이 추가되면 다른 위반도 같은 응답으로 나가는데, 그때 원인을 로그로 찾을 수 있게 하는 것이 목적이다
+- 응답은 바꾸지 않았다. 바꾸려면 제약 이름으로 분기해야 하는데, 지금은 분기할 대상이 없다
+
+### 서명키 설정 오류 메시지 (`JwtProvider` 생성자)
+
+- 잘못된 키면 서버가 뜨지 못하는 동작(fail-fast)은 전부터 있었다. 문제는 메시지였다. Base64가 아니면 `DecodingException: Illegal base64 character`,
+  짧으면 `WeakKeyException`만 나오고 어느 설정이 틀렸는지(`jwt.secret` / `JWT_SECRET`)가 드러나지 않았다
+- `DecodingException | WeakKeyException`을 잡아 설정 이름과 생성 방법을 담은 `IllegalStateException`으로 다시 던진다. 원래 예외는 cause로 남긴다
+- `CustomException`을 쓰지 않은 이유: 기동 시점이라 응답할 HTTP 요청이 없고, `ErrorCode`의 상태 코드는 의미가 없다.
+  CLAUDE.md의 "IllegalStateException 직접 사용 금지"는 요청 처리 중 비즈니스 예외에 대한 규칙으로 본다
+- 키 값은 메시지에 넣지 않는다. 테스트가 메시지에 입력값이 없는지도 확인한다
+- 테스트: 짧은 키 테스트의 기대 예외 변경(+cause 확인), Base64가 아닌 키 테스트 추가
+
+### 리프레시 토큰 길이 검사 (`RefreshTokenService.reissue`, `revokeFamilyOf`)
+
+- 문제: 입력 길이 제한이 없어 수 MB 문자열도 SHA-256 전체를 계산하고 잠금 조회까지 갔다. 요청 하나에 드는 일의 양을 보내는 쪽이 정한다
+- 발급한 토큰은 항상 43자(`RefreshTokenProvider.TOKEN_LENGTH = (32바이트 × 8 + 5) / 6`)다. 최대 길이만이 아니라 길이가 다르면 모두 해시 전에 거른다.
+  짧은 위조값도 발급한 토큰일 수 없어서 DB를 볼 이유가 없다
+  - 재발급: 401 `REFRESH_TOKEN_INVALID`, 로그 `reason=length_mismatch`
+  - 로그아웃: 아무것도 하지 않고 200. 없는 토큰과 같은 정책이다
+- DTO `@Size`(400)를 쓰지 않은 이유 (작성자 결정)
+  - 액세스 토큰을 본문에 넣은 경우가 401에서 400으로 바뀌어 "거부 응답은 원인과 관계없이 같다"(세션 5 결정 6)가 깨진다
+  - `GlobalExceptionHandler.handleValid`가 rejectedValue를 응답에 담아, 큰 입력이 400 응답으로 그대로 돌아온다
+- 한계: 검사는 JSON을 다 읽은 뒤에 한다. 본문 크기 자체는 앞단 프록시(`client_max_body_size` 등)에서 막아야 한다
+- 테스트: 10,000자 토큰으로 재발급하면 쿼리 0건, 401, 다른 거부와 본문 동일, 본문에 입력값 없음. 로그아웃은 쿼리 0건, 200.
+  `hasIssuedLength`를 항상 `true`로 바꾸면 두 테스트가 쿼리 1건으로 실패하는 것을 확인했다(실험 후 원복)
+
+### 만료된 리프레시 토큰 정리 (`RefreshTokenService.issue`)
+
+- 문제: 순환할 때마다 행이 늘고 만료된 행을 지우지 않아 테이블이 계속 커진다
+- 결정 (작성자 선택): 스케줄러(CLAUDE.md 제외 범위) 대신, 로그인 트랜잭션에서 그 사용자의 만료 행(`expires_at <= now`)만 지운다
+  - 사용자 한 명의 행은 마지막 로그인 이후 유효기간 안의 것으로 제한된다
+  - 묶음은 만료 시각을 물려받으므로 함께 지워진다. 만료된 묶음의 재사용 탐지는 잃지만, 쓸 수 있는 토큰이 없고 응답도 같은 401이다
+- 지우는 방식: id를 잠금 없는 읽기로 고른 뒤 기본키 IN으로 지운다
+  - `user_id` 범위로 바로 `DELETE`하면 REPEATABLE READ에서 next-key 잠금이 그 사용자 범위 끝의 간격까지 걸린다.
+    같은 사용자가 동시에 두 번 로그인하면 양쪽이 간격 잠금을 쥔 채 그 간격에 `INSERT`하려다 교착이 날 수 있다
+  - 이 판단은 InnoDB 잠금 규칙에서 추론한 것이고, MySQL에서 실측하지는 않았다(테스트는 H2)
+- 인덱스는 추가하지 않았다. 조회 조건 `user_id`는 FK라 InnoDB가 인덱스를 자동으로 만들고, 사용자당 행 수가 위처럼 제한되어 `expires_at`까지 인덱스에 넣을 이유가 작다. 엔티티는 바꾸지 않았다
+- 한계: 다시 로그인하지 않는 사용자의 만료 행은 남는다
+- 테스트: 같은 사용자 재로그인 시 만료 행 3개(순환한 묶음 포함)만 삭제, 다른 사용자의 만료 행 유지.
+  정리 호출을 빼면 첫 테스트가 "2개 예상, 실제 5개"로 실패하는 것을 확인했다(실험 후 원복)
+
+### 동시성 테스트를 MySQL 컨테이너로 (Testcontainers)
+
+- 리뷰: H2 MySQL 모드는 동시성 동작이 MySQL과 같지 않다
+- 결정 (작성자 선택): `*ConcurrencyTest` 4개만 MySQL 8.0 컨테이너로 옮긴다. Docker가 없으면 건너뛰지 않고 실패한다. 나머지는 H2 유지
+  - `build.gradle`: `spring-boot-testcontainers`, `testcontainers-mysql` (Boot 4.1.1 관리 버전 2.0.5)
+  - `support/MySqlContainerConfig`: `@ServiceConnection` 빈, `--innodb-lock-wait-timeout=3`(운영 `sessionVariables`와 같은 값)
+  - 컨테이너가 빈이라 4개 클래스가 컨텍스트 캐시 하나를 공유해 컨테이너가 한 번만 뜬다(기동 약 21초, 최초 이미지 다운로드 별도)
+  - 테스트 yaml의 H2 `driver-class-name`은 `@ServiceConnection`과 충돌하지 않았다(로그에 `jdbc:mysql://`, `MySQLDialect`)
+- 결과: 기존 동시성 테스트 11개는 MySQL에서도 그대로 통과했다. H2에서만 맞던 테스트는 없었다
+- 세션 6에서 미뤘던 확인: 잠금 대기 초과가 MySQL에서도 500이 아니라 401이다. 대기 시간 3.5초로 `innodb_lock_wait_timeout=3` 적용도 확인
+  (컨테이너 값 `@@innodb_lock_wait_timeout=3`, `REPEATABLE-READ`, 8.0.46)
+
+#### 리뷰 2 결정(조회 후 기본키 삭제)의 실측
+
+`RefreshTokenConcurrencyTest`에 같은 사용자 `issue()` 10건 동시 테스트를 추가했다(만료 행 0개 / 3개 매개변수화).
+로그인 API를 쓰지 않은 이유는 BCrypt 비교 시간이 들쭉날쭉해 트랜잭션이 겹치는 구간이 좁아지기 때문이다.
+
+| 삭제 방식 | 만료 행 0개 | 만료 행 3개 |
+|---|---|---|
+| `user_id` 범위 `DELETE` (대조 실험, 원복) | 3회 모두 `Deadlock found`(INSERT 단계), 마지막 회 10건 중 9건 실패 | 3회 모두 통과 |
+| id 조회 후 기본키 `DELETE` (현재) | 5회 모두 통과 | 5회 모두 통과 |
+
+- 처음 추론(만료 행이 있을 때 교착)은 틀렸다. 행이 있으면 그 행의 X 잠금에서 줄을 서서 교착까지 가지 않는다.
+  교착은 범위 안에 잠글 행이 없을 때, 양쪽이 간격 잠금만 쥔 채 같은 간격에 INSERT하려 할 때 난다. 첫 로그인이나 만료 행이 없는 사용자가 이 경우라 흔하다
+- 이 교착은 H2에서는 재현되지 않는다. MySQL로 옮긴 이유를 보여 주는 사례로 남긴다
+- `EXPLAIN`(임시 테스트, 삭제): 만료 행 조회 `type=ref key=FK(user_id)`, 삭제 `key=PRIMARY`. 인덱스 추가는 필요 없다(리뷰 2 판단 유지)
+
+- 테스트: 279 → 281개 (매개변수화 테스트 2건)
+
+### Security 필터 체인 CORS (`SecurityConfig`)
+
+- 리뷰의 전제("WebConfig에 CORS 설정이 있다")와 달리 CORS 설정은 어디에도 없었다. 결론은 같다: 브라우저 연동이 막힌다
+- 재현(설정 전, `SecurityConfigTest`)
+  - 보호 경로 preflight: 401
+  - 공개 경로 `/api/movies` preflight: 401. 공개 규칙이 `HttpMethod.GET`에만 걸려 있어 `OPTIONS`는 `anyRequest().authenticated()`에 걸린다
+  - 허용하지 않은 출처의 preflight: 403이 아니라 401
+  - 허용된 출처의 본 요청 401에 `Access-Control-Allow-Origin`이 없음 → 브라우저가 오류 본문을 프런트에 주지 않는다
+- 결정
+  - `http.cors(Customizer.withDefaults())` + `CorsConfigurationSource` 빈(`/api/**`). Security의 `CorsFilter`는 인가 필터보다 앞에 있다.
+    MVC 설정(`WebMvcConfigurer.addCorsMappings`)만 두면 인가 필터가 먼저 401을 내서 preflight가 MVC까지 가지 못한다
+  - preflight를 위해 `OPTIONS`를 `permitAll`로 여는 방법은 쓰지 않았다. 출처 검증 없이 모든 OPTIONS를 통과시키게 되고, CORS 응답 헤더도 여전히 없다
+  - 출처는 `CorsProperties`(`cors.allowed-origins`, `@NotEmpty`), 환경변수 `CORS_ALLOWED_ORIGINS`, 기본값 `http://localhost:3000`. 비밀값이 아니라 기본값을 둔다
+  - 메서드는 컨트롤러가 쓰는 `GET`/`POST`/`DELETE`만 연다. 헤더는 `Authorization`, `Content-Type`, 노출 헤더는 `WWW-Authenticate`
+  - `allowCredentials`는 켜지 않는다. 쿠키를 쓰지 않으므로 필요 없다(CLAUDE.md: 세션·인증 쿠키 미사용)
+- 테스트: `SecurityConfigTest` +4. 설정 전 4개 모두 실패, 설정 후 통과
+
+---
+
+## 만료 선점 동시 해제 시 빈 좌석을 점유로 판정하는 문제
+
+### 현상
+
+리뷰 3으로 동시성 테스트를 MySQL 컨테이너로 옮긴 뒤 `ReservationConcurrencyTest.만료된_선점이_잡고_있던_좌석을_동시_요청이_다시_가져간다`가
+가끔 실패했다(단독 0/8, 전체 실행 4회 중 2회). 만료 선점 X가 (2,1)·(2,2)를 잡고 있을 때 A가 (2,1), B가 (2,2)를 동시에 고르면
+B가 사전 점유 검사(`ReservationService.create`)에서 `SEAT_ALREADY_RESERVED`를 받았다. 이중 판매는 아니지만, 비어 있는 좌석을 거절한다.
+좌석을 고르기만 해도 점유되는 구조라, 만료된 선점이 풀린 좌석을 여러 사람이 동시에 고르는 일은 흔하다.
+
+### 원인
+
+- A와 B 모두 스냅샷으로 X를 만료 대상으로 읽고, 엔티티 `expire()` → 더티 체킹으로 전체 컬럼 UPDATE를 보낸다
+- B의 UPDATE는 A의 커밋을 기다렸다가 최신 행 위에서 실행된다. `release_key`는 둘 다 X의 id라 같은 값이다
+- InnoDB는 **값이 바뀌지 않는 UPDATE에는 새 행 버전을 만들지 않는다.** 그러면 B의 스냅샷에는 옛 버전(`release_key = 0`)이 그대로 보인다
+- 차이는 `updated_at`뿐이다. 이 JVM(Windows)의 `LocalDateTime.now()`는 0.34~0.5ms 단위로만 바뀌어서, 동시에 출발한 두 플러시가 같은 시각을 받을 수 있다
+- 한 플러시 안에서 시각의 틱 경계가 갈려 **B의 예매 행만 실제로 바뀌고 좌석 행은 그대로**인 경우가 생긴다.
+  그러면 B의 스냅샷에서 예매는 `EXPIRED`(자기 버전), 좌석은 `release_key = 0`(옛 버전)이 되고,
+  점유 조건 `release_key = 0 AND (status <> PENDING OR expires_at > now)`가 참이 된다
+- MySQL 드라이버는 바뀐 행이 아니라 조건에 맞은 행 수를 돌려주므로(1, 2), Hibernate는 이 상황을 알아챌 수 없다
+
+### 실험 (임시 테스트, MySQL 컨테이너, 삭제함)
+
+JDBC 커넥션 두 개로 순서를 고정했다. B가 스냅샷 생성 → A가 만료+커밋 → B가 같은 행을 UPDATE → B의 사전 검사.
+
+| 경우 | B의 UPDATE가 맞은 행 수 | B가 본 점유 좌석 |
+|---|---|---|
+| 예매 실제 변경, 좌석 값 같음 | 1 / 2 | **(2,1), (2,2)** |
+| 둘 다 실제 변경 | 1 / 2 | 없음 |
+| 둘 다 값 같음 | 1 / 2 | 없음 |
+| 조건부 UPDATE (수정안) | 0 / 0 | 없음 |
+
+처음 실험에서는 쿼리에 `NOW(6)`을 써서 모든 경우가 점유로 나왔다. 컨테이너 시각은 UTC이고 앱은 한국 시각 LocalDateTime으로 저장하기 때문이다.
+앱처럼 Java 시각을 넘기도록 고쳐서 다시 돌렸다.
+
+### 수정 — 조건부 UPDATE (compare-and-set)
+
+- `findExpiredHoldsBlocking`은 엔티티 대신 id만 읽는다
+- `ReservationRepository.expireIfPending`: `WHERE id = ? AND status = PENDING AND expires_at <= now`
+- `ReservationSeatRepository.releaseOccupied`: `WHERE reservation_id = ? AND release_key = 0`. 예매 UPDATE가 1행일 때만 부른다
+- 값이 실제로 바뀔 때만 행에 맞으므로 "UPDATE했는데 아무것도 안 바뀐" 상태가 생기지 않는다.
+  늦은 쪽은 0행이라 스냅샷 전체가 일관되게 옛 상태(`PENDING` + 만료 시각 지남 = 비점유)로 남는다.
+  INSERT의 유니크 검사는 최신 값을 보므로 통과한다
+- 벌크 UPDATE는 감사 리스너를 거치지 않아 `updatedAt`을 직접 쓴다. 벌크 UPDATE라 INSERT보다 먼저 실행되므로 이전의 `flush()` 호출은 필요 없다
+- 잠금 순서는 이전과 같다(예매 → 좌석). 비관적 락은 넣지 않았다(좌석 경합 세션 결정 1 유지)
+- `Reservation.expire()` 삭제 (작성자 결정). 만료 규칙이 엔티티와 쿼리 두 곳에 있으면 한쪽만 고쳐질 때 어긋난다. `isExpired()`는 `confirm`이 쓰므로 남겼다
+
+### 테스트
+
+- `ReservationServiceTest`: 해제 → INSERT 순서 검증으로 교체, "다른 요청이 먼저 만료시켰으면(0행) 좌석을 건드리지 않는다" 추가
+- `ReservationConcurrencyTest`: B의 스냅샷이 A의 커밋보다 앞서는 순서를 고정한 테스트 추가. 시각이 같아지는 조건까지는 고정할 수 없어
+  이 테스트만으로 이전 구현이 늘 실패하지는 않는다. 메커니즘은 위 실험으로 확정했다
+- 전체 285 → 287개
+
+---
+
+## 결제 세션 0: 토스페이먼츠 문서 정리 + 테스트 키 초기 세팅
+
+Toss Payments 테스트 키로 결제(주문 생성 → 승인)를 붙이기 전 준비 작업이다. 엔티티와 도메인 코드는 건드리지 않았다.
+결제를 붙일 기능, 주문·결제 엔티티, 승인 API는 다음 세션에서 설계한다.
+
+### 문서 정리
+
+`docs/toss-payments-guide.md`. 공식 문서 다섯 개(결제 흐름 / 개발 환경 / Core API / 결제위젯 연동 / 웹훅)를 우리 서비스에 대입해
+다시 묶었다. 끝에 다음 세션의 설계 질문 7개를 모았다.
+
+### 결정 1 — 결제위젯 연동 키, 본인 개발자센터 키
+
+- 결제 UI를 직접 만들지 않고 토스의 결제위젯을 쓴다. 프런트엔드가 없는 프로젝트라 UI 작업을 최소로 한다
+- 문서 공용 테스트 키 대신 본인 키를 쓴다. 개발자센터에서 테스트 결제 내역을 확인할 수 있고 웹훅도 등록할 수 있다
+- 결제위젯 키(`gck`/`gsk`)와 API 개별 연동 키(`ck`/`sk`)는 섞어 쓸 수 없다. 섞으면 `INVALID_API_KEY`
+
+### 결정 2 — 키 접두사를 기동 시점에 검증
+
+`TossPaymentsProperties`에 `@Pattern`으로 `test_gck_` / `test_gsk_`를 강제했다.
+API 개별 연동 키나 라이브 키를 잘못 넣으면 결제를 시도하는 시점이 아니라 **기동 시점에** 실패한다.
+과제 범위가 테스트 결제뿐이라, 라이브 키가 들어오는 것 자체를 오류로 본다.
+
+비밀값 관리는 JWT 서명키와 같다. `application.yaml`에는 `${TOSS_CLIENT_KEY}` / `${TOSS_SECRET_KEY}` 자리표시자만 두고
+기본값을 두지 않는다. 실제 값은 `.env`로 주입하고, 테스트 yaml에는 접두사만 맞춘 무효 키를 둔다.
+
+### 결정 3 — `RestClient`, 의존성 추가 없음
+
+- `RestClient.builder()`는 spring-web에 들어 있어 의존성을 추가하지 않았다. `WebClient`는 webflux가 필요하고 우리는 동기 호출이면 충분하다
+- 시크릿 키 Basic 인증 헤더(`base64(시크릿키 + ":")`)를 빈의 기본 헤더로 넣었다. 호출하는 쪽이 인증을 신경 쓰지 않게 한다
+- 타임아웃: 연결 5초, 읽기 60초. 토스가 일부 API에 최소 60초를 권한다. 짧게 잡으면 토스는 승인했는데 우리는 실패로 처리하는 불일치가 생긴다
+- 빈만 만들었다. 승인 호출을 감싸는 클라이언트(요청·응답 DTO, 에러 변환)는 다음 세션에서 이 빈을 주입받아 만든다
+
+### 결정 4 — 웹훅은 보류
+
+카드 결제는 승인 API의 동기 응답으로 결과를 바로 안다. 웹훅이 꼭 필요한 경우는 결과가 나중에 정해지는 결제(가상계좌)나
+승인 응답을 놓친 경우다. 뒤쪽은 결제 조회 API(`GET /v1/payments/orders/{orderId}`)로도 메울 수 있고,
+결제 조회는 이후 작업 범위에 들어 있다. 웹훅을 로컬에서 받으려면 공개 URL(ngrok)도 필요하다.
+
+### 변경 파일
+
+| 파일 | 내용 |
+|---|---|
+| `docs/toss-payments-guide.md` | 신설. 토스 문서 정리 |
+| `global/config/TossPaymentsProperties.java` | 신설. `toss-payments.*`, 키 접두사 검증 |
+| `global/config/TossPaymentsConfig.java` | 신설. 토스 API용 `RestClient` 빈(Basic 인증, 타임아웃) |
+| `application.yaml` (main) | `toss-payments` 블록, 환경변수 자리표시자 |
+| `application.yaml` (test) | 더미 키 |
+
+로컬 실행 시 `.env`에 `TOSS_CLIENT_KEY`, `TOSS_SECRET_KEY`가 필요하다.
+
+---
+
+## 결제 세션 1: Payment 엔티티 + 토스 승인 클라이언트 + 예매 결제
+
+예매의 mock 결제(`POST /api/reservations/{id}/payment`, `PaymentRequest`)를 토스페이먼츠 승인으로 바꿨다.
+매점은 아직 mock이고 다음 세션에서 옮긴다.
+
+### 흐름
+
+```
+POST /api/reservations                       좌석 선점 (기존과 같음) → PENDING
+POST /api/reservations/{id}/payments          결제 주문 생성 → orderId, orderName, amount
+   [브라우저 결제위젯 → successUrl?paymentKey=..&orderId=..&amount=..]
+POST /api/reservations/{id}/payments/confirm  {paymentKey, orderId, amount} → 토스 승인 → RESERVED
+```
+
+### 결정 1 — 결제는 `Payment` 엔티티로 따로, 결제 시도마다 한 행
+
+- `Reservation`에 컬럼을 붙이지 않았다. 거절된 뒤 다시 결제할 수 있고(결정 6) 토스 `orderId`는 재사용할 수 없어서 시도마다 행이 필요하다.
+  `paymentKey`·`method` 같은 토스 값도 예매 엔티티에 섞이지 않는다
+- `orderId` = `cgv-r-` + UUID 32자(38자). 예매 id를 쓰면 6자 미만이 되고, 순차 값이면 남의 주문번호를 짐작할 수 있다
+- 금액은 생성자가 `reservation.getTotalPrice()`에서 직접 읽는다. 호출자에게 받지 않는다(`addSeat`의 가격과 같은 이유)
+- `user_id`는 두지 않았다. 소유자 검증은 예매 조회가 하고, 주문번호를 예매 id와 함께 찾으므로(`findByOrderIdAndReservationId`) 그 예매의 주문이면 곧 본인 주문이다
+- 상태: `READY` → `IN_PROGRESS` → `DONE` / `FAILED`. `IN_PROGRESS`는 "토스를 부르는 중"과 "토스 결과를 모름"을 함께 뜻한다. 둘 다 확정하면 안 된다는 점이 같다
+- `reservation_id`는 지금 NOT NULL이다. 매점 세션에서 `purchase_id`를 더할 때 둘 다 nullable + "정확히 하나" CHECK로 바꾼다
+
+### 결정 2 — 승인은 T1 → 토스 호출 → T2, 잇는 쪽은 별도 클래스 (A안)
+
+토스 응답은 최대 60초다. 한 트랜잭션으로 감싸면 그동안 예매 행 락과 DB 커넥션을 쥐고, 토스가 승인한 뒤 커밋이 실패하면 흔적까지 롤백된다.
+
+| 단계 | 위치 | 하는 일 |
+|---|---|---|
+| T1 `startPayment` | `ReservationService` `@Transactional` | 예매 잠금 → 주문 조회 → 금액 대조 → 승인 중인 다른 시도 확인 → 선점 연장 → `READY→IN_PROGRESS` |
+| 토스 호출 | 트랜잭션 밖 | `TossPaymentsClient.confirm` |
+| T2 `completePayment` / `failPayment` | `ReservationService` `@Transactional` | 승인: 결제 `DONE` + 예매 `RESERVED` / 거절: 결제 `FAILED` + 연장 되돌림 |
+
+- 순서를 잇는 `ReservationPaymentService`에는 `@Transactional`을 붙이지 않는다. 붙이면 T1·T2가 바깥 트랜잭션에 합류해 트랜잭션을 나눈 의미가 없고,
+  관례대로 `readOnly`를 붙이면 쓰기가 반영되지 않을 수 있다. CLAUDE.md Service 컨벤션에 이 예외를 적었다
+- B안(`TransactionTemplate`으로 한 서비스 안에서 나누기)은 경계가 코드에 보이고 클래스가 늘지 않는 장점이 있었다. 프로젝트 전체가 선언적 트랜잭션 + mock 서비스 테스트라,
+  이 흐름만 프로그래밍 방식으로 두지 않았다. 대가로 T1·T2가 `public`이라 컨트롤러가 직접 부를 수 있는데, 관례로 막는다
+- T2(승인) 안에서 예외가 나면 토스는 이미 승인한 상태다. 500으로 내보내면 회원은 결제가 안 된 줄 안다. 오케스트레이터가 잡아 `PAYMENT_RESULT_UNKNOWN`으로 바꾸고 orderId·paymentKey를 error 로그로 남긴다.
+  T2가 롤백되므로 결제는 `IN_PROGRESS`로 남아 결제 조회로 맞출 단서가 된다
+
+### 결정 3 — 토스 클라이언트는 `global/client`, 결과를 셋으로 나눈다 (a안)
+
+- 예매·매점 서비스가 다른 도메인에 의존하지 않도록 `global/client`에 뒀다. 우리 상태로 바꾸는 판단(거절 시 좌석을 둘지 등)은 넣지 않는다. CLAUDE.md에 규칙으로 적었다
+- 결과는 sealed interface `TossConfirmResult`의 `Approved` / `Rejected` / `Unknown`. 실패를 하나로 합치면 "돈이 빠졌는지 모르는 실패"를 거절로 처리하게 된다
+
+| 토스 응답 | 분류 | 이유 |
+|---|---|---|
+| 2xx + `DONE` | Approved | |
+| 2xx + 그 밖의 상태 | Unknown | 가상계좌 `WAITING_FOR_DEPOSIT` 등. 결과가 나중에 정해진다 |
+| 4xx | Rejected | 토스가 요청을 받아들이지 않았다. 본문을 해석하지 못해도 같다(`HTTP_400` 코드로 둔다) |
+| 4xx `ALREADY_PROCESSED_PAYMENT` | Unknown | 앞선 승인이 이미 성공했고 그 응답만 놓친 경우다. 거절로 두면 돈은 빠졌는데 실패로 기록된다 |
+| 5xx, 연결·읽기 타임아웃, 응답 해석 실패 | Unknown | 토스가 승인했는지 알 수 없다 |
+
+- `Idempotency-Key`는 `orderId`. 같은 주문의 승인을 다시 보내도 토스가 첫 결과를 돌려준다. 지금은 재전송하지 않지만 결과 불명을 복구할 때(세션 3) 안전망이 된다
+- `TossPayment`, `ErrorResponse`에 `@JsonIgnoreProperties(ignoreUnknown = true)`. 설정 빈의 `RestClient.builder()`는 Boot의 ObjectMapper 설정을 쓰지 않는다
+
+### 결정 4 — 같은 예매의 결제는 예매 행 잠금으로 줄 세운다
+
+두 탭에서 각각 결제위젯 인증을 마치면 주문번호가 둘이라 토스 멱등키로는 걸러지지 않는다. 우리 쪽에서 "승인 중인 다른 시도"를 막아야 한다.
+
+- 결제 주문 생성·승인 시작(T1)·취소가 모두 `findOwnedForUpdate`(`SELECT … FOR UPDATE`)로 시작한다. 같은 예매에 대한 이 셋은 한 줄로 선다
+- **잠금 조회가 트랜잭션의 첫 쿼리여야 한다.** InnoDB REPEATABLE READ는 첫 일반 SELECT 시점의 스냅샷을 쓴다. 잠금보다 먼저 일반 SELECT를 하면
+  앞 트랜잭션이 커밋한 `IN_PROGRESS`를 잠금을 얻은 뒤에도 보지 못한다(만료 선점 동시 해제 문제와 같은 종류). 잠금이 먼저면 스냅샷은 잠금을 얻은 뒤에 생긴다
+- 잠금 쿼리는 조인하지 않는다. MySQL의 `FOR UPDATE`는 조인한 행까지 잠가, 회차·영화를 붙이면 같은 영화의 결제가 전부 줄을 선다. 응답에 필요한 값은 잠근 뒤 지연 로딩으로 읽는다
+- 락은 T1 커밋과 함께 풀린다. 토스를 기다리는 동안에는 아무 락도 쥐지 않는다
+- 취소도 같은 잠금을 쓰도록 바꿨다(`findOwnedWithSeats` 삭제). 승인 중인 선점을 취소하면 토스가 승인한 뒤 확정할 예매가 없다 → `PAYMENT_IN_PROGRESS`
+- 조건부 UPDATE(`READY→IN_PROGRESS`)만으로는 같은 주문의 중복만 막고, 서로 다른 주문의 동시 승인은 막지 못한다. 그래서 행 잠금을 골랐다
+
+### 결정 5 — 승인을 시작하면 선점을 3분 늘리고, 거절되면 되돌린다
+
+선점 9분 50초째에 승인을 시작하면 토스를 기다리는 사이 선점이 만료되고, 다른 회원의 `create()`가 `releaseExpiredHolds`로 좌석을 풀어 가져간다. 그런데 토스는 DONE을 돌려준다.
+
+- `Reservation.holdForPayment(now)`: `expiresAt = max(expiresAt, now + 3분)`. 3분은 연결 5초 + 읽기 60초보다 넉넉한 값이다
+  점유 판정 쿼리(`expires_at > now`)는 그대로라, 결제 도메인을 조인하지 않아도 승인 중인 선점은 풀리지 않는다
+- 남은 시간이 3분보다 길면 줄이지 않는다
+- 거절되면 `endPaymentHold(결제 전 만료 시각)`로 되돌린다. 남겨 두면 거절을 반복해 좌석을 계속 붙잡을 수 있다. 결제 전 만료 시각은 T1이 `ReservationPaymentAttempt`에 담아 T2로 넘긴다
+- 되돌릴 기준으로 `createdAt + 10분`을 쓰지 않았다. `createdAt`은 JPA Auditing이 시스템 시계로 채워 테스트의 `Clock`과 다르다
+
+### 결정 6 — 거절되면 좌석을 유지한다 (가안)
+
+- 카드 한도 초과처럼 다른 수단으로 바꾸면 되는 거절이 많다. 다시 시도할 수 있는 시간은 선점 만료가 제한한다
+- 다시 결제하려면 새 주문을 만든다. 거절된 주문으로 다시 승인하면 `INVALID_PAYMENT_STATUS`
+- 이전 mock은 실패하면 바로 취소했다. 그 코드(`PAYMENT_FAILED`, `noRollbackFor`)는 삭제했다
+
+### 결정 7 — 결과 불명은 `IN_PROGRESS`로 남기고 504
+
+- 실패로 확정하면 이미 돈이 빠진 회원이 다시 결제할 수 있다. 결제는 `IN_PROGRESS`로 두고 `PAYMENT_RESULT_UNKNOWN`(504)으로 답한다
+- 이 상태에서는 같은 예매의 새 결제와 취소가 막힌다(결정 4)
+
+### 오류 코드
+
+| 코드 | 상태 | 경우 |
+|---|---|---|
+| `PAYMENT_NOT_FOUND` | 404 | 이 예매의 주문번호가 아님 |
+| `PAYMENT_AMOUNT_MISMATCH` | 400 | 승인 요청 금액 ≠ 주문 금액. 토스를 부르지 않는다 |
+| `PAYMENT_IN_PROGRESS` | 409 | 같은 예매의 다른 결제가 승인 중(주문 생성·승인·취소) |
+| `INVALID_PAYMENT_STATUS` | 409 | 이미 거절·승인 중인 주문을 다시 승인 |
+| `PAYMENT_REJECTED` | 402 | 토스 거절. 토스 코드·메시지는 `Payment.failureCode/Message`에 남긴다 |
+| `PAYMENT_RESULT_UNKNOWN` | 504 | 토스 결과 불명, 또는 승인 후 우리 반영 실패 |
+
+남의 예매는 주문 생성·승인 모두 `RESERVATION_NOT_FOUND`(기존 소유권 정책과 같다).
+
+### 테스트
+
+- `TossPaymentsClientTest`(신규 7): `MockRestServiceServer`로 응답을 흉내 내 분류를 확인한다. 멱등키·요청 본문, 모르는 응답 필드 무시 포함
+- `ReservationPaymentServiceTest`(신규 6): T1 → 토스 → T2 순서, T1 실패 시 토스 미호출, 결과별 분기, 승인 후 반영 실패
+- `ReservationServiceTest`: mock 결제 5개 → 주문·T1·T2·취소 15개
+- `ReservationControllerTest`: 결제·만료·소유권 테스트를 승인 흐름으로 바꿨다(토스는 `@MockitoBean`)
+- `AuthorizationScenarioTest`: 예매 확정을 주문 + 승인 API로 바꿨다
+- `ReservationPaymentConcurrencyTest`(신규 3, MySQL 컨테이너): 토스 호출을 붙잡아 두고 그 순간 다른 요청을 보낸다
+
+변형 실험으로 동시성 테스트가 실제로 잡는지 확인했다(되돌림 완료).
+
+| 변형 | 깨지는 테스트 |
+|---|---|
+| `ReservationPaymentService`에 `@Transactional` | 토스 호출 중 다른 결제·취소 요청이 락 대기 한도에 걸림. 선점 연장 테스트도 다른 회원의 좌석 선택이 락에 걸림 |
+| 선점 연장 제거 | 토스 호출 중 다른 회원이 좌석을 가져감 |
+| T1의 "승인 중인 다른 시도" 확인 제거 | 두 주문 동시 승인 시 둘 다 `RESERVED`(이중 결제) |
+
+전체 287 → 319개 통과.
+
+### 한계 — 다음 세션으로
+
+- **결과 불명 결제**: 3분 유예가 끝나면 선점이 만료되어 다른 회원이 좌석을 가져갈 수 있다. 토스에서는 승인됐을 수 있다.
+  세션 3에서 `GET /v1/payments/orders/{orderId}`로 맞추고, 좌석을 잃은 승인 결제는 세션 4에서 취소(환불)한다
+- 결과 불명 결제가 있는 예매는 그때까지 새 결제·취소가 막힌다
+- **결제된 예매의 취소는 아직 환불 없이 좌석만 푼다.** 세션 4에서 토스 취소를 붙인다
+- 결제위젯이 가상계좌를 보여주면 승인 응답이 DONE이 아니라 결과 불명이 된다. 세션 3의 테스트 HTML에서 가상계좌를 빼야 한다
+- `orderName`은 "영화 제목 N매"다. 토스 제한(100자)보다 긴 제목은 자르지 않았다
+- `global/common/PaymentResult`는 이제 매점만 쓴다. 세션 2에서 삭제한다
+- 실제 토스 API는 아직 부르지 않았다. 결제위젯으로 `paymentKey`를 받으려면 세션 3의 테스트 HTML이 필요하다
+
+### 변경 파일
+
+| 파일 | 내용 |
+|---|---|
+| `domain/payment/entity/Payment.java`, `PaymentStatus.java` | 신설 |
+| `domain/payment/repository/PaymentRepository.java` | 신설 |
+| `domain/payment/dto/PaymentOrderResponse.java`, `PaymentConfirmRequest.java` | 신설. 매점도 같은 형식을 쓸 예정 |
+| `global/client/TossPaymentsClient.java`, `TossConfirmResult.java`, `TossPayment.java` | 신설 |
+| `domain/reservation/service/ReservationPaymentService.java` | 신설. T1 → 토스 → T2 |
+| `domain/reservation/dto/ReservationPaymentAttempt.java` | 신설. T1 → T2 전달값 |
+| `domain/reservation/entity/Reservation.java` | `verifyPayable`, `holdForPayment`, `endPaymentHold` 추가. `confirm`이 `verifyPayable` 사용 |
+| `domain/reservation/repository/ReservationRepository.java` | `findOwnedForUpdate` 추가, `findOwnedWithSeats` 삭제 |
+| `domain/reservation/service/ReservationService.java` | `pay` 삭제. 주문 생성·T1·T2 추가, 취소가 잠금 조회 사용 |
+| `domain/reservation/controller/ReservationController.java` | `/payment` → `/payments`, `/payments/confirm` |
+| `domain/reservation/dto/PaymentRequest.java` | 삭제 |
+| `global/exception/ErrorCode.java` | 결제 코드 6개 추가, `PAYMENT_FAILED` 삭제 |
+
+---
+
+## 결제 세션 2: 매점 결제
+
+매점의 mock 결제(`PurchaseCreateRequest.paymentResult`)를 토스 승인으로 바꿨다. 이로써 `global/common/PaymentResult`와 `PURCHASE_PAYMENT_FAILED`를 삭제했다.
+승인 흐름(T1 → 토스 → T2, 순서 잇는 클래스에 트랜잭션 없음, 결과 3분류)은 결제 세션 1과 같다. 여기서는 매점이 예매와 다른 점만 적는다.
+
+### 흐름
+
+```
+POST /api/purchases                         주문 → PENDING Purchase(단가 복사) + 결제 주문. 재고는 그대로
+   [브라우저 결제위젯 → successUrl]
+POST /api/purchases/{id}/payments/confirm   T1: 재고 차감 → 토스 승인 → T2: PAID / 거절 시 재고 복구 + FAILED
+```
+
+### 결정 1 — 재고는 승인 직전(T1)에 차감한다
+
+| 차감 시점 | 문제 |
+|---|---|
+| 주문 생성 | 결제창을 닫고 떠난 주문이 재고를 붙잡는다. 풀려면 만료·복구 장치가 필요한데, 재고는 아무 단위나 대체할 수 있어 미리 잡아 둘 이유가 없다 |
+| **T1 (승인 직전)** | 품절이면 토스를 부르지 않아 돈이 빠지지 않는다. 재고 락은 T1 커밋과 함께 풀린다 |
+| 토스 승인 후 | 품절이면 이미 빠진 돈을 환불해야 한다 |
+
+- 예매와 다른 점: 좌석은 "이 좌석"이라 결제 전에 선점으로 잡아 두지만, 재고는 대체 가능해 결제 직전까지 잡지 않는다
+- 주문 생성 때는 잠그지 않는 사전 검사(`ensureAvailable`)로 지금 팔 수 없는 주문을 거른다. 통과해도 승인 직전에 품절일 수 있다(먼저 승인한 쪽이 가져간다)
+- 세션 5(매점 구매) 기록의 "실제 PG였다면 외부 호출 동안 락을 쥐게 된다"를 이것으로 해결했다. 재고 락 보유 구간은 T1뿐이다
+- 차감·복구 모두 상품 id 오름차순으로 한 건씩 잠근다(기존 데드락 방지 그대로). `forEachStockInLockOrder` 하나를 같이 쓴다
+
+### 결정 2 — 거절되면 재고를 되돌리고 주문도 실패로 끝낸다. 구매 하나에 결제 하나
+
+- 예매는 거절돼도 선점을 남겨 같은 예매로 다시 결제한다(Reservation : Payment = 1 : N). 매점은 붙잡아 둔 자원이 없으니 다시 결제하려면 새로 주문한다(Purchase : Payment = 1 : 1)
+- `Payment.purchase`는 `@OneToOne` + `purchase_id` 유니크. 거절된 주문을 다시 승인하면 `PURCHASE_NOT_PENDING`
+- 복구(`Stock.restore`)는 T2에서 하므로 재고 락 대기에 걸릴 수 있다. 그래도 회원에게는 `PAYMENT_REJECTED`로 답한다. 돈은 빠지지 않았기 때문이다.
+  복구가 롤백되면 결제가 `IN_PROGRESS`로, 재고는 차감된 채로 남는다. 결제 조회(세션 3)로 정리할 대상이다
+
+### 결정 3 — 결과 불명이면 재고는 차감된 채로 둔다
+
+되돌렸는데 토스에서는 승인됐다면 판 수량보다 재고가 많아진다(초과 판매). 덜 파는 쪽이 안전하다.
+
+### 결정 4 — 같은 주문의 승인은 구매 행 잠금으로 줄 세운다
+
+- `PurchaseRepository.findOwnedForUpdate`. 예매와 같이 트랜잭션의 첫 쿼리이고, 조인하지 않는다(지점을 붙이면 같은 지점 결제가 전부 줄을 선다)
+- 1:1이라 "같은 구매의 다른 시도"는 없다. 같은 주문의 중복 승인만 막으면 된다. 잠금 뒤 `payment.startApproval()`이 `IN_PROGRESS`를 보고 `PAYMENT_IN_PROGRESS`로 거른다
+- T1에서 `startApproval()`을 재고 차감보다 먼저 부른다. 중복 요청이 재고 행을 잠갔다가 롤백하는 일이 없다. 차감이 실패하면 상태 변경도 함께 롤백된다
+- 주문 뒤에 지점이 휴관했으면 T1에서 `BRANCH_NOT_OPERATING`
+
+### 결정 5 — `Payment`는 예매·구매 중 정확히 하나에 속한다
+
+- `reservation_id`를 nullable로 바꾸고 CHECK `ck_payment_one_target` 추가. 생성자가 1차로 막고(둘 다 있거나 둘 다 없으면 서버 오류), CHECK는 엔티티를 거치지 않는 쓰기까지 막는다(`Stock`의 CHECK와 같은 방식)
+- 빌더 하나로 `.reservation(r)` 또는 `.purchase(p)`. 주문번호 접두사는 `cgv-r-` / `cgv-p-`
+- `Payment.startApproval()`: `IN_PROGRESS`면 `INVALID_PAYMENT_STATUS` 대신 `PAYMENT_IN_PROGRESS`. 예매 쪽은 T1의 다른 시도 확인이 먼저 거르므로 응답이 바뀌지 않는다
+
+### 결정 6 — `Purchase`에 상태, `purchasedAt`은 결제 승인 시각
+
+- `PurchaseStatus`: `PENDING` → `PAID` / `FAILED`. 주문 시각은 `createdAt`이 갖는다
+- `purchasedAt`은 nullable. `complete(now)`가 서비스의 `Clock` 기준으로 기록한다. 빌더에서 `now`를 뺐다
+- 구매 내역은 `PAID`만 보인다. 결제창을 닫고 떠난 주문과 거절된 주문은 산 것이 아니다
+
+### 기타
+
+- 주문 응답: `PurchaseOrderResponse { purchase, payment }`. `payment`는 예매와 같은 `PaymentOrderResponse`(orderId, orderName, amount). orderName은 "팝콘" / "팝콘 외 1건"
+- 승인 응답은 기존 `PurchaseResponse`
+- 토스 승인 시각 변환(`OffsetDateTime` → 서버 시간대 `LocalDateTime`)이 예매·매점에 중복돼 `TossPayment.approvedAtIn(zone, fallback)`으로 옮겼다. `ReservationService`는 이 한 줄만 바뀌었다
+- 주문 항목은 상품 id 순으로 담는다. 이전에는 잠금 순서대로 담아서 생긴 순서였는데, 이제 담는 시점(주문)과 잠그는 시점(T1)이 달라 명시적으로 정렬한다
+
+### 오류 코드
+
+| 코드 | 상태 | 경우 |
+|---|---|---|
+| `PURCHASE_NOT_FOUND` | 404 | 없거나 남의 주문 |
+| `PURCHASE_NOT_PENDING` | 409 | 이미 결제됐거나 거절된 주문을 다시 승인 |
+| `PURCHASE_PAYMENT_FAILED` | — | 삭제 |
+
+### 테스트
+
+- `StockTest` +2: 복구, 0 이하 복구 거부
+- `PaymentTest`(신규 4): 대상별 금액·접두사, 대상 정확히 하나, 승인 중 재시작
+- `PurchasePaymentServiceTest`(신규 6): T1 → 토스 → T2 순서, 승인 직전 품절 시 토스 미호출, 거절 시 복구, 복구 실패해도 거절 응답, 결과 불명 시 복구 안 함
+- `PurchaseControllerTest`: 주문과 승인으로 나눠 다시 썼다(15 → 20). 주문 뒤 품절, 금액 조작, 거절 후 재승인 불가, 결과 불명 시 재고 유지, 남의 주문, 내역에 `PAID`만
+- `PurchaseRollbackTest`(실제 커밋): 승인 직전 한 상품이라도 모자라면 다른 상품도 차감 안 됨 + 결제 `READY` 유지, 거절 시 커밋된 차감이 되돌아옴, 결제 CHECK 제약
+- `PurchaseConcurrencyTest`(MySQL): 기존 두 테스트를 "주문은 미리, 승인만 동시에"로 바꿨다. 토스 대기 중 같은 상품의 다른 주문이 막히지 않는지 추가
+
+`@Transactional` 컨트롤러 테스트에서는 T1이 롤백되지 않아(바깥 테스트 트랜잭션이 쥐고 있다) 승인 직전 품절 시 결제가 `IN_PROGRESS`로 보인다. 그 단언은 실제 커밋하는 `PurchaseRollbackTest`에 두었다.
+
+변형 실험: `PurchasePaymentService`에 `@Transactional`을 붙이면 "토스 대기 중 다른 주문" 테스트가 `STOCK_LOCK_CONFLICT`로 실패한다(되돌림 완료).
+
+전체 319 → 338개 통과.
+
+### 한계 — 다음 세션으로
+
+- 결과 불명 결제와, 거절 후 재고 복구에 실패한 결제는 `IN_PROGRESS`로 남고 재고는 차감된 채다. 세션 3의 결제 조회로 정리한다
+- 결제된 구매의 취소(환불 + 재고 복구)는 세션 4
+- 버려진 `PENDING` 주문은 잡고 있는 자원이 없어 정리하지 않는다. 행만 쌓인다
+- 예매 쪽 `failPayment`는 실패 시 예외가 그대로 나간다(매점처럼 거절 응답으로 바꾸지 않았다). 예매의 T2 거절은 예매 행 갱신뿐이라 락 대기에 걸릴 일이 드물어 이번 세션에서는 건드리지 않았다
+
+### 변경 파일
+
+| 파일 | 내용 |
+|---|---|
+| `domain/store/entity/PurchaseStatus.java` | 신설 |
+| `domain/store/entity/Purchase.java` | `status`, `purchasedAt` nullable, `verifyPayable`·`complete`·`fail`, 빌더에서 `now` 제거 |
+| `domain/store/entity/Stock.java` | `restore` |
+| `domain/payment/entity/Payment.java` | `purchase`(@OneToOne), `reservation` nullable, CHECK, 접두사, `startApproval`의 진행 중 응답 |
+| `domain/payment/repository/PaymentRepository.java` | `findByOrderIdAndPurchaseId` |
+| `domain/store/repository/PurchaseRepository.java` | `findOwnedForUpdate`, `findWithDetails`, 내역은 `PAID`만 |
+| `domain/store/repository/StockRepository.java` | `findByBranchIdAndProductIdIn`(사전 검사) |
+| `domain/store/dto/PurchaseCreateRequest.java` | `paymentResult` 제거 |
+| `domain/store/dto/PurchaseOrderResponse.java`, `PurchasePaymentAttempt.java` | 신설 |
+| `domain/store/service/PurchaseService.java` | `purchase` → `createOrder`, `startPayment`, `completePayment`, `failPayment` |
+| `domain/store/service/PurchasePaymentService.java` | 신설. T1 → 토스 → T2 |
+| `domain/store/controller/PurchaseController.java` | `POST /api/purchases`가 주문 생성, `POST /{id}/payments/confirm` 추가 |
+| `global/client/TossPayment.java` | `approvedAtIn` |
+| `domain/reservation/service/ReservationService.java` | 승인 시각 변환을 `approvedAtIn`으로 |
+| `global/exception/ErrorCode.java` | `PURCHASE_NOT_FOUND`, `PURCHASE_NOT_PENDING` 추가, `PURCHASE_PAYMENT_FAILED` 삭제 |
+| `global/common/PaymentResult.java` | 삭제 |
+
+---
+
+## 결제 세션 3: 테스트용 결제위젯 페이지 + 실제 토스 연동 확인
+
+세션 1·2의 테스트는 모두 토스 응답을 흉내 냈다. 실제 토스로 결제위젯 → 승인까지 해 보려고 브라우저 페이지와 로컬 샘플 데이터를 만들었다.
+세션 계획도 바꿨다. 결과 불명 정리는 조회·취소가 모두 있어야 제대로 할 수 있어 마지막(세션 5)으로 옮겼다(CLAUDE.md).
+
+### 결정 1 — 테스트 페이지는 정적 HTML 한 장 (`/payment-test.html`)
+
+- 프런트엔드가 없는 프로젝트라 `src/main/resources/static`에 둔다. 로그인 → 좌석 선택(좌석 배치도) 또는 매점 주문 → 결제위젯 → 승인까지 한 화면에서 한다
+- successUrl·failUrl을 모두 이 페이지로 둔다. 돌아온 쿼리에 `paymentKey`가 있으면 성공, `code`가 있으면 실패다. 어떤 대상(예매/구매, id)의 결제였는지는
+  결제창으로 가기 전에 `sessionStorage`에 적어 두고 돌아와서 읽는다. 액세스 토큰도 같은 곳에 둔다. 테스트 도구라 저장 위치의 보안은 따지지 않았다(인증은 여전히 Authorization 헤더)
+- 돌아오자마자 `history.replaceState`로 쿼리를 지운다. 새로고침으로 같은 승인 요청을 다시 보내지 않게 한다
+- "승인 요청 금액을 100원으로 조작" 체크박스로 서버의 금액 대조를 브라우저에서 확인할 수 있다
+- 결제위젯은 `customerKey: ANONYMOUS`. 회원별 결제수단 저장(브랜드페이)을 쓰지 않는다
+- 결제 어드민(결제수단 노출 설정)은 사업자 정보가 있어야 써서 쓰지 않는다. 기본 UI(`variantKey: DEFAULT`)로 띄우고, 가상계좌는 고르지 않는다
+
+### 결정 2 — 클라이언트 키는 서버가 내려준다 (`GET /api/payments/widget-config`, 공개)
+
+- 클라이언트 키는 브라우저 소스에 어차피 들어가는 값이라 공개해도 된다. 페이지에 키를 심지 않고 `.env` 한 곳에서 시크릿 키와 짝으로 관리한다
+- 응답에는 클라이언트 키만 담는다. 테스트가 시크릿 키 접두사(`test_gsk_`)가 섞이지 않는지 본다
+
+### 결정 3 — 보안 규칙: 페이지와 설정 API만 연다
+
+- `GET /payment-test.html`: 토스가 successUrl로 되돌려 보내는 요청은 브라우저 이동이라 Authorization 헤더가 없다. 화면만 열고, 그 안의 API 호출은 각각 토큰을 싣는다
+- `GET /api/payments/widget-config`: 로그인 전에도 결제위젯 SDK를 초기화할 수 있어야 한다
+
+### 결정 4 — 샘플 데이터는 local 프로필 전용 SQL
+
+- `ddl-auto: create`라 부팅마다 DB가 비고, 회차·상품을 만드는 API가 없다. 지점 1, 상영관 1, 영화 1, 내일 회차 2, 상품 3(나초는 품절 확인용으로 재고 1), 재고를 넣는다
+- `application.yaml`의 local 프로필 문서에서만 `spring.sql.init.mode: always` + `data-locations`. 다른 프로필(테스트 포함)에는 부팅 부수효과가 없다
+- 관리자 계정은 SQL로 넣지 않았다(해시가 Git에 남는다). 샘플 데이터에는 비밀값이 없어 SQL로 둔다
+- 회차는 `CURDATE() + 1일`. 지난 회차는 선점할 수 없고, 오늘 회차는 실행 시각에 따라 이미 지났을 수 있다
+- SQL은 엔티티가 바뀌어도 컴파일 오류가 나지 않는다. `LocalSampleDataTest`가 MySQL 컨테이너의 실제 스키마에 넣어 본다
+
+### 실제 서버 + 실제 토스로 확인한 것 (브라우저 없이)
+
+local 프로필로 앱을 띄우고 HTTP로 직접 호출했다.
+
+| 확인 | 결과 |
+|---|---|
+| 샘플 데이터 적재, 페이지·설정 API 공개 | 200. 클라이언트 키는 `test_gck_`, 시크릿 키 미노출 |
+| 금액을 100원으로 바꿔 승인 | 400 `PAYMENT_AMOUNT_MISMATCH`, 토스 미호출 |
+| 가짜 `paymentKey`로 승인 (예매) | **실제 토스가 404 `NOT_FOUND_PAYMENT_SESSION`** → 우리 402 `PAYMENT_REJECTED`, 예매 `PENDING` 유지 |
+| 가짜 `paymentKey`로 승인 (매점) | 같은 거절 → 차감했던 재고가 49로 되돌아옴 |
+
+시크릿 키 Basic 인증(콜론 포함), 토스 오류 본문 해석, 거절 분류가 실제 토스 응답으로 맞는 것을 확인했다.
+
+로컬 MySQL 8에서 `Public Key Retrieval is not allowed`로 처음 접속이 거절됐다. 서버 재시작 직후 `caching_sha2_password` 첫 인증에서 생긴다.
+이번 실행에만 `SPRING_DATASOURCE_URL`로 `allowPublicKeyRetrieval=true`를 붙였다. 프로젝트 설정은 바꾸지 않았다.
+
+### 브라우저 결제 확인 (사용자가 직접 진행)
+
+| 항목 | 결과 |
+|---|---|
+| 예매 3석 42,000원 → 결제위젯 → 인증 → 승인 | **성공.** T1(`IN_PROGRESS`) → 토스 승인 약 1.3초 → T2(`DONE`, 결제수단 "간편결제", 토스 승인 시각 저장) → `RESERVED` |
+| 금액 조작 체크 상태로 승인 | 돌아온 `amount=42000`인데 100원으로 보내 400 `PAYMENT_AMOUNT_MISMATCH`, 토스 미호출. 결제는 `READY` 그대로 |
+| 카드사 미선택 / 결제창 닫기 | SDK가 `NEED_CARD_PAYMENT_DETAIL` / `USER_CANCEL`로 거부. 리다이렉트 없이 `requestPayment()`의 예외로 온다 |
+| 매점 팝콘 5개 32,500원 → 카드 → 승인 | **성공.** T1(`IN_PROGRESS` + 재고 50 → 45) → T2(`DONE`, 구매 `PAID`). 앞서 결제창을 닫고 떠난 주문 2건(콜라 포함)은 `PENDING`으로 남고 재고를 붙잡지 않았다(콜라 판매 가능 49 그대로) |
+
+확인하면서 고친 것
+
+- 첫 시도에서 아이디·비밀번호가 빈 값으로 나갔다. 원인은 확정하지 못했고(자동완성 미리보기 추정) 자동완성을 끄고 빈 값이면 요청을 막았다
+- 결제창에서 돌아오면 페이지가 새로 열려 화면 로그가 지워졌다. 로그를 `sessionStorage`에 두고, 페이지가 열릴 때와 승인 요청 본문을 기록하게 했다
+- "로그 지우기" 버튼에 핸들러가 빠져 있었다
+
+알게 된 것
+
+- `.env`의 토스 키는 **문서 공용 키**(`test_gck_docs_` / `test_gsk_docs_`)다. 개발자센터는 전자결제 신청 전에는 본인 키를 주지 않고
+  "문서 예제와 같은 테스트 연동 키"만 보여준다. **세션 0 결정 1(본인 키 사용)을 철회한다.** 가입만 해도 본인 테스트 키가 나온다고 본 것이 틀렸다.
+  공용 키라 개발자센터에서 결제 내역을 볼 수 없고 웹훅도 등록할 수 없다. 결제 상태 확인은 우리 DB와 결제 조회 API로 한다(세션 4).
+  여러 사람이 쓰는 상점이므로 결제위젯에 회원 개인정보(이름·이메일·전화번호)를 넘기지 않는다
+- 국민카드 인증은 실제 KB 스타뱅킹 앱 푸시로 왔다. 출금은 없었다
+- 공용 키로는 카카오페이도 진행된다. 카카오페이 머니 **자동충전이 걸려 있어 국민 계좌 → 머니 42,000원 충전이 실제로 일어났고**, 결제는 가상이라 머니로 남았다.
+  `docs/toss-payments-guide.md`의 테스트 환경 설명(카드사 화면, 간편결제)을 고치고 페이지에 경고를 넣었다
+
+### 테스트
+
+- `PaymentWidgetControllerTest`(신규 3): 설정 API 공개 + 시크릿 키 미포함, 페이지 공개, successUrl 쿼리가 붙어도 공개
+- `LocalSampleDataTest`(신규 1, MySQL): 샘플 SQL이 현재 스키마에 들어가고 회차가 미래, 나초만 품절
+
+전체 338 → 342개 통과.
+
+### 변경 파일
+
+| 파일 | 내용 |
+|---|---|
+| `src/main/resources/static/payment-test.html` | 신설. 테스트 결제 페이지 |
+| `src/main/resources/db/local-sample-data.sql` | 신설. local 샘플 데이터 |
+| `src/main/resources/application.yaml` | local 프로필에서만 샘플 SQL 실행 |
+| `domain/payment/controller/PaymentWidgetController.java`, `dto/PaymentWidgetConfigResponse.java` | 신설. 클라이언트 키 공개 API |
+| `global/config/SecurityConfig.java` | 페이지·설정 API 공개 |
+
+---
+
+## 결제 세션 4: 결제 조회 / 전체 취소 / 부분 취소 + 결제된 예매·구매 취소 시 환불
+
+결제를 조회하고, 결제된 예매·구매를 취소하면 토스 결제 취소(환불)를 함께 하도록 만들었다. 승인과 같은 T1 → 토스 → T2 구조를 쓰지만 자원을 놓는 순서가 반대다.
+근거로 삼은 토스 문서는 [Core API 결제 취소·조회](https://docs.tosspayments.com/reference#결제-취소), [Payment 객체](https://docs.tosspayments.com/reference#payment-객체),
+[취소 가이드](https://docs.tosspayments.com/guides/v2/cancel-payment), [멱등키](https://docs.tosspayments.com/reference/using-api/idempotency-key),
+[에러 코드](https://docs.tosspayments.com/reference/error-codes)다. 정리는 `docs/toss-payments-guide.md` 3장에 옮겼다.
+
+### 흐름
+
+```
+GET    /api/reservations/{id}/payments                          예매 결제 조회 (결제창만 열고 떠난 READY 제외)
+GET    /api/purchases/{id}/payment                              구매 결제 조회
+GET    /api/admin/payments/{orderId}/toss                       관리자 토스 대조
+
+DELETE /api/reservations/{id}                                   결제 전 선점은 바로 취소, 결제된 예매는 남은 좌석 전부 환불
+POST   /api/reservations/{id}/cancellations                     좌석 부분 취소 {"seats":[{"rowNum":1,"colNum":2}]}
+POST   /api/reservations/{id}/cancellations/{cancelId}/retry    결과 불명 취소 재시도
+
+DELETE /api/admin/purchases/{id}                                매점 전체 환불 (관리자)
+POST   /api/admin/purchases/{id}/cancellations                  매점 수량 부분 환불 {"items":[{"productId":1,"quantity":2}]}
+POST   /api/admin/purchases/{id}/cancellations/{cancelId}/retry 결과 불명 환불 재시도
+```
+
+### 결정 1 — 회원 조회는 우리 DB만, 토스 조회는 관리자 대조에만 (A안)
+
+- 조회할 때마다 토스를 부르면 공용 키 상점 전체가 함께 쓰는 호출 한도(분당 100건)를 회원의 새로고침이 쓴다. 응답도 느려진다
+- 우리 DB는 "이 좌석·상품이 유효한가"를 판단하는 기준이고, 토스는 "돈이 실제로 어떻게 움직였나"의 기준이다.
+  카드 번호·할부·영수증·정산 같은 결제수단 상세는 토스가 관리하므로 저장하지 않는다.
+  저장하는 것은 paymentKey, orderId, 상태, 금액, 결제수단, 승인 시각, 누적 취소액, 취소 요청마다의 금액·사유·시각·transactionKey·멱등키다
+- 공용 키라 개발자센터에서 결제 내역을 볼 수 없다. 토스 쪽 상태를 보는 수단으로 관리자 대조 API를 뒀다.
+  우리 주문이 아닌 orderId는 토스에 묻지 않는다(관리자 API가 아무 주문이나 조회하는 통로가 되지 않게)
+- 대조 서비스(`PaymentAdminService`)에는 `@Transactional`을 붙이지 않는다. 토스를 기다리는 동안 커넥션을 쥐지 않기 위해서다
+
+### 결정 2 — 취소도 T1 → 토스 → T2. 자원은 환불이 확인된 뒤에 놓는다
+
+| 승인 | 취소 |
+|---|---|
+| 피할 일: 돈은 빠졌는데 좌석이 없음 | 피할 일: 좌석은 풀렸는데 환불이 안 됨 |
+| 좌석·재고를 **먼저** 확보하고 토스를 부른다 | 토스 환불이 **확인된 뒤에** 좌석을 놓는다 |
+
+- T1: 예매·구매 행 잠금(첫 쿼리) → 상태·기한·대상 검사 → 서버가 금액 계산 → `PaymentCancel(IN_PROGRESS)` 저장 → 대상(좌석/수량)을 그 요청에 묶음
+- 토스 호출은 트랜잭션 밖이다. 순서를 잇는 `ReservationCancelService` / `PurchaseRefundService`에는 `@Transactional`을 붙이지 않는다(CLAUDE.md 예외 규칙)
+- T2 성공: 예매·구매 행을 다시 잠그고 취소 `DONE` → 결제 누적액 → 좌석 해제 / 수량 반영 → 남은 것이 없으면 예매·구매 `CANCELLED`
+- T2 거절: 취소 `FAILED`. 좌석·결제는 그대로이고 다시 요청할 수 있다
+- 결과 불명 / 환불 후 T2 실패: 취소를 `IN_PROGRESS`로 두고 504. 좌석은 점유된 채다. 같은 결제의 새 취소를 막는다
+- 좌석을 T1에서 놓지 않는 이유: 놓으면 다른 회원이 가져가고, 환불이 거절됐을 때 되돌릴 수 없다
+
+### 결정 3 — 취소 이력은 `PaymentCancel`(요청 1건 = 행 1개), 결제에는 누적액
+
+- 누적액만 두면 진행 중인 취소, 멱등키, 어느 좌석·수량의 취소였는지를 담을 곳이 없어 결과 불명을 정리할 수 없다
+- `Payment.canceledAmount`는 잔액 검사를 행 합산 없이 하려는 캐시다. `applyCancel`은 `PaymentCancel.complete`만 부른다(이력 없이 누적액만 바뀌지 않게)
+- 잔액 검사(`verifyCancelable`)는 요청 생성과 확정 두 번 한다. 두 요청이 같은 잔액을 보고 함께 통과하는 일을 확정에서 한 번 더 막는다
+- `requestedAt`을 따로 둔다. 재시도 기한의 기준인데, `createdAt`은 JPA Auditing이 시스템 시계로 채워 테스트 `Clock`과 다르다
+- 예매: `ReservationSeat.paymentCancel`(FK). 좌석은 한 번만 취소되므로 FK 하나면 된다. `cancelledAt`으로 "회원이 취소해 풀린 좌석"과 "선점 만료로 풀린 좌석"을 구분한다
+- 매점: `PurchaseProductCancel`(취소 요청 × 상품 라인 × 수량) 상세 엔티티. 한 라인이 여러 번 나눠 환불될 수 있어서다. `PurchaseProduct.canceledQuantity`는 확정된 수량의 누적이다
+
+### 결정 4 — 멱등키는 취소 요청마다 새 UUID. 재시도는 같은 키로, 14일까지
+
+- orderId를 쓰지 않는다. 같은 결제에 부분 취소를 두 번 하면 주소·메서드·키가 같아져, 두 번째 취소에 첫 응답이 캐시에서 돌아오고 실제로는 취소되지 않은 채 성공으로 기록된다
+- 재시도(`…/cancellations/{cancelId}/retry`)는 저장해 둔 멱등키·금액·사유를 그대로 보낸다. 첫 요청이 토스에 닿았으면 첫 응답이, 안 닿았으면 이번 처리 결과가 온다. 어느 쪽이든 두 번 환불되지 않는다
+- 재시도가 첫 요청과 겹쳐도 안전하다. 토스는 같은 키에 `IDEMPOTENT_REQUEST_PROCESSING`이나 첫 응답을 주고, T2는 이미 `DONE`인 취소면 아무것도 바꾸지 않는다
+- 토스 멱등키는 15일 유효하다. 그 뒤 같은 키로 보내면 새 요청이 되어 이중 환불이 될 수 있어 재시도는 요청 후 14일까지만 받는다
+
+### 결정 5 — 애매한 취소 응답은 거절이 아니라 결과 불명
+
+결과 불명을 거절로 처리하면 회원이 다시 요청할 때 새 멱등키로 같은 금액이 한 번 더 환불된다. 부분 취소는 잔액이 남아 있어 토스도 그 요청을 거절하지 않는다.
+
+| 토스 응답 | 분류 |
+|---|---|
+| 2xx + 상태 `CANCELED`/`PARTIAL_CANCELED` + `cancels` 마지막 항목 `DONE` | Canceled (그 항목의 transactionKey·canceledAt 저장) |
+| 그 밖의 4xx | Rejected |
+| `ALREADY_CANCELED_PAYMENT` | Unknown — 앞선 취소가 성공했는데 응답만 놓쳤을 수 있다 |
+| 409 `IDEMPOTENT_REQUEST_PROCESSING` | Unknown — 같은 키의 첫 요청이 처리 중 |
+| 400 `PROVIDER_ERROR` | Unknown — "일시적인 오류"라 처리됐는지 알 수 없다 |
+| 5xx, 타임아웃, 응답 해석 실패, 2xx인데 위 조건 불충족 | Unknown |
+
+조회 결과도 셋(`Found` / `NotFound` / `Unavailable`)으로 나눈다. `NotFound`는 `NOT_FOUND_PAYMENT`일 때만이다. `NOT_FOUND_MERCHANT` 등 나머지 404는 "물어보지 못함"이다(결정 11).
+
+### 결정 6 — 금액과 사유는 서버가 만든다. `cancelAmount`는 늘 명시한다
+
+- 금액을 클라이언트에게서 받지 않는다. 좌석 `paidPrice` 합 / 상품 `unitPrice` × 수량으로 계산한다. "결제 금액보다 많은 금액 취소"는 구조상 생길 수 없고, 엔티티 검사가 마지막으로 막는다
+- 전액 취소도 `cancelAmount`를 넣는다. 빼면 토스가 남은 잔액 전부를 취소해, 우리와 토스의 잔액이 어긋났을 때 엉뚱한 금액이 조용히 환불된다. 넣으면 그때는 토스가 `NOT_CANCELABLE_AMOUNT`로 거절한다
+- 성공 응답의 `balanceAmount`가 우리 잔액과 다르면 error 로그만 남긴다. 환불은 이미 끝났다
+- 사유(`cancelReason`, 200자 제한)는 `예매 부분 취소: A1, A2`, `매장 전체 환불: 팝콘×2` 처럼 서버가 만든다. 200자를 넘으면 자른다
+
+### 결정 7 — 상태
+
+| 대상 | 상태 |
+|---|---|
+| `Payment` | `DONE` → `PARTIAL_CANCELED` → `CANCELED`. **잔액이 0이면 `CANCELED`**. 취소 진행 중은 `Payment`가 아니라 `PaymentCancel.status`가 갖는다(`IN_PROGRESS`를 함께 쓰면 "승인 결과 모름"과 구분할 수 없다) |
+| `PaymentCancel` | `IN_PROGRESS`(토스 호출 중이거나 결과 모름) / `DONE` / `FAILED` |
+| 예매 | 부분 취소 후에도 `RESERVED`, 남은 좌석이 없으면 `CANCELLED` |
+| 구매 | 부분 환불 후에도 `PAID`, 남은 수량이 없으면 `CANCELLED`(신설). 구매 내역에 `PAID` + `CANCELLED`가 보인다 |
+| 응답 | `totalPrice`는 처음 금액 그대로(무엇을 얼마에 샀었는지 남김), `remainingPrice`를 새로 둔다. 좌석은 `cancelled`, 상품은 `canceledQuantity` |
+
+토스는 부분 취소를 거듭해 잔액이 0이 돼도 `PARTIAL_CANCELED`로 둔다(결정 11). 우리는 잔액 기준이라 `CANCELED`다. 회원에게 의미 있는 사실은 "더 돌려받을 돈이 남았나"이고 그것은 잔액이 정한다.
+
+### 결정 8 — 예매 부분 취소는 좌석 단위, 기한은 전체 취소와 같다
+
+- 좌석 하나는 한 번만 취소된다. 결제 전 선점(`PENDING`)의 부분 취소는 막는다(`RESERVATION_NOT_RESERVED`). 결제 주문 금액이 이미 정해져 있다
+- 기한(상영 20분 전)은 T1 시각으로 판단한다. 토스를 기다리는 사이 기한이 지나도 T2에서 다시 거절하지 않는다. 재시도도 기한을 보지 않는다(기한 안에 요청한 취소의 결과를 맞추는 것)
+- 남은 좌석을 모두 고르면 결과적으로 전체 취소가 된다
+
+### 결정 9 — 매점: 회원 취소 불가, 매장(관리자)이 수량 단위로 환불, 재고는 되돌리지 않는다 (C안)
+
+- CGV 매점(패스트오더·키오스크)은 제조가 시작됐거나 수령 대기 중이면 취소·환불이 안 된다. 우리 모델에는 제조·수령 상태가 없어 "결제 = 제조 접수"로 본다. 회원이 결제한 구매를 취소하는 API는 두지 않는다
+- 고려한 안: A 매점 취소 제거 / B 제조 상태(`PREPARING`) 도입 후 제조 전까지 회원 취소 / **C 매장이 제공하지 못한 수량만큼 관리자 환불**.
+  수량 단위 부분 환불이 실제로 생기는 곳은 매장 쪽 사정(품절·기계 고장)이라 C를 택했다. B는 결제 세션 범위를 넘는 주문 처리 기능이고 "환불 중 제조 시작" 경합이 새로 생긴다
+- 재고를 되돌리지 않는다. 환불 사유가 "만들 수 없음"이라 재고로 돌리면 다른 회원이 못 만드는 상품을 산다. 재고 조정은 매장의 몫이다
+- 관리자 잠금 조회 `PurchaseRepository.findByIdForUpdate`(소유자 조건 없음, 조인 없음, 첫 쿼리)
+- 거절되면 상세 행은 거절된 요청의 기록으로 남는다. 남은 수량은 확정된 환불만 세므로 다시 요청하는 데 걸리지 않는다
+- 환불 기한은 두지 않았다(수령 개념이 없음)
+
+### 결정 10 — 동시성: 행 잠금 + 결제당 진행 중 취소 1건
+
+| 상황 | 처리 |
+|---|---|
+| 같은 결제의 취소 두 건이 동시에 | 예매·구매 행 잠금으로 줄을 세우고, 뒤 요청은 진행 중 취소를 보고 409 `PAYMENT_CANCEL_IN_PROGRESS`. 토스는 한 번만 불린다 |
+| 승인 중(`IN_PROGRESS`)인 결제를 취소 | 기존 `ensureNoPaymentInProgress`로 409 `PAYMENT_IN_PROGRESS` |
+| 토스 환불 대기 중 다른 회원이 그 좌석 선택 | 아직 점유 중이라 `SEAT_ALREADY_RESERVED`. 환불이 확인돼야 풀린다 |
+| 토스 대기 중 같은 예매·구매의 다른 요청 | T1이 커밋돼 락이 없으므로 락 대기가 아니라 409로 바로 끝난다 |
+
+잠금 조회가 트랜잭션의 첫 쿼리여야 하는 이유는 결제 세션 1 결정 4와 같다(REPEATABLE READ 스냅샷).
+
+### 결정 11 — 실제 토스로 알게 된 것
+
+| 확인 | 결과 |
+|---|---|
+| 공용 키로 `GET /v1/payments/orders/{orderId}` | **실제로 있는 결제도** 404 `NOT_FOUND_MERCHANT`. 세션 0에서 이 응답을 "키 정상, 그 주문만 없음"으로 적었는데 공용 키에서는 orderId 조회 자체가 동작하지 않는다 |
+| `GET /v1/payments/{paymentKey}` | 정상. 우리 DB와 상태·금액·잔액·취소 이력이 일치 |
+| 없는 paymentKey | 404 `NOT_FOUND_PAYMENT` |
+| 한 번에 전액 취소 | 토스 상태 `CANCELED` |
+| 부분 취소를 두 번 해 잔액 0 | 토스 상태 **`PARTIAL_CANCELED`**, `balanceAmount` 0 |
+
+그래서 고친 것(fix 커밋 `e1f7fa1`): 대조 API는 paymentKey가 있으면 paymentKey로 묻고, 없을 때만 orderId로 묻는다. 응답에 `tossLookupBy`를 싣는다. `NOT_FOUND_MERCHANT`는 `Unavailable`로 분류한다.
+대조·정리는 토스 상태 이름이 아니라 **잔액과 취소 이력**으로 비교해야 한다.
+
+### 브라우저 확인 (사용자가 직접 진행, 매점 환불은 생략)
+
+| 항목 | 결과 |
+|---|---|
+| 예매 3석 42,000원 → A1 부분 취소 | 토스 `PARTIAL_CANCELED` · 잔액 28,000원 · 취소 1건, 우리와 일치 |
+| 다른 계정 3석 → 전체 취소 | 토스 `CANCELED` · 잔액 0원 · 사유 "예매 전체 취소: B1, B2, B3". 좌석 해제 시각 = 토스 취소 시각 |
+| 새 DB에서 A1 → A1 재취소 → A2·A3 → 전체 취소 재요청 → 대조 | `SEAT_ALREADY_CANCELLED`, 예매 `CANCELLED`, `ALREADY_CANCELLED`, 대조 `PAYMENT_KEY · FOUND` (토스 `PARTIAL_CANCELED` 잔액 0 / 우리 `CANCELED`) |
+
+결과 불명과 재시도는 실제 토스로 일부러 만들 수 없어 테스트로만 확인했다.
+
+### 기타
+
+- 영화 예매율 집계(`countConfirmedByMovie(Id)`)가 부분 취소된 좌석까지 셌다. `RESERVED`만 보고 `release_key`를 보지 않아서다. `releaseKey = 0` 조건을 더했다
+- 테스트 페이지의 "내 예매 내역" / "내 구매 내역" 버튼에 핸들러가 없었다(세션 3). 연결했다
+- `TossPayment`에 `balanceAmount`, `cancels`를 더하면서 테스트 9곳의 생성자 호출을 `TestFixtures.approvedToss(...)` 하나로 모았다. 토스 취소 목은 `TestFixtures.tossCancelsFrom(결제액)`(잔액을 이어서 줄임)
+- 결제 세션 3까지 문서 공용 키를 개발자센터 본인 키로 착각했던 정정은 이 세션 첫 커밋에 함께 들어갔다
+
+### 오류 코드
+
+| 코드 | 상태 | 경우 |
+|---|---|---|
+| `PAYMENT_NOT_CANCELABLE` | 409 | 승인되지 않은 결제 |
+| `PAYMENT_ALREADY_CANCELED` | 409 | 이미 전액 취소된 결제 |
+| `CANCEL_AMOUNT_EXCEEDS_BALANCE` | 409 | 취소 금액 > 잔액(계산 쪽 버그를 막는 마지막 검사) |
+| `PAYMENT_CANCEL_IN_PROGRESS` | 409 | 같은 결제에 진행 중인 취소가 있음 |
+| `PAYMENT_CANCEL_REJECTED` | 409 | 토스가 취소를 거절. 토스는 정상 응답을 줬으므로 502가 아니다 |
+| `PAYMENT_CANCEL_RESULT_UNKNOWN` | 504 | 취소 결과 불명, 또는 환불 후 우리 반영 실패 |
+| `PAYMENT_CANCEL_NOT_FOUND` | 404 | 재시도할 취소가 없음(다른 예매·구매의 취소 id 포함) |
+| `PAYMENT_CANCEL_NOT_RETRYABLE` | 409 | 이미 결과가 정해진 취소를 재시도 |
+| `PAYMENT_CANCEL_RETRY_EXPIRED` | 409 | 요청 후 14일이 지난 취소 |
+| `RESERVATION_NOT_RESERVED` | 409 | 결제 전 선점의 부분 취소 |
+| `SEAT_NOT_IN_RESERVATION` | 400 | 이 예매의 좌석이 아님 |
+| `SEAT_ALREADY_CANCELLED` | 409 | 이미 취소된 좌석 |
+| `PURCHASE_NOT_PAID` | 409 | 결제가 끝나지 않았거나 이미 모두 환불된 구매 |
+| `PRODUCT_NOT_IN_PURCHASE` | 400 | 이 구매에 없는 상품 |
+| `CANCEL_QUANTITY_EXCEEDED` | 409 | 남은 수량보다 많이 환불 |
+
+남의 예매는 지금처럼 `RESERVATION_NOT_FOUND`(404). 매점 환불은 관리자 전용이라 회원은 403.
+
+### 테스트
+
+| 커밋 | 내용 | 전체 |
+|---|---|---|
+| 조회 + 대조 | 클라이언트 조회 분류, 관리자 대조(권한·우리 주문 아님 404), 회원 조회·소유권 | 342 → 358 |
+| 예매 취소 | `PaymentCancelTest`, 클라이언트 취소 분류 7, `ReservationCancelServiceTest`, 서비스 T1·T2 멱등, 컨트롤러 13(여러 번 부분 취소 잔액, 이미 취소된 좌석, 거절, 결과 불명 + 같은 멱등키 재시도, 14일, 남의 예매), `ReservationCancelConcurrencyTest` 3 | → 399 |
+| 대조 fix | `NOT_FOUND_MERCHANT` → 조회 불가, paymentKey 조회, 승인된 결제는 paymentKey로 | → 402 |
+| 매점 환불 | `PurchaseRefundTest`, `PurchaseRefundServiceTest`, `PurchaseAdminControllerTest` 12(재고 그대로, 수량 초과, 회원 403, 내역 표시 등), `PurchaseRefundConcurrencyTest` 2 | → 425 |
+
+변형 실험(MySQL, 되돌림 완료)
+
+| 변형 | 깨지는 테스트 |
+|---|---|
+| `ReservationCancelService`에 `@Transactional` | 토스 대기 중 같은 예매의 다른 취소가 락 대기 예외 / 동시 부분 취소 둘 다 성공 |
+| T1에서 좌석 해제 | 환불 대기 중 다른 회원이 좌석을 가져감 / 남은 금액 틀림 |
+| 진행 중 취소 확인 제거(예매) | 토스 대기 중 다른 취소가 막히지 않음 / 동시 부분 취소에 토스 2번 호출 |
+| `PurchaseRefundService`에 `@Transactional` | 토스 대기 중 다른 환불이 락 대기 예외 / 동시 부분 환불 둘 다 성공 |
+| 진행 중 취소 확인 제거(매점) | 위 두 테스트 모두 실패 |
+
+`PurchaseRollbackTest`의 결제 CHECK 제약 테스트는 원시 INSERT에 새 NOT NULL 컬럼(`canceled_amount`)을 넣도록 고쳤다.
+
+### 한계 — 다음 세션으로
+
+- **결과 불명 승인 결제는 paymentKey가 없다.** 승인이 성공해야 저장하는데, 공용 키는 orderId 조회가 안 되므로 그런 결제는 조회로 맞출 방법이 없다. 세션 5에서 T1(승인 시작)에 paymentKey를 먼저 저장해야 한다
+- 결과 불명 결제·취소를 토스 조회로 맞출 때는 상태 이름이 아니라 잔액·취소 이력으로 비교한다(결정 11)
+- 14일이 지난 결과 불명 취소는 재시도할 수 없다. 관리자 대조로 확인해 수동으로 맞춰야 한다(세션 5)
+- 좌석을 잃은 승인 결제의 환불은 세션 5
+- 매점에는 제조·수령 상태가 없어 환불 기한이 없고, 환불하지 못한 재고를 조정하는 API도 없다
+- 가상계좌 환불(`refundReceiveAccount`), 결제수단별 취소 제약, 웹훅은 범위 밖
+- README의 동시성 표 6번("예매 결제·취소·만료 — 미적용")은 결제 세션 1에서 이미 적용됐다. 결제·취소 동시성 지점도 표에 없다. 동시성 세션에서 갱신한다
+- CLAUDE.md "설계 배경"의 "예매 취소 시 `seats.clear()`로 좌석 행을 삭제한다" 문단은 낡았다. 지금은 `release_key`로 행을 남기고 점유만 푼다
+
+### 변경 파일
+
+| 커밋 | 파일 |
+|---|---|
+| 조회 + 대조 (`143b145`) | `global/client/TossPayment`(잔액·취소 이력), `TossLookupResult`(신설), `TossPaymentsClient`(조회), `domain/payment/dto/PaymentResponse`·`PaymentReconcileResponse`, `service/PaymentAdminService`, `controller/PaymentAdminController`(신설), `PaymentRepository`, 예매·구매 컨트롤러·서비스·저장소(결제 조회), `payment-test.html`, `TestFixtures.approvedToss` |
+| 예매 취소 (`d832804`) | `Payment`(누적액·잔액·취소 검사), `PaymentStatus`, `PaymentCancel`·`PaymentCancelStatus`·`PaymentCancelRepository`(신설), `TossCancelResult`(신설), `TossPaymentsClient.cancel`, `Reservation`·`ReservationSeat`, `ReservationService`(취소 T1·재시도·T2), `ReservationCancelService`(신설), `ReservationCancelRequest`·`ReservationCancelAttempt`(신설), `ReservationResponse`·`ReservationDetailRow`·`ReservationRepository`(좌석 취소 표시), `ReservationSeatRepository`(예매율 집계), `ErrorCode`, `payment-test.html` |
+| 대조 fix (`e1f7fa1`) | `TossPaymentsClient`(paymentKey 조회·분류), `TossLookupResult`, `PaymentAdminService`, `PaymentReconcileResponse` |
+| 매점 환불 (`a8df2b5`) | `PurchaseProductCancel`·`PurchaseProductCancelRepository`(신설), `PurchaseProduct`(취소 수량), `Purchase`(환불·`cancelledAt`), `PurchaseStatus`(`CANCELLED`), `PurchaseService`(환불 T1·재시도·T2, 내역), `PurchaseRefundService`·`PurchaseAdminController`(신설), `PurchaseRefundRequest`·`PurchaseRefundAttempt`(신설), `PurchaseResponse`·`PurchaseHistoryRow`, `PurchaseRepository`, `PaymentCancel`(사유 200자), `PaymentCancelRepository`, `ErrorCode`, `payment-test.html` |
+
+---
+
+## 동시성 세션: 동시성 문제 재현과 해결 (과제 4번)
+
+README 「동시성 문제」의 지점마다 "적용 전에 실제로 문제가 난다"를 다시 낼 수 있는 형태로 남겼다. 운영 코드는 바꾸지 않았다.
+README 6번("예매 결제·취소·만료 — 미적용")은 결제 세션 1에서 이미 적용된 상태라 낡아 있었고, 결제 세션 1~4의 지점은 표에 없었다. 표를 1~10번으로 다시 썼다.
+
+### 결정 1 — "적용 전"은 변형 실험 + README에 diff (작성자 선택)
+
+- git 이력: 재고 락·좌석 유니크 제약은 기능의 첫 커밋부터 있어 "제어 없는 커밋"이 없다. 예전 커밋은 mock 결제·H2라 지금 테스트가 돌지 않는다
+- 운영 코드 스위치: 테스트용 분기가 운영 코드에 남는다
+- 유니크 제약은 엔티티 대신 테스트 시작 시 `ALTER TABLE ... DROP INDEX`로 지웠다(엔티티 변경 없이 같은 스키마). 외래 키가 유니크 인덱스를 쓰는 경우(`reservation_seat.screening_id`, `branch_like.user_id`)는 대신할 인덱스를 먼저 만들어야 지워진다
+- 실험할 때만 `@Test`를 `@RepeatedTest(5)`로 바꿨다. 끝날 때마다 백업으로 되돌리고 SHA-256 일치를 확인했다. git은 쓰지 않았다
+
+### 결정 2 — 순서는 게이트로 고정한다 (`support/RaceGate`, `RaceGateConfig`)
+
+- 동시에 출발만 시키는 테스트는 한쪽이 쓰기까지 끝낸 뒤 다른 쪽이 읽으면 경합 없이 통과한다. 이런 우연한 통과는 재현으로 치지 않았다
+- 게이트는 지정한 저장소 메서드가 반환된 직후("읽었고 아직 쓰지 않음")에 요청들을 서로 기다리게 한다. `RaceGateConfig`가 저장소 프록시(`Advised`) 맨 앞에 인터셉터를 붙인다
+  - `@MockitoSpyBean`을 쓰지 않은 이유: 빈 오버라이드가 컨텍스트 캐시 키를 바꿔 컨테이너가 더 뜬다. `MySqlContainerConfig`가 `RaceGateConfig`를 가져오게 해 기존 컨텍스트 수를 유지했다
+- 제어가 있으면 늦은 요청은 DB 락에 막혀 게이트에 오지 못한다. JVM 대기와 DB 대기가 서로를 무는 교착을 피하려고 **1초 뒤 혼자 지나간다.** 1초 < 락 대기 한도 3초라 늦은 요청은 락 예외 없이 앞선 커밋을 기다린다. 결과는 바뀌지 않고 시간만 든다
+- 단언은 타이밍에 흔들리지 않는 불변식으로 한다(줄어든 재고 = 판매 수량, 계정 수, 토스 호출 수). `gate.aloneCount()`로 경합이 실제로 겹쳤는지 본다. 유니크 제약 지점은 0, 락 지점은 1이다
+- 기존 다중 스레드 테스트는 부하 회귀용으로 남겼다
+
+### 결정 3 — 전부 다루되 깊이를 둘로 (작성자 선택)
+
+| 깊이 | 지점 | 한 일 |
+|---|---|---|
+| 깊게 | 1 좌석, 3 재고, 7 같은 예매 두 결제, 4 회원가입 | 게이트 테스트 신설(7은 sleep 200ms로 겹침을 기대하던 기존 테스트를 교체) + 변형 실험 |
+| 얕게 | 1′ 좌석 정렬, 4 찜, 5 리프레시 토큰, 6 선점 연장, 8 트랜잭션 분리, 9 예매 취소, 10 매점 환불 | 기존 테스트로 변형 실험만 다시 |
+| 고정 불가 | 2 만료 선점 회수 | 이전 기록(간헐 실패 4회 중 2회, JDBC 순서 고정 실험)으로 대신. `updated_at` 시각 충돌은 Auditing이 시스템 시계로 채워 운영 코드를 바꾸지 않고는 고정할 수 없다 |
+
+### 결정 4 — README는 기존 절을 고친다 (작성자 선택)
+
+새 절을 따로 두면 "왜 문제인가 / 방법 / 근거"가 두 곳에 생겨 한쪽만 낡는다(이번의 6번이 그 예). 조사 부분은 그대로 두고, 지점마다 문제 / 재현 / 고려한 방법 / 선택과 이유 / 결과(변형 diff + 실패 메시지 + 5회 반복)로 정리했다. 「재현 방법」 「실행 결과」 소절을 더했다.
+「테스트 실행 환경」도 현행화했다(컨테이너 테스트 9개 클래스, 전체 실행에서 컨테이너 2번 기동: 일반 / 토스 목 컨텍스트).
+
+### 실험 결과
+
+| 실험 | 변형 | 결과 |
+|---|---|---|
+| 깊게, 적용 전 | 좌석·회원가입 유니크 인덱스 삭제, `StockRepository`·`ReservationRepository.findOwnedForUpdate`의 `@Lock` 제거 | 게이트 테스트 4개 × 5 = **20/20 실패** |
+| 얕게, 적용 전 | 좌석 정렬 제거, 승인 중 확인 제거, 선점 연장 제거, 찜 유니크 인덱스 삭제, 리프레시 `@Lock` 제거, 예매·매점의 진행 중 취소 확인 제거 | 9개 × 5 = **40/45 실패** |
+| 8, 적용 전 | `ReservationPaymentService`에 `@Transactional` | **5/5 실패** (토스 대기 중 두 번째 결제가 `CannotAcquireLockException`) |
+| 적용 후 | 반복 하네스만 | **69/69 통과** |
+
+지점별 실패 메시지는 README에 있다. 눈여겨볼 것:
+
+- 7번은 락과 승인 중 상태 **둘 다** 필요하다. 락만 빼도, 확인만 빼도 둘 다 승인된다. 락은 T1끼리 줄을 세우고, 커밋해 둔 `IN_PROGRESS`가 락이 풀린 뒤의 토스 호출 구간을 덮는다. 9·10번도 같은 구조라 행 잠금이 있어도 진행 중 취소 확인을 빼면 환불이 두 번 나간다
+- 3번 적용 전에서 DB `CHECK (quantity >= 1)`은 아무것도 막지 못했다. 두 요청이 모두 1을 썼기 때문이다. CHECK는 범위 위반을 막지 갱신 손실을 막지 않는다
+- 5번은 3주차 세션 6에서 10건 중 7건 성공이었는데 MySQL에서는 매번 10건 모두 성공했다
+
+### 발견 — 좌석 정렬 테스트는 MySQL에서 정렬이 빠진 것을 잡지 못한다
+
+`좌석_순서가_엇갈린_요청이_겹쳐도_매핑되지_않은_예외가_나오지_않는다`는 정렬을 빼도 5/5 통과했다. 로그를 세어 보니 정렬이 없으면 30요청 중 **21건이 교착(1213)으로 롤백**됐고, 정렬이 있으면 0건이었다.
+InnoDB가 교착을 즉시 감지해 한쪽만 롤백하고, 그 요청이 409 `SEAT_RESERVATION_CONFLICT`로 매핑되어 "1건 성공 + 매핑된 실패" 단언이 그대로 맞는다.
+캡처를 위해 다시 돌렸을 때는 21건이 아니라 7건이었다(정렬이 있으면 다시 0건). 교착 횟수는 실행마다 다르다.
+좌석 경합 세션의 "정렬을 빼면 성공 0건"은 당시 테스트 DB인 H2의 값이었다. README에 사실대로 적었고 테스트는 고치지 않았다. "실패는 모두 `SEAT_ALREADY_RESERVED`"로 단언을 강화하면 잡을 수 있지만, 교착 발생이 타이밍에 달려 있어 확률적인 회귀 테스트가 된다.
+
+### 결정 5 — 실행 결과는 Gradle HTML 리포트 캡처로 남긴다 (작성자 선택)
+
+- 실험 시점의 JUnit XML·HTML 리포트는 다음 실행이 덮어써서 남아 있지 않았다. 캡처를 위해 실험을 모두 다시 돌렸고 결과는 같았다(20/20, 40/45, 5/5 실패, 69/69 통과)
+- 실험마다 `build/reports/tests/test`를 복사해 두고 헤드리스 Chrome(`--headless=new --screenshot`)으로 요약 화면과 1회차 상세 화면(실패 메시지)을 찍었다. 22장, `docs/images/concurrency/`
+  - 상세 페이지는 경로가 Windows 260자 한도를 넘어 Chrome이 열지 못했다. 리포트를 짧은 경로로 옮겨 찍었다. 메서드 이름이 긴 테스트는 Gradle이 파일명을 해시로 줄여, 내용에 `repetition 1 of 5`가 있는 파일을 골랐다
+- README에는 요약 화면 4장을 「실행 결과」에 바로 보이게, 지점별 화면은 각 「결과」 아래 접는 블록에 두었다
+
+### 결정 6 — 그림 두 장은 README에 SVG 파일로, 4·10번은 다섯 항목을 채운다 (작성자 선택)
+
+- 문장만으로는 조립하기 어려운 두 가지를 그렸다. 게이트가 순서를 고정하는 원리(3번 재고 예시, 적용 전·후 타임라인)와, 락은 T1만 덮고 토스 호출 구간은 `IN_PROGRESS`가 덮는다는 것(지금 / 확인 제거 / 한 트랜잭션)이다. 각각 「재현 방법」과 7번에 넣었다
+- `docs/images/concurrency/concurrency-gate.svg`, `concurrency-lock-vs-in-progress.svg`. GitHub는 SVG를 `<img>`로 보여 줘 페이지 색 설정을 따르지 않으므로 흰 배경과 고정 색을 파일 안에 넣었다. 같은 그림을 담은 Artifact 페이지도 만들었지만 비공개라 README에서 링크하지 않았다
+- 다른 지점을 참조하던 4번(회원가입·찜)과 10번(매점 환불)에 「고려한 방법」 표와 「선택과 이유」를 따로 두었다. 10번은 남은 수량이 확정된 환불만 센다는 점(진행 중 환불이 다른 요청의 계산에 드러나지 않음)과, 재고를 되돌리지 않아 막을 것이 이중 환불뿐이라는 점이 9번과 다르다
+
+### 테스트
+
+| 클래스 | 변경 |
+|---|---|
+| `support/RaceGate`, `RaceGateConfig` | 신설 |
+| `support/MySqlContainerConfig` | `RaceGateConfig` 가져오기 |
+| `ReservationConcurrencyTest` | +1 `두_요청이_모두_빈_좌석을_확인한_뒤_INSERT해도_한_건만_성공한다` |
+| `PurchaseConcurrencyTest` | +1 `두_승인이_같은_재고를_읽은_뒤_차감해도_판매_가능_수량을_넘지_않는다` |
+| `ReservationPaymentConcurrencyTest` | `같은_예매의_두_주문을_동시에_승인해도_토스는_한_번만_불린다`를 게이트 방식으로 교체 |
+| `SignupConcurrencyTest` | 신설 1 (회원가입 동시성 테스트가 없었다) |
+
+전체 425 → 428개 통과.
+
+### 남은 것
+
+- 영화 찜은 극장 찜과 코드 모양이 같아 동시성 테스트를 따로 두지 않았다
+- 2번(만료 선점 회수)은 앱 수준에서 매번 재현할 수 없다
+- 결과 불명 결제가 3분 선점 연장을 넘기는 경우는 결제 세션 5
+
+---
+
+## 결제 세션 5 + 과제 6: 외부 API 통신 방법 + 결과 불명 결제 정리
+
+과제 6번(외부 API 통신 방법 고민하기)과 결제 세션 5(결과 불명 결제 정리)를 함께 했다. 과제의 세 상황 중 "Toss는 성공했지만 우리 서버에서 오류"가
+곧 세션 5의 범위였다. README에 「외부 API 통신과 예외 처리」 절을 새로 두었다.
+
+### 결정 1 — 클라이언트는 RestClient 유지 (작성자 선택)
+
+RestTemplate / RestClient / WebClient / OpenFeign / HTTP Interface를 비교해 제안만 하고 작성자가 골랐다. 결제 세션 0에서 이미 RestClient였다.
+
+- T1 → 토스 → T2가 동기여야 하고(결과를 받아야 T2를 정함), 애플리케이션이 MVC + JPA라 WebClient의 논블로킹 이점이 없다
+- 부르는 API가 넷이고 오류 의미가 API마다 다르다. Feign `ErrorDecoder`나 전역 핸들러로 모으면 API별 판단이 한 곳에 섞인다
+- 의존성 0개, `MockRestServiceServer` 테스트를 그대로 쓴다. 선언형이 필요해지면 RestClient 백엔드의 HTTP Interface로 옮긴다
+- 확인: 설치된 spring-web 7.0.9의 `RestTemplate`에는 아직 `@Deprecated`가 없다. README에는 "Spring 팀이 7.x deprecated / 8.0 제거 예정 발표"로 적었다
+
+### 결정 2 — 클라이언트 분류 보강 (③④⑤⑥, 작성자가 넷 다 선택)
+
+| | 이전 | 이후 |
+|---|---|---|
+| ③ 2xx인데 응답의 orderId·paymentKey·금액이 요청과 다름 (승인) / 마지막 취소 거래 금액·paymentKey가 다름 (취소) / 다른 결제 (조회) | 그대로 성공 | 결과 불명 / 조회 불가 + error 로그 |
+| ④ 승인 400 `PROVIDER_ERROR` | 거절 | 결과 불명. 취소와 같은 기준. 토스 에러 코드 문서에서 승인 API에도 400 "일시적인 오류"로 있는 것을 확인 |
+| ⑤ 승인 401 `UNAUTHORIZED_KEY`·`INVALID_API_KEY`·429 | 거절 → 402 "다른 결제수단으로" | `Rejected(serviceError = true)` → 503 `PAYMENT_SERVICE_UNAVAILABLE` + error 로그 |
+| ⑥ 연결 실패 (`ConnectException`·`HttpConnectTimeoutException`·`UnknownHostException`, 원인 사슬에서 찾음) | 결과 불명 | 같은 멱등키로 1번 다시. 또 실패면 승인은 `Rejected(serviceError)`, 취소는 결과 불명, 조회는 조회 불가 |
+
+- 분류는 여전히 셋이다(CLAUDE.md 규칙). "토스가 판단하지 않은 거절"은 거절의 하위 사유(`serviceError`)로 표현했다. 돈이 안 빠진 점이 같아 보상도 같고, 회원 안내만 다르다
+- **승인과 취소의 비대칭.** 승인은 주문마다 한 번만 보낸다(재승인은 T1이 막음). 연결을 못 했으면 그 주문의 승인은 토스에 한 번도 닿지 않았다 → 거절이 안전.
+  취소는 같은 멱등키의 재시도일 수 있어 이번 요청이 막혔다고(연결 실패·401) 첫 요청이 환불되지 않았다는 뜻이 아니다 → 결과 불명
+- 읽기 타임아웃은 다시 보내지 않는다. 이미 60초를 기다렸다
+
+### 결정 3 — T1에서 paymentKey와 승인 시작 시각을 저장, 거절되면 paymentKey를 지운다 (Payment 엔티티 변경, 작성자 허용)
+
+- 문서 공용 키는 orderId 조회가 안 되므로(세션 4 결정 11) 승인 성공 뒤에 저장하면 결과 불명 결제는 조회할 방법이 없다
+- `startApproval(paymentKey, now)`, `approve(method, approvedAt)`. 토스 응답 paymentKey가 요청과 같은지는 클라이언트가 확인한다(③)
+- `approvalStartedAt`: updatedAt은 Auditing이 시스템 시계로 채워 Clock과 다르다
+- `fail()`이 paymentKey를 지운다. 승인 요청의 paymentKey는 토스가 확인하기 전 값이라 남기면 유니크 제약이 그 키의 진짜 주문을 막는다. 대가로 거절된 결제의 관리자 대조는 orderId로 묻는다(공용 키에서는 동작 안 함)
+- `verifyRecoverable(now)`: IN_PROGRESS가 아니면 `INVALID_PAYMENT_STATUS`, 승인 시작 후 `RECOVERY_DELAY`(2분) 전이면 `PAYMENT_IN_PROGRESS`
+
+### 결정 4 — 정리 계기는 스케줄러 + 관리자 API (작성자 선택)
+
+- 스케줄러 1분 간격(`@Scheduled(fixedDelay = 60s)`). 서버가 T2 전에 죽은 결제는 아무도 다시 요청하지 않으므로 사람 손 없이 정리돼야 한다
+- 관리자: `POST /api/admin/reservations/payments/{orderId}/recovery`(`ReservationAdminController` 신설), `POST /api/admin/purchases/payments/{orderId}/recovery`(`PurchaseAdminController`). 같은 `recover(orderId)`를 쓴다
+- 서비스는 같은 도메인 것만 쓴다는 규칙 때문에 정리 서비스를 도메인마다 둔다(`ReservationPaymentRecoveryService`, `PurchasePaymentRecoveryService`). `@Scheduled`도 각 서비스에 직접 단다
+- `global/config/SchedulingConfig`: `@EnableScheduling` + `scheduling.enabled`(없으면 켬). 테스트 yaml에서 끈다. 켜 두면 테스트가 시계를 미는 사이 정리가 끼어든다
+- 2분: 토스 호출 최대 연결 5초 × 2 + 읽기 60초. 원래 요청의 T2와 겹치더라도 둘 다 행 잠금 후 IN_PROGRESS를 다시 확인해 한 번만 반영된다
+- 대상 조회는 주문번호(취소는 엔티티 + 예매/구매 fetch)만 읽고, 건마다 잠금 트랜잭션을 새로 연다(잠금이 첫 쿼리, 세션 1 결정 4)
+- 한 건이 예외여도 나머지를 계속한다
+
+### 결정 5 — 토스 조회 결과별 판단
+
+| 토스 | 예매 | 매점 |
+|---|---|---|
+| `DONE` + orderId·금액 일치 | 예매 잠금 → `PENDING`이면 확정, 아니면(EXPIRED) 승인 확정 + 전액 환불 요청 저장 → 토스 취소 | 구매 확정(재고는 T1에서 차감됨) |
+| `DONE`인데 orderId·금액 다름 | 보류 + error 로그 | 같음 |
+| `ABORTED` / `EXPIRED` (`TossPayment.isNeverApproved`) / `NOT_FOUND_PAYMENT` | 결제 FAILED. 늘린 선점 시간은 되돌리지 않음(기준 시각이 원래 요청 메모리에만 있었고, 2분 뒤라 대부분 지남) | 결제·구매 FAILED + 재고 복구 |
+| `READY` / `IN_PROGRESS` / 취소 상태 / 조회 불가 | 보류 | 보류(재고 묶인 채) |
+
+- 토스 `IN_PROGRESS`(인증만)는 아직 승인될 수 있다. 인증 후 10분이 지나면 토스가 `EXPIRED`로 바꿔 그때 실패로 확정된다
+- 결과 불명 승인을 승인 API로 다시 보내지 않았다. 멱등키로 이중 결제는 없지만 좌석을 잃은 예매에 돈을 받고 다시 환불하게 될 수 있다
+- 승인 확정과 환불 요청(`PaymentCancel`)을 한 트랜잭션에 저장한다. 토스 취소 전에 서버가 죽어도 남은 취소 요청을 재시도로 마친다
+- 환불 결과 불명 → `REFUND_PENDING`(재시도 대기), 환불 거절 → `REFUND_REJECTED` + error 로그(자동으로 풀 수 없음)
+
+### 결정 6 — Reservation 엔티티 두 곳 (작성자가 이유를 듣고 허용)
+
+- `confirmAfterRecovery(now)`: PENDING이면 만료 시각을 보지 않고 확정. 좌석은 `expireIfPending`(PENDING → EXPIRED)과 함께만 풀리므로 PENDING이면 아직 이 예매의 것이다. 호출 쪽이 예매 행을 잠가 확정 중에 만료될 수 없다
+- `completeRefund`: `RESERVED`일 때만 `CANCELLED`로 바꾼다. 자동 환불한 `EXPIRED` 예매가 `CANCELLED`로 바뀌면 "회원 취소"로 잘못 남는다(`ReservationStatus` 주석의 이유와 같다)
+- `isPending()` 추가. `ReservationCancelService.refund`를 package-private으로 열어 자동 환불이 같은 경로를 쓴다
+
+### 결정 7 — 결과 불명 취소도 스케줄러가 같은 멱등키로 다시 보낸다
+
+- 회원 취소·매장 환불·자동 환불 모두. 기존 재시도 경로(`ReservationCancelService.retry` / `PurchaseRefundService.retry`)를 그대로 쓴다
+- 요청 후 2분 ~ 14일. 14일은 `PaymentCancel.RETRY_DAYS`(private)와 같은 값을 `PaymentCancelRepository.AUTO_RETRY_PERIOD`에 따로 두었다. 엔티티 상수를 여는 것도 엔티티 수정이라 이번에는 하지 않았다
+
+### 오류 코드
+
+| 코드 | 상태 | 경우 |
+|---|---|---|
+| `PAYMENT_SERVICE_UNAVAILABLE` | 503 | 토스가 판단하지 않은 승인 거절(키 오류, 429, 연결 실패). 결제는 FAILED, 새 주문 가능 |
+
+정리 API는 기존 코드를 쓴다: 우리 주문 아님 `PAYMENT_NOT_FOUND`(404), 2분 전 `PAYMENT_IN_PROGRESS`(409), 이미 결과가 정해짐 `INVALID_PAYMENT_STATUS`(409).
+응답은 `PaymentRecoveryResponse`(`APPROVED` / `REFUNDED` / `REFUND_PENDING` / `REFUND_REJECTED` / `FAILED` / `UNRESOLVED`).
+
+### 테스트
+
+| 커밋 | 내용 | 전체 |
+|---|---|---|
+| 클라이언트 분류 | `TossPaymentsClientTest` +14(연결 실패 재시도·읽기 타임아웃 미재시도·응답 불일치·JSON 아님·PROVIDER_ERROR·키 오류·429, 취소 쪽 비대칭), 서비스 2, 컨트롤러 1 | 428 → 445 |
+| 예매 정리 | `PaymentTest` +4, `ReservationPaymentRecoveryServiceTest` 11, `ReservationAdminControllerTest` 11 | → 471 |
+| 매점 정리 | `PurchasePaymentRecoveryServiceTest` 6, `PurchaseRecoveryControllerTest` 6 | → 483 |
+
+- `PurchaseRecoveryControllerTest`는 Clock 목이 필요해 `PurchaseAdminControllerTest`와 나눴다. 예매 테스트와 목 구성이 같아 컨텍스트를 공유한다
+- 처음에 재고를 `availableQuantity()`(최소 재고 1을 뺀 값)로 확인해 1씩 어긋났다. `getQuantity()`로 고쳤다
+
+변형 실험(H2, 되돌림 후 SHA-256 일치 확인)
+
+| 변형 | 깨지는 테스트 |
+|---|---|
+| `confirmAfterRecovery`에 `verifyPayable` 추가 | 선점 만료 시각이 지났어도 좌석이 풀리지 않았으면 확정한다 |
+| `completeRefund`의 `isReserved()` 조건 제거 | 좌석을 잃으면 EXPIRED 유지 2개 (`expected: EXPIRED but was: CANCELLED`) |
+| 매점 `failRecoveredPayment`의 재고 복구 제거 | `expected: 10 but was: 7` |
+
+### 한계
+
+- 스케줄러는 서버 한 대 가정. 여러 대면 토스 조회가 중복된다(반영은 잠금 + 상태 재확인으로 한 번)
+- 스케줄러가 실제로 도는 것은 테스트하지 않았다(테스트에서 끔)
+- 결과 불명이 상영 시작 이후까지 가면 그대로 확정한다
+- 환불 거절(`REFUND_REJECTED`)과 14일 넘은 결과 불명 취소는 수동 처리. 처리 API는 없다
+- 결과 불명·연결 실패는 실제 토스로 만들 수 없어 테스트로만 확인했다
+- 서킷 브레이커, 읽기 타임아웃 재시도, 웹훅은 넣지 않았다(README 「고려했지만 넣지 않은 것」)
+
+### 변경 파일
+
+| 커밋 | 파일 |
+|---|---|
+| 클라이언트 분류 | `TossPaymentsClient`, `TossConfirmResult`, `ErrorCode`, `ReservationPaymentService`, `PurchasePaymentService`, 테스트 |
+| 예매 정리 | `Payment`, `Reservation`, `TossPayment`, `PaymentRepository`, `PaymentCancelRepository`, `PaymentRecoveryResponse`(신설), `ReservationRecoveryTarget`·`ReservationCancelRetryTarget`(신설), `ReservationService`, `ReservationCancelService`, `ReservationPaymentRecoveryService`·`ReservationAdminController`·`SchedulingConfig`(신설), `PurchaseService`(호출부), 테스트 yaml, 테스트 |
+| 매점 정리 | `PaymentRepository`, `PaymentCancelRepository`, `PurchaseRecoveryTarget`·`PurchaseRefundRetryTarget`·`PurchasePaymentRecoveryService`(신설), `PurchaseService`, `PurchaseAdminController`, 테스트 |
+| 문서 | `README.md`(새 절 + 낡은 문장 3곳), `docs/refactoring-log.md`, `docs/toss-payments-guide.md`, `CLAUDE.md` |
+
+---
+
+## 과제 7: Webhook 조사와 설계 (구현 안 함)
+
+과제 7번(Webhook 알아보기). 과제 명세대로 구현하지 않고 조사와 설계만 했다. 설계 문서를 아티팩트로 먼저 보여 주고, 작성자가 A안을 고른 뒤
+README에 「Webhook」 절로 옮겼다. 코드 변경은 없다.
+
+### 조사에서 설계에 영향을 준 것
+
+- **`PAYMENT_STATUS_CHANGED`에는 서명도 secret도 없다.** 서명(`tosspayments-webhook-signature`, HMAC-SHA256)은 `payout.changed`·`seller.changed`만,
+  `DEPOSIT_CALLBACK`은 본문 `secret`을 승인 응답의 `secret`과 비교한다. 이 서비스가 쓸 이벤트는 검증 수단이 없어 재조회가 필수다
+- 10초 안에 200을 줘야 한다. 못 하면 최대 7번 재전송(1·4·16·64·256·1024·4096분, 최초 전송부터 약 3일 19시간)
+- 본문은 `{ eventType, createdAt, data }`이고 `data`는 승인·조회 응답과 같은 Payment 객체라 기존 `TossPayment`를 그대로 쓸 수 있다
+- `CANCEL_STATUS_CHANGED`는 해외 간편결제 전용이다. 국내 결제의 취소는 `PAYMENT_STATUS_CHANGED`로 온다
+- 웹훅은 상점아이디(MID)별로 등록되고 그 상점의 결제만 받는다. 작성자가 개발자센터에서 확인한 키 구성은 다음과 같다:
+  결제위젯 연동 키는 문서 공용 키(`test_gck_docs_` / `test_gsk_docs_`)뿐이고, 내 상점 키는 API 개별 연동 키(`test_ck_` / `test_sk_`)와 보안 키다.
+  우리 테스트 결제는 문서용 상점에서 일어나므로 내 상점에 웹훅을 등록해도 오지 않는다. API 개별 연동 키는 결제창용이라 결제위젯과 섞을 수 없다
+  (`TossPaymentsProperties`가 `test_gck_`·`test_gsk_`만 받는 이유). 실제 수신은 전자결제 신청(내 결제위젯 키) 또는 결제창 연동 전환이 있어야 확인할 수 있다
+- 정정: 결제 세션 3의 "개발자센터는 전자결제 신청 전에는 본인 키를 주지 않는다"는 결제위젯 연동 키에 한한 이야기였다. API 개별 연동 키는 가입만으로 나온다.
+  `.env`는 그대로 문서 공용 키를 쓴다
+- 보안 키는 `payout.changed`·`seller.changed` 서명 검증용이라 `PAYMENT_STATUS_CHANGED`만 쓰는 이 설계에는 필요 없다. `.env`에 넣지 않는다
+
+### 결정 1 — 웹훅은 세 번째 정리 계기. 판단은 기존 정리 서비스가 한다
+
+- 작성자는 결제 완료·예매 확정을 웹훅 몫으로 예상했다. 정상 경로에서는 승인 응답을 받은 T2가 이미 확정하므로 웹훅은 "이미 반영됨"으로 넘긴다.
+  웹훅이 확정을 맡는 것은 T2가 일어나지 못한 경우(결과 불명, T2 전 서버 다운)다. README 역할 절의 첫머리에 이 구분을 적었다
+- 스케줄러가 볼 수 없던 두 경우가 웹훅으로만 새로 잡힌다: 상점관리자에서 직접 한 취소(스케줄러는 `IN_PROGRESS`만 본다),
+  `FAILED`로 확정했는데 토스는 `DONE`인 결제(`fail()`이 `paymentKey`를 지워 조회할 키도 없다)
+- 웹훅 전용 판단을 따로 만들지 않는다. `ReservationPaymentRecoveryService`·`PurchasePaymentRecoveryService`의 토스 상태별 분기를 "조회한 결과를 받아 반영"하는
+  메서드로 떼어 스케줄러·관리자 API·웹훅이 함께 쓴다. 세 계기가 같은 행 잠금 + 상태 재확인을 거치므로 동시에 와도 한 번만 반영된다
+- 스케줄러는 남긴다. 웹훅은 유실될 수 있고 로컬 개발 중에는 오지 않는다
+
+### 결정 2 — 본문은 단서, 상태는 토스 조회 결과로 판단한다
+
+- 본문에서 `orderId`·`paymentKey`만 꺼내고 `GET /v1/payments/{paymentKey}`로 다시 조회한다. 조회는 우리 시크릿 키로 하므로 위조된 본문으로는 상태를 바꿀 수 없다
+- 같은 장치로 중복과 순서 뒤바뀜도 해결된다. 몇 번째로 도착한 웹훅이든 항상 지금 토스 상태로 맞춘다
+- 우리 결제가 `READY`·`FAILED`면 저장된 `paymentKey`가 없으므로 본문의 키로 조회하고, 응답의 주문번호가 우리 주문과 같을 때만 반영한다
+
+### 결정 3 — 받기와 처리를 나눈다. 받은 이벤트는 `WebhookEvent`로 남긴다
+
+- 토스 조회는 읽기 타임아웃이 60초라 요청 안에서 처리하면 10초 규칙을 지킬 수 없다. 저장 → 200 → 커밋 후 `@Async` 처리
+- 200을 준 뒤 처리 전에 서버가 죽으면 토스는 다시 보내지 않는다. `processedAt`이 비어 있고 받은 지 1분 지난 행을 기존 스케줄러가 다시 처리한다
+- `transmissionId`(헤더) 유니크로 중복 저장을 막되, 정확성은 처리의 멱등성에 기댄다. 재전송의 transmission-id가 같은지 문서에서 확인하지 못했다
+- 엔티티 신설이라 구현할 때 다시 확인받는다
+
+### 결정 4 — 웹훅은 2분을 기다리지 않는다 (A안, 작성자 선택)
+
+토스는 상태가 바뀐 직후 웹훅을 보내므로 웹훅은 거의 항상 `RECOVERY_DELAY`(2분) 안에 도착한다. 규칙을 그대로 두면(B안) 결과 불명 정리가 스케줄러보다
+빠르지 않고, 웹훅이 새로 하는 일은 결정 1의 두 경우를 감지하는 것뿐이다.
+
+A안은 바로 처리한다. 원래 요청의 T2와 겹쳐도 행 잠금 + `IN_PROGRESS` 재확인으로 한 번만 반영되지만, 먼저 반영된 결제를 원래 요청이 만나면 지금 코드는 잘못 응답한다.
+
+| 경로 | 지금 코드 | 웹훅이 먼저 반영했을 때 |
+|---|---|---|
+| 승인 → T2 | `Payment.approve()`의 `requireStatus(IN_PROGRESS)` | `INVALID_PAYMENT_STATUS` → `ReservationPaymentService.complete()`의 `catch (RuntimeException)` → **성공한 결제가 504** |
+| 거절 → 보상 | `failPayment()` → `Payment.fail()`의 `requireStatus(IN_PROGRESS)` | 잡는 곳이 없어 **402 대신 409** `INVALID_PAYMENT_STATUS` |
+
+- 구현할 때 바꿀 것: `approve()`는 같은 `paymentKey`로 이미 `DONE`이면, `fail()`은 이미 `FAILED`면 그대로 두고 T2가 성공(거절)으로 응답한다. `Payment` 엔티티 변경이라 그때 다시 확인받는다
+- 매점 재고 복구는 지금처럼 `IN_PROGRESS → FAILED` 전이에 성공한 쪽만 한다. 웹훅의 실패 확정과 원래 요청의 거절 처리가 겹쳐도 한 번만 되돌린다
+- 선택: 읽기 타임아웃으로 504를 주기 직전에 우리 결제를 다시 읽어 `DONE`이면 성공 응답
+
+### 결정 5 — 도메인 사이 전달은 스프링 이벤트
+
+- "service는 같은 도메인 것만 쓴다" 때문에 결제 도메인 처리기가 예매·매점 서비스를 부르지 않는다. 처리기가 조회한 `TossPayment`를 이벤트로 발행하고,
+  예매·매점 리스너가 주문번호 접두사(`cgv-r-`·`cgv-p-`)로 자기 주문만 골라 정리 서비스를 부른다
+- 토스 조회는 처리기에서 한 번만 한다
+
+### 결정 6 — 200이 아닌 응답은 저장 실패 때만
+
+- 토스는 200이 아닐 때만 다시 보낸다. 모르는 이벤트·우리 주문 아님·본문 해석 불가는 다시 받아도 결과가 같아 200 + 로그
+- 엔드포인트 `POST /api/payments/webhook/toss`, `permitAll`. 토스는 Bearer 토큰을 보낼 수 없다. 위조 요청이 할 수 있는 일은 토스 조회 한 번을 일으키는 것뿐이다
+
+### 결정 7 — 외부 취소는 자동 반영하지 않는다
+
+- 상점관리자에서 한 부분 취소가 어느 좌석·상품인지 알 수 없다. 불일치를 기록하고 error 로그 → 관리자
+- 웹훅을 받고 승인 API를 다시 부르지 않는다. 결제 세션 5 결정 5와 같은 이유
+
+### 한계
+
+- 실제 웹훅 수신은 내 상점의 결제위젯 키(전자결제 신청 필요) + ngrok이 있어야 확인할 수 있다
+- 서버가 여러 대면 같은 이벤트를 동시에 처리해 토스 조회가 중복된다. 반영은 한 번(스케줄러와 같은 한계)
+- 가상계좌(`DEPOSIT_CALLBACK`)는 다루지 않았다. 도입하면 선점 10분과 입금 기한의 충돌을 따로 설계해야 한다
+
+### 변경 파일
+
+| 커밋 | 파일 |
+|---|---|
+| README | `README.md`(「Webhook」 절 신설, 「고려했지만 넣지 않은 것」의 웹훅 행에 새 절 안내) |
+| 세션 기록 | `docs/refactoring-log.md`, `README.md`(실제 웹훅 수신 제약 문단을 개발자센터 확인 결과로 수정) |
+
+---
+
+## 4주차 README 보완: 결제 절 추가 (구현 변경 없음)
+
+과제 README 필수 항목과 대조했다. 구현은 결제 세션 1~5로 모두 끝나 있었다. README에는 결제 흐름·상태·승인·검증·조회·취소 본문이 없었고, 이 내용은 이 문서의 세션 기록에만 흩어져 있었다.
+
+### 결정 1 — `## 결제` 절을 「4주차 리팩토링」 뒤, 「동시성 문제」 앞에 둔다
+
+- 동시성 6~10번과 멱등성·외부 API 절이 T1/T2, `IN_PROGRESS` 같은 결제 용어를 이미 쓰고 있다. 흐름을 먼저 읽어야 뒤 절이 이해된다
+- 하위 절: 결제가 필요한 기능(예매·매점 차이), 주문·결제 흐름, 저장 구조, 상태와 상태 전이, 승인 과정, 승인 전 검증, 조회(우리 DB와 토스의 역할), 전체·부분 취소, API 목록
+
+### 결정 2 — 다른 절과 겹치는 내용은 옮기지 않고 가리킨다
+
+- 동시 요청은 「동시성 문제」, 재전송은 「중복 결제와 멱등성」, 결과 불명·오류는 「외부 API 통신과 예외 처리」에 이미 있다. 결제 절에는 흐름에 필요한 만큼만 쓰고 절 이름으로 넘긴다
+- 오류 코드·테스트 이름·경로는 `ErrorCode`, 테스트 소스, 컨트롤러 매핑에서 확인한 것만 적었다
+
+### 결정 3 — 비밀값 표에 토스 키를 더한다
+
+- 「서명키·관리자 비밀번호 로컬 설정」을 「비밀값 로컬 설정」으로 바꾸고 `TOSS_SECRET_KEY`·`TOSS_CLIENT_KEY`를 추가했다. 과제의 "API Key는 환경변수로" 요구가 README에 드러나지 않았다
+- 문서 공용 테스트 키라서 생기는 한계(개발자센터 내역 없음, orderId 조회·웹훅 불가)를 한 줄로 적었다
+
+### 변경 파일
+
+| 파일 | 내용 |
+|---|---|
+| `README.md` | `## 결제` 절 신설, 비밀값 표 제목·토스 키 2행·공용 키 설명 |
+| `docs/refactoring-log.md` | 이 기록 |
+
+## 4주차 PR(#25) 코드 리뷰 반영
+
+리뷰 10건(Wannys26 5건, zzulYH-11 5건)을 코드와 대조했다. 실제 결함 6건은 고치고, 1건은 일부만 반영하고, 설계 제안 1건과 칭찬 2건은 답글로 설명한다.
+
+### 결정 1 — 승인 T2도 예매·구매 행 잠금을 첫 쿼리로 한다 (Wannys26)
+
+- `completePayment`/`failPayment`가 결제를 일반 SELECT로 먼저 읽었다. InnoDB 스냅샷이 잠금 전에 잡혀, 정리가 먼저 커밋해도 옛 `IN_PROGRESS`를 보고 덮어쓸 수 있었다
+- 정리는 승인 시작 2분 뒤에만 돌아 평소에는 겹치지 않지만, T2가 늦어지면 열리는 틈이다. 예매·매점 모두 잠금 → 결제 조회 순서로 바꿨다. 이미 정리된 결제는 `requireStatus`가 `INVALID_PAYMENT_STATUS`로 막는다
+
+### 결정 2 — 상영이 시작된 뒤 확인된 승인은 확정하지 않고 환불한다 (zzulYH-11)
+
+- `confirmAfterRecovery`는 만료·상영 시각을 보지 않았다. 정리가 늦어지면 지난 회차가 `RESERVED`가 되고 취소 기한도 지나 환불받을 길이 없다
+- `Reservation.expireAfterScreeningStarted` 추가(엔티티 변경, 확인받음). PENDING → EXPIRED, 좌석 해제 후 전액 환불, 사유 "상영 시작 후 결제 확인으로 자동 환불"
+- 벌크 `expireIfPending`을 쓰지 않은 이유: `expiresAt <= now` 조건이라 T1이 늘린 선점 시간이 남은 이 경우를 바꾸지 못한다
+
+### 결정 3 — 결과 불명 결제의 자동 정리를 승인 시작 후 1일로 제한한다 (Wannys26)
+
+- stale 조회에 하한이 없어, 토스 조회가 계속 실패하거나 토스에서 직접 취소된 결제는 1분마다 영원히 다시 물었다. 매점은 재고가 차감된 채 묶인다
+- `PaymentRepository.AUTO_RECOVERY_PERIOD = 1일`. 그 뒤는 매일 09시 `reportAbandoned`가 주문번호 목록을 error 로그로 남기고, 관리자 정리 API로 맞춘다
+- 상태 컬럼을 두지 않고 "기간이 지난 IN_PROGRESS"를 관리 대상으로 본다. 엔티티 변경 없이 같은 정보를 얻는다. 매분 error 로그를 남기면 하루 1440번 쌓여 다른 오류가 묻힌다
+
+### 결정 4 — 승인의 결과 불명 코드에 `IDEMPOTENT_REQUEST_PROCESSING`을 더한다. 허용 목록 방식으로는 바꾸지 않는다 (Wannys26)
+
+- 취소 목록과 가이드 문서에는 있었는데 승인 목록에서 빠져 있었다
+- "확정 거절만 거절" 방식은 채택하지 않았다. 카드 한도 초과 같은 흔한 거절이 전부 결과 불명이 되어 회원이 정리 때까지 다시 결제하지 못하고, 수십 개의 거절 코드를 빠짐없이 관리해야 해서 누락하면 반대 방향 오류가 생긴다. 새 코드는 "이미 처리됨·처리 중·일시 오류" 계열이면 결과 불명에 더하는 기준을 주석에 적었다
+
+### 결정 5 — 토스 호출 오류 사유를 "예외 종류 + HTTP 상태 + 토스 코드"로 요약한다. paymentKey는 남긴다 (Wannys26)
+
+- `e.getMessage()`에는 5xx 응답 본문 전체나 요청 URL이 들어가, 로그·결제 실패 사유·관리자 정리 응답까지 흘러갔다. `describe()`로 바꿨다
+- paymentKey는 비밀값이 아니다. successUrl 쿼리로 브라우저에 이미 노출되고 시크릿 키 없이는 쓸 수 없으며, paymentKey 조회에서는 클라이언트가 아는 유일한 추적 키다
+
+### 결정 6 — 다른 결제에 쓰인 paymentKey는 409로 응답한다 (zzulYH-11)
+
+- 유니크 위반이 T1 커밋 시점에 나서 500이 됐다. 토스 호출 전이라 돈 문제는 없었다
+- 승인 시작 직후 flush하고 `DataIntegrityViolationException`을 `PAYMENT_KEY_ALREADY_USED`(409)로 바꾼다(`saveHold`와 같은 방식). 사전 조회 대신 제약을 쓰면 동시 요청까지 한 번에 막는다. 매점은 재고 잠금 전에 flush한다
+
+### 결정 7 — `PaymentCancel.transactionKey`에 유니크 제약 (zzulYH-11, 엔티티 변경 확인받음)
+
+- 지금도 `requireInProgress`와 행 잠금이 막지만, 엔티티를 거치지 않는 쓰기와 응답 해석 실수까지 DB가 막는다. 확정 전 NULL은 여러 행 허용
+
+### 반영하지 않은 것 — 예매·매점 결제 흐름 공통화 (Wannys26)
+
+- 공통 흐름을 두면 payment 서비스가 예매·매점 서비스를 부르게 되어 "service는 같은 도메인 것만" 규칙과 충돌한다
+- 겹치는 것은 T1 → 토스 → T2를 잇는 몇 줄이고, 보상 규칙(좌석 유지 vs 재고 복구, 1:N vs 1:1, 상영 시작 판단)은 도메인마다 다르다. 웹훅을 붙여 결과 반영 진입점이 늘면 다시 본다
+
+### 변경 파일
+
+| 파일 | 내용 |
+|---|---|
+| `ReservationService`, `PurchaseService` | T2 잠금 순서, 상영 시작 후 환불, 정리 기간, paymentKey flush |
+| `Reservation` | `isScreeningStarted`, `expireAfterScreeningStarted` |
+| `PaymentCancel` | `transactionKey` unique |
+| `PaymentRepository` | `AUTO_RECOVERY_PERIOD`, `...StartedBetween` 조회 |
+| `ReservationPaymentRecoveryService`, `PurchasePaymentRecoveryService` | `reportAbandoned`, 환불 상세 문구 |
+| `TossPaymentsClient` | 승인 결과 불명 코드, `describe()` |
+| `ErrorCode` | `PAYMENT_KEY_ALREADY_USED` |
+| 테스트 | `ReservationServiceTest` 1, `ReservationAdminControllerTest` 2, `ReservationControllerTest` 1, `TossPaymentsClientTest` 3 추가. 전체 490개 통과 |
+| `README.md`, `docs/toss-payments-guide.md` | 분류 표 갱신 |

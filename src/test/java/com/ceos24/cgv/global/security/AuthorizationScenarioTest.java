@@ -12,6 +12,8 @@ import com.ceos24.cgv.domain.screening.entity.Screening;
 import com.ceos24.cgv.domain.user.entity.Role;
 import com.ceos24.cgv.domain.user.entity.User;
 import com.ceos24.cgv.domain.user.repository.UserRepository;
+import com.ceos24.cgv.global.client.TossConfirmResult.Approved;
+import com.ceos24.cgv.global.client.TossPaymentsClient;
 import com.ceos24.cgv.global.security.jwt.JwtProvider;
 import com.ceos24.cgv.support.AuthScenarioTest;
 import com.ceos24.cgv.support.TestFixtures;
@@ -19,10 +21,15 @@ import com.jayway.jsonpath.JsonPath;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.BDDMockito.given;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -39,6 +46,7 @@ class AuthorizationScenarioTest extends AuthScenarioTest {
     @Autowired ReservationRepository reservationRepository;
     @Autowired UserRepository userRepository;
     @Autowired JwtProvider jwtProvider;
+    @MockitoBean TossPaymentsClient tossPaymentsClient;
 
     @Test
     @DisplayName("일반 사용자가 관리자 API를 호출하면 403 ACCESS_DENIED 공통 JSON을 받는다")
@@ -93,6 +101,8 @@ class AuthorizationScenarioTest extends AuthScenarioTest {
         assertThat(reloaded.getSeats()).hasSize(2).allMatch(ReservationSeat::isOccupied);
 
         // 거부 이유가 소유권이었음을 확인한다. 기한·상태 때문이었다면 주인도 취소하지 못한다
+        given(tossPaymentsClient.cancel(anyString(), anyString(), anyInt(), anyString()))
+                .willAnswer(TestFixtures.tossCancelsFrom(reloaded.getTotalPrice()));
         mockMvc.perform(delete("/api/reservations/{id}", reservationId).with(bearer(ownerToken)))
                 .andExpect(status().isOk());
     }
@@ -135,9 +145,18 @@ class AuthorizationScenarioTest extends AuthScenarioTest {
                 .andReturn().getResponse().getContentAsString();
         Long id = ((Number) JsonPath.read(response, "$.data.id")).longValue();
 
-        mockMvc.perform(post("/api/reservations/{id}/payment", id).with(bearer(token))
+        String order = mockMvc.perform(post("/api/reservations/{id}/payments", id).with(bearer(token)))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        String orderId = JsonPath.read(order, "$.data.orderId");
+        int amount = JsonPath.read(order, "$.data.amount");
+        given(tossPaymentsClient.confirm("tgen_test_key", orderId, amount)).willReturn(new Approved(
+                TestFixtures.approvedToss("tgen_test_key", orderId, amount, OffsetDateTime.now())));
+
+        mockMvc.perform(post("/api/reservations/{id}/payments/confirm", id).with(bearer(token))
                         .contentType("application/json")
-                        .content("{\"result\":\"SUCCESS\"}"))
+                        .content("{\"paymentKey\":\"tgen_test_key\",\"orderId\":\"%s\",\"amount\":%d}"
+                                .formatted(orderId, amount)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.status").value("RESERVED"));
         return id;

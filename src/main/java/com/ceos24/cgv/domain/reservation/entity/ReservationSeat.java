@@ -1,5 +1,6 @@
 package com.ceos24.cgv.domain.reservation.entity;
 
+import com.ceos24.cgv.domain.payment.entity.PaymentCancel;
 import com.ceos24.cgv.global.entity.BaseTimeEntity;
 import com.ceos24.cgv.domain.screening.entity.Screening;
 import jakarta.persistence.*;
@@ -7,6 +8,8 @@ import lombok.AccessLevel;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+
+import java.time.LocalDateTime;
 
 @Getter
 @Entity
@@ -51,6 +54,16 @@ public class ReservationSeat extends BaseTimeEntity {
     @Column(name = "release_key", nullable = false)
     private long releaseKey;
 
+    // 이 좌석을 환불하는 취소 요청. 토스가 환불을 확인하기 전까지 좌석은 점유된 채로 이 요청에 묶인다.
+    // 먼저 놓으면 다른 회원이 가져가, 환불이 거절됐을 때 되돌릴 수 없다.
+    // 결과를 모르는 취소를 다시 보낼 때도 어느 좌석의 취소였는지 여기서 찾는다.
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "payment_cancel_id")
+    private PaymentCancel paymentCancel;
+
+    // 회원이 취소해서 풀린 좌석만 갖는다. 선점 만료로 풀린 좌석은 비어 있어 둘을 구분할 수 있다.
+    private LocalDateTime cancelledAt;
+
     @Builder
     private ReservationSeat(Reservation reservation, Screening screening, int rowNum, int colNum,
                             AudienceType audienceType, int paidPrice) {
@@ -69,8 +82,27 @@ public class ReservationSeat extends BaseTimeEntity {
         this.releaseKey = reservationId;
     }
 
+    void cancel(Long reservationId, LocalDateTime now) {
+        release(reservationId);
+        this.cancelledAt = now;
+    }
+
+    void attachCancel(PaymentCancel paymentCancel) {
+        this.paymentCancel = paymentCancel;
+    }
+
+    // 환불이 거절되면 좌석은 그대로 회원의 것이다. 다음 취소 요청에 다시 포함될 수 있게 연결을 끊는다.
+    void detachCancel() {
+        this.paymentCancel = null;
+    }
+
     public boolean isOccupied() {
         return this.releaseKey == OCCUPIED;
+    }
+
+    // 프록시의 id getter는 초기화하지 않는다. 연결된 취소 요청을 읽지 않고 같은 요청인지 비교한다.
+    boolean belongsTo(Long paymentCancelId) {
+        return this.paymentCancel != null && this.paymentCancel.getId().equals(paymentCancelId);
     }
 
     public String getLabel() {
@@ -80,5 +112,11 @@ public class ReservationSeat extends BaseTimeEntity {
     // 좌석 라벨 규칙을 한 곳에 둔다. 회차 좌석 조회도 좌표만 갖고 같은 규칙을 쓴다.
     public static String label(int rowNum, int colNum) {
         return String.valueOf((char) ('A' + rowNum - 1)) + colNum;
+    }
+
+    // (행, 열) 쌍을 IN 절에 넣을 방법이 DB마다 달라 스칼라 하나로 접는다. 열 수는 상영관 종류 최대가 22라
+    // 100진 자리에서 겹치지 않는다. ReservationRepository.findExpiredHoldsBlocking의 JPQL도 같은 식을 쓴다.
+    public static int key(int rowNum, int colNum) {
+        return rowNum * 100 + colNum;
     }
 }

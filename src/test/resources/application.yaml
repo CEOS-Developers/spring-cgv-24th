@@ -19,3 +19,16 @@ jwt:
 
 refresh-token:
   validity: 14d
+
+cors:
+  allowed-origins: http://localhost:3000
+
+# 접두사 검증만 통과하는 무효 키. 테스트는 토스를 실제로 호출하지 않는다.
+toss-payments:
+  base-url: https://api.tosspayments.com
+  client-key: test_gck_dummy-for-test-only
+  secret-key: test_gsk_dummy-for-test-only
+
+# 결과 불명 결제 정리 스케줄러를 끈다. 테스트는 정리 메서드를 직접 부른다(SchedulingConfig).
+scheduling:
+  enabled: false

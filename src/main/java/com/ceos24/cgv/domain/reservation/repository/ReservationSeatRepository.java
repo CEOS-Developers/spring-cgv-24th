@@ -3,6 +3,7 @@ package com.ceos24.cgv.domain.reservation.repository;
 import com.ceos24.cgv.domain.reservation.entity.ReservationSeat;
 import com.ceos24.cgv.domain.reservation.entity.ReservationStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -49,14 +50,24 @@ public interface ReservationSeatRepository extends JpaRepository<ReservationSeat
         int getColNum();
     }
 
-    // 예매율 정렬용. 확정된 예매만 센다. 선점은 아직 결제 전이고,
-    // 취소·만료분은 release_key가 0이 아니라 status 조건만으로 이미 빠진다.
+    // 만료 선점 해제. release_key = 0 조건은 ReservationRepository.expireIfPending의 조건과 같은 이유다.
+    // 해제 값이 예매 id인 이유는 ReservationSeat.release()와 같다.
+    @Modifying
+    @Query("""
+            UPDATE ReservationSeat rs SET rs.releaseKey = :reservationId, rs.updatedAt = :now
+            WHERE rs.reservation.id = :reservationId AND rs.releaseKey = 0
+            """)
+    int releaseOccupied(@Param("reservationId") Long reservationId, @Param("now") LocalDateTime now);
+
+    // 예매율 정렬용. 확정된 예매의 점유 중인 좌석만 센다. 선점은 아직 결제 전이다.
+    // 부분 취소된 예매는 RESERVED로 남지만 취소한 좌석은 풀려 있어, status만으로는 그 좌석까지 센다.
     @Query("""
             SELECT s.movie.id AS movieId, COUNT(rs) AS reservedCount
             FROM ReservationSeat rs
             JOIN rs.reservation r
             JOIN rs.screening s
             WHERE r.status = :reserved
+              AND rs.releaseKey = 0
             GROUP BY s.movie.id
             """)
     List<MovieSeatCountProjection> countConfirmedByMovie(@Param("reserved") ReservationStatus reserved);
@@ -72,6 +83,7 @@ public interface ReservationSeatRepository extends JpaRepository<ReservationSeat
             JOIN rs.reservation r
             WHERE rs.screening.movie.id = :movieId
               AND r.status = :reserved
+              AND rs.releaseKey = 0
             """)
     long countConfirmedByMovieId(@Param("movieId") Long movieId,
                                  @Param("reserved") ReservationStatus reserved);

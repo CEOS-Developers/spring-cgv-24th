@@ -25,6 +25,7 @@ public record ReservationDetailRow(
         int rowNum,
         int colNum,
         AudienceType audienceType,
-        int paidPrice
+        int paidPrice,
+        LocalDateTime seatCancelledAt
 ) {
 }

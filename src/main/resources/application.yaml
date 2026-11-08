@@ -35,11 +35,22 @@ jwt:
 refresh-token:
   validity: ${REFRESH_TOKEN_VALIDITY}
 
+# CORS_ALLOWED_ORIGINS: 프런트엔드 출처, 여러 개면 쉼표로 구분. 없으면 로컬 개발 서버만 허용한다.
+cors:
+  allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000}
+
 # local 프로필(SPRING_PROFILES_ACTIVE=local)에서만 읽는다. 다른 프로필에서는 값이 없어도 된다.
 # 비밀번호 평문은 Git에 올리지 않는 .env로만 주입한다.
 admin:
   login-id: ${ADMIN_LOGIN_ID}
   password: ${ADMIN_PASSWORD}
+
+# TOSS_CLIENT_KEY / TOSS_SECRET_KEY: 개발자센터의 "결제위젯 연동 키" 테스트 키(test_gck_ / test_gsk_).
+# 시크릿 키는 서버 전용이라 .env로만 주입한다. 클라이언트 키는 노출돼도 되지만 짝을 맞춰 같은 곳에서 관리한다.
+toss-payments:
+  base-url: https://api.tosspayments.com
+  client-key: ${TOSS_CLIENT_KEY}
+  secret-key: ${TOSS_SECRET_KEY}
 
 logging:
   level:
@@ -50,3 +61,14 @@ springdoc:
   swagger-ui:
     path: /swagger-ui.html
     operations-sorter: method
+---
+# 결제 테스트 페이지에서 고를 지점·회차·상품을 local 프로필에서만 넣는다. 다른 프로필에는 부팅 부수효과가 없다.
+# MySQL은 내장 DB가 아니라 mode: always가 있어야 실행된다. 실행 시점은 위의 defer-datasource-initialization 덕에 테이블 생성 뒤다.
+spring:
+  config:
+    activate:
+      on-profile: local
+  sql:
+    init:
+      mode: always
+      data-locations: classpath:db/local-sample-data.sql

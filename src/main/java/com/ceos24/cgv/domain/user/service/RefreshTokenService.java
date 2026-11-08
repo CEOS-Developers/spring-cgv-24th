@@ -1,13 +1,13 @@
 package com.ceos24.cgv.domain.user.service;
 
-import com.ceos24.cgv.domain.user.dto.TokenReissueResponse;
+import com.ceos24.cgv.domain.user.dto.TokenResponse;
 import com.ceos24.cgv.domain.user.entity.RefreshToken;
 import com.ceos24.cgv.domain.user.entity.User;
 import com.ceos24.cgv.domain.user.repository.RefreshTokenRepository;
 import com.ceos24.cgv.domain.user.repository.UserRepository;
 import com.ceos24.cgv.global.exception.CustomException;
 import com.ceos24.cgv.global.exception.ErrorCode;
-import com.ceos24.cgv.global.security.RefreshTokenProvider;
+import com.ceos24.cgv.global.security.refresh.RefreshTokenProvider;
 import com.ceos24.cgv.global.security.jwt.JwtProvider;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -17,6 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.UUID;
 
 // 리프레시 토큰의 DB 상태를 바꾸는 트랜잭션 경계. AuthService가 이 경계 바깥에서 잠금 대기 초과를 응답으로 바꾼다.
@@ -35,14 +36,28 @@ public class RefreshTokenService {
     // 원문은 응답으로 한 번만 내보내고 DB에는 해시만 남긴다. 로그인마다 새 묶음이라 기기별 토큰이 따로 산다.
     @Transactional
     public String issue(Long userId) {
+        LocalDateTime now = LocalDateTime.now(clock);
+        deleteExpired(userId, now);
+
         String rawToken = refreshTokenProvider.generate();
         refreshTokenRepository.save(RefreshToken.builder()
                 .user(userRepository.getReferenceById(userId))
                 .tokenHash(refreshTokenProvider.hash(rawToken))
                 .familyId(UUID.randomUUID().toString())
-                .expiresAt(refreshTokenProvider.expiresAt(LocalDateTime.now(clock)))
+                .expiresAt(refreshTokenProvider.expiresAt(now))
                 .build());
         return rawToken;
+    }
+
+    // 순환할 때마다 행이 늘어 정리가 없으면 테이블이 계속 커진다. 스케줄러 대신 로그인할 때 그 사용자의 만료 행만 지운다.
+    // 사용자당 남는 행은 마지막 로그인 이후 유효기간 안의 것으로 묶인다.
+    // 한 묶음은 만료 시각을 물려받아 함께 만료되므로 묶음이 반쯤 지워진 채 남지 않는다. 만료 뒤 재사용 탐지는 잃지만,
+    // 그 묶음에는 이미 쓸 수 있는 토큰이 없고 응답도 같은 401이라 막아 줄 것이 없다.
+    private void deleteExpired(Long userId, LocalDateTime now) {
+        List<Long> expiredIds = refreshTokenRepository.findExpiredIdsByUserId(userId, now);
+        if (!expiredIds.isEmpty()) {
+            refreshTokenRepository.deleteAllByIdIn(expiredIds);
+        }
     }
 
     // 사용 완료 표시와 새 토큰 저장이 한 트랜잭션이다. 어느 쪽이 실패해도 둘 다 되돌아가서
@@ -50,7 +65,11 @@ public class RefreshTokenService {
     // 역할은 DB의 사용자에서 읽는다. 권한이 바뀌었다면 재발급 시점에 반영된다.
     // noRollbackFor: 재사용 탐지의 묶음 폐기는 401과 함께 커밋되어야 한다. 쓰기 뒤에 예외를 던지는 곳은 그 분기뿐이다.
     @Transactional(noRollbackFor = CustomException.class)
-    public TokenReissueResponse reissue(String rawRefreshToken) {
+    public TokenResponse reissue(String rawRefreshToken) {
+        // 400으로 따로 알리지 않는다. 거부 응답은 원인과 관계없이 같아야 하고, 받은 값을 검증 오류 응답으로 되돌려 주지도 않는다.
+        if (!refreshTokenProvider.hasIssuedLength(rawRefreshToken)) {
+            throw rejected("length_mismatch", null);
+        }
         RefreshToken current = refreshTokenRepository
                 .findByTokenHashForUpdate(refreshTokenProvider.hash(rawRefreshToken))
                 .orElseThrow(() -> rejected("not_found", null));
@@ -69,7 +88,7 @@ public class RefreshTokenService {
 
         User user = current.getUser();
         String accessToken = jwtProvider.createAccessToken(user.getId(), user.getRole());
-        return TokenReissueResponse.of(accessToken, jwtProvider.getAccessTokenValiditySeconds(),
+        return TokenResponse.of(accessToken, jwtProvider.getAccessTokenValiditySeconds(),
                 nextRawToken, Duration.between(now, next.getExpiresAt()).toSeconds());
     }
 
@@ -78,6 +97,9 @@ public class RefreshTokenService {
     // 사용 완료 토큰이어도 401을 내지 않는다. 로그아웃이 토큰 상태를 확인하는 창구가 되지 않게 탐지는 로그로만 남긴다.
     @Transactional
     public void revokeFamilyOf(String rawRefreshToken) {
+        if (!refreshTokenProvider.hasIssuedLength(rawRefreshToken)) {
+            return;
+        }
         refreshTokenRepository.findByTokenHash(refreshTokenProvider.hash(rawRefreshToken)).ifPresent(token -> {
             int revoked = refreshTokenRepository.revokeFamily(token.getFamilyId(), LocalDateTime.now(clock));
             if (token.isUsed()) {

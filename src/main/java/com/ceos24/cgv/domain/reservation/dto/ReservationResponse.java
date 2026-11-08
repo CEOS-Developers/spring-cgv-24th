@@ -7,11 +7,10 @@ import com.ceos24.cgv.domain.reservation.entity.ReservationStatus;
 import com.ceos24.cgv.domain.screening.entity.Screening;
 
 import java.time.LocalDateTime;
-import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
+import java.util.stream.Collectors;
 
 public record ReservationResponse(
         Long id,
@@ -20,7 +19,10 @@ public record ReservationResponse(
         ReservationStatus status,
         String statusName,
         List<SeatSummary> seats,
+        // 처음 잡은 좌석 전부의 금액이다. 취소해도 줄지 않아, 무엇을 얼마에 샀었는지가 남는다.
         int totalPrice,
+        // 취소되지 않은 좌석의 금액이다. 부분 취소 뒤에 남은 예매의 값이다.
+        int remainingPrice,
         LocalDateTime selectedAt,
         LocalDateTime expiresAt,
         LocalDateTime confirmedAt,
@@ -50,14 +52,17 @@ public record ReservationResponse(
             String label,
             AudienceType audienceType,
             String audienceTypeName,
-            int paidPrice
+            int paidPrice,
+            // 회원이 취소한 좌석이다. 선점 만료로 풀린 좌석은 false이고, 예매 상태(EXPIRED)가 그 사실을 말한다.
+            boolean cancelled
     ) {
         public static SeatSummary from(ReservationSeat seat) {
             return new SeatSummary(
                     seat.getLabel(),
                     seat.getAudienceType(),
                     seat.getAudienceType().getDisplayName(),
-                    seat.getPaidPrice()
+                    seat.getPaidPrice(),
+                    seat.getCancelledAt() != null
             );
         }
 
@@ -66,13 +71,12 @@ public record ReservationResponse(
                     ReservationSeat.label(row.rowNum(), row.colNum()),
                     row.audienceType(),
                     row.audienceType().getDisplayName(),
-                    row.paidPrice()
+                    row.paidPrice(),
+                    row.seatCancelledAt() != null
             );
         }
     }
 
-    // 만료된 선점은 DB 상태가 아직 PENDING이어도 이미 좌석을 놓은 것이나 마찬가지다.
-    // 정리는 다음 좌석 선점 요청이 하고, 조회는 현재 사실만 보여준다.
     public static ReservationResponse from(Reservation r, LocalDateTime now) {
         List<SeatSummary> seats = r.getSeats().stream()
                 .sorted(Comparator.comparingInt(ReservationSeat::getRowNum)
@@ -80,7 +84,7 @@ public record ReservationResponse(
                 .map(SeatSummary::from)
                 .toList();
 
-        ReservationStatus status = resolveStatus(r.getStatus(), r.getExpiresAt(), now);
+        ReservationStatus status = r.getStatus().resolve(r.getExpiresAt(), now);
 
         return new ReservationResponse(
                 r.getId(),
@@ -90,6 +94,7 @@ public record ReservationResponse(
                 status.getDisplayName(),
                 seats,
                 r.getTotalPrice(),
+                remainingPriceOf(seats),
                 r.getCreatedAt(),
                 r.getExpiresAt(),
                 r.getConfirmedAt(),
@@ -109,7 +114,7 @@ public record ReservationResponse(
                 .mapToInt(ReservationDetailRow::paidPrice)
                 .sum();
 
-        ReservationStatus status = resolveStatus(head.status(), head.expiresAt(), now);
+        ReservationStatus status = head.status().resolve(head.expiresAt(), now);
 
         return new ReservationResponse(
                 head.reservationId(),
@@ -126,6 +131,7 @@ public record ReservationResponse(
                 status.getDisplayName(),
                 seats,
                 totalPrice,
+                remainingPriceOf(seats),
                 head.selectedAt(),
                 head.expiresAt(),
                 head.confirmedAt(),
@@ -133,22 +139,19 @@ public record ReservationResponse(
         );
     }
 
-    // 행은 예매 id 내림차순으로 온다. LinkedHashMap이라 묶은 뒤에도 그 순서가 유지된다.
-    public static List<ReservationResponse> listOf(List<ReservationDetailRow> rows, LocalDateTime now) {
-        Map<Long, List<ReservationDetailRow>> byReservation = new LinkedHashMap<>();
-        for (ReservationDetailRow row : rows) {
-            byReservation.computeIfAbsent(row.reservationId(), id -> new ArrayList<>()).add(row);
-        }
-        return byReservation.values().stream()
-                .map(group -> of(group, now))
-                .toList();
+    private static int remainingPriceOf(List<SeatSummary> seats) {
+        return seats.stream()
+                .filter(seat -> !seat.cancelled())
+                .mapToInt(SeatSummary::paidPrice)
+                .sum();
     }
 
-    // 프로젝션 경로에는 엔티티가 없어 Reservation.isExpired()를 부를 수 없다.
-    private static ReservationStatus resolveStatus(ReservationStatus status,
-                                                   LocalDateTime expiresAt,
-                                                   LocalDateTime now) {
-        boolean expired = status == ReservationStatus.PENDING && !now.isBefore(expiresAt);
-        return expired ? ReservationStatus.EXPIRED : status;
+    // 행은 예매 id 내림차순으로 온다. LinkedHashMap이라 묶은 뒤에도 그 순서가 유지된다.
+    public static List<ReservationResponse> listOf(List<ReservationDetailRow> rows, LocalDateTime now) {
+        return rows.stream()
+                .collect(Collectors.groupingBy(ReservationDetailRow::reservationId, LinkedHashMap::new, Collectors.toList()))
+                .values().stream()
+                .map(group -> of(group, now))
+                .toList();
     }
 }

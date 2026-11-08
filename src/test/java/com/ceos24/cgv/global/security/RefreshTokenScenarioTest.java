@@ -6,9 +6,14 @@ import com.ceos24.cgv.domain.user.entity.User;
 import com.ceos24.cgv.domain.user.repository.RefreshTokenRepository;
 import com.ceos24.cgv.global.security.jwt.JwtProperties;
 import com.ceos24.cgv.global.security.jwt.JwtProvider;
+import com.ceos24.cgv.global.security.refresh.RefreshTokenProperties;
+import com.ceos24.cgv.global.security.refresh.RefreshTokenProvider;
 import com.ceos24.cgv.support.AuthScenarioTest;
 import com.ceos24.cgv.support.TestFixtures;
 import com.jayway.jsonpath.JsonPath;
+import jakarta.persistence.EntityManagerFactory;
+import org.hibernate.SessionFactory;
+import org.hibernate.stat.Statistics;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -41,6 +46,7 @@ class RefreshTokenScenarioTest extends AuthScenarioTest {
     @Autowired RefreshTokenProperties refreshTokenProperties;
     @Autowired JwtProvider jwtProvider;
     @Autowired JwtProperties jwtProperties;
+    @Autowired EntityManagerFactory emf;
 
     @Test
     @DisplayName("로그인하면 액세스 토큰과 리프레시 토큰을 함께 발급한다")
@@ -345,6 +351,23 @@ class RefreshTokenScenarioTest extends AuthScenarioTest {
         assertThat(rejectedBody(accessToken)).isEqualTo(expiredBody);
     }
 
+    // 길이 제한이 없으면 큰 문자열 전체를 해시하고 DB까지 조회한다. 길이가 다르면 쿼리 없이 같은 401로 거부한다.
+    @Test
+    @DisplayName("발급 길이와 다른 리프레시 토큰은 DB 조회 없이 401 REFRESH_TOKEN_INVALID이고 다른 거부 응답과 본문이 같다")
+    void 길이가_다른_리프레시_토큰은_DB_조회_없이_401() throws Exception {
+        String oversized = "a".repeat(10_000);
+        Statistics statistics = statistics();
+
+        String body = reissueRequest(oversized)
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("REFRESH_TOKEN_INVALID"))
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(statistics.getPrepareStatementCount()).isZero();
+        assertThat(body).isEqualTo(rejectedBody(refreshTokenProvider.generate()))
+                .doesNotContain(oversized);
+    }
+
     @Test
     @DisplayName("리프레시 토큰이 비어 있거나 빠지면 400 INVALID_INPUT_VALUE")
     void 리프레시_토큰이_비어_있으면_400() throws Exception {
@@ -471,6 +494,16 @@ class RefreshTokenScenarioTest extends AuthScenarioTest {
     }
 
     @Test
+    @DisplayName("발급 길이와 다른 리프레시 토큰으로 로그아웃하면 DB 조회 없이 200")
+    void 길이가_다른_리프레시_토큰으로_로그아웃하면_DB_조회_없이_200() throws Exception {
+        Statistics statistics = statistics();
+
+        logoutRequest("a".repeat(10_000)).andExpect(status().isOk());
+
+        assertThat(statistics.getPrepareStatementCount()).isZero();
+    }
+
+    @Test
     @DisplayName("리프레시 토큰이 비어 있으면 로그아웃은 400 INVALID_INPUT_VALUE")
     void 로그아웃_리프레시_토큰이_비어_있으면_400() throws Exception {
         logoutRequest("")
@@ -494,12 +527,57 @@ class RefreshTokenScenarioTest extends AuthScenarioTest {
                 .andExpect(status().isOk());
     }
 
+    // ─── 만료 행 정리 ─────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("로그인하면 같은 사용자의 만료된 리프레시 토큰 행이 순환으로 이어진 것까지 모두 지워진다")
+    void 로그인하면_같은_사용자의_만료된_토큰_행이_지워진다() throws Exception {
+        Long userId = signup("refresh01");
+        String valid = loginForRefreshToken("refresh01");
+        User user = em.find(User.class, userId);
+        String expired = storeRefreshToken(user, LocalDateTime.now().minusMinutes(1));
+        storeRotatedExpiredFamily(user);
+        assertThat(tokensOf(userId)).hasSize(4);
+
+        String next = loginForRefreshToken("refresh01");
+        flushAndClear();
+
+        assertThat(tokensOf(userId)).hasSize(2)
+                .extracting(RefreshToken::getTokenHash)
+                .containsExactlyInAnyOrder(refreshTokenProvider.hash(valid), refreshTokenProvider.hash(next));
+        // 지워진 토큰도 다른 거부와 같은 응답이다
+        reissueRequest(expired)
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("REFRESH_TOKEN_INVALID"));
+    }
+
+    @Test
+    @DisplayName("로그인해도 다른 사용자의 만료된 리프레시 토큰 행은 지우지 않는다")
+    void 로그인해도_다른_사용자의_만료된_토큰_행은_남는다() throws Exception {
+        signup("refresh01");
+        Long otherId = signup("refresh02");
+        storeRefreshToken(em.find(User.class, otherId), LocalDateTime.now().minusMinutes(1));
+
+        loginForRefreshToken("refresh01");
+        flushAndClear();
+
+        assertThat(tokensOf(otherId)).hasSize(1);
+    }
+
     // ─── 헬퍼 ─────────────────────────────────────────────────────────────────
 
     private ResultActions logoutRequest(String refreshToken) throws Exception {
         return mockMvc.perform(post(LOGOUT_API)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"refreshToken\":\"%s\"}".formatted(refreshToken)));
+    }
+
+    // 앞서 쌓인 쓰기를 내보낸 뒤 센다. 그래야 요청이 실행한 쿼리만 남는다.
+    private Statistics statistics() {
+        em.flush();
+        Statistics statistics = emf.unwrap(SessionFactory.class).getStatistics();
+        statistics.clear();
+        return statistics;
     }
 
     private LocalDateTime revokedAtOf(String refreshToken) {
@@ -554,6 +632,19 @@ class RefreshTokenScenarioTest extends AuthScenarioTest {
                 .build());
         flushAndClear();
         return rawToken;
+    }
+
+    // 한 번 순환한 뒤 함께 만료된 묶음. 사용 완료 행과 그 다음 행이 같은 만료 시각을 갖는다.
+    private void storeRotatedExpiredFamily(User user) {
+        LocalDateTime expiresAt = LocalDateTime.now().minusMinutes(1);
+        RefreshToken first = persist(RefreshToken.builder()
+                .user(user)
+                .tokenHash(refreshTokenProvider.hash(refreshTokenProvider.generate()))
+                .familyId(UUID.randomUUID().toString())
+                .expiresAt(expiresAt)
+                .build());
+        persist(first.rotate(refreshTokenProvider.hash(refreshTokenProvider.generate()), expiresAt.minusDays(1)));
+        flushAndClear();
     }
 
     private String expiredAccessToken(Long userId) {

@@ -9,10 +9,13 @@ import com.ceos24.cgv.domain.reservation.entity.AudienceType;
 import com.ceos24.cgv.domain.reservation.entity.Reservation;
 import com.ceos24.cgv.domain.reservation.entity.ReservationSeat;
 import com.ceos24.cgv.domain.reservation.entity.ReservationStatus;
+import com.ceos24.cgv.domain.reservation.repository.ReservationSeatRepository;
 import com.ceos24.cgv.domain.screening.entity.Screening;
 import com.ceos24.cgv.domain.user.entity.User;
 import com.ceos24.cgv.global.exception.CustomException;
 import com.ceos24.cgv.global.exception.ErrorCode;
+import com.ceos24.cgv.support.MySqlContainerConfig;
+import com.ceos24.cgv.support.RaceGate;
 import com.ceos24.cgv.support.TestFixtures;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
@@ -21,6 +24,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDateTime;
@@ -40,6 +44,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 // 모든 실패가 매핑된 예외로 나오는지를 실제 스레드로 확인한다.
 // 스레드마다 트랜잭션이 따로 열려야 해서 ControllerIntegrationTest(@Transactional)를 쓰지 않는다.
 @SpringBootTest
+@Import(MySqlContainerConfig.class)
 class ReservationConcurrencyTest {
 
     private static final int PRICE = 14000;
@@ -79,6 +84,7 @@ class ReservationConcurrencyTest {
     // 커밋하는 테스트라 롤백에 기댈 수 없다. 남기면 다른 테스트의 목록 단언이 깨진다.
     @AfterEach
     void tearDown() {
+        RaceGate.disarmAll();
         transactionTemplate.executeWithoutResult(status -> {
             em.createQuery("delete from ReservationSeat").executeUpdate();
             em.createQuery("delete from Reservation").executeUpdate();
@@ -98,6 +104,22 @@ class ReservationConcurrencyTest {
         assertThat(successCount(outcomes)).isEqualTo(1);
         assertThatFailuresAreMapped(outcomes);
         assertThat(occupiedSeatCount()).isEqualTo(1);
+    }
+
+    // 위 테스트는 동시에 출발만 시켜서, 한 요청이 INSERT를 마친 뒤 다른 요청이 사전 검사를 하면 경합 없이 통과한다.
+    // 여기서는 두 요청을 사전 검사 직후에 세워 둘 다 "빈 좌석"을 본 뒤 INSERT하게 한다.
+    // 이 틈은 애플리케이션 코드로 닫을 수 없고, 유니크 제약이 없으면 두 요청이 모두 성공한다.
+    @Test
+    void 두_요청이_모두_빈_좌석을_확인한_뒤_INSERT해도_한_건만_성공한다() throws Exception {
+        RaceGate gate = RaceGate.arm(ReservationSeatRepository.class, "findOccupiedPositionsByScreeningId", 2);
+
+        List<Outcome> outcomes = runConcurrently(2, i -> request(userIds.get(i), seat(4, 4)));
+
+        assertThat(successCount(outcomes)).isEqualTo(1);
+        assertThatFailuresAreMapped(outcomes);
+        assertThat(occupiedSeatCount()).isEqualTo(1);
+        // 둘 다 사전 검사를 통과했다. 경합이 실제로 겹쳤으므로 우연히 통과한 결과가 아니다.
+        assertThat(gate.aloneCount()).isZero();
     }
 
     @Test
@@ -121,8 +143,8 @@ class ReservationConcurrencyTest {
             Screening screening = em.find(Screening.class, screeningId);
             User user = em.find(User.class, userIds.get(0));
             Reservation stale = TestFixtures.hold(user, screening, longAgo);
-            stale.addSeat(2, 1, AudienceType.ADULT, PRICE);
-            stale.addSeat(2, 2, AudienceType.ADULT, PRICE);
+            stale.addSeat(2, 1, AudienceType.ADULT);
+            stale.addSeat(2, 2, AudienceType.ADULT);
             em.persist(stale);
         });
 
@@ -142,6 +164,41 @@ class ReservationConcurrencyTest {
                     .getSingleResult();
             assertThat(expired.getSeats()).noneMatch(ReservationSeat::isOccupied);
         });
+    }
+
+    // 위 테스트의 간헐 실패를 순서를 고정해 다시 만든 것이다. B의 스냅샷이 A의 커밋보다 앞서고, A가 만료 선점을 먼저 풀었다.
+    // 이전 구현은 B도 같은 값으로 다시 UPDATE했고, 시각까지 같으면 좌석 행만 옛 버전으로 남아 B가 (2,2)를 점유로 봤다.
+    // 시각이 같아지는 것은 여기서 고정할 수 없어 이 테스트만으로 이전 구현이 늘 실패하지는 않는다. 확인하는 것은 B의 해제가
+    // 0행이 되는 경로에서도 빈 좌석을 잡는다는 점이다.
+    @Test
+    void 만료_선점을_다른_요청이_먼저_풀어도_스냅샷이_앞선_요청은_빈_좌석을_잡는다() throws Exception {
+        transactionTemplate.executeWithoutResult(status -> {
+            Reservation stale = TestFixtures.hold(
+                    em.find(User.class, userIds.get(0)), em.find(Screening.class, screeningId),
+                    LocalDateTime.now().minusMinutes(30));
+            stale.addSeat(2, 1, AudienceType.ADULT);
+            stale.addSeat(2, 2, AudienceType.ADULT);
+            em.persist(stale);
+        });
+
+        ExecutorService other = Executors.newSingleThreadExecutor();
+        try {
+            transactionTemplate.executeWithoutResult(status -> {
+                // B의 스냅샷을 만든다. 이후 create는 이 트랜잭션에 합류한다.
+                em.createQuery("select count(r) from Reservation r", Long.class).getSingleResult();
+                try {
+                    other.submit(() -> reservationService.create(userIds.get(1), request(userIds.get(1), seat(2, 1)).request()))
+                            .get(10, TimeUnit.SECONDS);
+                } catch (Exception e) {
+                    throw new IllegalStateException(e);
+                }
+                reservationService.create(userIds.get(2), request(userIds.get(2), seat(2, 2)).request());
+            });
+        } finally {
+            other.shutdownNow();
+        }
+
+        assertThat(occupiedSeatCount()).isEqualTo(2);
     }
 
     // ─── helpers ──────────────────────────────────────────────────────────────
