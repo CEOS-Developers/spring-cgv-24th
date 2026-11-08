@@ -36,7 +36,10 @@ public class SecurityConfig {
             "/v3/api-docs/**", // 스웨거 문서
             "/api/auth/signup", // 회원가입
             "/api/auth/login", // 로그인
-            "/api/auth/reissue" // 토큰 재발급
+            "/api/auth/reissue", // 토큰 재발급
+            "/api/v1/payments/toss/success", // 결제 성공 리다이렉트
+            "/api/v1/payments/toss/fail", // 결제 실패 리다이렉트
+            "/payment-test.html" // 프론트엔드 대체용 임시 결제 테스트 페이지
     };
 
     @Bean
