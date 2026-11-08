@@ -14,6 +14,7 @@ import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestClientResponseException;
 
 import java.net.ConnectException;
 import java.net.UnknownHostException;
@@ -89,11 +90,12 @@ public class TossPaymentsClient {
             // 승인은 주문번호마다 한 번만 보낸다(같은 주문의 재승인은 T1이 막는다). 그래서 연결조차 못 했으면
             // 이 주문의 승인은 토스에 한 번도 닿지 않은 것이고, 돈이 빠지지 않았다고 확신할 수 있다.
             if (isNotSent(e)) {
-                log.error("[Toss] 승인 요청 연결 실패 orderId={} reason={}", orderId, e.getMessage());
-                return new Rejected(CONNECTION_FAILED, e.getMessage(), true);
+                String reason = describe(e);
+                log.error("[Toss] 승인 요청 연결 실패 orderId={} reason={}", orderId, reason);
+                return new Rejected(CONNECTION_FAILED, reason, true);
             }
             // 5xx, 읽기 타임아웃, 응답 본문 해석 실패. 토스가 승인했는지 이쪽에서는 알 수 없다.
-            return unknown(orderId, e.getClass().getSimpleName() + ": " + e.getMessage());
+            return unknown(orderId, describe(e));
         }
     }
 
@@ -122,7 +124,7 @@ public class TossPaymentsClient {
             return new TossCancelResult.Rejected(error.code(), error.message());
         } catch (RestClientException e) {
             // 연결 실패도 승인과 달리 결과 불명이다. 재시도라면 첫 요청이 이미 환불됐을 수 있다.
-            return cancelUnknown(idempotencyKey, e.getClass().getSimpleName() + ": " + e.getMessage());
+            return cancelUnknown(idempotencyKey, describe(e));
         }
     }
 
@@ -184,8 +186,9 @@ public class TossPaymentsClient {
             // 404여도 NOT_FOUND_MERCHANT처럼 결제가 없다는 뜻이 아닌 응답이 있다. 401·403도 물어보지 못했다는 뜻이다
             return new Unavailable(error.code() + ": " + error.message());
         } catch (RestClientException e) {
-            log.warn("[Toss] 결제 조회 실패 key={} reason={}", key, e.getMessage());
-            return new Unavailable(e.getClass().getSimpleName() + ": " + e.getMessage());
+            String reason = describe(e);
+            log.warn("[Toss] 결제 조회 실패 key={} reason={}", key, reason);
+            return new Unavailable(reason);
         }
     }
 
@@ -219,7 +222,7 @@ public class TossPaymentsClient {
             if (!isNotSent(e)) {
                 throw e;
             }
-            log.warn("[Toss] 연결 실패, 한 번 다시 보냄 key={} reason={}", key, e.getMessage());
+            log.warn("[Toss] 연결 실패, 한 번 다시 보냄 key={} reason={}", key, describe(e));
             return call.get();
         }
     }
@@ -235,8 +238,18 @@ public class TossPaymentsClient {
         return false;
     }
 
+    // 예외 메시지를 그대로 쓰지 않는다. 5xx는 응답 본문 전체가, 연결 오류는 요청 URL이 메시지에 들어가
+    // 로그와 결제 실패 사유, 관리자 정리 응답까지 흘러간다. 추적에 필요한 오류 종류·HTTP 상태·토스 코드만 남긴다.
+    private String describe(RestClientException e) {
+        if (e instanceof RestClientResponseException response) {
+            return "HTTP " + response.getStatusCode().value() + " " + parseError(response).code();
+        }
+        Throwable cause = e.getMostSpecificCause();
+        return cause.getClass().getSimpleName() + ": " + cause.getMessage();
+    }
+
     // 4xx는 본문 형식이 어긋나도 토스가 요청을 받아들이지 않았다는 사실은 같다. 거절로 두고 사유만 비운다.
-    private ErrorResponse parseError(HttpClientErrorException e) {
+    private ErrorResponse parseError(RestClientResponseException e) {
         try {
             ErrorResponse error = e.getResponseBodyAs(ErrorResponse.class);
             if (error != null && error.code() != null) {

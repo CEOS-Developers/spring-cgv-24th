@@ -121,6 +121,26 @@ class TossPaymentsClientTest {
     }
 
     @Test
+    void 서버_오류의_사유에는_응답_본문이_아니라_상태와_오류_코드만_남긴다() {
+        server.expect(requestTo(CONFIRM_URL))
+                .andRespond(withServerError().contentType(MediaType.APPLICATION_JSON)
+                        .body(errorJson("FAILED_INTERNAL_SYSTEM_PROCESSING", "내부 시스템 처리 작업이 실패했습니다.")));
+
+        TossConfirmResult result = client.confirm("tgen_test_key", ORDER_ID, 14000);
+
+        assertThat(((Unknown) result).reason()).isEqualTo("HTTP 500 FAILED_INTERNAL_SYSTEM_PROCESSING");
+    }
+
+    @Test
+    void 연결_오류의_사유에는_요청_주소가_남지_않는다() {
+        server.expect(requestTo(CONFIRM_URL)).andRespond(withException(new SocketTimeoutException("Read timed out")));
+
+        TossConfirmResult result = client.confirm("tgen_test_key", ORDER_ID, 14000);
+
+        assertThat(((Unknown) result).reason()).isEqualTo("SocketTimeoutException: Read timed out");
+    }
+
+    @Test
     void 읽기_타임아웃은_결과_불명이다() {
         server.expect(requestTo(CONFIRM_URL)).andRespond(withException(new SocketTimeoutException("Read timed out")));
 
