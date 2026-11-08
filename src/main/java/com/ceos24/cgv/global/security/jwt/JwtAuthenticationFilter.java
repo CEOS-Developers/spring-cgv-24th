@@ -1,6 +1,7 @@
 package com.ceos24.cgv.global.security.jwt;
 
 import com.ceos24.cgv.global.security.CustomUserDetails;
+import com.ceos24.cgv.global.security.SecurityPaths;
 import com.ceos24.cgv.global.security.exception.SecurityErrorCode;
 import com.ceos24.cgv.global.security.handler.CustomAuthenticationEntryPoint;
 import io.jsonwebtoken.ExpiredJwtException;
@@ -16,10 +17,12 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.util.AntPathMatcher;
 import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.util.Arrays;
 
 import static com.ceos24.cgv.global.security.handler.SecurityResponseWriter.AUTH_ERROR;
 
@@ -27,6 +30,7 @@ import static com.ceos24.cgv.global.security.handler.SecurityResponseWriter.AUTH
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private static final String BEARER_PREFIX = "Bearer ";
+    private static final AntPathMatcher PATH_MATCHER = new AntPathMatcher();
 
     private final JwtTokenProvider jwtTokenProvider;
     private final CustomAuthenticationEntryPoint authenticationEntryPoint;
@@ -67,11 +71,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     protected boolean shouldNotFilter(HttpServletRequest request) {
         String path = request.getRequestURI();
 
-        return path.equals("/api/auth/login")
-                || path.equals("/api/auth/signup")
-                || path.startsWith("/swagger-ui")
-                || path.startsWith("/v3/api-docs")
-                || path.equals("/error");
+        return Arrays.stream(SecurityPaths.JWT_EXCLUDED_PATHS).anyMatch(pattern -> PATH_MATCHER.match(pattern, path));
     }
 
     private String resolveToken(String authorizationHeader) {

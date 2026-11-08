@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head><meta charset="UTF-8"><title>결제 승인 중</title></head>
+<body>
+<h2>결제 인증 성공 → 서버 승인 요청</h2>
+<pre id="result">승인 요청 중...</pre>
+
+<script>
+    const params = new URLSearchParams(window.location.search);
+    const request = {
+        paymentKey: params.get("paymentKey"),
+        orderId: params.get("orderId"),
+        amount: Number(params.get("amount")), // 그대로 믿지 않고 서버가 DB 금액과 비교함
+    };
+
+    fetch("/api/payments/confirm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + sessionStorage.getItem("accessToken") },
+        body: JSON.stringify(request),
+    })
+        .then(async (res) => {
+            document.getElementById("result").textContent = `HTTP ${res.status}\n` + JSON.stringify(await res.json(), null, 2);
+        })
+        .catch((e) => document.getElementById("result").textContent = "요청 실패: " + e.message);
+</script>
+</body>
+</html>

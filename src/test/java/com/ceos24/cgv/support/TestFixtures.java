@@ -25,6 +25,7 @@ import com.ceos24.cgv.domain.theater.entity.TheaterLike;
 import com.ceos24.cgv.domain.user.entity.User;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 
@@ -71,7 +72,7 @@ public final class TestFixtures {
     }
 
     public static Reservation reservation(Long id, User user, Schedule schedule, String seatSummary) {
-        return withId(Reservation.create(user, schedule, schedule.getPrice(), seatSummary), id);
+        return withId(Reservation.create(user, schedule, schedule.getPrice(), seatSummary, Instant.now()), id);
     }
 
     public static ReservationSeat reservationSeat(Long id, Reservation reservation, Seat seat) {

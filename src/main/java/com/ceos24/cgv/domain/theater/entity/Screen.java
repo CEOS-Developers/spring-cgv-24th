@@ -5,6 +5,9 @@ import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
+import java.util.ArrayList;
+import java.util.List;
+
 @Entity
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
@@ -33,5 +36,15 @@ public class Screen {
 
     public static Screen create(Theater theater, ScreenType screenType, String name) {
         return new Screen(theater, screenType, name);
+    }
+
+    public List<Seat> createSeats() {
+        List<Seat> seats = new ArrayList<>();
+        for (int row = 1; row <= screenType.getTotalRow(); row++) {
+            for (int col = 1; col <= screenType.getTotalCol(); col++) {
+                seats.add(Seat.create(this, row, col));
+            }
+        }
+        return seats;
     }
 }

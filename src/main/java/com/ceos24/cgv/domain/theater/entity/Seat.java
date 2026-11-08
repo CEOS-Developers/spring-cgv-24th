@@ -37,4 +37,8 @@ public class Seat {
     public static Seat create(Screen screen, Integer rowNum, Integer colNum) {
         return new Seat(screen, rowNum, colNum);
     }
+
+    public String getLabel() {
+        return String.valueOf((char) ('A' + rowNum - 1)) + colNum;
+    }
 }

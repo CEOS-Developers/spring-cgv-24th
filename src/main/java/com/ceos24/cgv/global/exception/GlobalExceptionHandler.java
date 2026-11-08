@@ -10,6 +10,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -124,6 +125,19 @@ public class GlobalExceptionHandler {
 
         ErrorReasonDTO errorReason = GlobalErrorStatus._BAD_REQUEST.getReasonHttpStatus();
         String message = String.format("필수 파라미터 '%s'가 누락되었습니다.", e.getParameterName());
+
+        return ResponseEntity
+                .status(errorReason.getHttpStatus())
+                .body(ApiResponse.onFailure(errorReason.getCode(), message, null));
+    }
+
+    // 6-2. 필수 요청 헤더 누락
+    @ExceptionHandler(MissingRequestHeaderException.class)
+    public ResponseEntity<ApiResponse<Object>> handleMissingRequestHeaderException(
+            MissingRequestHeaderException e, HttpServletRequest request) {
+
+        ErrorReasonDTO errorReason = GlobalErrorStatus._BAD_REQUEST.getReasonHttpStatus();
+        String message = String.format("필수 헤더 '%s'가 누락되었습니다.", e.getHeaderName());
 
         return ResponseEntity
                 .status(errorReason.getHttpStatus())

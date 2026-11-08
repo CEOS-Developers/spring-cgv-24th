@@ -10,13 +10,17 @@ import com.ceos24.cgv.domain.movie.enums.MovieImageType;
 import com.ceos24.cgv.domain.movie.enums.MovieStatus;
 import com.ceos24.cgv.domain.movie.exception.MovieErrorStatus;
 import com.ceos24.cgv.domain.movie.repository.MovieImageRepository;
+import com.ceos24.cgv.domain.movie.repository.MovieLikeRepository;
 import com.ceos24.cgv.domain.movie.repository.MoviePersonRepository;
 import com.ceos24.cgv.domain.movie.repository.MovieRepository;
 import com.ceos24.cgv.domain.movie.repository.MovieStatisticsRepository;
+import com.ceos24.cgv.domain.review.repository.ReviewRepository;
+import com.ceos24.cgv.domain.schedule.repository.ScheduleRepository;
 import com.ceos24.cgv.global.exception.GeneralException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -42,6 +46,12 @@ class MovieServiceTest {
     private MovieStatisticsRepository movieStatisticsRepository;
     @Mock
     private MoviePersonRepository moviePersonRepository;
+    @Mock
+    private MovieLikeRepository movieLikeRepository;
+    @Mock
+    private ScheduleRepository scheduleRepository;
+    @Mock
+    private ReviewRepository reviewRepository;
 
     @InjectMocks
     private MovieService movieService;
@@ -115,6 +125,47 @@ class MovieServiceTest {
         assertThat(target.getRunningTime()).isEqualTo(150);
         assertThat(target.getStatus()).isEqualTo(MovieStatus.ENDED);
         verify(movieRepository).delete(target);
+    }
+
+    @Test
+    void 영화를_삭제하면_종속_데이터를_먼저_삭제한다() {
+        Movie target = movie(1L);
+        when(movieRepository.findById(1L)).thenReturn(Optional.of(target));
+
+        movieService.delete(1L);
+
+        InOrder inOrder = inOrder(movieImageRepository, moviePersonRepository, movieStatisticsRepository,
+                movieLikeRepository, movieRepository);
+        inOrder.verify(movieImageRepository).deleteByMovieId(1L);
+        inOrder.verify(moviePersonRepository).deleteByMovieId(1L);
+        inOrder.verify(movieStatisticsRepository).deleteByMovieId(1L);
+        inOrder.verify(movieLikeRepository).deleteByMovieId(1L);
+        inOrder.verify(movieRepository).delete(target);
+    }
+
+    @Test
+    void 상영_일정이_있는_영화는_삭제할_수_없다() {
+        when(movieRepository.findById(1L)).thenReturn(Optional.of(movie(1L)));
+        when(scheduleRepository.existsByMovieId(1L)).thenReturn(true);
+
+        assertThatThrownBy(() -> movieService.delete(1L))
+                .isInstanceOf(GeneralException.class)
+                .extracting(error -> ((GeneralException) error).getCode())
+                .isEqualTo(MovieErrorStatus.MOVIE_HAS_HISTORY);
+        verify(movieRepository, never()).delete(any(Movie.class));
+        verifyNoInteractions(movieImageRepository, moviePersonRepository, movieStatisticsRepository, movieLikeRepository);
+    }
+
+    @Test
+    void 리뷰가_있는_영화는_삭제할_수_없다() {
+        when(movieRepository.findById(1L)).thenReturn(Optional.of(movie(1L)));
+        when(reviewRepository.existsByMovieId(1L)).thenReturn(true);
+
+        assertThatThrownBy(() -> movieService.delete(1L))
+                .isInstanceOf(GeneralException.class)
+                .extracting(error -> ((GeneralException) error).getCode())
+                .isEqualTo(MovieErrorStatus.MOVIE_HAS_HISTORY);
+        verify(movieRepository, never()).delete(any(Movie.class));
     }
 
     @Test

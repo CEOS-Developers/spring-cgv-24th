@@ -9,6 +9,7 @@ import java.util.List;
 
 public interface MoviePersonRepository extends JpaRepository<MoviePerson, Long> {
     List<MoviePerson> findByMovieId(Long movieId);
+    void deleteByMovieId(Long movieId);
 
     @Query("SELECT mp FROM MoviePerson mp JOIN FETCH mp.person WHERE mp.movie.id = :movieId")
     List<MoviePerson> findByMovieIdWithPerson(@Param("movieId") Long movieId);

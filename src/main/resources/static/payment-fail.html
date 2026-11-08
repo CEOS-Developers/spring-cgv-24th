@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head><meta charset="UTF-8"><title>결제 실패</title></head>
+<body>
+<h2>결제 인증 실패 / 사용자 취소</h2>
+<pre id="result"></pre>
+<p><a href="/checkout.html">다시 결제하기</a></p>
+
+<script>
+    // failUrl은 인증 단계 실패라 승인 API를 호출하지 않는다
+    const params = new URLSearchParams(window.location.search);
+    document.getElementById("result").textContent =
+        `code: ${params.get("code")}\nmessage: ${params.get("message")}\norderId: ${params.get("orderId")}`;
+</script>
+</body>
+</html>

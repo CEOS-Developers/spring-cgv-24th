@@ -18,6 +18,11 @@ public enum ReservationErrorStatus implements BaseErrorCode {
     CANCEL_DEADLINE_PASSED(HttpStatus.BAD_REQUEST, "RESERVATION400_3", "상영 시작 20분 전까지만 취소할 수 있습니다."),
     SEAT_ALREADY_RESERVED(HttpStatus.CONFLICT, "RESERVATION409", "이미 예매된 좌석이 포함되어 있습니다."),
     ALREADY_CANCELLED(HttpStatus.CONFLICT, "RESERVATION409_1", "이미 취소된 예매입니다."),
+    RESERVATION_NOT_PENDING_PAYMENT(HttpStatus.CONFLICT, "RESERVATION409_2", "결제 대기 중인 예매만 결제할 수 있습니다."),
+    RESERVATION_HOLD_EXPIRED(HttpStatus.CONFLICT, "RESERVATION409_3", "좌석 선점 시간이 만료되어 결제할 수 없습니다."),
+    PAYMENT_CANCEL_REQUIRED(HttpStatus.CONFLICT, "RESERVATION409_4", "결제된 예매는 결제 취소 API로 취소해주세요."),
+    RESERVATION_PAYMENT_IN_PROGRESS(HttpStatus.CONFLICT, "RESERVATION409_5", "결제가 진행 중인 예매는 취소할 수 없습니다."),
+    RESERVATION_ALREADY_PAYING(HttpStatus.CONFLICT, "RESERVATION409_6", "이미 결제가 진행 중인 예매입니다."),
     NOT_RESERVATION_OWNER(HttpStatus.FORBIDDEN, "RESERVATION403", "본인의 예매만 조회하거나 취소할 수 있습니다.");
 
     private final HttpStatus httpStatus;

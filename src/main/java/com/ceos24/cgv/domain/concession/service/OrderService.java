@@ -6,11 +6,16 @@ import com.ceos24.cgv.domain.concession.dto.response.OrderResponse;
 import com.ceos24.cgv.domain.concession.entity.Item;
 import com.ceos24.cgv.domain.concession.entity.Order;
 import com.ceos24.cgv.domain.concession.entity.OrderItem;
+import com.ceos24.cgv.domain.concession.enums.OrderStatus;
 import com.ceos24.cgv.domain.concession.exception.ConcessionErrorStatus;
 import com.ceos24.cgv.domain.concession.repository.ItemRepository;
 import com.ceos24.cgv.domain.concession.repository.OrderItemRepository;
 import com.ceos24.cgv.domain.concession.repository.OrderRepository;
 import com.ceos24.cgv.domain.concession.repository.StockRepository;
+import com.ceos24.cgv.domain.payment.dto.response.PaymentReadyResponse;
+import com.ceos24.cgv.domain.payment.entity.Payment;
+import com.ceos24.cgv.domain.payment.exception.PaymentErrorStatus;
+import com.ceos24.cgv.domain.payment.repository.PaymentRepository;
 import com.ceos24.cgv.domain.theater.entity.Theater;
 import com.ceos24.cgv.domain.theater.exception.TheaterErrorStatus;
 import com.ceos24.cgv.domain.theater.repository.TheaterRepository;
@@ -21,10 +26,13 @@ import com.ceos24.cgv.global.exception.GeneralException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import com.ceos24.cgv.domain.concession.entity.Stock;
 
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 @Service
@@ -32,84 +40,139 @@ import java.util.stream.Collectors;
 @Transactional(readOnly = true)
 public class OrderService {
 
-    private final OrderRepository orderRepository;
-    private final OrderItemRepository orderItemRepository;
-    private final StockRepository stockRepository;
-    private final ItemRepository itemRepository;
-    private final TheaterRepository theaterRepository;
-    private final UserRepository userRepository;
+	private final OrderRepository orderRepository;
+	private final OrderItemRepository orderItemRepository;
+	private final StockRepository stockRepository;
+	private final ItemRepository itemRepository;
+	private final TheaterRepository theaterRepository;
+	private final UserRepository userRepository;
+	private final PaymentRepository paymentRepository;
 
-    @Transactional
-    public Long create(Long userId, OrderCreateRequest request) {
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new GeneralException(UserErrorStatus.USER_NOT_FOUND));
-        Theater theater = theaterRepository.findById(request.theaterId())
-                .orElseThrow(() -> new GeneralException(TheaterErrorStatus.THEATER_NOT_FOUND));
+	@Transactional
+	public Long create(Long userId, OrderCreateRequest request) {
+		User user = userRepository.findById(userId)
+				.orElseThrow(() -> new GeneralException(UserErrorStatus.USER_NOT_FOUND));
+		Theater theater = theaterRepository.findById(request.theaterId())
+				.orElseThrow(() -> new GeneralException(TheaterErrorStatus.THEATER_NOT_FOUND));
 
-        Map<Long, Integer> quantityByItemId = new LinkedHashMap<>();
-        for (var itemRequest : request.items()) {
-            quantityByItemId.merge(itemRequest.itemId(), itemRequest.quantity(), Integer::sum);
-        }
+		Map<Long, Integer> quantityByItemId = new LinkedHashMap<>();
+		for (var itemRequest : request.items()) {
+			quantityByItemId.merge(itemRequest.itemId(), itemRequest.quantity(), Integer::sum);
+		}
 
-        int totalPrice = 0;
-        for (Map.Entry<Long, Integer> entry : quantityByItemId.entrySet()) {
-            Item item = itemRepository.findById(entry.getKey())
-                    .orElseThrow(() -> new GeneralException(ConcessionErrorStatus.ITEM_NOT_FOUND));
-            stockRepository.findByTheaterIdAndItemId(request.theaterId(), item.getId())
-                    .orElseThrow(() -> new GeneralException(ConcessionErrorStatus.STOCK_NOT_FOUND));
+		Map<Long, Item> itemById = itemRepository.findAllById(quantityByItemId.keySet()).stream()
+				.collect(Collectors.toMap(Item::getId, Function.identity()));
 
-            totalPrice += item.getPrice() * entry.getValue();
-        }
+		int totalPrice = 0;
+		for (Map.Entry<Long, Integer> entry : quantityByItemId.entrySet()) {
+			Item item = itemById.get(entry.getKey());
+			if (item == null) {
+				throw new GeneralException(ConcessionErrorStatus.ITEM_NOT_FOUND);
+			}
 
-        Order order = orderRepository.save(Order.create(user, theater, totalPrice));
+			Stock stock = stockRepository.findByTheaterIdAndItemId(request.theaterId(), item.getId())
+					.orElseThrow(() -> new GeneralException(ConcessionErrorStatus.STOCK_NOT_FOUND));
+			if (!stock.hasEnough(entry.getValue())) {
+				throw new GeneralException(ConcessionErrorStatus.INSUFFICIENT_STOCK);
+			}
 
-        for (Map.Entry<Long, Integer> entry : quantityByItemId.entrySet()) {
-            Item item = itemRepository.findById(entry.getKey())
-                    .orElseThrow(() -> new GeneralException(ConcessionErrorStatus.ITEM_NOT_FOUND));
+			totalPrice += item.getPrice() * entry.getValue();
+		}
 
-            int updatedRows = stockRepository.decreaseStock(request.theaterId(), item.getId(), entry.getValue());
-            if (updatedRows == 0) {
-                throw new GeneralException(ConcessionErrorStatus.INSUFFICIENT_STOCK);
-            }
+		Order order = orderRepository.save(Order.create(user, theater, totalPrice));
 
-            OrderItem orderItem = OrderItem.create(order, item, entry.getValue(), item.getPrice());
-            orderItemRepository.save(orderItem);
-        }
+		for (Map.Entry<Long, Integer> entry : quantityByItemId.entrySet()) {
+			Item item = itemById.get(entry.getKey());
+			OrderItem orderItem = OrderItem.create(order, item, entry.getValue(), item.getPrice());
+			orderItemRepository.save(orderItem);
+		}
 
-        return order.getId();
-    }
+		paymentRepository.save(Payment.forOrder(order));
 
-    public OrderResponse findById(Long orderId, Long userId) {
-        Order order = orderRepository.findByIdWithTheater(orderId)
-                .orElseThrow(() -> new GeneralException(ConcessionErrorStatus.ORDER_NOT_FOUND));
+		return order.getId();
+	}
 
-        if (!order.getUser().getId().equals(userId)) {
-            throw new GeneralException(ConcessionErrorStatus.NOT_ORDER_OWNER);
-        }
+	public OrderResponse findById(Long orderId, Long userId) {
+		Order order = orderRepository.findByIdWithTheater(orderId)
+				.orElseThrow(() -> new GeneralException(ConcessionErrorStatus.ORDER_NOT_FOUND));
 
-        List<OrderItemResponse> items = orderItemRepository.findByOrderIdWithItem(orderId).stream()
-                .map(OrderItemResponse::from)
-                .toList();
+		if (!order.isOwnedBy(userId)) {
+			throw new GeneralException(ConcessionErrorStatus.NOT_ORDER_OWNER);
+		}
 
-        return OrderResponse.of(order, items);
-    }
+		List<OrderItemResponse> items = orderItemRepository.findByOrderIdWithItem(orderId).stream()
+				.map(OrderItemResponse::from)
+				.toList();
 
-    public List<OrderResponse> findByUserId(Long userId) {
-        userRepository.findById(userId)
-                .orElseThrow(() -> new GeneralException(UserErrorStatus.USER_NOT_FOUND));
+		return OrderResponse.of(order, items);
+	}
 
-        List<Order> orders = orderRepository.findByUserIdWithTheaterOrderByOrderedAtDesc(userId);
-        List<Long> orderIds = orders.stream().map(Order::getId).toList();
+	public List<OrderResponse> findByUserId(Long userId) {
+		userRepository.findById(userId)
+				.orElseThrow(() -> new GeneralException(UserErrorStatus.USER_NOT_FOUND));
 
-        Map<Long, List<OrderItemResponse>> itemsByOrderId = orderItemRepository
-                .findByOrderIdInWithItem(orderIds).stream()
-                .collect(Collectors.groupingBy(
-                        oi -> oi.getOrder().getId(),
-                        Collectors.mapping(OrderItemResponse::from, Collectors.toList())
-                ));
+		List<Order> orders = orderRepository.findByUserIdWithTheaterOrderByOrderedAtDesc(userId);
+		List<Long> orderIds = orders.stream().map(Order::getId).toList();
 
-        return orders.stream()
-                .map(order -> OrderResponse.of(order, itemsByOrderId.getOrDefault(order.getId(), List.of())))
-                .toList();
-    }
+		Map<Long, List<OrderItemResponse>> itemsByOrderId = orderItemRepository
+				.findByOrderIdInWithItem(orderIds).stream()
+				.collect(Collectors.groupingBy(
+						oi -> oi.getOrder().getId(),
+						Collectors.mapping(OrderItemResponse::from, Collectors.toList())
+				));
+
+		return orders.stream()
+				.map(order -> OrderResponse.of(order, itemsByOrderId.getOrDefault(order.getId(), List.of())))
+				.toList();
+	}
+
+	public PaymentReadyResponse getPaymentInfo(Long orderId, Long userId) {
+		Order order = orderRepository.findByIdWithTheater(orderId)
+				.orElseThrow(() -> new GeneralException(ConcessionErrorStatus.ORDER_NOT_FOUND));
+
+		if (!order.isOwnedBy(userId)) {
+			throw new GeneralException(ConcessionErrorStatus.NOT_ORDER_OWNER);
+		}
+
+		if (order.getStatus() != OrderStatus.PENDING_PAYMENT) {
+			throw new GeneralException(ConcessionErrorStatus.ORDER_NOT_PENDING_PAYMENT);
+		}
+
+		Payment payment = paymentRepository.findByOrderId(orderId)
+				.orElseThrow(() -> new GeneralException(PaymentErrorStatus.PAYMENT_NOT_FOUND));
+		return PaymentReadyResponse.from(payment);
+	}
+
+	// 결제 승인 후 호출. 락 순서를 고정(itemId 오름차순)해 데드락을 막고, 하나라도 부족하면 전체 차감을 롤백한다
+	@Transactional
+	public void completePaidOrder(Order order) {
+		List<OrderItem> orderItems = orderItemRepository.findByOrderIdWithItem(order.getId()).stream()
+				.sorted(Comparator.comparing(orderItem -> orderItem.getItem().getId()))
+				.toList();
+
+		for (OrderItem orderItem : orderItems) {
+			int updated = stockRepository.decreaseStock(order.getTheater().getId(), orderItem.getItem().getId(),
+					orderItem.getQuantity());
+			if (updated == 0) {
+				throw new GeneralException(ConcessionErrorStatus.INSUFFICIENT_STOCK);
+			}
+		}
+		order.completePayment();
+	}
+
+	// 결제 전액 취소 후 호출. PAID가 아니면 이미 복구됐거나 차감된 적이 없으므로 재고를 건드리지 않는다
+	@Transactional
+	public void restoreCanceledOrder(Order order) {
+		if (order.getStatus() != OrderStatus.PAID) {
+			return;
+		}
+		List<OrderItem> orderItems = orderItemRepository.findByOrderIdWithItem(order.getId()).stream()
+				.sorted(Comparator.comparing(orderItem -> orderItem.getItem().getId()))
+				.toList();
+
+		for (OrderItem orderItem : orderItems) {
+			stockRepository.increaseStock(order.getTheater().getId(), orderItem.getItem().getId(), orderItem.getQuantity());
+		}
+		order.cancelPayment();
+	}
 }

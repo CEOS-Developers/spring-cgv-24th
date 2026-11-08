@@ -1,5 +1,5 @@
 package com.ceos24.cgv.domain.reservation.enums;
 
 public enum ReservationStatus {
-    RESERVED, CANCELLED
+    PENDING_PAYMENT, PAYING, RESERVED, CANCELLED, EXPIRED
 }

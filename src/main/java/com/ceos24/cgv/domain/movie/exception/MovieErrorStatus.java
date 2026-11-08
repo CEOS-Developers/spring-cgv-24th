@@ -12,7 +12,9 @@ public enum MovieErrorStatus implements BaseErrorCode {
 
     MOVIE_NOT_FOUND(HttpStatus.NOT_FOUND, "MOVIE404", "존재하지 않는 영화입니다."),
     ALREADY_LIKED_MOVIE(HttpStatus.CONFLICT, "MOVIE409", "이미 찜한 영화입니다."),
-    MOVIE_LIKE_NOT_FOUND(HttpStatus.NOT_FOUND, "MOVIE404_1", "찜하지 않은 영화입니다.");
+    MOVIE_LIKE_NOT_FOUND(HttpStatus.NOT_FOUND, "MOVIE404_1", "찜하지 않은 영화입니다."),
+    MOVIE_HAS_HISTORY(HttpStatus.CONFLICT, "MOVIE409_1", "상영 일정이나 리뷰가 있는 영화는 삭제할 수 없습니다."),
+    INVALID_SCREENING_PERIOD(HttpStatus.BAD_REQUEST, "MOVIE400", "상영 종료일은 개봉일보다 빠를 수 없습니다.");
 
     private final HttpStatus httpStatus;
     private final String code;

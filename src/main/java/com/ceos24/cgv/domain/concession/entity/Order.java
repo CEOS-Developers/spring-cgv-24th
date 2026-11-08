@@ -1,5 +1,6 @@
 package com.ceos24.cgv.domain.concession.entity;
 
+import com.ceos24.cgv.domain.concession.enums.OrderStatus;
 import com.ceos24.cgv.domain.theater.entity.Theater;
 import com.ceos24.cgv.domain.user.entity.User;
 import jakarta.persistence.*;
@@ -9,39 +10,54 @@ import lombok.NoArgsConstructor;
 
 import java.time.Instant;
 
-
 @Entity
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @Table(name = "orders")
 public class Order {
 
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+	@Id
+	@GeneratedValue(strategy = GenerationType.IDENTITY)
+	private Long id;
 
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "user_id", nullable = false)
-    private User user;
+	@ManyToOne(fetch = FetchType.LAZY)
+	@JoinColumn(name = "user_id", nullable = false)
+	private User user;
 
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "theater_id", nullable = false)
-    private Theater theater;
+	@ManyToOne(fetch = FetchType.LAZY)
+	@JoinColumn(name = "theater_id", nullable = false)
+	private Theater theater;
 
-    @Column(nullable = false)
-    private Instant orderedAt;
+	@Column(nullable = false)
+	private Instant orderedAt;
 
-    @Column(nullable = false)
-    private Integer totalPrice;
+	@Column(nullable = false)
+	private Integer totalPrice;
 
-    private Order(User user, Theater theater, Instant orderedAt, Integer totalPrice) {
-        this.user = user;
-        this.theater = theater;
-        this.orderedAt = orderedAt;
-        this.totalPrice = totalPrice;
-    }
+	@Enumerated(EnumType.STRING)
+	private OrderStatus status;
 
-    public static Order create(User user, Theater theater, Integer totalPrice) {
-        return new Order(user, theater, Instant.now(), totalPrice);
-    }
+	private Order(User user, Theater theater, Instant orderedAt, Integer totalPrice) {
+		this.user = user;
+		this.theater = theater;
+		this.orderedAt = orderedAt;
+		this.totalPrice = totalPrice;
+		this.status = OrderStatus.PENDING_PAYMENT;
+	}
+
+	public static Order create(User user, Theater theater, Integer totalPrice) {
+		return new Order(user, theater, Instant.now(), totalPrice);
+	}
+
+	public boolean isOwnedBy(Long userId) {
+		return user.getId().equals(userId);
+	}
+
+	public void completePayment() {
+		this.status = OrderStatus.PAID;
+	}
+
+	public void cancelPayment() {
+		this.status = OrderStatus.CANCELED;
+	}
 }

@@ -2,6 +2,8 @@ package com.ceos24.cgv.domain.movie.entity;
 
 import com.ceos24.cgv.domain.movie.enums.AgeRating;
 import com.ceos24.cgv.domain.movie.enums.MovieStatus;
+import com.ceos24.cgv.domain.movie.exception.MovieErrorStatus;
+import com.ceos24.cgv.global.exception.GeneralException;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -55,11 +57,14 @@ public class Movie {
 
     public static Movie create(String title, String genre, Integer runningTime, String description,
                                AgeRating ageRating, MovieStatus status, LocalDate openDate, LocalDate closeDate) {
+        validateScreeningPeriod(openDate, closeDate);
         return new Movie(title, genre, runningTime, description, ageRating, status, openDate, closeDate);
     }
 
     public void update(String title, String genre, Integer runningTime, String description,
                        AgeRating ageRating, MovieStatus status, LocalDate openDate, LocalDate closeDate) {
+        validateScreeningPeriod(openDate != null ? openDate : this.openDate,
+                closeDate != null ? closeDate : this.closeDate);
         if (title != null) this.title = title;
         if (genre != null) this.genre = genre;
         if (runningTime != null) this.runningTime = runningTime;
@@ -68,5 +73,11 @@ public class Movie {
         if (status != null) this.status = status;
         if (openDate != null) this.openDate = openDate;
         if (closeDate != null) this.closeDate = closeDate;
+    }
+
+    private static void validateScreeningPeriod(LocalDate openDate, LocalDate closeDate) {
+        if (openDate != null && closeDate != null && closeDate.isBefore(openDate)) {
+            throw new GeneralException(MovieErrorStatus.INVALID_SCREENING_PERIOD);
+        }
     }
 }

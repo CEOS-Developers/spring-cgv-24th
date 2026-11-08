@@ -8,4 +8,5 @@ import java.util.List;
 public interface MovieImageRepository extends JpaRepository<MovieImage, Long> {
     List<MovieImage> findByMovieId(Long movieId);
     List<MovieImage> findByMovieIdIn(List<Long> movieIds);
+    void deleteByMovieId(Long movieId);
 }
