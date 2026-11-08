@@ -39,7 +39,11 @@ public class TossPaymentsClient {
     // 4xx지만 토스가 승인하지 않았다고 확신할 수 없는 응답들이다.
     // ALREADY_PROCESSED_PAYMENT: 앞선 승인 요청이 이미 성공했고 그 응답만 놓쳤다. 거절로 처리하면 돈은 빠졌는데 실패로 기록된다.
     // PROVIDER_ERROR: 400이지만 "일시적인 오류"라 카드사에서 처리됐는지 알 수 없다. 취소에서와 같은 기준이다.
-    private static final Set<String> CONFIRM_UNKNOWN_CODES = Set.of("ALREADY_PROCESSED_PAYMENT", "PROVIDER_ERROR");
+    // IDEMPOTENT_REQUEST_PROCESSING: 같은 멱등키(주문번호)의 첫 승인 요청이 아직 처리 중이다. 그 요청은 승인될 수 있다.
+    // 그 밖의 4xx는 거절로 둔다. 카드 한도 초과 같은 흔한 거절까지 결과 불명으로 두면 회원이 정리까지 다시 결제하지 못한다.
+    // 새 코드는 "이미 처리됨·처리 중·일시 오류" 계열인지로 판단해 여기에 더한다.
+    private static final Set<String> CONFIRM_UNKNOWN_CODES =
+            Set.of("ALREADY_PROCESSED_PAYMENT", "PROVIDER_ERROR", "IDEMPOTENT_REQUEST_PROCESSING");
     private static final String CANCEL_URI = "/v1/payments/{paymentKey}/cancel";
     private static final String DONE = "DONE";
     private static final String CANCELED = "CANCELED";

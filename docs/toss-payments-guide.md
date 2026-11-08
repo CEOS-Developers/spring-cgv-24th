@@ -249,6 +249,7 @@ Content-Type: application/json
 | 카드사 거절 등 그 밖의 4xx | 거절 → 402 | 토스가 승인하지 않았다 |
 | 400 `ALREADY_PROCESSED_PAYMENT` | 결과 모름 | 앞선 승인이 성공했고 응답만 놓쳤다 |
 | 400 `PROVIDER_ERROR` | 결과 모름 | 승인 API에도 "일시적인 오류"로 있다. 카드사에서 처리됐는지 알 수 없다 |
+| 409 `IDEMPOTENT_REQUEST_PROCESSING` | 결과 모름 | 같은 주문(멱등키)의 첫 승인이 처리 중. 그 요청은 승인될 수 있다 (PR 리뷰 반영) |
 | 401 `UNAUTHORIZED_KEY`, 400 `INVALID_API_KEY`, 429 | 거절(`serviceError`) → 503 | 토스가 판단하지 않았다. 돈은 안 빠졌지만 카드를 바꿔도 소용없다 |
 | 연결 실패 | 같은 멱등키로 1번 다시 → 또 실패면 거절(`serviceError`) → 503 | 승인은 주문마다 한 번만 보내므로 토스에 한 번도 닿지 않은 것이 확실하다 |
 | 500대(`FAILED_PAYMENT_INTERNAL_SYSTEM_PROCESSING`, `UNKNOWN_PAYMENT_ERROR` 등), 읽기 타임아웃 | 결과 모름 → 504 | |

@@ -111,6 +111,16 @@ class TossPaymentsClientTest {
     }
 
     @Test
+    void 같은_주문의_첫_승인_요청이_처리_중이면_결과_불명이다() {
+        // 첫 요청은 승인될 수 있다. 거절로 확정하면 돈이 빠진 회원이 새 주문으로 다시 결제할 수 있다
+        server.expect(requestTo(CONFIRM_URL))
+                .andRespond(withStatus(HttpStatus.CONFLICT).contentType(MediaType.APPLICATION_JSON)
+                        .body(errorJson("IDEMPOTENT_REQUEST_PROCESSING", "이전 요청이 처리 중입니다.")));
+
+        assertThat(client.confirm("tgen_test_key", ORDER_ID, 14000)).isInstanceOf(Unknown.class);
+    }
+
+    @Test
     void 읽기_타임아웃은_결과_불명이다() {
         server.expect(requestTo(CONFIRM_URL)).andRespond(withException(new SocketTimeoutException("Read timed out")));
 
