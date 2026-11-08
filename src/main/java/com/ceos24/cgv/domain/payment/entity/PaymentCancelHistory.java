@@ -20,6 +20,9 @@ public class PaymentCancelHistory {
     @Column(name = "cancel_request_id", unique = true)
     private String cancelRequestId;
 
+    @Column(name = "transaction_key", unique = true)
+    private String transactionKey;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "payment_id", nullable = false)
     private Payment payment;
@@ -42,7 +45,7 @@ public class PaymentCancelHistory {
     private LocalDateTime canceledAt;
 
     public PaymentCancelHistory(Payment payment, Long cancelAmount, String cancelReason, LocalDateTime canceledAt) {
-        this(payment, null, null, null, "전체 취소", cancelAmount, cancelReason, canceledAt);
+        this(payment, null, null, null, null, "전체 취소", cancelAmount, cancelReason, canceledAt);
     }
 
     public PaymentCancelHistory(
@@ -53,12 +56,34 @@ public class PaymentCancelHistory {
             Long cancelAmount,
             String cancelReason,
             LocalDateTime canceledAt) {
-        this(payment, null, orderItem, cancelQuantity, itemName, cancelAmount, cancelReason, canceledAt);
+        this(payment, null, null, orderItem, cancelQuantity, itemName, cancelAmount, cancelReason, canceledAt);
     }
 
     public PaymentCancelHistory(
             Payment payment,
             String cancelRequestId,
+            OrderItem orderItem,
+            Long cancelQuantity,
+            String itemName,
+            Long cancelAmount,
+            String cancelReason,
+            LocalDateTime canceledAt) {
+        this(
+                payment,
+                cancelRequestId,
+                null,
+                orderItem,
+                cancelQuantity,
+                itemName,
+                cancelAmount,
+                cancelReason,
+                canceledAt);
+    }
+
+    public PaymentCancelHistory(
+            Payment payment,
+            String cancelRequestId,
+            String transactionKey,
             OrderItem orderItem,
             Long cancelQuantity,
             String itemName,
@@ -75,7 +100,8 @@ public class PaymentCancelHistory {
             throw new IllegalArgumentException("취소 사유는 필수입니다.");
         }
         this.payment = payment;
-        this.cancelRequestId = cancelRequestId;
+        this.cancelRequestId = normalizeBlankToNull(cancelRequestId);
+        this.transactionKey = normalizeBlankToNull(transactionKey);
         this.orderItem = orderItem;
         this.cancelQuantity = cancelQuantity;
         this.itemName = itemName != null
@@ -84,5 +110,9 @@ public class PaymentCancelHistory {
         this.cancelAmount = cancelAmount;
         this.cancelReason = cancelReason;
         this.canceledAt = canceledAt != null ? canceledAt : LocalDateTime.now();
+    }
+
+    private static String normalizeBlankToNull(String value) {
+        return (value != null && !value.isBlank()) ? value : null;
     }
 }

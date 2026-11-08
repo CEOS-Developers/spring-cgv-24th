@@ -23,10 +23,20 @@ public class RestClientConfig {
     }
 
     @Bean
-    public RestClient tossRestClient(TossProperties tossProperties) {
+    public RestClient tossCommandRestClient(TossProperties tossProperties) {
+        return createTossRestClient(tossProperties, Duration.ofSeconds(3), Duration.ofSeconds(5));
+    }
+
+    @Bean
+    public RestClient tossQueryRestClient(TossProperties tossProperties) {
+        return createTossRestClient(tossProperties, Duration.ofSeconds(2), Duration.ofSeconds(3));
+    }
+
+    private RestClient createTossRestClient(
+            TossProperties tossProperties, Duration connectTimeout, Duration readTimeout) {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
-        factory.setConnectTimeout(Duration.ofSeconds(5));
-        factory.setReadTimeout(Duration.ofSeconds(5));
+        factory.setConnectTimeout(connectTimeout);
+        factory.setReadTimeout(readTimeout);
 
         String encodedSecretKey =
                 Base64.getEncoder().encodeToString((tossProperties.secretKey() + ":").getBytes(StandardCharsets.UTF_8));

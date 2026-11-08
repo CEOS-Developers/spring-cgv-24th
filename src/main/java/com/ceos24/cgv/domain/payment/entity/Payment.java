@@ -30,7 +30,7 @@ public class Payment {
     @Column(name = "order_code", unique = true, nullable = false)
     private String orderId;
 
-    @OneToOne(fetch = FetchType.LAZY)
+    @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "order_id")
     private Order order;
 
@@ -118,11 +118,53 @@ public class Payment {
         return this.reservation != null;
     }
 
-    public void complete(String paymentKey, String method, LocalDateTime approvedAt) {
+    public boolean isApprovedOrCanceled() {
+        return this.status == PaymentStatus.DONE
+                || this.status == PaymentStatus.PARTIAL_CANCELED
+                || this.status == PaymentStatus.CANCELED;
+    }
+
+    public void validateOwner(Long memberId) {
+        if (memberId == null) {
+            throw new BusinessException(ErrorCode.AUTH_UNAUTHORIZED_USER);
+        }
+        Long ownerId = isReservationPayment()
+                ? this.reservation.getMember().getId()
+                : this.order.getMember().getId();
+        if (!ownerId.equals(memberId)) {
+            throw new BusinessException(ErrorCode.AUTH_FORBIDDEN_USER, "해당 결제에 대한 권한이 없습니다.");
+        }
+    }
+
+    public void validateTargetAmountMatched() {
+        Long targetPrice = isReservationPayment() ? this.reservation.getTotalPrice() : this.order.getTotalPrice();
+        if (!this.totalAmount.equals(targetPrice)) {
+            throw new BusinessException(
+                    ErrorCode.PAYMENT_AMOUNT_MISMATCH,
+                    "결제 금액(" + this.totalAmount + "원)이 현재 주문/예매 금액(" + targetPrice + "원)과 일치하지 않습니다.");
+        }
+    }
+
+    public void startConfirm(String paymentKey) {
         if (this.status != PaymentStatus.READY) {
             throw new BusinessException(
                     ErrorCode.PAYMENT_ALREADY_PROCESSED,
-                    "결제 준비(READY) 상태에서만 승인이 가능합니다. 현재 상태: " + this.status.getDescription());
+                    "결제 준비(READY) 상태에서만 승인을 시작할 수 있습니다. 현재 상태: " + this.status.getDescription());
+        }
+        if (paymentKey == null || paymentKey.isBlank()) {
+            throw new IllegalArgumentException("PG 결제 키(paymentKey)는 필수입니다.");
+        }
+        this.paymentKey = paymentKey;
+        this.status = PaymentStatus.IN_PROGRESS;
+    }
+
+    public void complete(String paymentKey, String method, LocalDateTime approvedAt) {
+        if (this.status != PaymentStatus.READY
+                && this.status != PaymentStatus.IN_PROGRESS
+                && this.status != PaymentStatus.FAILED) {
+            throw new BusinessException(
+                    ErrorCode.PAYMENT_ALREADY_PROCESSED,
+                    "승인 완료 처리할 수 없는 결제 상태입니다. 현재 상태: " + this.status.getDescription());
         }
         if (paymentKey == null || paymentKey.isBlank()) {
             throw new IllegalArgumentException("PG 결제 키(paymentKey)는 필수입니다.");
@@ -135,7 +177,7 @@ public class Payment {
     }
 
     public void cancel(Long cancelAmount, String cancelReason, LocalDateTime canceledAt) {
-        cancel(null, null, null, null, cancelAmount, cancelReason, canceledAt);
+        cancel(null, null, null, null, null, cancelAmount, cancelReason, canceledAt);
     }
 
     public void cancel(
@@ -145,11 +187,23 @@ public class Payment {
             Long cancelAmount,
             String cancelReason,
             LocalDateTime canceledAt) {
-        cancel(null, orderItem, cancelQuantity, itemName, cancelAmount, cancelReason, canceledAt);
+        cancel(null, null, orderItem, cancelQuantity, itemName, cancelAmount, cancelReason, canceledAt);
     }
 
     public void cancel(
             String cancelRequestId,
+            OrderItem orderItem,
+            Long cancelQuantity,
+            String itemName,
+            Long cancelAmount,
+            String cancelReason,
+            LocalDateTime canceledAt) {
+        cancel(cancelRequestId, null, orderItem, cancelQuantity, itemName, cancelAmount, cancelReason, canceledAt);
+    }
+
+    public void cancel(
+            String cancelRequestId,
+            String transactionKey,
             OrderItem orderItem,
             Long cancelQuantity,
             String itemName,
@@ -181,18 +235,35 @@ public class Payment {
         }
 
         PaymentCancelHistory cancelHistory = new PaymentCancelHistory(
-                this, cancelRequestId, orderItem, cancelQuantity, itemName, cancelAmount, cancelReason, canceledAt);
+                this,
+                cancelRequestId,
+                transactionKey,
+                orderItem,
+                cancelQuantity,
+                itemName,
+                cancelAmount,
+                cancelReason,
+                canceledAt);
         this.cancelHistories.add(cancelHistory);
     }
 
     public void abort() {
-        if (this.status == PaymentStatus.READY) {
+        if (this.status == PaymentStatus.READY
+                || this.status == PaymentStatus.IN_PROGRESS
+                || this.status == PaymentStatus.FAILED) {
             this.status = PaymentStatus.ABORTED;
         }
     }
 
+    public void abort(String paymentKey) {
+        if (this.paymentKey == null && paymentKey != null && !paymentKey.isBlank()) {
+            this.paymentKey = paymentKey;
+        }
+        abort();
+    }
+
     public void fail() {
-        if (this.status == PaymentStatus.READY) {
+        if (this.status == PaymentStatus.READY || this.status == PaymentStatus.IN_PROGRESS) {
             this.status = PaymentStatus.FAILED;
         }
     }

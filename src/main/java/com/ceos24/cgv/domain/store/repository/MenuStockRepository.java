@@ -18,5 +18,11 @@ public interface MenuStockRepository extends JpaRepository<MenuStock, Long> {
     List<MenuStock> findAllByStoreIdAndMenuIdIn(Long storeId, List<Long> menuIds);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query(
+            "SELECT ms FROM MenuStock ms WHERE ms.store.id = :storeId AND ms.menu.id IN :menuIds ORDER BY ms.menu.id ASC")
+    List<MenuStock> findAllByStoreIdAndMenuIdInOrderByMenuIdAsc(
+            @Param("storeId") Long storeId, @Param("menuIds") List<Long> menuIds);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
     Optional<MenuStock> findByStoreIdAndMenuId(Long storeId, Long menuId);
 }

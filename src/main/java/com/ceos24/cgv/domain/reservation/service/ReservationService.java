@@ -33,6 +33,7 @@ public class ReservationService {
     private final SeatRepository seatRepository;
     private final SeatReservationRepository seatReservationRepository;
     private final ReservationRepository reservationRepository;
+    private final ReservationExpirationProcessor reservationExpirationProcessor;
 
     @Transactional
     public ReservationResponse reserveSeats(Long memberId, Long screeningId, List<Long> seatNumbers) {
@@ -64,30 +65,43 @@ public class ReservationService {
 
     @Transactional
     public void cancelReservation(Long memberId, Long reservationId) {
-        Reservation reservation = findReservationWithSeats(reservationId, memberId);
+        Reservation reservation = findReservationWithLock(reservationId, memberId);
         reservation.cancelWithoutPayment();
     }
 
     @Transactional
     public ReservationResponse cancelReservationSeats(Long memberId, Long reservationId, List<Long> seatNumbers) {
-        Reservation reservation = findReservationWithSeats(reservationId, memberId);
+        Reservation reservation = findReservationWithLock(reservationId, memberId);
         reservation.cancelSeatsWithoutPayment(seatNumbers, LocalDateTime.now());
         return ReservationResponse.from(reservation);
     }
 
-    @Transactional
     public int expireHoldReservations() {
         LocalDateTime now = LocalDateTime.now();
-        List<Reservation> expiredReservations =
-                reservationRepository.findAllExpiredHoldReservations(ReservationStatus.HOLD, now);
+        List<Long> expiredReservationIds =
+                reservationRepository.findAllExpiredHoldReservationIds(ReservationStatus.HOLD, now);
 
-        if (expiredReservations.isEmpty()) {
+        if (expiredReservationIds.isEmpty()) {
             return 0;
         }
 
-        expiredReservations.forEach(Reservation::expire);
-        log.info("만료된 임시 좌석 점유 {}건 정리 완료", expiredReservations.size());
-        return expiredReservations.size();
+        int expiredCount = 0;
+        for (Long reservationId : expiredReservationIds) {
+            try {
+                if (reservationExpirationProcessor.expireSingleReservation(reservationId, now)) {
+                    expiredCount++;
+                }
+            } catch (ObjectOptimisticLockingFailureException e) {
+                log.debug("예매 만료 정리 중 동시 상태 변경으로 스킵: reservationId={}", reservationId);
+            } catch (Exception e) {
+                log.error("단일 예매 만료 처리 중 오류 발생: reservationId={}, error={}", reservationId, e.getMessage(), e);
+            }
+        }
+
+        if (expiredCount > 0) {
+            log.info("만료된 임시 좌석 점유 {}건 정리 완료", expiredCount);
+        }
+        return expiredCount;
     }
 
     private Member findMember(Long memberId) {
@@ -127,6 +141,7 @@ public class ReservationService {
         List<Long> expiredReservationIds = existingReservations.stream()
                 .map(sr -> sr.getReservation().getId())
                 .distinct()
+                .sorted()
                 .toList();
 
         List<Reservation> expiredReservations = reservationRepository.findAllWithSeatsByIdIn(expiredReservationIds);
@@ -138,9 +153,13 @@ public class ReservationService {
         }
     }
 
-    private Reservation findReservationWithSeats(Long reservationId, Long memberId) {
-        return reservationRepository
-                .findByIdAndMemberIdWithSeats(reservationId, memberId)
+    private Reservation findReservationWithLock(Long reservationId, Long memberId) {
+        Reservation reservation = reservationRepository
+                .findByIdWithLock(reservationId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.RESERVATION_NOT_FOUND));
+        if (!reservation.getMember().getId().equals(memberId)) {
+            throw new BusinessException(ErrorCode.RESERVATION_NOT_FOUND);
+        }
+        return reservation;
     }
 }

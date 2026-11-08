@@ -7,4 +7,6 @@ import org.springframework.data.jpa.repository.JpaRepository;
 public interface PaymentCancelHistoryRepository extends JpaRepository<PaymentCancelHistory, Long> {
 
     Optional<PaymentCancelHistory> findByCancelRequestId(String cancelRequestId);
+
+    boolean existsByTransactionKey(String transactionKey);
 }

@@ -55,6 +55,7 @@ public enum ErrorCode {
 
     // Payment
     PAYMENT_NOT_FOUND(404, "존재하지 않는 결제 정보입니다."),
+    PAYMENT_IN_PROGRESS(409, "결제 승인이 진행 중입니다. 잠시 후 다시 확인해 주세요."),
     PAYMENT_AMOUNT_MISMATCH(400, "결제 요청 금액이 주문 금액과 일치하지 않습니다."),
     PAYMENT_ALREADY_PROCESSED(400, "이미 완료되었거나 처리 불가능한 결제입니다."),
     PAYMENT_CANCEL_AMOUNT_EXCEEDED(400, "취소 요청 금액이 남은 결제 잔액을 초과했습니다."),
@@ -63,7 +64,8 @@ public enum ErrorCode {
     PAYMENT_GATEWAY_TIMEOUT(504, "결제 대행사 통신 중 시간 초과가 발생했습니다."),
     PAYMENT_INVALID_RESPONSE(502, "결제 대행사의 응답 정보가 올바르지 않습니다."),
     PAYMENT_GATEWAY_ERROR(502, "외부 결제 대행사(PG) 통신 중 오류가 발생했습니다."),
-    PAYMENT_COMPENSATION_FAILED(500, "시스템 오류 발생 후 자동 보상 취소 처리에 실패했습니다. 운영자 확인이 필요합니다.");
+    PAYMENT_COMPENSATION_FAILED(500, "시스템 오류 발생 후 자동 보상 취소 처리에 실패했습니다. 운영자 확인이 필요합니다."),
+    WEBHOOK_INVALID_SIGNATURE(401, "유효하지 않은 웹훅 서명입니다.");
 
     private final int status;
     private final String message;

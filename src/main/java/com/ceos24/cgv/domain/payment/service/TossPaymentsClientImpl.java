@@ -7,8 +7,8 @@ import com.ceos24.cgv.domain.payment.dto.TossPaymentResponse;
 import com.ceos24.cgv.domain.payment.exception.TossPaymentException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.client.ClientHttpResponse;
 import org.springframework.stereotype.Component;
@@ -17,11 +17,20 @@ import org.springframework.web.client.RestClient;
 
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class TossPaymentsClientImpl implements TossPaymentsClient {
 
-    private final RestClient tossRestClient;
+    private final RestClient tossCommandRestClient;
+    private final RestClient tossQueryRestClient;
     private final ObjectMapper objectMapper;
+
+    public TossPaymentsClientImpl(
+            @Qualifier("tossCommandRestClient") RestClient tossCommandRestClient,
+            @Qualifier("tossQueryRestClient") RestClient tossQueryRestClient,
+            ObjectMapper objectMapper) {
+        this.tossCommandRestClient = tossCommandRestClient;
+        this.tossQueryRestClient = tossQueryRestClient;
+        this.objectMapper = objectMapper;
+    }
 
     @Override
     public TossPaymentResponse confirm(TossConfirmRequest request, String idempotencyKey) {
@@ -31,7 +40,7 @@ public class TossPaymentsClientImpl implements TossPaymentsClient {
                 request.amount(),
                 idempotencyKey);
         RestClient.RequestBodySpec requestSpec =
-                tossRestClient.post().uri("/v1/payments/confirm").body(request);
+                tossCommandRestClient.post().uri("/v1/payments/confirm").body(request);
 
         if (idempotencyKey != null && !idempotencyKey.isBlank()) {
             requestSpec.header("Idempotency-Key", idempotencyKey);
@@ -52,7 +61,7 @@ public class TossPaymentsClientImpl implements TossPaymentsClient {
     public TossPaymentResponse getPayment(String paymentKey) {
         log.info("Requesting Toss payment inquiry: paymentKey={}", paymentKey);
         try {
-            return tossRestClient
+            return tossQueryRestClient
                     .get()
                     .uri("/v1/payments/{paymentKey}", paymentKey)
                     .retrieve()
@@ -71,7 +80,7 @@ public class TossPaymentsClientImpl implements TossPaymentsClient {
                 paymentKey,
                 request.cancelAmount(),
                 idempotencyKey);
-        RestClient.RequestBodySpec requestSpec = tossRestClient
+        RestClient.RequestBodySpec requestSpec = tossCommandRestClient
                 .post()
                 .uri("/v1/payments/{paymentKey}/cancel", paymentKey)
                 .body(request);

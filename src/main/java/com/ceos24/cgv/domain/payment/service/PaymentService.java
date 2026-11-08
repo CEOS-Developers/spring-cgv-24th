@@ -1,8 +1,5 @@
 package com.ceos24.cgv.domain.payment.service;
 
-import com.ceos24.cgv.domain.order.entity.Order;
-import com.ceos24.cgv.domain.order.entity.OrderItem;
-import com.ceos24.cgv.domain.order.repository.OrderRepository;
 import com.ceos24.cgv.domain.payment.dto.PaymentCancelRequest;
 import com.ceos24.cgv.domain.payment.dto.PaymentConfirmRequest;
 import com.ceos24.cgv.domain.payment.dto.PaymentPrepareRequest;
@@ -11,174 +8,43 @@ import com.ceos24.cgv.domain.payment.dto.PaymentResponse;
 import com.ceos24.cgv.domain.payment.dto.TossCancelRequest;
 import com.ceos24.cgv.domain.payment.dto.TossConfirmRequest;
 import com.ceos24.cgv.domain.payment.dto.TossPaymentResponse;
-import com.ceos24.cgv.domain.payment.entity.Payment;
-import com.ceos24.cgv.domain.payment.entity.PaymentCancelHistory;
-import com.ceos24.cgv.domain.payment.entity.PaymentStatus;
 import com.ceos24.cgv.domain.payment.exception.TossPaymentException;
-import com.ceos24.cgv.domain.payment.repository.PaymentCancelHistoryRepository;
-import com.ceos24.cgv.domain.payment.repository.PaymentRepository;
-import com.ceos24.cgv.domain.reservation.entity.Reservation;
-import com.ceos24.cgv.domain.reservation.repository.ReservationRepository;
-import com.ceos24.cgv.domain.store.repository.MenuStockRepository;
+import com.ceos24.cgv.domain.payment.service.PaymentTransactionService.CancelPlan;
+import com.ceos24.cgv.domain.payment.service.PaymentTransactionService.CompleteResult;
+import com.ceos24.cgv.domain.payment.service.PaymentTransactionService.ConfirmStartResult;
 import com.ceos24.cgv.global.exception.BusinessException;
 import com.ceos24.cgv.global.exception.ErrorCode;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
-import java.util.List;
-import java.util.Objects;
-import java.util.Optional;
-import java.util.UUID;
+import java.time.format.DateTimeParseException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class PaymentService {
 
-    private final PaymentRepository paymentRepository;
-    private final PaymentCancelHistoryRepository paymentCancelHistoryRepository;
-    private final OrderRepository orderRepository;
-    private final ReservationRepository reservationRepository;
-    private final MenuStockRepository menuStockRepository;
+    private final PaymentTransactionService paymentTransactionService;
     private final TossPaymentsClient tossPaymentsClient;
-    private final PaymentRecoveryService paymentRecoveryService;
 
-    @Transactional
-    public PaymentPrepareResponse preparePayment(PaymentPrepareRequest request) {
+    public PaymentPrepareResponse preparePayment(Long memberId, PaymentPrepareRequest request) {
         validatePrepareRequest(request);
-        if (request.reservationId() != null) {
-            return prepareReservationPayment(request.reservationId());
-        }
-        return prepareOrderPayment(request.orderId());
+        return paymentTransactionService.preparePayment(memberId, request);
     }
 
-    private void validatePrepareRequest(PaymentPrepareRequest request) {
-        if ((request.orderId() == null) == (request.reservationId() == null)) {
-            throw new BusinessException(ErrorCode.INVALID_INPUT_VALUE, "orderId와 reservationId 중 정확히 하나만 입력해야 합니다.");
+    public PaymentResponse confirmPayment(Long memberId, PaymentConfirmRequest request) {
+        // T1: 비관적 락 기반 사전 검증 및 IN_PROGRESS 전이
+        ConfirmStartResult startResult = paymentTransactionService.startConfirm(memberId, request);
+        if (startResult.alreadyCompleted()) {
+            return startResult.response();
         }
-    }
-
-    private PaymentPrepareResponse prepareOrderPayment(Long orderId) {
-        Order order =
-                orderRepository.findById(orderId).orElseThrow(() -> new BusinessException(ErrorCode.ORDER_NOT_FOUND));
-
-        Optional<Payment> existingPayment = paymentRepository.findByOrder(order);
-        if (existingPayment.isPresent()) {
-            Payment p = existingPayment.get();
-            if (p.getStatus() == PaymentStatus.DONE
-                    || p.getStatus() == PaymentStatus.PARTIAL_CANCELED
-                    || p.getStatus() == PaymentStatus.CANCELED
-                    || p.getStatus() == PaymentStatus.MANUAL_RECOVERY_REQUIRED) {
-                throw new BusinessException(ErrorCode.PAYMENT_ALREADY_PROCESSED, "이미 결제가 처리된 주문입니다.");
-            }
-            if (p.getStatus() == PaymentStatus.READY) {
-                return new PaymentPrepareResponse(
-                        p.getOrderId(), p.getTotalAmount(), createOrderName(order), p.getId());
-            }
+        if (startResult.recoveryRequired()) {
+            return recoverFromPendingConfirm(request.orderId(), startResult.paymentKey(), startResult.amount());
         }
 
-        String orderCode = "CGV_ORDER_"
-                + order.getId()
-                + "_"
-                + UUID.randomUUID().toString().replace("-", "").substring(0, 10);
-        Payment payment = Payment.createReady(order, orderCode, order.getTotalPrice());
-        paymentRepository.save(payment);
-
-        return new PaymentPrepareResponse(
-                payment.getOrderId(), payment.getTotalAmount(), createOrderName(order), payment.getId());
-    }
-
-    private PaymentPrepareResponse prepareReservationPayment(Long reservationId) {
-        Reservation reservation = reservationRepository
-                .findByIdWithLock(reservationId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.RESERVATION_NOT_FOUND));
-
-        reservation.validatePayable(LocalDateTime.now());
-
-        Optional<Payment> existingPayment = paymentRepository.findTopByReservationOrderByIdDesc(reservation);
-        if (existingPayment.isPresent()) {
-            Payment p = existingPayment.get();
-            if (p.getStatus() == PaymentStatus.DONE
-                    || p.getStatus() == PaymentStatus.PARTIAL_CANCELED
-                    || p.getStatus() == PaymentStatus.CANCELED
-                    || p.getStatus() == PaymentStatus.MANUAL_RECOVERY_REQUIRED) {
-                throw new BusinessException(ErrorCode.PAYMENT_ALREADY_PROCESSED, "이미 결제가 처리된 예매입니다.");
-            }
-            if (p.getStatus() == PaymentStatus.READY) {
-                if (p.getTotalAmount().equals(reservation.getTotalPrice())) {
-                    return new PaymentPrepareResponse(
-                            p.getOrderId(), p.getTotalAmount(), createReservationName(reservation), p.getId());
-                }
-                // HOLD 상태 중 부분 취소 등으로 예매 금액이 변경된 경우 기존 READY 결제를 중단하고 새로 발급
-                p.abort();
-            }
-        }
-
-        String orderCode = "CGV_RES_"
-                + reservation.getId()
-                + "_"
-                + UUID.randomUUID().toString().replace("-", "").substring(0, 10);
-        Payment payment = Payment.createReady(reservation, orderCode, reservation.getTotalPrice());
-        paymentRepository.save(payment);
-
-        return new PaymentPrepareResponse(
-                payment.getOrderId(), payment.getTotalAmount(), createReservationName(reservation), payment.getId());
-    }
-
-    @Transactional
-    public PaymentResponse confirmPayment(PaymentConfirmRequest request) {
-        // 1. 결제 데이터 조회
-        Payment payment = paymentRepository
-                .findByOrderId(request.orderId())
-                .orElseThrow(() -> new BusinessException(ErrorCode.PAYMENT_NOT_FOUND));
-
-        // 2. 이미 승인 완료(DONE)된 경우 멱등 반환
-        if (payment.getStatus() == PaymentStatus.DONE) {
-            if (!payment.getTotalAmount().equals(request.amount())
-                    || (payment.getPaymentKey() != null
-                            && !payment.getPaymentKey().equals(request.paymentKey()))) {
-                log.error(
-                        "승인 완료된 결제에 대한 파라미터 불일치 요청: orderId={}, DB amount={}, req amount={}, DB key={}, req key={}",
-                        request.orderId(),
-                        payment.getTotalAmount(),
-                        request.amount(),
-                        payment.getPaymentKey(),
-                        request.paymentKey());
-                throw new BusinessException(ErrorCode.PAYMENT_AMOUNT_MISMATCH, "이미 승인 완료된 결제의 정보와 일치하지 않습니다.");
-            }
-            log.info("결제 승인 멱등 응답: 이미 승인 완료된 요청 (orderId={})", request.orderId());
-            return PaymentResponse.from(payment);
-        }
-
-        // 3. 결제 상태 검증 (READY 상태에서만 승인 가능)
-        if (payment.getStatus() != PaymentStatus.READY) {
-            log.warn("결제 승인 거절: 승인 가능한 상태가 아님. orderId={}, status={}", request.orderId(), payment.getStatus());
-            throw new BusinessException(ErrorCode.PAYMENT_ALREADY_PROCESSED);
-        }
-
-        // 4. 결제 금액 검증
-        if (!payment.getTotalAmount().equals(request.amount())) {
-            log.error(
-                    "결제 금액 불일치: DB 금액={}원, 요청 금액={}원 (orderId={})",
-                    payment.getTotalAmount(),
-                    request.amount(),
-                    request.orderId());
-            throw new BusinessException(ErrorCode.PAYMENT_AMOUNT_MISMATCH);
-        }
-
-        // 4-1. 영화 예매 결제인 경우 PG 승인 요청 전 점유 만료 및 예매 금액 사전 검증
-        if (payment.isReservationPayment()) {
-            Reservation reservation = payment.getReservation();
-            reservation.validatePayable(LocalDateTime.now());
-            if (!payment.getTotalAmount().equals(reservation.getTotalPrice())) {
-                throw new BusinessException(ErrorCode.PAYMENT_AMOUNT_MISMATCH, "결제 요청 금액이 현재 예매 금액과 일치하지 않습니다.");
-            }
-        }
-
-        // 5. 토스페이먼츠 승인 API 호출 (orderId를 Idempotency-Key로 전달)
+        // T1과 T2 사이: 외부 토스 승인 API 호출 (orderId를 Idempotency-Key로 사용)
         TossPaymentResponse tossResponse;
         try {
             tossResponse = tossPaymentsClient.confirm(
@@ -191,18 +57,23 @@ public class PaymentService {
                     e.getTossCode(),
                     e.getMessage());
             if (e.isClientError()) {
-                paymentRecoveryService.recordAbortByOrderId(request.orderId());
-            } else {
-                paymentRecoveryService.recordFailByOrderId(request.orderId());
+                if ("ALREADY_PROCESSED_PAYMENT".equals(e.getTossCode())) {
+                    log.warn(
+                            "토스 이미 승인 완료 응답 수신(ALREADY_PROCESSED_PAYMENT) -> 단건 조회 복구 실행: orderId={}",
+                            request.orderId());
+                    return recoverFromPendingConfirm(request.orderId(), request.paymentKey(), request.amount());
+                }
+                paymentTransactionService.recordAbortByOrderId(request.orderId());
+                throw e;
             }
-            throw e;
+            log.warn("토스 결제 승인 서버 에러/타임아웃 발생 -> 단건 조회 복구 실행: orderId={}", request.orderId());
+            return recoverFromPendingConfirm(request.orderId(), request.paymentKey(), request.amount());
         } catch (Exception e) {
-            log.error("토스 결제 승인 API 호출 중 예외 발생: orderId={}, error={}", request.orderId(), e.getMessage());
-            paymentRecoveryService.recordFailByOrderId(request.orderId());
-            throw e;
+            log.warn("토스 결제 승인 중 예외 발생 -> 단건 조회 복구 실행: orderId={}, error={}", request.orderId(), e.getMessage());
+            return recoverFromPendingConfirm(request.orderId(), request.paymentKey(), request.amount());
         }
 
-        // 6. 응답 필수 필드 및 금액 검증
+        // 응답 필수값 및 금액 무결성 검증 (실패 시 즉시 자동 보상 취소)
         try {
             tossResponse.validateIntegrity(request.orderId(), request.amount());
         } catch (BusinessException integrityEx) {
@@ -215,48 +86,82 @@ public class PaymentService {
                     integrityEx);
         }
 
-        // 7. 예매 확정 및 결제 승인 완료 상태 반영 (실패 시 자동 보상 취소)
+        // T2: 승인 확정 및 자원 반영 (실패 시 즉시 자동 보상 취소)
+        return applyApprovedPayment(tossResponse, true);
+    }
+
+    private PaymentResponse recoverFromPendingConfirm(String orderId, String paymentKey, Long amount) {
+        log.info("결제 승인 복구 조회 시작: orderId={}, paymentKey={}", orderId, paymentKey);
+        TossPaymentResponse latest;
         try {
-            if (payment.isReservationPayment()) {
-                Reservation lockedReservation = reservationRepository
-                        .findByIdWithLock(payment.getReservation().getId())
-                        .orElseThrow(() -> new BusinessException(ErrorCode.RESERVATION_NOT_FOUND));
-                lockedReservation.confirm(LocalDateTime.now());
-                reservationRepository.saveAndFlush(lockedReservation);
-            }
-            LocalDateTime approvedAt = tossResponse.approvedAt() != null
-                    ? OffsetDateTime.parse(tossResponse.approvedAt()).toLocalDateTime()
-                    : LocalDateTime.now();
-            payment.complete(tossResponse.paymentKey(), tossResponse.method(), approvedAt);
-            paymentRepository.saveAndFlush(payment);
-        } catch (Exception dbException) {
+            latest = tossPaymentsClient.getPayment(paymentKey);
+        } catch (Exception inquiryEx) {
             log.error(
-                    "결제 승인 후 DB 반영 중 오류 발생으로 보상 취소 진행: orderId={}, error={}",
-                    request.orderId(),
-                    dbException.getMessage(),
-                    dbException);
-            String cancelReason = "시스템 오류로 인한 자동 보상 취소";
-            BusinessException exceptionToThrow =
-                    new BusinessException(ErrorCode.PAYMENT_GATEWAY_ERROR, "주문 처리 중 오류가 발생하여 결제가 자동으로 취소되었습니다.");
-            if (dbException instanceof BusinessException be && be.getErrorCode() == ErrorCode.RESERVATION_EXPIRED) {
-                cancelReason = "예매 점유 시간 만료로 인한 자동 보상 취소";
-                exceptionToThrow =
-                        new BusinessException(ErrorCode.RESERVATION_EXPIRED, "예매 점유 시간이 만료되어 결제가 자동으로 취소되었습니다.");
-            } else if (dbException instanceof BusinessException be
-                    && be.getErrorCode() == ErrorCode.RESERVATION_ALREADY_PROCESSED) {
-                cancelReason = "예매 상태 변경으로 인한 자동 보상 취소";
-                exceptionToThrow = new BusinessException(
-                        ErrorCode.RESERVATION_ALREADY_PROCESSED, "이미 처리되었거나 취소된 예매로 인해 결제가 자동으로 취소되었습니다.");
-            }
-            executeCompensatingCancel(
-                    request.orderId(),
-                    tossResponse.paymentKey() != null ? tossResponse.paymentKey() : request.paymentKey(),
-                    request.amount(),
-                    cancelReason,
-                    exceptionToThrow);
+                    "결제 승인 복구 조회 실패: orderId={}, paymentKey={}, error={}", orderId, paymentKey, inquiryEx.getMessage());
+            throw new BusinessException(
+                    ErrorCode.PAYMENT_GATEWAY_TIMEOUT, "결제 승인 결과 확인 중 시간 초과가 발생했습니다. 잠시 후 결제 내역을 확인해 주세요.");
         }
 
-        return PaymentResponse.from(payment);
+        String status = latest.status();
+        if ("DONE".equals(status)) {
+            latest.validateIntegrity(orderId, amount);
+            return applyApprovedPayment(latest, true);
+        }
+        if ("CANCELED".equals(status) || "PARTIAL_CANCELED".equals(status)) {
+            paymentTransactionService.applyCancelWebhook(latest);
+            throw new BusinessException(ErrorCode.PAYMENT_ALREADY_CANCELED, "결제 승인 직후 취소된 거래입니다.");
+        }
+        if ("ABORTED".equals(status) || "EXPIRED".equals(status)) {
+            paymentTransactionService.recordAbortByOrderId(orderId);
+            throw new BusinessException(ErrorCode.PAYMENT_ALREADY_PROCESSED, "결제 승인이 중단되었거나 만료되었습니다.");
+        }
+
+        throw new BusinessException(ErrorCode.PAYMENT_IN_PROGRESS);
+    }
+
+    private PaymentResponse applyApprovedPayment(
+            TossPaymentResponse tossResponse, boolean throwBusinessExceptionAfterCompensation) {
+        try {
+            CompleteResult result = paymentTransactionService.completeApprovedPayment(tossResponse);
+            if (result.alreadyAborted()) {
+                if (throwBusinessExceptionAfterCompensation) {
+                    throw new BusinessException(ErrorCode.PAYMENT_ALREADY_PROCESSED, "이미 중단되거나 보상 취소된 결제입니다.");
+                }
+            }
+            return result.response();
+        } catch (Exception dbException) {
+            log.error(
+                    "결제 승인 후 DB 반영 중 오류 발생으로 자동 보상 취소 진행: orderId={}, error={}",
+                    tossResponse.orderId(),
+                    dbException.getMessage(),
+                    dbException);
+
+            RuntimeException exceptionToThrow;
+            String reason;
+            if (dbException instanceof BusinessException be
+                    && (be.getErrorCode() == ErrorCode.RESERVATION_EXPIRED
+                            || be.getErrorCode() == ErrorCode.RESERVATION_ALREADY_PROCESSED)) {
+                reason = "예매 점유 만료 또는 상태 변경으로 인한 자동 보상 취소";
+                exceptionToThrow = be;
+            } else if (dbException instanceof BusinessException be
+                    && be.getErrorCode() == ErrorCode.PAYMENT_AMOUNT_MISMATCH) {
+                reason = "결제 금액 불일치로 인한 자동 보상 취소";
+                exceptionToThrow = be;
+            } else {
+                reason = "시스템 처리 오류로 인한 자동 보상 취소";
+                exceptionToThrow =
+                        new BusinessException(ErrorCode.PAYMENT_GATEWAY_ERROR, "주문/예매 처리 중 오류가 발생하여 결제가 자동으로 취소되었습니다.");
+            }
+
+            executeCompensatingCancel(
+                    tossResponse.orderId(),
+                    tossResponse.paymentKey(),
+                    tossResponse.totalAmount(),
+                    reason,
+                    throwBusinessExceptionAfterCompensation ? exceptionToThrow : null);
+
+            return null;
+        }
     }
 
     private void executeCompensatingCancel(
@@ -265,195 +170,103 @@ public class PaymentService {
         boolean cancelSucceeded = false;
         try {
             tossPaymentsClient.cancel(paymentKey, new TossCancelRequest(reason, amount), "COMPENSATION_" + orderId);
-            log.info("보상 취소 완료 (orderId={})", orderId);
+            log.info("보상 취소 API 성공: orderId={}", orderId);
             cancelSucceeded = true;
-            paymentRecoveryService.recordCompensatedAbort(orderId, paymentKey);
+            paymentTransactionService.recordCompensatedAbort(orderId, paymentKey);
         } catch (Exception cancelEx) {
-            handleCompensationFailure(orderId, paymentKey, cancelEx);
+            log.error(
+                    "보상 취소 실패 (수동 확인 필요): orderId={}, paymentKey={}, error={}",
+                    orderId,
+                    paymentKey,
+                    cancelEx.getMessage(),
+                    cancelEx);
+            paymentTransactionService.recordManualRecoveryRequired(orderId, paymentKey);
+            throw new BusinessException(
+                    ErrorCode.PAYMENT_COMPENSATION_FAILED, "시스템 오류 발생 후 자동 결제 취소에도 실패했습니다. 관리자 확인이 필요합니다.");
         }
 
-        if (cancelSucceeded) {
+        if (cancelSucceeded && exceptionToThrowOnSuccess != null) {
             throw exceptionToThrowOnSuccess;
         }
     }
 
-    private void handleCompensationFailure(String orderId, String paymentKey, Exception cancelEx) {
-        log.error(
-                "결제 승인 후 보상 취소 API 호출 실패 (orderId={}, paymentKey={}). MANUAL_RECOVERY_REQUIRED 상태로 기록합니다.",
-                orderId,
-                paymentKey,
-                cancelEx);
-        paymentRecoveryService.recordManualRecoveryRequired(orderId, paymentKey);
-        throw new BusinessException(
-                ErrorCode.PAYMENT_COMPENSATION_FAILED, "주문 처리 중 시스템 오류가 발생하였으며 자동 결제 취소에도 실패했습니다. 관리자 확인이 필요합니다.");
+    public void completeApprovedPaymentFromWebhook(TossPaymentResponse tossResponse) {
+        applyApprovedPayment(tossResponse, false);
     }
 
-    @Transactional(readOnly = true)
-    public PaymentResponse getPayment(String paymentKey) {
-        Payment payment = paymentRepository
-                .findByPaymentKey(paymentKey)
-                .orElseThrow(() -> new BusinessException(ErrorCode.PAYMENT_NOT_FOUND));
-        return PaymentResponse.from(payment);
+    public PaymentResponse getPayment(Long memberId, String paymentKey) {
+        return paymentTransactionService.getPayment(memberId, paymentKey);
     }
 
-    @Transactional
-    public PaymentResponse cancelPayment(String paymentKey, PaymentCancelRequest request) {
-        // 1. paymentKey로 결제 조회
-        Payment payment = paymentRepository
-                .findByPaymentKey(paymentKey)
-                .orElseThrow(() -> new BusinessException(ErrorCode.PAYMENT_NOT_FOUND));
-
-        // 2. 취소 멱등성 검증 (cancelRequestId가 주어졌을 때 이미 처리된 취소인지 확인)
-        if (request.cancelRequestId() != null && !request.cancelRequestId().isBlank()) {
-            Optional<PaymentCancelHistory> existingCancel =
-                    paymentCancelHistoryRepository.findByCancelRequestId(request.cancelRequestId());
-            if (existingCancel.isPresent()) {
-                log.info("결제 취소 멱등 응답: 이미 처리된 취소 요청 (cancelRequestId={})", request.cancelRequestId());
-                return PaymentResponse.from(payment);
-            }
+    public PaymentResponse cancelPayment(Long memberId, String paymentKey, PaymentCancelRequest request) {
+        // T1: 비관적 락 기반 유효성 검증 및 취소 계획 수립
+        CancelPlan plan = paymentTransactionService.prepareCancel(memberId, paymentKey, request);
+        if (plan.alreadyCanceled()) {
+            return plan.response();
         }
 
-        // 3. 취소 가능 결제 상태 검증
-        if (payment.getStatus() == PaymentStatus.CANCELED) {
-            throw new BusinessException(ErrorCode.PAYMENT_ALREADY_CANCELED);
-        }
-        if (payment.getStatus() != PaymentStatus.DONE && payment.getStatus() != PaymentStatus.PARTIAL_CANCELED) {
-            throw new BusinessException(ErrorCode.PAYMENT_ALREADY_PROCESSED, "승인 완료된 결제만 취소할 수 있습니다.");
-        }
-
-        OrderItem targetItem = null;
-        Long cancelQty = null;
-        String itemName = "전체 취소";
-        Long cancelAmount;
-
-        // 4. 도메인 유형(영화 예매 vs 스토어 주문)에 따른 취소 분기 처리
-        if (payment.isReservationPayment()) {
-            if (request.orderItemId() != null || request.cancelQuantity() != null) {
-                throw new BusinessException(
-                        ErrorCode.INVALID_INPUT_VALUE, "영화 예매 결제 취소에서는 주문 품목 ID 또는 수량을 지정할 수 없습니다.");
-            }
-            Reservation reservation = reservationRepository
-                    .findByIdWithLock(payment.getReservation().getId())
-                    .orElseThrow(() -> new BusinessException(ErrorCode.RESERVATION_NOT_FOUND));
-
-            if (request.seatNumbers() != null && !request.seatNumbers().isEmpty()) {
-                if (request.seatNumbers().stream().anyMatch(Objects::isNull)) {
-                    throw new BusinessException(ErrorCode.INVALID_INPUT_VALUE, "좌석 번호 목록에 null이 포함될 수 없습니다.");
-                }
-                List<Long> sortedSeatNumbers =
-                        request.seatNumbers().stream().distinct().sorted().toList();
-                cancelAmount = reservation.cancelByPayment(sortedSeatNumbers);
-                if (request.cancelAmount() != null && !request.cancelAmount().equals(cancelAmount)) {
-                    throw new BusinessException(
-                            ErrorCode.PAYMENT_AMOUNT_MISMATCH,
-                            "요청한 취소 금액(" + request.cancelAmount() + "원)이 취소 대상 좌석 금액(" + cancelAmount
-                                    + "원)과 일치하지 않습니다.");
-                }
-                cancelQty = (long) sortedSeatNumbers.size();
-                itemName = "좌석 예매 취소 " + sortedSeatNumbers;
-            } else {
-                if (request.cancelAmount() != null && !request.cancelAmount().equals(payment.getBalanceAmount())) {
-                    throw new BusinessException(
-                            ErrorCode.INVALID_INPUT_VALUE,
-                            "예매 부분 취소는 취소할 좌석 번호(seatNumbers)를 함께 지정해야 하며, 전체 취소 시 남은 결제 잔액("
-                                    + payment.getBalanceAmount() + "원)과 일치해야 합니다.");
-                }
-                List<Long> remainingSeats = reservation.getSeatNumbers();
-                cancelAmount = reservation.cancelByPayment(null);
-                if (!cancelAmount.equals(payment.getBalanceAmount())) {
-                    throw new BusinessException(
-                            ErrorCode.PAYMENT_AMOUNT_MISMATCH,
-                            "예매 잔여 금액(" + cancelAmount + "원)이 결제 잔액(" + payment.getBalanceAmount() + "원)과 일치하지 않습니다.");
-                }
-                cancelQty = (long) remainingSeats.size();
-                itemName = "좌석 예매 전체 취소 " + remainingSeats;
-            }
-        } else {
-            if (request.seatNumbers() != null && !request.seatNumbers().isEmpty()) {
-                throw new BusinessException(ErrorCode.INVALID_INPUT_VALUE, "스토어 주문 결제 취소에서는 좌석 번호를 지정할 수 없습니다.");
-            }
-            if (request.orderItemId() != null) {
-                targetItem = payment.getOrder().getOrderItems().stream()
-                        .filter(oi -> oi.getId().equals(request.orderItemId()))
-                        .findFirst()
-                        .orElseThrow(() -> new BusinessException(ErrorCode.ORDER_ITEM_NOT_FOUND));
-
-                cancelQty = request.cancelQuantity() != null ? request.cancelQuantity() : 1L;
-                itemName = targetItem.getMenu().getName();
-
-                cancelAmount = targetItem.cancelQuantity(cancelQty);
-                restoreMenuStock(payment.getOrder(), targetItem, cancelQty);
-            } else {
-                cancelAmount = request.cancelAmount() != null ? request.cancelAmount() : payment.getBalanceAmount();
-                if (cancelAmount.equals(payment.getBalanceAmount())) {
-                    for (OrderItem oi : payment.getOrder().getOrderItems()) {
-                        Long remainingQty = oi.getCancelableQuantity();
-                        if (remainingQty > 0) {
-                            oi.cancelQuantity(remainingQty);
-                            restoreMenuStock(payment.getOrder(), oi, remainingQty);
-                        }
-                    }
-                }
-            }
-        }
-
-        // 5. 결제 잔액 초과 검증
-        if (cancelAmount > payment.getBalanceAmount()) {
-            throw new BusinessException(ErrorCode.PAYMENT_CANCEL_AMOUNT_EXCEEDED);
-        }
-
-        // 6. 토스페이먼츠 취소 API 호출 (cancelRequestId를 Idempotency-Key로 전달)
+        // T1과 T2 사이: 외부 토스 취소 API 호출 (멱등키 전송)
+        TossPaymentResponse tossResponse;
         try {
-            tossPaymentsClient.cancel(
-                    paymentKey, new TossCancelRequest(request.cancelReason(), cancelAmount), request.cancelRequestId());
+            tossResponse = tossPaymentsClient.cancel(
+                    paymentKey,
+                    new TossCancelRequest(request.cancelReason(), plan.cancelAmount()),
+                    plan.effectiveIdempotencyKey());
         } catch (Exception e) {
             log.error(
-                    "토스 결제 취소 API 호출 실패: paymentKey={}, amount={}, error={}", paymentKey, cancelAmount, e.getMessage());
+                    "토스 결제 취소 API 호출 실패: paymentKey={}, amount={}, error={}",
+                    paymentKey,
+                    plan.cancelAmount(),
+                    e.getMessage());
             throw e;
         }
 
-        // 7. 도메인 잔액 차감, 상태 변경 및 취소 이력 저장
-        payment.cancel(
-                request.cancelRequestId(),
-                targetItem,
-                cancelQty,
-                itemName,
-                cancelAmount,
-                request.cancelReason(),
-                LocalDateTime.now());
+        // 토스 응답의 최신 취소 이력에서 transactionKey와 canceledAt 추출
+        String transactionKey = null;
+        LocalDateTime canceledAt = null;
+        if (tossResponse.cancels() != null && !tossResponse.cancels().isEmpty()) {
+            TossPaymentResponse.TossCancel latestCancel =
+                    tossResponse.cancels().get(tossResponse.cancels().size() - 1);
+            transactionKey = latestCancel.transactionKey();
+            canceledAt = parseTossDateTime(latestCancel.canceledAt());
+        }
 
-        return PaymentResponse.from(payment);
+        // T2: 도메인 잔액 차감, 자원(좌석/재고) 복구 및 취소 이력 저장
+        try {
+            return paymentTransactionService.applyCancel(
+                    memberId, paymentKey, request, plan, transactionKey, canceledAt);
+        } catch (Exception postCancelEx) {
+            log.error(
+                    "토스 취소 성공 후 DB 반영 실패 (수동 확인 필요): paymentKey={}, error={}",
+                    paymentKey,
+                    postCancelEx.getMessage(),
+                    postCancelEx);
+            paymentTransactionService.recordManualRecoveryRequiredByPaymentKey(paymentKey);
+            throw postCancelEx;
+        }
     }
 
-    private void restoreMenuStock(Order order, OrderItem orderItem, Long quantity) {
-        if (order == null
-                || order.getStore() == null
-                || order.getStore().getId() == null
-                || orderItem == null
-                || orderItem.getMenu() == null
-                || orderItem.getMenu().getId() == null) {
-            return;
+    private void validatePrepareRequest(PaymentPrepareRequest request) {
+        boolean hasOrder = request.orderId() != null;
+        boolean hasReservation = request.reservationId() != null;
+        if ((hasOrder && hasReservation) || (!hasOrder && !hasReservation)) {
+            throw new BusinessException(
+                    ErrorCode.INVALID_INPUT_VALUE, "스토어 주문 ID(orderId) 또는 영화 예매 ID(reservationId) 중 정확히 하나만 입력해야 합니다.");
         }
-        menuStockRepository
-                .findByStoreIdAndMenuId(
-                        order.getStore().getId(), orderItem.getMenu().getId())
-                .ifPresent(menuStock -> menuStock.increaseStock(quantity));
     }
 
-    private String createOrderName(Order order) {
-        if (order.getOrderItems() == null || order.getOrderItems().isEmpty()) {
-            return "CGV 스토어 상품 주문";
+    private LocalDateTime parseTossDateTime(String dateTimeStr) {
+        if (dateTimeStr == null || dateTimeStr.isBlank()) {
+            return LocalDateTime.now();
         }
-        String firstItemName = order.getOrderItems().get(0).getMenu().getName();
-        int extraCount = order.getOrderItems().size() - 1;
-        return extraCount > 0 ? firstItemName + " 외 " + extraCount + "건" : firstItemName;
-    }
-
-    private String createReservationName(Reservation reservation) {
-        int seatCount = reservation.getSeatReservations().size();
-        if (reservation.getScreening() != null && reservation.getScreening().getMovie() != null) {
-            return reservation.getScreening().getMovie().getTitle() + " (" + seatCount + "매)";
+        try {
+            return OffsetDateTime.parse(dateTimeStr).toLocalDateTime();
+        } catch (DateTimeParseException e) {
+            try {
+                return LocalDateTime.parse(dateTimeStr);
+            } catch (DateTimeParseException ignored) {
+                return LocalDateTime.now();
+            }
         }
-        return "CGV 영화 예매 (" + seatCount + "매)";
     }
 }
