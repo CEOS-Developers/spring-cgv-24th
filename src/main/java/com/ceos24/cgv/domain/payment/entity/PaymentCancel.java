@@ -51,7 +51,9 @@ public class PaymentCancel extends BaseTimeEntity {
     @Column(nullable = false)
     private LocalDateTime requestedAt;
 
-    @Column(length = 64)
+    // 토스 취소 거래 하나는 우리 취소 요청 하나에만 반영된다. 상태 검사와 행 잠금이 먼저 막지만, 엔티티를 거치지 않는
+    // 쓰기나 응답 해석 실수(다른 거래를 이 요청의 것으로 읽음)까지 DB가 막는다. 확정 전에는 NULL이라 여러 행이 비어 있어도 된다.
+    @Column(unique = true, length = 64)
     private String transactionKey;
 
     private LocalDateTime canceledAt;
