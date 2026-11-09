@@ -4,6 +4,7 @@ import com.ceos24.springboot.global.exception.ErrorCode;
 import com.ceos24.springboot.global.exception.GlobalException;
 import com.ceos24.springboot.payment.domain.*;
 import com.ceos24.springboot.payment.dto.*;
+import com.ceos24.springboot.payment.config.TossPaymentProperties;
 import com.ceos24.springboot.payment.repository.PaymentRepository;
 import com.ceos24.springboot.reservation.domain.Reservation;
 import com.ceos24.springboot.reservation.domain.ReservationStatus;
@@ -20,11 +21,13 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.Objects;
+import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
 public class PaymentConfirmTransactionService {
     private final Clock clock;
+    private final TossPaymentProperties properties;
     private final PaymentRepository paymentRepository;
     private final ReservationRepository reservationRepository;
     private final ReservationLifecycleService reservationLifecycle;
@@ -67,10 +70,11 @@ public class PaymentConfirmTransactionService {
                 }
                 target.begin(now);
                 payment.startProcessing(request.paymentKey());
+                payment.getRecovery().schedule(now.plus(properties.getRecovery().getProcessingTimeout()));
             }
             case UNKNOWN -> {
                 validateHeldTarget(target);
-                payment.startProcessing(request.paymentKey());
+                return context(userId, target, payment, true, null);
             }
             case PROCESSING -> {
                 validateHeldTarget(target);
@@ -79,6 +83,24 @@ public class PaymentConfirmTransactionService {
             default -> throw new GlobalException(ErrorCode.INVALID_PAYMENT_STATUS);
         }
         return context(userId, target, payment, false, null);
+    }
+
+    @Transactional
+    public Optional<ConfirmContext> claimRecovery(Long paymentId) {
+        var identity = paymentRepository.findRecoveryReference(paymentId).orElse(null);
+        if (identity == null) { return Optional.empty(); }
+        var reference = paymentRepository.findTarget(identity.getOrderId(), identity.getUserId()).orElseThrow();
+        LockedTarget target = lockTarget(reference.getTargetType(), reference.getTargetId(), identity.getUserId());
+        Payment payment = findPayment(identity.getOrderId(), identity.getUserId());
+        LocalDateTime now = LocalDateTime.now(clock);
+        if ((payment.getStatus() != PaymentStatus.UNKNOWN && payment.getStatus() != PaymentStatus.PROCESSING)
+                || !payment.getRecovery().isDue(now, payment.getCreatedAt(),
+                now.minus(properties.getRecovery().getProcessingTimeout()))) {
+            return Optional.empty();
+        }
+        validateHeldTarget(target);
+        payment.getRecovery().claim(now.plus(properties.getRecovery().getLeaseDuration()));
+        return Optional.of(context(identity.getUserId(), target, payment, true, null));
     }
 
     @Transactional
@@ -108,6 +130,9 @@ public class PaymentConfirmTransactionService {
         } else {
             // Never release stock/seats based only on a timeout or an unsupported state.
             payment.markUnknown();
+        }
+        if (payment.getStatus() == PaymentStatus.UNKNOWN) {
+            payment.getRecovery().schedule(LocalDateTime.now(clock).plus(properties.getRecovery().getRetryDelay()));
         }
         return target.response(payment);
     }

@@ -4,6 +4,7 @@ import com.ceos24.springboot.global.exception.ErrorCode;
 import com.ceos24.springboot.global.exception.GlobalException;
 import com.ceos24.springboot.payment.domain.*;
 import com.ceos24.springboot.payment.dto.*;
+import com.ceos24.springboot.payment.config.TossPaymentProperties;
 import com.ceos24.springboot.payment.repository.PaymentCancellationRepository;
 import com.ceos24.springboot.payment.repository.PaymentRepository;
 import com.ceos24.springboot.reservation.domain.Reservation;
@@ -27,6 +28,7 @@ import java.util.*;
 @RequiredArgsConstructor
 public class PaymentCancelTransactionService {
     private final Clock clock;
+    private final TossPaymentProperties properties;
     private final PaymentRepository payments;
     private final PaymentCancellationRepository cancellations;
     private final ReservationRepository reservations;
@@ -51,7 +53,7 @@ public class PaymentCancelTransactionService {
         if (existing.isPresent()) {
             PaymentCancellation cancellation = existing.get();
             cancellation.validateSameRequest(request);
-            return context(userId, payment, cancellation,
+            return context(userId, payment, cancellation, true,
                     cancellation.isPending() ? null : PaymentCancelResponse.from(payment, cancellation));
         }
 
@@ -68,7 +70,26 @@ public class PaymentCancelTransactionService {
         }
         PaymentCancellation cancellation = cancellations.save(
                 PaymentCancellation.start(payment, requestId, request, LocalDateTime.now(clock)));
-        return context(userId, payment, cancellation, null);
+        cancellation.getRecovery().schedule(LocalDateTime.now(clock).plus(properties.getRecovery().getProcessingTimeout()));
+        return context(userId, payment, cancellation, false, null);
+    }
+
+    @Transactional
+    public Optional<CancelContext> claimRecovery(Long cancellationId) {
+        var identity = cancellations.findRecoveryReference(cancellationId).orElse(null);
+        if (identity == null) { return Optional.empty(); }
+        var reference = payments.findTargetById(identity.getPaymentId(), identity.getUserId()).orElseThrow();
+        lockTarget(reference.getTargetType(), reference.getTargetId(), identity.getUserId());
+        Payment payment = findPayment(identity.getPaymentId(), identity.getUserId());
+        PaymentCancellation cancellation = cancellations.findAllWithLock(payment.getId()).stream()
+                .filter(c -> c.getId().equals(cancellationId)).findFirst().orElseThrow();
+        LocalDateTime now = LocalDateTime.now(clock);
+        if (!cancellation.isPending() || !cancellation.getRecovery().isDue(now, cancellation.getCreatedAt(),
+                now.minus(properties.getRecovery().getProcessingTimeout()))) {
+            return Optional.empty();
+        }
+        cancellation.getRecovery().claim(now.plus(properties.getRecovery().getLeaseDuration()));
+        return Optional.of(context(identity.getUserId(), payment, cancellation, true, null));
     }
 
     @Transactional
@@ -82,6 +103,7 @@ public class PaymentCancelTransactionService {
         if (!cancellation.isPending()) {
             return PaymentCancelResponse.from(payment, cancellation);
         }
+        if (rejected) { cancellation.recordRejection(); }
 
         List<TossPaymentCancelResponse.Cancel> additions = verifiedAdditions(payment, remote, history);
         long expectedBalance = cancellation.getBalanceBefore() - cancellation.getCancelAmount();
@@ -102,21 +124,21 @@ public class PaymentCancelTransactionService {
                     storeOrderLifecycle.refundLocked(target.storeOrder());
                 }
             }
-        } else if (rejected && additions != null && additions.isEmpty()
+        } else if (cancellation.isRejectedByPg() && additions != null && additions.isEmpty()
                 && Objects.equals(remote.balanceAmount(), cancellation.getBalanceBefore())) {
             // 명시적 PG 거절 + PG 조회에서 미변경 확인이 모두 있어야 실패로 확정한다.
             cancellation.markFailed();
         } else {
             // 타임아웃, 검증 실패, 비동기 처리 중에는 좌석/재고/잔액을 유지한다.
             cancellation.markUnknown();
+            cancellation.getRecovery().schedule(LocalDateTime.now(clock).plus(properties.getRecovery().getRetryDelay()));
         }
         return PaymentCancelResponse.from(payment, cancellation);
     }
 
     private CancelContext context(Long userId, Payment payment, PaymentCancellation cancellation,
+                                  boolean lookupOnly,
                                   PaymentCancelResponse completed) {
-        // PG 멱등키는 15일 유효하다. 오래된 미확정 요청은 재전송하지 않고 조회만 한다.
-        boolean lookupOnly = !cancellation.getCreatedAt().isAfter(LocalDateTime.now(clock).minusDays(14));
         return new CancelContext(userId, payment.getId(), payment.getTargetType(), payment.getTargetId(),
                 cancellation.getId(), payment.getPaymentKey(), cancellation.getPgIdempotencyKey(),
                 new TossPaymentCancelRequest(cancellation.getCancelReason(), cancellation.getCancelAmount()),

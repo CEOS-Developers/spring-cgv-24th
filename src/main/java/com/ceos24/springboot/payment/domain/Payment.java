@@ -14,13 +14,16 @@ import java.util.UUID;
 
 @Entity
 @Getter
-@Table(name = "payment", indexes = @Index(name = "idx_payment_user_status_approved",
-        columnList = "user_id,status,approved_at,payment_id"),
+@Table(name = "payment", indexes = {
+        @Index(name = "idx_payment_user_status_approved", columnList = "user_id,status,approved_at,payment_id"),
+        @Index(name = "idx_payment_recovery", columnList = "status,next_recovery_at,payment_id")},
         uniqueConstraints = {@UniqueConstraint(name = "uk_payment_order_id", columnNames = "order_id"),
                 @UniqueConstraint(name = "uk_payment_payment_key", columnNames = "payment_key")}
 )
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Payment {
+    @Embedded
+    private PaymentRecovery recovery = new PaymentRecovery();
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
