@@ -90,6 +90,7 @@ public class Reservation {
 
     // 예매 전 점유시간 설정
     public boolean expireIfPending(LocalDateTime now) {
+        // 승인 PROCESSING/UNKNOWN 동안 이 플래그를 유지한다. 기한만으로 좌석을 해제하지 않는다.
         if (paymentProcessing
                 || status != ReservationStatus.Pending
                 || expiresAt == null

@@ -32,6 +32,7 @@ public interface ReservationRepository
             @Param("userId") Long userId
     );
 
+    // 결제 진행 중/결과 미확정 예매는 일반 만료 대신 PaymentRecoveryScheduler가 처리한다.
     @Query("""
             select r.reservationId from Reservation r
             where r.status = :status and r.expiresAt <= :now and r.paymentProcessing = false
