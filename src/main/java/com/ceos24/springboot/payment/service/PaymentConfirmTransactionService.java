@@ -8,7 +8,7 @@ import com.ceos24.springboot.payment.repository.PaymentRepository;
 import com.ceos24.springboot.reservation.domain.Reservation;
 import com.ceos24.springboot.reservation.domain.ReservationStatus;
 import com.ceos24.springboot.reservation.repository.ReservationRepository;
-import com.ceos24.springboot.reservation.repository.ReservationSeatRepository;
+import com.ceos24.springboot.reservation.service.ReservationLifecycleService;
 import com.ceos24.springboot.shop.domain.StoreOrder;
 import com.ceos24.springboot.shop.domain.StoreOrderStatus;
 import com.ceos24.springboot.shop.repository.StoreOrderRepository;
@@ -27,7 +27,7 @@ public class PaymentConfirmTransactionService {
     private final Clock clock;
     private final PaymentRepository paymentRepository;
     private final ReservationRepository reservationRepository;
-    private final ReservationSeatRepository reservationSeatRepository;
+    private final ReservationLifecycleService reservationLifecycle;
     private final StoreOrderRepository storeOrderRepository;
     private final StoreOrderLifecycleService storeOrderLifecycle;
 
@@ -101,11 +101,7 @@ public class PaymentConfirmTransactionService {
         } else if ("ABORTED".equals(remote.status()) || "EXPIRED".equals(remote.status())) {
             payment.markFailed();
             if (target.reservation() != null) {
-                Reservation reservation = target.reservation();
-                reservation.endPaymentProcessing();
-                if (reservation.expireIfPending(LocalDateTime.now(clock))) {
-                    reservationSeatRepository.deleteAllByReservation_ReservationId(reservation.getReservationId());
-                }
+                reservationLifecycle.failPaymentLocked(target.reservation(), LocalDateTime.now(clock));
             } else {
                 storeOrderLifecycle.failPaymentLocked(target.storeOrder(), LocalDateTime.now(clock));
             }

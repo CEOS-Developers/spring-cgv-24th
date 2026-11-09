@@ -340,6 +340,62 @@ class PaymentConfirmIntegrationTest {
         assertThat(saved.isPaymentProcessing()).isTrue();
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"DIRECT", "USER", "SCHEDULER", "SEATS"})
+    void pendingPaymentExpiresTogetherWithReservation(String path) {
+        backdateExpiry();
+
+        switch (path) {
+            case "DIRECT" -> expiration.expireReservation(reservationId);
+            case "USER" -> expiration.releaseExpiredReservationsForUser(userId);
+            case "SCHEDULER" -> scheduler.expirePendingReservations();
+            case "SEATS" -> expiration.releaseExpiredSeats(
+                    jdbc.queryForObject("select screening_id from reservation where reservation_id = ?",
+                            Long.class, reservationId),
+                    jdbc.queryForList("select seat_id from reservation_seat where reservation_id = ?",
+                            Long.class, reservationId));
+            default -> throw new IllegalArgumentException(path);
+        }
+
+        assertThat(payments.findById(prepared.paymentId()).orElseThrow().getStatus()).isEqualTo(PaymentStatus.EXPIRED);
+        assertThat(reservations.findById(reservationId).orElseThrow().getStatus()).isEqualTo(ReservationStatus.Expired);
+        assertThat(reservationSeats.findAllByReservation_ReservationId(reservationId)).isEmpty();
+        expiration.expireReservation(reservationId);
+        assertThat(payments.findById(prepared.paymentId()).orElseThrow().getStatus()).isEqualTo(PaymentStatus.EXPIRED);
+        verifyNoInteractions(tossPaymentClient);
+    }
+
+    @Test
+    void pendingPaymentIsCanceledTogetherWithReservation() {
+        reservationService.cancelReservation(userId, reservationId);
+
+        assertThat(payments.findById(prepared.paymentId()).orElseThrow().getStatus()).isEqualTo(PaymentStatus.CANCELED);
+        assertThat(reservations.findById(reservationId).orElseThrow().getStatus()).isEqualTo(ReservationStatus.Canceled);
+        assertThat(reservationSeats.findAllByReservation_ReservationId(reservationId)).isEmpty();
+        verifyNoInteractions(tossPaymentClient);
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void nonReadyPaymentRejectsReservationClosureAndRollsBack(boolean expired) {
+        when(tossPaymentClient.confirm(any(), anyString())).thenReturn(new TossPaymentConfirmResponse(
+                PAYMENT_KEY, prepared.orderId(), AMOUNT, "영화 티켓 예매", "ABORTED", "카드", null, "KRW"));
+        assertError(() -> approval.confirm(userId, new PaymentConfirmRequest(PAYMENT_KEY, prepared.orderId(), AMOUNT)),
+                ErrorCode.PAYMENT_APPROVAL_FAILED);
+
+        if (expired) {
+            backdateExpiry();
+            assertError(() -> expiration.expireReservation(reservationId), ErrorCode.INVALID_PAYMENT_STATUS);
+        } else {
+            assertError(() -> reservationService.cancelReservation(userId, reservationId), ErrorCode.INVALID_PAYMENT_STATUS);
+        }
+
+        assertThat(payments.findById(prepared.paymentId()).orElseThrow().getStatus()).isEqualTo(PaymentStatus.FAILED);
+        assertThat(reservations.findById(reservationId).orElseThrow().getStatus())
+                .isEqualTo(ReservationStatus.Pending);
+        assertThat(reservationSeats.findAllByReservation_ReservationId(reservationId)).hasSize(2);
+    }
+
     private void backdateExpiry() {
         jdbc.update("update reservation set expires_at = ? where reservation_id = ?", LocalDateTime.now(clock).minusMinutes(1), reservationId);
         jdbc.update("update payment set expires_at = ? where payment_id = ?", LocalDateTime.now(clock).minusMinutes(1), prepared.paymentId());

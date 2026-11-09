@@ -24,6 +24,7 @@ public class ReservationService {
     private final ReservationQueryService queryService;
     private final ReservationRepository reservationRepository;
     private final ReservationSeatRepository reservationSeatRepository;
+    private final ReservationLifecycleService lifecycle;
 
     // 외부 트랜잭션을 중단해도 커넥션은 반환되지 않으므로, 트랜잭션 내 호출 자체를 차단한다.
     // 만료 트랜잭션이 커밋되고 커넥션을 반환한 뒤 예매 트랜잭션을 시작한다.
@@ -74,12 +75,8 @@ public class ReservationService {
                         .map(ReservationSeat::getSeat)
                         .toList();
 
-        // 예매 상태 변경
-        reservation.cancel();
-
-        // 좌석 점유 해제
-        reservationSeatRepository
-                .deleteAllByReservation_ReservationId(reservationId);
+        // 예매 취소, 결제 종료, 좌석 점유 해제를 함께 처리
+        lifecycle.cancelLocked(reservation);
 
         // 취소된 예매 정보 + 기존 좌석 정보 반환
         return ReservationResponse.from(

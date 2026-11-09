@@ -9,7 +9,7 @@ import com.ceos24.springboot.payment.repository.PaymentRepository;
 import com.ceos24.springboot.reservation.domain.Reservation;
 import com.ceos24.springboot.reservation.domain.ReservationStatus;
 import com.ceos24.springboot.reservation.repository.ReservationRepository;
-import com.ceos24.springboot.reservation.repository.ReservationSeatRepository;
+import com.ceos24.springboot.reservation.service.ReservationLifecycleService;
 import com.ceos24.springboot.shop.domain.StoreOrder;
 import com.ceos24.springboot.shop.domain.StoreOrderStatus;
 import com.ceos24.springboot.shop.repository.StoreOrderRepository;
@@ -30,7 +30,7 @@ public class PaymentCancelTransactionService {
     private final PaymentRepository payments;
     private final PaymentCancellationRepository cancellations;
     private final ReservationRepository reservations;
-    private final ReservationSeatRepository reservationSeats;
+    private final ReservationLifecycleService reservationLifecycle;
     private final StoreOrderRepository storeOrders;
     private final StoreOrderLifecycleService storeOrderLifecycle;
 
@@ -97,8 +97,7 @@ public class PaymentCancelTransactionService {
                     .atZoneSameInstant(clock.getZone()).toLocalDateTime());
             if (payment.getBalanceAmount() == 0) {
                 if (target.reservation() != null) {
-                    target.reservation().cancelAfterRefund();
-                    reservationSeats.deleteAllByReservation_ReservationId(target.reservation().getReservationId());
+                    reservationLifecycle.refundLocked(target.reservation());
                 } else {
                     storeOrderLifecycle.refundLocked(target.storeOrder());
                 }

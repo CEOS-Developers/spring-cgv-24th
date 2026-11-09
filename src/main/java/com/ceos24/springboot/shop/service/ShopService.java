@@ -71,7 +71,6 @@ public class ShopService {
     @Transactional
     public StoreOrderResponse createOrder(Long userId, StoreOrderCreateRequest request) {
         Map<Long, Integer> quantities = validatedQuantities(request);
-        // Finish expired holds before taking any inventory locks.
         expirationService.releaseExpiredForTheater(request.theaterId());
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new GlobalException(ErrorCode.PAYMENT_USER_REQUIRED));
@@ -81,7 +80,6 @@ public class ShopService {
         List<OrderMenu> orderMenus = new ArrayList<>();
         int totalAmount = 0;
         try {
-            // Sorted, merged IDs prevent reverse lock order and duplicate order lines.
             for (var entry : quantities.entrySet()) {
                 StoreInventory inventory = storeInventoryRepository
                         .findWithLock(theater.getTheaterId(), entry.getKey())
