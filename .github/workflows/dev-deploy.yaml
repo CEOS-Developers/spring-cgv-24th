@@ -1,0 +1,84 @@
+name: CI/CD Pipeline # Workflow의 이름 정의
+
+on:
+  push:
+    branches: [ "master" ]  # master 브랜치에 push될 때 자동 실행
+
+# 워크 플로에 코드 읽기 권한만 부여 (최소 권한)
+permissions:
+  contents: read
+
+# 모든 job에서 공유하는 값 (태그에 커밋 SHA를 넣어 배포 버전 추적)
+env:
+  IMAGE_NAME: ${{ vars.DOCKER_IMAGE_NAME }}
+  IMAGE_TAG: dev-${{ github.sha }}
+
+jobs:
+  # 1단계: 애플리케이션 빌드 후 Docker 이미지를 Docker Hub에 push
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      # 저장소 코드를 runner로 가져옴
+      - name: Checkout source code
+        uses: actions/checkout@v7
+
+      # JDK 21 설치
+      - name: Set up JDK 21
+        uses: actions/setup-java@v6
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      # Gradle 실행 환경 구성 + 의존성 캐싱
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      # 실행 가능한 Spring Boot jar 생성
+      - name: Build with Gradle
+        run: ./gradlew bootJar
+
+      # Secrets에 저장한 계정으로 Docker Hub 로그인
+      - name: Login to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      # Dockerfile로 이미지를 만들고 Docker Hub에 업로드
+      - name: Build and push image
+        run: |
+          docker build -t "$IMAGE_NAME:$IMAGE_TAG" .
+          docker push "$IMAGE_NAME:$IMAGE_TAG"
+
+  # 2단계: EC2에 접속해 새 이미지로 컨테이너 교체
+  deploy:
+    needs: build-and-push  # build-and-push가 성공해야 실행
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@v1
+        env:
+          ENV_VARS: ${{ secrets.ENV_VARS }}
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_KEY }}
+          # 지정한 환경변수를 EC2 쪽 스크립트로 전달
+          envs: ENV_VARS,IMAGE_NAME,IMAGE_TAG
+          script: |
+            
+            # 명령이 하나라도 실패하면 즉시 중단
+            set -e
+            
+            # 애플리케이션 배포 디렉토리로 이동
+            cd /home/ubuntu/app
+
+            # 애플리케이션 실행에 필요한 환경변수 파일을 생성
+            printf '%s\n' "$ENV_VARS" > .env
+
+            # 새 이미지 pull -> 변경된 이미지 실행
+            docker compose pull spring-app
+            docker compose up -d
+
+            # 사용하지 않는 이전 이미지 정리
+            docker image prune -af
