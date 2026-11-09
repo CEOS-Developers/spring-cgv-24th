@@ -56,6 +56,22 @@ jobs:
     needs: build-and-push  # build-and-push가 성공해야 실행
     runs-on: ubuntu-latest
     steps:
+      # scp는 runner의 워크스페이스에서 파일을 가져가므로, 잡마다 비어 있는
+      # 워크스페이스에 저장소를 먼저 받아야 한다. 잡 사이에는 파일이 공유되지 않는다.
+      - name: Checkout source code
+        uses: actions/checkout@v7
+
+      # EC2에 compose 파일 복사
+      - name: Copy compose files to EC2
+        uses: appleboy/scp-action@v1
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_KEY }}
+          source: "docker-compose.yml"
+          target: "/home/ubuntu/app"
+
+      # EC2에서 애플리케이션 실행
       - name: Deploy to EC2
         uses: appleboy/ssh-action@v1
         env:
