@@ -18,7 +18,6 @@ import com.ceos24.spring_cgv.domain.payment.dto.request.PaymentReadyRequest;
 import com.ceos24.spring_cgv.domain.payment.exception.PaymentException;
 import com.ceos24.spring_cgv.domain.payment.repository.PaymentRepository;
 import com.ceos24.spring_cgv.domain.payment.repository.PaymentSeatRepository;
-import com.ceos24.spring_cgv.domain.reservation.entity.ReservationSeat;
 import com.ceos24.spring_cgv.domain.reservation.enums.AgeGroup;
 import com.ceos24.spring_cgv.domain.reservation.repository.ReservationRepository;
 import com.ceos24.spring_cgv.domain.reservation.repository.ReservationSeatRepository;
@@ -150,7 +149,7 @@ class PaymentConcurrencyTest {
     }
 
     @Test
-    @DisplayName("동시에 예매하면 여러 명이 같은 좌석을 점유한다.")
+    @DisplayName("동시에 예매해도 한 명만 좌석을 점유한다.")
     void 여러회원이_같은좌석을_동시에_예매() throws InterruptedException {
 
         int threadCount = REQUEST_COUNT;
@@ -189,13 +188,17 @@ class PaymentConcurrencyTest {
         finished.await(30, TimeUnit.SECONDS);
         executor.shutdown();
 
-        long reservedCount = countReservedRowsOfTargetSeat();
-        printResult("동시 요청", success.get(), rejected.get(), failed.get(), reservedCount);
+        long claimedCount = countPaymentSeatsOfTargetSeat();
+        printResult("동시 요청", success.get(), rejected.get(), failed.get(), claimedCount);
         unexpected.forEach(message -> System.out.println("  예상치 못한 예외 > " + message));
 
-        // 좌석 하나에 RESERVED 행이 2개 이상 생겼다면 동시성 문제가 재현된 것이다.
-        // 해결편에서 락이나 유니크 제약을 적용한 뒤에는 이 단정을 isEqualTo(1)로 바꾸면 회귀 테스트가 된다.
-        assertThat(reservedCount).isEqualTo(1);
+        // Redis 장애나 인터럽트로 실패한 요청이 섞이면 좌석 행 수만으로는 선점이 제대로
+        // 동작했는지 알 수 없으므로, 예상치 못한 실패가 없었음을 먼저 확인한다.
+        assertThat(failed.get()).isZero();
+
+        // 좌석 하나를 두고 32개가 경쟁해도 결제 좌석 행은 하나만 생겨야 한다.
+        // 2개 이상이면 선점이 뚫려 여러 명이 같은 좌석을 가져간 것이다.
+        assertThat(claimedCount).isEqualTo(1);
     }
 
     /***
@@ -210,19 +213,21 @@ class PaymentConcurrencyTest {
     }
 
     /***
-     * 함수 기능: 목표 좌석을 현재 점유(RESERVED)하고 있는 행이 몇 개인지 센다.
+     * 함수 기능: 목표 좌석을 가져간 결제 좌석 행이 몇 개인지 센다.
      *          정상이라면 1이고, 2 이상이면 여러 사람이 같은 좌석을 가져간 것이다.
-     * @return 목표 좌석의 RESERVED 행 수
+     *          ready는 예매가 아니라 Redis 선점과 결제를 만들고 예매는 confirm에서 확정되므로,
+     *          이 시점에 좌석의 주인을 보여주는 행은 ReservationSeat이 아니라 PaymentSeat이다.
+     * @return 목표 좌석의 결제 좌석 행 수
      */
-    private long countReservedRowsOfTargetSeat() {
+    private long countPaymentSeatsOfTargetSeat() {
 
-        return reservationSeatRepository.findAllByScreeningId(screeningId).stream()
+        // 각 테스트가 새 상영회차를 만들고 @AfterEach가 결제를 지우므로, 남아 있는 행은 이번 테스트 것뿐이다.
+        return paymentSeatRepository.findAll().stream()
                 .filter(seat -> seat.getSeatRow() == SEAT_ROW && seat.getSeatNumber() == SEAT_NUMBER)
-                .filter(ReservationSeat::isReserved)
                 .count();
     }
 
-    private void printResult(String label, int success, int rejected, int failed, long reservedCount) {
+    private void printResult(String label, int success, int rejected, int failed, long claimedCount) {
 
         System.out.printf("""
 
@@ -232,10 +237,10 @@ class PaymentConcurrencyTest {
                         좌석 중복으로 거절   : %d
                         그 외 실패           : %d
                         ------------------------------------
-                        %d행 %d번 좌석의 RESERVED 행 수 : %d   (정상이라면 1)
+                        %d행 %d번 좌석의 결제 좌석 행 수 : %d   (정상이라면 1)
                         ====================================
                         %n""",
                 label, REQUEST_COUNT, success, rejected, failed,
-                SEAT_ROW, SEAT_NUMBER, reservedCount);
+                SEAT_ROW, SEAT_NUMBER, claimedCount);
     }
 }
