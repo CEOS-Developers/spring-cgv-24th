@@ -1,8 +1,9 @@
-name: CI/CD Pipeline # Workflow의 이름 정의
+name: Deploy (dev) # master에 반영된 코드를 EC2에 배포하는 워크플로
 
+# 테스트 검증은 PR 단계의 ci.yaml이 담당하므로 여기서는 빌드와 배포만 한다.
 on:
   push:
-    branches: [ "master" ]  # master 브랜치에 push될 때 자동 실행
+    branches: [ "master" ]  # 직접 push와 PR 머지 모두 push 이벤트로 실행된다
 
 # 워크 플로에 코드 읽기 권한만 부여 (최소 권한)
 permissions:
