@@ -4,7 +4,8 @@ spring:
   datasource:
     # innodb_lock_wait_timeout: 기본 50초. 좌석 경합으로 막힌 스레드는 커넥션을 쥔 채
     # 기다리므로, 한도가 길면 좌석 하나의 경합이 풀을 말려 무관한 API까지 같이 죽는다.
-    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/${DB_NAME}?useSSL=false&characterEncoding=UTF-8&sessionVariables=innodb_lock_wait_timeout=3
+    # serverTimezone: 드라이버가 시각 값을 변환할 때 쓰는 기준. 생략하면 JVM 기본값을 따르므로 앱의 업무 시간대와 명시적으로 맞춘다.
+    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/${DB_NAME}?useSSL=false&characterEncoding=UTF-8&serverTimezone=Asia/Seoul&sessionVariables=innodb_lock_wait_timeout=3
     username: ${DB_USERNAME}
     password: ${DB_PASSWORD}
     driver-class-name: com.mysql.cj.jdbc.Driver
