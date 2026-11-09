@@ -47,8 +47,8 @@ public class PaymentConfirmService {
                 );
             }
         } catch (RestClientException e) {
-            // 승인 응답을 못 받았어도 토스에서는 성공했을 수 있다.
-            remote = lookupOrNull(context.paymentKey());
+            // 추가 네트워크 대기 없이 UNKNOWN을 커밋하고 지연 복구한다.
+            remote = null;
         }
 
         // 이 호출이 반환되면 DB 트랜잭션은 커밋된 상태다.
@@ -68,11 +68,4 @@ public class PaymentConfirmService {
         throw new GlobalException(ErrorCode.PAYMENT_RESULT_UNKNOWN);
     }
 
-    private TossPaymentConfirmResponse lookupOrNull(String paymentKey) {
-        try {
-            return tossPaymentClient.findByPaymentKey(paymentKey);
-        } catch (RestClientException e) {
-            return null;
-        }
-    }
 }
