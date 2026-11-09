@@ -48,3 +48,12 @@ dependencies {
 tasks.named('test') {
 	useJUnitPlatform()
 }
+
+// 배포 스크립트가 고를 jar를 하나로 고정한다. plain jar는 실행할 수 없어 같이 나오면 혼동만 생긴다.
+tasks.named('jar') {
+	enabled = false
+}
+
+tasks.named('bootJar') {
+	archiveFileName = 'cgv.jar'
+}
