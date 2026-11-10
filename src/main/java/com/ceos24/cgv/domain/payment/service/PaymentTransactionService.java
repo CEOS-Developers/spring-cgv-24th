@@ -43,6 +43,9 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class PaymentTransactionService {
 
+    /** 결제 승인 진행(IN_PROGRESS) 시 예매 점유를 최소 이 시간(분)까지 보장한다. */
+    private static final long PAYMENT_HOLD_GRACE_MINUTES = 2L;
+
     private final PaymentRepository paymentRepository;
     private final PaymentCancelHistoryRepository paymentCancelHistoryRepository;
     private final OrderRepository orderRepository;
@@ -193,6 +196,11 @@ public class PaymentTransactionService {
         payment.validateTargetAmountMatched();
         if (payment.isReservationPayment()) {
             payment.getReservation().validatePayable(LocalDateTime.now());
+        }
+
+        if (payment.isReservationPayment()) {
+            // PG 승인 지연으로 점유가 만료되어 정상 결제가 환불되지 않도록 최소 grace 보장
+            payment.getReservation().extendHoldForPayment(LocalDateTime.now(), PAYMENT_HOLD_GRACE_MINUTES);
         }
 
         payment.startConfirm(request.paymentKey());
@@ -449,10 +457,18 @@ public class PaymentTransactionService {
         }
 
         String normalizedTransactionKey = normalizeBlankToNull(transactionKey);
-        if (normalizedTransactionKey != null
-                && paymentCancelHistoryRepository.existsByTransactionKey(normalizedTransactionKey)) {
-            log.info("결제 취소 멱등 응답(후처리): 이미 반영된 transactionKey={}", normalizedTransactionKey);
-            return PaymentResponse.from(payment);
+        if (normalizedTransactionKey != null) {
+            Optional<PaymentCancelHistory> applied =
+                    paymentCancelHistoryRepository.findByTransactionKey(normalizedTransactionKey);
+            if (applied.isPresent()) {
+                log.info("결제 취소 멱등 응답(후처리): 이미 반영된 transactionKey={}", normalizedTransactionKey);
+                // 취소 웹훅이 API 응답보다 먼저 잔액/이력만 반영한 경우(부분 취소는 좌석·품목 매핑을 알 수 없음),
+                // 이 요청이 알고 있는 좌석/품목 자원을 여기서 복구한다.
+                if (applied.get().getCancelRequestId() == null) {
+                    releaseResourcesAlreadySyncedByWebhook(payment, plan);
+                }
+                return PaymentResponse.from(payment);
+            }
         }
 
         OrderItem targetItem = null;
@@ -627,6 +643,32 @@ public class PaymentTransactionService {
         }
 
         paymentRepository.saveAndFlush(payment);
+    }
+
+    private void releaseResourcesAlreadySyncedByWebhook(Payment payment, CancelPlan plan) {
+        if (payment.isReservationPayment()) {
+            Reservation reservation = payment.getReservation();
+            List<Long> seats = plan.sortedSeatNumbers();
+            if (seats != null
+                    && !seats.isEmpty()
+                    && reservation.getStatus() == ReservationStatus.CONFIRMED
+                    && reservation.getSeatNumbers().containsAll(seats)) {
+                reservation.cancelByPayment(seats);
+                log.info("웹훅 선반영 취소에 대한 좌석 복구 완료: orderId={}, seats={}", payment.getOrderId(), seats);
+            }
+            return;
+        }
+        if (plan.orderItemId() != null && plan.cancelQuantity() != null) {
+            payment.getOrder().getOrderItems().stream()
+                    .filter(oi -> oi.getId().equals(plan.orderItemId()))
+                    .findFirst()
+                    .filter(oi ->
+                            oi.getCancelableQuantity() != null && oi.getCancelableQuantity() >= plan.cancelQuantity())
+                    .ifPresent(oi -> {
+                        oi.cancelQuantity(plan.cancelQuantity());
+                        restoreSingleMenuStock(payment.getOrder(), oi, plan.cancelQuantity());
+                    });
+        }
     }
 
     private void releaseRemainingTargetResourcesOnFullCancel(Payment payment) {
