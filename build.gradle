@@ -43,6 +43,14 @@ dependencies {
 	testAnnotationProcessor 'org.projectlombok:lombok'
 }
 
+tasks.named('processResources') {
+	exclude 'application-local.yml'
+}
+
+tasks.withType(Jar).configureEach {
+	exclude '**/application-local.yml'
+}
+
 tasks.named('test') {
 	useJUnitPlatform()
 	systemProperty 'cgv.test.database', 'h2'
