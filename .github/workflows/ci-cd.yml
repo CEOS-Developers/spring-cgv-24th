@@ -1,0 +1,127 @@
+name: CI/CD
+
+on:
+  pull_request:
+  push:
+    branches: [Mymyseoyoung]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_DATABASE: cgv_ci
+          MYSQL_USER: cgv
+          MYSQL_PASSWORD: ci_password
+          MYSQL_ROOT_PASSWORD: ci_root_password
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -pci_root_password --silent"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    env:
+      DB_NAME: cgv_ci
+      DB_USERNAME: cgv
+      MYSQL_PASSWORD: ci_password
+      JWT_SECRET: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+      TOSS_SECRET_KEY: test_sk_ci_placeholder
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - run: chmod +x gradlew
+      - name: Run tests
+        run: ./gradlew test --no-daemon
+      - name: Upload test report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report
+          path: build/reports/tests/test
+
+  publish:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/Mymyseoyoung'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/mymyseoyoung/spring-cgv-24th:${{ github.sha }}
+            ghcr.io/mymyseoyoung/spring-cgv-24th:latest
+
+  deploy:
+    needs: publish
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      packages: read
+    concurrency:
+      group: cgv-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure SSH
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$EC2_SSH_KEY" > ~/.ssh/ec2_key
+          chmod 600 ~/.ssh/ec2_key
+          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
+      - name: Copy Compose configuration
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+        run: |
+          scp -i ~/.ssh/ec2_key compose.yaml compose.deploy.yaml \
+            "$EC2_USER@$EC2_HOST:~/spring-cgv-24th/"
+      - name: Pull and start application
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APP_IMAGE: ghcr.io/mymyseoyoung/spring-cgv-24th:${{ github.sha }}
+        run: |
+          printf '%s' "$GH_TOKEN" | ssh -i ~/.ssh/ec2_key \
+            "$EC2_USER@$EC2_HOST" "sudo docker login ghcr.io -u $GITHUB_ACTOR --password-stdin"
+          ssh -i ~/.ssh/ec2_key "$EC2_USER@$EC2_HOST" \
+            "cd ~/spring-cgv-24th && \
+             sudo env APP_IMAGE=$APP_IMAGE docker compose -f compose.yaml -f compose.deploy.yaml pull app && \
+             sudo env APP_IMAGE=$APP_IMAGE docker compose -f compose.yaml -f compose.deploy.yaml up -d --no-build && \
+             sudo env APP_IMAGE=$APP_IMAGE docker compose -f compose.yaml -f compose.deploy.yaml ps"
+          if ! ssh -i ~/.ssh/ec2_key "$EC2_USER@$EC2_HOST" \
+            'for attempt in $(seq 1 30); do curl -fsS http://localhost:8080/api/movies >/dev/null && exit 0; sleep 5; done; exit 1'; then
+            ssh -i ~/.ssh/ec2_key "$EC2_USER@$EC2_HOST" \
+              "cd ~/spring-cgv-24th && sudo env APP_IMAGE=$APP_IMAGE docker compose -f compose.yaml -f compose.deploy.yaml logs --tail=100 app"
+            exit 1
+          fi
