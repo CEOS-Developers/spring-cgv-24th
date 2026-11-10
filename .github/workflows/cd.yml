@@ -12,6 +12,9 @@ concurrency:
   group: cd-alissa159
   cancel-in-progress: false
 
+env:
+  IMAGE: ${{ vars.DOCKER_IMAGE }}:${{ github.sha }}
+
 jobs:
   publish:
     runs-on: ubuntu-24.04
@@ -36,7 +39,6 @@ jobs:
       TZ: Asia/Seoul
       DB_USERNAME: cgv_test
       DB_PASSWORD: cgv_test
-      IMAGE: ${{ vars.DOCKER_IMAGE }}:${{ github.sha }}
     steps:
       - name: 배포 설정 확인
         env:
@@ -51,12 +53,21 @@ jobs:
         run: |
           missing=""
           for name in DOCKERHUB_USERNAME DOCKER_IMAGE DEPLOY_PATH DOCKERHUB_TOKEN EC2_HOST EC2_USERNAME EC2_SSH_KEY EC2_KNOWN_HOSTS; do
-            [ -n "$(printenv "$name")" ] || missing="$missing $name"
+            [ -n "${!name}" ] || missing="$missing $name"
           done
           if [ -n "$missing" ]; then
             echo "::error::GitHub Secrets/Variables가 비어 있습니다:$missing"
             exit 1
           fi
+          invalid=""
+          for name in DOCKERHUB_USERNAME DOCKER_IMAGE DEPLOY_PATH EC2_HOST EC2_USERNAME; do
+            case "${!name}" in *[[:space:]]*) invalid="$invalid $name" ;; esac
+          done
+          if [ -n "$invalid" ]; then
+            echo "::error::값에 공백 또는 줄바꿈이 들어 있습니다. 앞뒤 공백 없이 다시 입력하세요:$invalid"
+            exit 1
+          fi
+          echo "배포 이미지: $IMAGE"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -91,8 +102,6 @@ jobs:
     needs: publish
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    env:
-      IMAGE: ${{ vars.DOCKER_IMAGE }}:${{ github.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
