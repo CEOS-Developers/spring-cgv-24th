@@ -15,12 +15,16 @@ import com.ceos24.cgv.domain.payment.repository.PaymentRepository;
 import com.ceos24.cgv.domain.reservation.service.ReservationService;
 import com.ceos24.cgv.global.exception.GeneralException;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
+import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -30,6 +34,7 @@ public class PaymentService {
 	public static final String COMPENSATION_REASON = "주문 확정 실패로 인한 자동 취소";
 
 	private static final List<PaymentStatus> CONFIRMABLE = List.of(PaymentStatus.READY, PaymentStatus.UNKNOWN);
+	private static final int MAX_IDEMPOTENCY_KEY_LENGTH = 300;
 
 	private final PaymentRepository paymentRepository;
 	private final PaymentCancelRepository paymentCancelRepository;
@@ -116,8 +121,8 @@ public class PaymentService {
 		payment.cancelFully();
 		handleCompensated(payment);
 		PaymentCancel cancel = PaymentCancel.request(payment, payment.getCompensationIdempotencyKey(), null, canceledAmount,
-				COMPENSATION_REASON);
-		applyTossCancel(cancel, canceled);
+				COMPENSATION_REASON, Instant.now(clock));
+		applyTossCancel(payment, cancel, canceled);
 		paymentCancelRepository.save(cancel);
 		return toResponse(payment);
 	}
@@ -130,9 +135,18 @@ public class PaymentService {
 		return toResponse(payment);
 	}
 
+	// 소유자 확인을 이미 거친 흐름에서 정산 결과를 돌려줄 때 쓴다
+	public PaymentResponse getPaymentResult(Long paymentId) {
+		return toResponse(getPayment(paymentId));
+	}
+
 	// Payment 행을 잠가 같은 결제의 동시 취소를 직렬화하고, 취소 금액을 처리 중으로 먼저 예약해 초과 취소를 막는다
 	@Transactional
 	public CancelStart startCancel(Long userId, Long paymentId, String idempotencyKey, PaymentCancelRequest request) {
+		if (idempotencyKey.isBlank() || idempotencyKey.length() > MAX_IDEMPOTENCY_KEY_LENGTH
+				|| Payment.isServerIdempotencyKey(idempotencyKey)) {
+			throw new GeneralException(PaymentErrorStatus.INVALID_IDEMPOTENCY_KEY);
+		}
 		Payment payment = getPaymentForUpdate(paymentId);
 		if (!payment.isOwnedBy(userId)) {
 			throw new GeneralException(PaymentErrorStatus.NOT_PAYMENT_OWNER);
@@ -160,8 +174,31 @@ public class PaymentService {
 
 		int amount = (requestedAmount != null) ? requestedAmount : payment.getCancelableAmount();
 		payment.reserveCancel(amount);
-		PaymentCancel cancel = paymentCancelRepository.save(
-				PaymentCancel.request(payment, idempotencyKey, requestedAmount, amount, request.cancelReason()));
+		PaymentCancel cancel;
+		try {
+			cancel = paymentCancelRepository.save(PaymentCancel.request(payment, idempotencyKey, requestedAmount, amount,
+					request.cancelReason(), Instant.now(clock)));
+		} catch (DataIntegrityViolationException e) { // 다른 결제의 취소가 같은 새 멱등키를 동시에 먼저 저장한 경우
+			throw new GeneralException(PaymentErrorStatus.IDEMPOTENCY_KEY_CONFLICT);
+		}
+		return CancelStart.toCall(payment, cancel);
+	}
+
+	public List<PaymentCancel> findStaleCancels() {
+		return paymentCancelRepository.findStalePendingCancels(Instant.now(clock).minus(Payment.PROCESSING_TIMEOUT));
+	}
+
+	// 서버 중단(REQUESTED)이나 결과 불명(UNKNOWN)으로 남은 취소를 같은 멱등키로 다시 요청하도록 선점한다.
+	// 그사이 정리됐거나 다른 요청이 같은 취소를 다시 시도 중이면 건너뛴다
+	@Transactional
+	public CancelStart startCancelRecovery(Long paymentId, Long cancelId) {
+		Payment payment = getPaymentForUpdate(paymentId);
+		PaymentCancel cancel = getCancel(cancelId);
+		Instant now = Instant.now(clock);
+		if (!cancel.isPending() || cancel.isRequestedAfter(now.minus(Payment.PROCESSING_TIMEOUT))) {
+			throw new GeneralException(PaymentErrorStatus.CANCEL_IN_PROGRESS);
+		}
+		cancel.retry(now);
 		return CancelStart.toCall(payment, cancel);
 	}
 
@@ -313,26 +350,37 @@ public class PaymentService {
 			case DONE -> CancelStart.completed(toResponse(payment));
 			case REQUESTED -> throw new GeneralException(PaymentErrorStatus.CANCEL_IN_PROGRESS);
 			case FAILED -> throw new GeneralException(PaymentErrorStatus.CANCEL_ALREADY_FAILED);
-			case UNKNOWN -> CancelStart.toCall(payment, existing);
+			case UNKNOWN -> {
+				existing.retry(Instant.now(clock));
+				yield CancelStart.toCall(payment, existing);
+			}
 		};
 	}
 
 	private void completePendingCancel(Payment payment, PaymentCancel cancel, TossPaymentResponse toss) {
-		applyTossCancel(cancel, toss);
+		applyTossCancel(payment, cancel, toss);
 		payment.completeCancel(cancel.getCancelAmount());
 		if (payment.getStatus() == PaymentStatus.CANCELED) {
 			handleFullyCanceled(payment);
 		}
 	}
 
-	private void applyTossCancel(PaymentCancel cancel, TossPaymentResponse toss) {
-		List<TossPaymentResponse.Cancel> cancels = toss.cancels();
-		if (cancels == null || cancels.isEmpty()) {
-			cancel.complete(null, Instant.now());
+	// 동시 부분 취소에서는 응답의 마지막 취소가 이 건이 아닐 수 있어, 아직 기록되지 않은 같은 금액의 토스 취소를 찾는다
+	private void applyTossCancel(Payment payment, PaymentCancel cancel, TossPaymentResponse toss) {
+		List<TossPaymentResponse.Cancel> cancels = (toss.cancels() != null) ? toss.cancels() : List.of();
+		Set<String> recorded = paymentCancelRepository.findByPaymentIdOrderByIdAsc(payment.getId()).stream()
+				.map(PaymentCancel::getTransactionKey)
+				.filter(Objects::nonNull)
+				.collect(Collectors.toSet());
+		TossPaymentResponse.Cancel matched = cancels.stream()
+				.filter(c -> !recorded.contains(c.transactionKey()) && cancel.getCancelAmount().equals(c.cancelAmount()))
+				.findFirst()
+				.orElse(null);
+		if (matched == null) {
+			cancel.complete(null, Instant.now(clock));
 			return;
 		}
-		TossPaymentResponse.Cancel last = cancels.get(cancels.size() - 1);
-		cancel.complete(last.transactionKey(), last.canceledAt().toInstant());
+		cancel.complete(matched.transactionKey(), matched.canceledAt().toInstant());
 	}
 
 	private PaymentResponse toResponse(Payment payment) {

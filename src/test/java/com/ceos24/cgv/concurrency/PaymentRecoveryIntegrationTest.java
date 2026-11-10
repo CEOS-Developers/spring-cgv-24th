@@ -31,6 +31,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -204,6 +205,89 @@ class PaymentRecoveryIntegrationTest extends ConcurrencyTestSupport {
         assertThat(stock(theater, item)).isEqualTo(8);
         verify(tossPaymentClient, times(1)).getByOrderId(payment.getTossOrderId());
         verify(tossPaymentClient, never()).cancel(any(), any(), any(), any());
+    }
+
+    @Test
+    void 결과_불명_재승인이_거절돼도_토스에서_승인된_것이_확인되면_예매를_확정한다() {
+        User user = saveUser();
+        Payment payment = reservationPayment(user.getId(), saveSchedule(1));
+        when(tossPaymentClient.confirm(any(), any(), anyInt(), any())).thenThrow(TossPaymentException.unknown("Read timed out"));
+        assertThatThrownBy(() -> confirm(user, payment, "pk-" + payment.getId())).isInstanceOf(TossPaymentException.class);
+        assertThat(paymentRepository.findById(payment.getId()).orElseThrow().getStatus()).isEqualTo(PaymentStatus.UNKNOWN);
+
+        doThrow(TossPaymentException.rejected("NOT_FOUND_PAYMENT", "존재하지 않는 결제 정보 입니다."))
+                .when(tossPaymentClient).confirm(any(), any(), anyInt(), any());
+        when(tossPaymentClient.getByOrderId(payment.getTossOrderId()))
+                .thenReturn(tossResponse("DONE", payment, payment.getAmount(), 0));
+        PaymentResponse response = confirm(user, payment, "wrong-payment-key");
+
+        assertThat(response.status()).isEqualTo(PaymentStatus.DONE);
+        Payment result = paymentRepository.findById(payment.getId()).orElseThrow();
+        assertThat(result.getStatus()).isEqualTo(PaymentStatus.DONE);
+        assertThat(result.getPaymentKey()).isEqualTo("pk-" + payment.getId());
+        assertThat(reservationStatus(payment)).isEqualTo(ReservationStatus.RESERVED);
+        assertThat(reservationSeatRepository.findByReservationIdWithSeat(reservationId(payment))).hasSize(1);
+        verify(tossPaymentClient, never()).cancel(any(), any(), any(), any());
+    }
+
+    @Test
+    void 결과_불명_재승인이_거절되고_토스에서도_승인_실패로_확인되면_실패를_확정하고_좌석을_반환한다() {
+        User user = saveUser();
+        Payment payment = reservationPayment(user.getId(), saveSchedule(1));
+        when(tossPaymentClient.confirm(any(), any(), anyInt(), any())).thenThrow(TossPaymentException.unknown("Read timed out"));
+        assertThatThrownBy(() -> confirm(user, payment, "pk-" + payment.getId())).isInstanceOf(TossPaymentException.class);
+        assertThat(reservationStatus(payment)).isEqualTo(ReservationStatus.PAYING);
+
+        TossPaymentException rejection = TossPaymentException.rejected("REJECT_CARD_COMPANY", "카드사에서 거절했습니다.");
+        doThrow(rejection).when(tossPaymentClient).confirm(any(), any(), anyInt(), any());
+        when(tossPaymentClient.getByOrderId(payment.getTossOrderId()))
+                .thenReturn(tossResponse("ABORTED", payment, payment.getAmount(), 0));
+
+        assertThatThrownBy(() -> confirm(user, payment, "pk-" + payment.getId())).isSameAs(rejection);
+        assertThat(paymentRepository.findById(payment.getId()).orElseThrow().getStatus()).isEqualTo(PaymentStatus.FAILED);
+        assertThat(reservationStatus(payment)).isEqualTo(ReservationStatus.CANCELLED);
+        assertThat(reservationSeatRepository.findByReservationIdWithSeat(reservationId(payment))).isEmpty();
+    }
+
+    @Test
+    void 결제_승인과_결제_전_예매_취소가_동시에_와도_한쪽만_반영되고_보상_취소가_필요한_상태가_생기지_않는다() throws Exception {
+        Schedule schedule = saveSchedule(5);
+        when(tossPaymentClient.confirm(any(), any(), anyInt(), any())).thenAnswer(invocation -> {
+            Payment target = paymentRepository.findByTossOrderId(invocation.getArgument(1)).orElseThrow();
+            return tossResponse("DONE", target, target.getAmount(), 0);
+        });
+
+        for (Seat seat : seatRepository.findAll()) {
+            User user = saveUser();
+            Long reservationId = reservationService.create(user.getId(),
+                    new ReservationCreateRequest(schedule.getId(), List.of(seat.getId())));
+            Payment payment = paymentRepository.findByReservationId(reservationId).orElseThrow();
+
+            List<Throwable> results = runConcurrently(List.of(
+                    () -> reservationService.cancel(reservationId, user.getId()),
+                    () -> confirm(user, payment, "pk-" + payment.getId())));
+
+            assertThat(successCount(results)).isEqualTo(1);
+            ReservationStatus reservationStatus = reservationRepository.findById(reservationId).orElseThrow().getStatus();
+            PaymentStatus paymentStatus = paymentRepository.findById(payment.getId()).orElseThrow().getStatus();
+            if (results.get(0) == null) {
+                assertThat(errorCode(results.get(1))).isEqualTo("RESERVATION409_3");
+                assertThat(reservationStatus).isEqualTo(ReservationStatus.CANCELLED);
+                assertThat(paymentStatus).isEqualTo(PaymentStatus.EXPIRED);
+                assertThat(reservationSeatRepository.findByReservationIdWithSeat(reservationId)).isEmpty();
+            } else {
+                assertThat(errorCode(results.get(0))).isIn("RESERVATION409_5", "RESERVATION409_4");
+                assertThat(reservationStatus).isEqualTo(ReservationStatus.RESERVED);
+                assertThat(paymentStatus).isEqualTo(PaymentStatus.DONE);
+                assertThat(reservationSeatRepository.findByReservationIdWithSeat(reservationId)).hasSize(1);
+            }
+        }
+        verify(tossPaymentClient, never()).cancel(any(), any(), any(), any());
+    }
+
+    private PaymentResponse confirm(User user, Payment payment, String paymentKey) {
+        return paymentFacade.confirm(user.getId(),
+                new PaymentConfirmRequest(paymentKey, payment.getTossOrderId(), payment.getAmount()));
     }
 
     // 승인 후 재고 부족으로 보상 취소를 보냈는데 응답이 유실된 상태를 만든다 (토스에서는 실제로 취소됨)

@@ -21,6 +21,7 @@ public enum PaymentErrorStatus implements BaseErrorCode {
 	PAYMENT_NOT_RECONCILABLE(HttpStatus.CONFLICT, "PAYMENT409_2", "결과 확인이 필요한 결제가 아닙니다."),
 	CANCEL_AMOUNT_EXCEEDED(HttpStatus.BAD_REQUEST, "PAYMENT400_2", "취소 금액이 취소 가능 잔액을 초과합니다."),
 	PARTIAL_CANCEL_NOT_SUPPORTED(HttpStatus.BAD_REQUEST, "PAYMENT400_3", "영화 예매 결제는 전체 취소만 가능합니다."),
+	INVALID_IDEMPOTENCY_KEY(HttpStatus.BAD_REQUEST, "PAYMENT400_4", "사용할 수 없는 멱등키입니다."),
 	PAYMENT_NOT_CANCELABLE(HttpStatus.CONFLICT, "PAYMENT409_3", "취소할 수 없는 결제 상태입니다."),
 	ALREADY_CANCELED(HttpStatus.CONFLICT, "PAYMENT409_4", "이미 전액 취소된 결제입니다."),
 	CANCEL_IN_PROGRESS(HttpStatus.CONFLICT, "PAYMENT409_5", "같은 취소 요청이 처리 중입니다."),

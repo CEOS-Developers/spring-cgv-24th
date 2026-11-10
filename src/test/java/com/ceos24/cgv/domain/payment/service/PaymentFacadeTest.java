@@ -127,7 +127,7 @@ class PaymentFacadeTest {
 
 	private PaymentService.CancelStart cancelStart(Payment payment) {
 		payment.approve("pk-1", "카드", Instant.now());
-		PaymentCancel cancel = withId(PaymentCancel.request(payment, "key-1", null, 15_000, "단순 변심"), 200L);
+		PaymentCancel cancel = withId(PaymentCancel.request(payment, "key-1", null, 15_000, "단순 변심", Instant.now()), 200L);
 		return PaymentService.CancelStart.toCall(payment, cancel);
 	}
 
@@ -286,7 +286,7 @@ class PaymentFacadeTest {
 
 	private PaymentService.CancelStart unknownCancelStart(Payment payment) {
 		payment.approve("pk-1", "카드", Instant.now());
-		PaymentCancel cancel = withId(PaymentCancel.request(payment, "key-1", 3_000, 3_000, "단순 변심"), 200L);
+		PaymentCancel cancel = withId(PaymentCancel.request(payment, "key-1", 3_000, 3_000, "단순 변심", Instant.now()), 200L);
 		cancel.markUnknown();
 		return PaymentService.CancelStart.toCall(payment, cancel);
 	}
@@ -318,7 +318,7 @@ class PaymentFacadeTest {
 				.thenThrow(TossPaymentException.rejected("ALREADY_CANCELED_PAYMENT", "이미 취소된 결제입니다."));
 		when(tossPaymentClient.getByOrderId(payment.getTossOrderId())).thenReturn(current);
 		when(paymentService.settleUnknownCancel(100L, 200L, 0, current)).thenReturn(PaymentCancelStatus.DONE);
-		when(paymentService.getPayment(10L, 100L)).thenReturn(response);
+		when(paymentService.getPaymentResult(100L)).thenReturn(response);
 
 		assertThat(paymentFacade.cancel(10L, 100L, "key-1", request)).isSameAs(response);
 		verify(paymentService, never()).failCancel(anyLong(), anyLong());
@@ -352,5 +352,72 @@ class PaymentFacadeTest {
 		assertThatThrownBy(() -> paymentFacade.cancel(10L, 100L, "key-1", request)).isInstanceOf(TossPaymentException.class);
 		verify(paymentService).failCancel(100L, 200L);
 		verify(tossPaymentClient, never()).getByOrderId(anyString());
+	}
+
+	@Test
+	void 결과_불명_재승인이_거절되면_토스를_조회해_승인이_확인될_때_확정한다() {
+		Payment payment = readyPayment();
+		payment.markUnknown();
+		TossPaymentResponse approved = toss(payment, "DONE");
+		PaymentConfirmRequest request = new PaymentConfirmRequest("other-pk", payment.getTossOrderId(), 15_000);
+		PaymentResponse response = PaymentResponse.from(payment, List.of());
+		when(paymentService.startApproval(10L, request)).thenReturn(payment);
+		when(tossPaymentClient.confirm(anyString(), anyString(), anyInt(), anyString()))
+				.thenThrow(TossPaymentException.rejected("NOT_FOUND_PAYMENT", "존재하지 않는 결제 정보 입니다."));
+		when(tossPaymentClient.getByOrderId(payment.getTossOrderId())).thenReturn(approved);
+		when(paymentService.completeApproval(100L, approved)).thenReturn(response);
+
+		assertThat(paymentFacade.confirm(10L, request)).isSameAs(response);
+		verify(paymentService, never()).fail(anyLong());
+	}
+
+	@Test
+	void 결과_불명_재승인이_거절되고_토스에서도_승인_실패로_확인되면_실패를_확정하고_거절을_알린다() {
+		Payment payment = readyPayment();
+		payment.markUnknown();
+		TossPaymentResponse aborted = toss(payment, "ABORTED");
+		PaymentConfirmRequest request = new PaymentConfirmRequest("pk-1", payment.getTossOrderId(), 15_000);
+		TossPaymentException rejection = TossPaymentException.rejected("REJECT_CARD_COMPANY", "카드사에서 거절했습니다.");
+		Payment failed = readyPayment();
+		failed.fail();
+		when(paymentService.startApproval(10L, request)).thenReturn(payment);
+		when(tossPaymentClient.confirm(anyString(), anyString(), anyInt(), anyString())).thenThrow(rejection);
+		when(tossPaymentClient.getByOrderId(payment.getTossOrderId())).thenReturn(aborted);
+		when(paymentService.fail(100L)).thenReturn(PaymentResponse.from(failed, List.of()));
+
+		assertThatThrownBy(() -> paymentFacade.confirm(10L, request)).isSameAs(rejection);
+		verify(paymentService).fail(100L);
+	}
+
+	@Test
+	void 첫_승인이_거절되면_토스를_다시_조회하지_않고_실패로_반영한다() {
+		Payment payment = readyPayment();
+		PaymentConfirmRequest request = new PaymentConfirmRequest("pk-1", payment.getTossOrderId(), 15_000);
+		when(paymentService.startApproval(10L, request)).thenReturn(payment);
+		when(tossPaymentClient.confirm(anyString(), anyString(), anyInt(), anyString()))
+				.thenThrow(TossPaymentException.rejected("REJECT_CARD_COMPANY", "카드사에서 거절했습니다."));
+
+		assertThatThrownBy(() -> paymentFacade.confirm(10L, request)).isInstanceOf(TossPaymentException.class);
+		verify(paymentService).fail(100L);
+		verify(tossPaymentClient, never()).getByOrderId(anyString());
+	}
+
+	@Test
+	void 오래_남은_취소는_같은_멱등키로_다시_요청해_정리하고_한_건이_실패해도_나머지를_계속_처리한다() {
+		Payment payment = readyPayment();
+		payment.approve("pk-1", "카드", Instant.now());
+		PaymentCancel stuck = withId(PaymentCancel.request(payment, "key-1", 3_000, 3_000, "단순 변심", Instant.now()), 200L);
+		PaymentCancel skipped = withId(PaymentCancel.request(payment, "key-2", 2_000, 2_000, "단순 변심", Instant.now()), 201L);
+		stuck.markUnknown();
+		TossPaymentResponse canceled = toss(payment, "PARTIAL_CANCELED");
+		when(paymentService.findStaleCancels()).thenReturn(List.of(skipped, stuck));
+		when(paymentService.startCancelRecovery(100L, 201L)).thenThrow(new GeneralException(PaymentErrorStatus.CANCEL_IN_PROGRESS));
+		when(paymentService.startCancelRecovery(100L, 200L)).thenReturn(PaymentService.CancelStart.toCall(payment, stuck));
+		when(tossPaymentClient.cancel("pk-1", "단순 변심", 3_000, "key-1")).thenReturn(canceled);
+
+		paymentFacade.recoverStaleCancels();
+
+		verify(paymentService).completeCancel(100L, 200L, canceled);
+		verify(tossPaymentClient, times(1)).cancel(anyString(), anyString(), any(), anyString());
 	}
 }

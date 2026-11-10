@@ -11,6 +11,7 @@ import com.ceos24.cgv.domain.payment.enums.PaymentCancelStatus;
 import com.ceos24.cgv.domain.payment.enums.PaymentStatus;
 import com.ceos24.cgv.domain.payment.exception.TossPaymentException;
 import com.ceos24.cgv.domain.payment.service.PaymentFacade;
+import com.ceos24.cgv.domain.payment.service.PaymentService;
 import com.ceos24.cgv.domain.reservation.dto.request.ReservationCreateRequest;
 import com.ceos24.cgv.domain.reservation.enums.ReservationStatus;
 import com.ceos24.cgv.domain.reservation.service.ReservationService;
@@ -21,7 +22,9 @@ import com.ceos24.cgv.domain.user.entity.User;
 import com.ceos24.cgv.global.exception.GeneralException;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.test.util.ReflectionTestUtils;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
@@ -35,9 +38,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -48,6 +53,8 @@ class PaymentCancelRecoveryIntegrationTest extends ConcurrencyTestSupport {
 
     @Autowired
     private PaymentFacade paymentFacade;
+    @Autowired
+    private PaymentService paymentService;
     @Autowired
     private ReservationService reservationService;
 
@@ -238,6 +245,98 @@ class PaymentCancelRecoveryIntegrationTest extends ConcurrencyTestSupport {
                 new ReservationCreateRequest(schedule.getId(), List.of(seatId)));
         assertThat(reservationRepository.findById(nextReservationId).orElseThrow().getStatus())
                 .isEqualTo(ReservationStatus.PENDING_PAYMENT);
+    }
+
+    @Test
+    void 취소_요청_기록_후_서버가_중단돼_남은_취소는_처리_제한_시간이_지나면_같은_멱등키로_다시_요청해_한_번만_반영한다() {
+        Payment payment = paidOrderPayment();
+        paymentService.startCancel(user.getId(), payment.getId(), "cancel-crash", new PaymentCancelRequest(REASON, null));
+        doReturn(tossResponse("CANCELED", payment, 0, 10_000)).when(tossPaymentClient).cancel(any(), any(), any(), any());
+
+        paymentFacade.recoverStaleCancels();
+        verify(tossPaymentClient, never()).cancel(any(), any(), any(), any());
+        assertThat(payment(payment).getPendingCancelAmount()).isEqualTo(10_000);
+        assertThat(cancelStatusByAmount(payment)).containsEntry(10_000, PaymentCancelStatus.REQUESTED);
+
+        makeCancelsStale(payment);
+        paymentFacade.recoverStaleCancels();
+        paymentFacade.recoverStaleCancels();
+
+        Payment result = payment(payment);
+        assertThat(result.getStatus()).isEqualTo(PaymentStatus.CANCELED);
+        assertThat(result.getBalanceAmount()).isZero();
+        assertThat(result.getPendingCancelAmount()).isZero();
+        assertThat(cancelStatusByAmount(payment)).containsEntry(10_000, PaymentCancelStatus.DONE);
+        assertThat(orderStatus(payment)).isEqualTo(OrderStatus.CANCELED);
+        assertThat(stock()).isEqualTo(10);
+        verify(tossPaymentClient, times(1)).cancel(eq("pk-" + payment.getId()), eq(REASON), eq(10_000), eq("cancel-crash"));
+    }
+
+    @Test
+    void 결과_불명으로_남은_취소는_자동으로_다시_요청하고_토스가_거절하면_취소_누계로_실패를_확정한다() {
+        Payment payment = paidOrderPayment();
+        doThrow(TossPaymentException.unknown("Read timed out")).when(tossPaymentClient).cancel(any(), any(), any(), any());
+        assertThatThrownBy(() -> cancel(payment, "cancel-1", 3_000, REASON)).isInstanceOf(TossPaymentException.class);
+        doThrow(TossPaymentException.rejected("NOT_CANCELABLE_AMOUNT", "취소 할 수 없는 금액입니다."))
+                .when(tossPaymentClient).cancel(any(), any(), any(), any());
+        when(tossPaymentClient.getByOrderId(payment.getTossOrderId())).thenReturn(tossResponse("DONE", payment, 10_000, 0));
+
+        makeCancelsStale(payment);
+        paymentFacade.recoverStaleCancels();
+        paymentFacade.recoverStaleCancels();
+
+        Payment result = payment(payment);
+        assertThat(result.getStatus()).isEqualTo(PaymentStatus.DONE);
+        assertThat(result.getBalanceAmount()).isEqualTo(10_000);
+        assertThat(result.getPendingCancelAmount()).isZero();
+        assertThat(cancelStatusByAmount(payment)).containsEntry(3_000, PaymentCancelStatus.FAILED);
+        assertThat(orderStatus(payment)).isEqualTo(OrderStatus.PAID);
+        assertThat(stock()).isEqualTo(8);
+        verify(tossPaymentClient, times(2)).cancel(any(), any(), any(), any());
+    }
+
+    @Test
+    void 서버가_쓰는_승인_보상_멱등키_형식은_취소_멱등키로_쓸_수_없다() {
+        Payment payment = paidOrderPayment();
+
+        assertThatThrownBy(() -> cancel(payment, payment.getCompensationIdempotencyKey(), null, REASON))
+                .isInstanceOfSatisfying(GeneralException.class, e -> assertThat(errorCode(e)).isEqualTo("PAYMENT400_4"));
+        assertThatThrownBy(() -> cancel(payment, payment.getConfirmIdempotencyKey(), 3_000, REASON))
+                .isInstanceOfSatisfying(GeneralException.class, e -> assertThat(errorCode(e)).isEqualTo("PAYMENT400_4"));
+
+        assertThat(payment(payment).getPendingCancelAmount()).isZero();
+        assertThat(paymentCancelRepository.findByPaymentIdOrderByIdAsc(payment.getId())).isEmpty();
+        verify(tossPaymentClient, never()).cancel(any(), any(), any(), any());
+    }
+
+    @Test
+    void 서로_다른_결제에_같은_새_멱등키로_동시에_취소해도_한_건만_처리되고_나머지는_충돌로_응답한다() throws Exception {
+        Payment first = paidOrderPayment();
+        User firstUser = user;
+        Payment second = paidOrderPayment();
+        doAnswer(invocation -> {
+            Payment target = paymentRepository.findByPaymentKey(invocation.getArgument(0)).orElseThrow();
+            return tossResponse("PARTIAL_CANCELED", target, 7_000, 3_000);
+        }).when(tossPaymentClient).cancel(any(), any(), any(), any());
+
+        List<Throwable> results = runConcurrently(List.of(
+                () -> paymentFacade.cancel(firstUser.getId(), first.getId(), "shared-key", new PaymentCancelRequest(REASON, 3_000)),
+                () -> paymentFacade.cancel(user.getId(), second.getId(), "shared-key", new PaymentCancelRequest(REASON, 3_000))));
+
+        assertThat(successCount(results)).isEqualTo(1);
+        assertThat(failureCount(results, "PAYMENT409_7")).isEqualTo(1);
+        assertThat(payment(first).getPendingCancelAmount() + payment(second).getPendingCancelAmount()).isZero();
+        assertThat(payment(first).getBalanceAmount() + payment(second).getBalanceAmount()).isEqualTo(17_000);
+        assertThat(paymentCancelRepository.findAll()).hasSize(1);
+        verify(tossPaymentClient, times(1)).cancel(any(), any(), any(), any());
+    }
+
+    private void makeCancelsStale(Payment payment) {
+        for (PaymentCancel cancel : paymentCancelRepository.findByPaymentIdOrderByIdAsc(payment.getId())) {
+            ReflectionTestUtils.setField(cancel, "lastRequestedAt",
+                    Instant.now().minus(Payment.PROCESSING_TIMEOUT).minusSeconds(60));
+            paymentCancelRepository.save(cancel);
+        }
     }
 
     // 재고 10개 중 2개(10,000원)를 결제 승인까지 마친 매점 주문 결제

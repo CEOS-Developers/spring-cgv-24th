@@ -45,19 +45,22 @@ public class PaymentCancel {
 
 	private Instant canceledAt;
 
+	private Instant lastRequestedAt; // 마지막으로 토스에 취소를 요청한 시각. 자동 복구가 진행 중인 요청과 겹치지 않게 한다
+
 	private PaymentCancel(Payment payment, String idempotencyKey, Integer requestedAmount, Integer cancelAmount,
-						  String cancelReason) {
+						  String cancelReason, Instant requestedAt) {
 		this.payment = payment;
 		this.idempotencyKey = idempotencyKey;
 		this.requestedAmount = requestedAmount;
 		this.cancelAmount = cancelAmount;
 		this.cancelReason = cancelReason;
 		this.status = PaymentCancelStatus.REQUESTED;
+		this.lastRequestedAt = requestedAt;
 	}
 
 	public static PaymentCancel request(Payment payment, String idempotencyKey, Integer requestedAmount, Integer cancelAmount,
-										String cancelReason) {
-		return new PaymentCancel(payment, idempotencyKey, requestedAmount, cancelAmount, cancelReason);
+										String cancelReason, Instant requestedAt) {
+		return new PaymentCancel(payment, idempotencyKey, requestedAmount, cancelAmount, cancelReason, requestedAt);
 	}
 
 	public boolean isSameRequest(Long paymentId, Integer requestedAmount, String cancelReason) {
@@ -67,6 +70,16 @@ public class PaymentCancel {
 
 	public boolean isPending() {
 		return status == PaymentCancelStatus.REQUESTED || status == PaymentCancelStatus.UNKNOWN;
+	}
+
+	public boolean isRequestedAfter(Instant time) {
+		return lastRequestedAt != null && lastRequestedAt.isAfter(time);
+	}
+
+	// 같은 멱등키로 다시 요청한다. 앞선 요청의 반영 여부를 알 수 없으므로 결과 불명으로 둔다
+	public void retry(Instant now) {
+		this.status = PaymentCancelStatus.UNKNOWN;
+		this.lastRequestedAt = now;
 	}
 
 	public void complete(String transactionKey, Instant canceledAt) {

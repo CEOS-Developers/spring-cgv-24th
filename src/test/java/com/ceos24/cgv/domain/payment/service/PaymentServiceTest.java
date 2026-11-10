@@ -22,6 +22,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.Clock;
@@ -154,7 +155,7 @@ class PaymentServiceTest {
 	@Test
 	void 같은_멱등키로_이미_완료된_취소는_토스_호출_대상이_아니다() {
 		Payment payment = donePayment();
-		PaymentCancel done = PaymentCancel.request(payment, "key-1", null, 15_000, "단순 변심");
+		PaymentCancel done = PaymentCancel.request(payment, "key-1", null, 15_000, "단순 변심", NOW);
 		done.complete("tx-1", Instant.now());
 		when(paymentRepository.findByIdForUpdate(100L)).thenReturn(Optional.of(payment));
 		when(paymentCancelRepository.findByIdempotencyKey("key-1")).thenReturn(Optional.of(done));
@@ -171,7 +172,7 @@ class PaymentServiceTest {
 		Payment other = withId(Payment.forOrder(order(2L, user(10L), theater(2L), 5_000)), 101L);
 		when(paymentRepository.findByIdForUpdate(100L)).thenReturn(Optional.of(payment));
 		when(paymentCancelRepository.findByIdempotencyKey("key-1"))
-				.thenReturn(Optional.of(PaymentCancel.request(other, "key-1", null, 5_000, "단순 변심")));
+				.thenReturn(Optional.of(PaymentCancel.request(other, "key-1", null, 5_000, "단순 변심", NOW)));
 
 		assertThatThrownBy(() -> paymentService.startCancel(10L, 100L, "key-1", new PaymentCancelRequest("단순 변심", null)))
 				.isInstanceOf(GeneralException.class)
@@ -346,7 +347,7 @@ class PaymentServiceTest {
 		Payment payment = reservationPayment();
 		payment.approve("pk-1", "카드", Instant.now());
 		payment.reserveCancel(15_000);
-		PaymentCancel cancel = withId(PaymentCancel.request(payment, "key-1", null, 15_000, "단순 변심"), 200L);
+		PaymentCancel cancel = withId(PaymentCancel.request(payment, "key-1", null, 15_000, "단순 변심", NOW), 200L);
 		when(paymentRepository.findByIdForUpdate(100L)).thenReturn(Optional.of(payment));
 		when(paymentCancelRepository.findById(200L)).thenReturn(Optional.of(cancel));
 
@@ -367,7 +368,7 @@ class PaymentServiceTest {
 	}
 
 	private PaymentCancel storedCancel(Payment payment, Integer requestedAmount, int cancelAmount, String reason) {
-		PaymentCancel cancel = withId(PaymentCancel.request(payment, "key-1", requestedAmount, cancelAmount, reason), 200L);
+		PaymentCancel cancel = withId(PaymentCancel.request(payment, "key-1", requestedAmount, cancelAmount, reason, NOW), 200L);
 		when(paymentRepository.findByIdForUpdate(100L)).thenReturn(Optional.of(payment));
 		when(paymentCancelRepository.findByIdempotencyKey("key-1")).thenReturn(Optional.of(cancel));
 		return cancel;
@@ -443,7 +444,7 @@ class PaymentServiceTest {
 		Payment payment = donePayment();
 		payment.reserveCancel(9_000);
 		payment.reserveCancel(6_000);
-		PaymentCancel first = withId(PaymentCancel.request(payment, "key-1", 9_000, 9_000, "단순 변심"), 200L);
+		PaymentCancel first = withId(PaymentCancel.request(payment, "key-1", 9_000, 9_000, "단순 변심", NOW), 200L);
 		when(paymentRepository.findByIdForUpdate(100L)).thenReturn(Optional.of(payment));
 		when(paymentCancelRepository.findById(200L)).thenReturn(Optional.of(first));
 
@@ -458,7 +459,7 @@ class PaymentServiceTest {
 
 	private PaymentCancel unknownCancel(Payment payment, int amount) {
 		payment.reserveCancel(amount);
-		PaymentCancel cancel = withId(PaymentCancel.request(payment, "key-1", amount, amount, "단순 변심"), 200L);
+		PaymentCancel cancel = withId(PaymentCancel.request(payment, "key-1", amount, amount, "단순 변심", NOW), 200L);
 		cancel.markUnknown();
 		when(paymentRepository.findByIdForUpdate(100L)).thenReturn(Optional.of(payment));
 		when(paymentCancelRepository.findById(200L)).thenReturn(Optional.of(cancel));
@@ -652,5 +653,118 @@ class PaymentServiceTest {
 				.extracting(error -> ((GeneralException) error).getCode())
 				.isEqualTo(PaymentErrorStatus.PAYMENT_NOT_RECONCILABLE);
 		verify(paymentRepository, never()).startReconcile(anyLong(), any(), any());
+	}
+
+	@Test
+	void 서버가_쓰는_승인_보상_멱등키_형식이나_너무_긴_키로는_취소를_시작하지_않는다() {
+		for (String key : List.of("compensate-abc", "confirm-abc", " ", "k".repeat(301))) {
+			assertThatThrownBy(() -> paymentService.startCancel(10L, 100L, key, new PaymentCancelRequest("단순 변심", null)))
+					.isInstanceOf(GeneralException.class)
+					.extracting(error -> ((GeneralException) error).getCode())
+					.isEqualTo(PaymentErrorStatus.INVALID_IDEMPOTENCY_KEY);
+		}
+		verify(paymentRepository, never()).findByIdForUpdate(anyLong());
+		verify(paymentCancelRepository, never()).save(any());
+	}
+
+	@Test
+	void 다른_결제가_같은_새_멱등키를_먼저_저장했으면_서버_오류_대신_멱등키_충돌로_응답한다() {
+		Payment payment = donePayment();
+		when(paymentRepository.findByIdForUpdate(100L)).thenReturn(Optional.of(payment));
+		when(paymentCancelRepository.save(any())).thenThrow(new DataIntegrityViolationException("Duplicate entry"));
+
+		assertThatThrownBy(() -> paymentService.startCancel(10L, 100L, "key-1", new PaymentCancelRequest("단순 변심", 3_000)))
+				.isInstanceOf(GeneralException.class)
+				.extracting(error -> ((GeneralException) error).getCode())
+				.isEqualTo(PaymentErrorStatus.IDEMPOTENCY_KEY_CONFLICT);
+	}
+
+	@Test
+	void 결과_불명_취소를_재시도하면_마지막_요청_시각을_갱신해_자동_복구와_겹치지_않게_한다() {
+		Payment payment = donePayment();
+		payment.reserveCancel(3_000);
+		PaymentCancel cancel = withId(PaymentCancel.request(payment, "key-1", 3_000, 3_000, "단순 변심",
+				NOW.minus(Payment.PROCESSING_TIMEOUT).minusSeconds(1)), 200L);
+		cancel.markUnknown();
+		when(paymentRepository.findByIdForUpdate(100L)).thenReturn(Optional.of(payment));
+		when(paymentCancelRepository.findByIdempotencyKey("key-1")).thenReturn(Optional.of(cancel));
+
+		paymentService.startCancel(10L, 100L, "key-1", new PaymentCancelRequest("단순 변심", 3_000));
+
+		assertThat(cancel.getLastRequestedAt()).isEqualTo(NOW);
+		assertThat(cancel.isRequestedAfter(NOW.minus(Payment.PROCESSING_TIMEOUT))).isTrue();
+	}
+
+	@Test
+	void 처리_제한_시간이_지난_요청_상태의_취소는_결과_불명으로_바꿔_같은_멱등키로_재시도하게_한다() {
+		Payment payment = donePayment();
+		payment.reserveCancel(3_000);
+		PaymentCancel cancel = withId(PaymentCancel.request(payment, "key-1", 3_000, 3_000, "단순 변심",
+				NOW.minus(Payment.PROCESSING_TIMEOUT).minusSeconds(1)), 200L);
+		when(paymentRepository.findByIdForUpdate(100L)).thenReturn(Optional.of(payment));
+		when(paymentCancelRepository.findById(200L)).thenReturn(Optional.of(cancel));
+
+		PaymentService.CancelStart start = paymentService.startCancelRecovery(100L, 200L);
+
+		assertThat(cancel.getStatus()).isEqualTo(PaymentCancelStatus.UNKNOWN);
+		assertThat(cancel.getLastRequestedAt()).isEqualTo(NOW);
+		assertThat(start.retry()).isTrue();
+		assertThat(start.idempotencyKey()).isEqualTo("key-1");
+		assertThat(start.amount()).isEqualTo(3_000);
+		assertThat(payment.getPendingCancelAmount()).isEqualTo(3_000);
+	}
+
+	@Test
+	void 최근에_다시_요청된_취소는_자동_복구하지_않는다() {
+		Payment payment = donePayment();
+		payment.reserveCancel(3_000);
+		PaymentCancel cancel = withId(PaymentCancel.request(payment, "key-1", 3_000, 3_000, "단순 변심", NOW.minusSeconds(10)), 200L);
+		cancel.markUnknown();
+		when(paymentRepository.findByIdForUpdate(100L)).thenReturn(Optional.of(payment));
+		when(paymentCancelRepository.findById(200L)).thenReturn(Optional.of(cancel));
+
+		assertThatThrownBy(() -> paymentService.startCancelRecovery(100L, 200L))
+				.isInstanceOf(GeneralException.class)
+				.extracting(error -> ((GeneralException) error).getCode())
+				.isEqualTo(PaymentErrorStatus.CANCEL_IN_PROGRESS);
+		assertThat(cancel.getLastRequestedAt()).isEqualTo(NOW.minusSeconds(10));
+	}
+
+	@Test
+	void 이미_정리된_취소는_자동_복구하지_않는다() {
+		Payment payment = donePayment();
+		PaymentCancel cancel = withId(PaymentCancel.request(payment, "key-1", 3_000, 3_000, "단순 변심",
+				NOW.minus(Payment.PROCESSING_TIMEOUT).minusSeconds(1)), 200L);
+		cancel.fail();
+		when(paymentRepository.findByIdForUpdate(100L)).thenReturn(Optional.of(payment));
+		when(paymentCancelRepository.findById(200L)).thenReturn(Optional.of(cancel));
+
+		assertThatThrownBy(() -> paymentService.startCancelRecovery(100L, 200L)).isInstanceOf(GeneralException.class);
+		assertThat(cancel.getStatus()).isEqualTo(PaymentCancelStatus.FAILED);
+	}
+
+	@Test
+	void 토스_응답에서_아직_기록되지_않은_같은_금액의_취소를_찾아_거래_키를_기록한다() {
+		Payment payment = donePayment();
+		payment.reserveCancel(3_000);
+		payment.reserveCancel(5_000);
+		PaymentCancel recorded = PaymentCancel.request(payment, "key-0", 3_000, 3_000, "단순 변심", NOW);
+		recorded.complete("tx-recorded", NOW);
+		PaymentCancel cancel = withId(PaymentCancel.request(payment, "key-1", 3_000, 3_000, "단순 변심", NOW), 200L);
+		OffsetDateTime canceledAt = OffsetDateTime.parse("2026-11-03T10:00:00+09:00");
+		TossPaymentResponse toss = new TossPaymentResponse("pk-1", payment.getTossOrderId(), "PARTIAL_CANCELED", 15_000, 4_000,
+				"카드", OffsetDateTime.now(), List.of(
+				new TossPaymentResponse.Cancel("tx-recorded", 3_000, "단순 변심", OffsetDateTime.now()),
+				new TossPaymentResponse.Cancel("tx-mine", 3_000, "단순 변심", canceledAt),
+				new TossPaymentResponse.Cancel("tx-other", 5_000, "단순 변심", OffsetDateTime.now())));
+		when(paymentRepository.findByIdForUpdate(100L)).thenReturn(Optional.of(payment));
+		when(paymentCancelRepository.findById(200L)).thenReturn(Optional.of(cancel));
+		when(paymentCancelRepository.findByPaymentIdOrderByIdAsc(100L)).thenReturn(List.of(recorded, cancel));
+
+		paymentService.completeCancel(100L, 200L, toss);
+
+		assertThat(cancel.getStatus()).isEqualTo(PaymentCancelStatus.DONE);
+		assertThat(cancel.getTransactionKey()).isEqualTo("tx-mine");
+		assertThat(cancel.getCanceledAt()).isEqualTo(canceledAt.toInstant());
 	}
 }

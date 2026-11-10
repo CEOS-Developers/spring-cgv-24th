@@ -6,7 +6,9 @@ import com.ceos24.cgv.domain.payment.dto.request.PaymentCancelRequest;
 import com.ceos24.cgv.domain.payment.dto.request.PaymentConfirmRequest;
 import com.ceos24.cgv.domain.payment.dto.response.PaymentResponse;
 import com.ceos24.cgv.domain.payment.entity.Payment;
+import com.ceos24.cgv.domain.payment.entity.PaymentCancel;
 import com.ceos24.cgv.domain.payment.enums.PaymentCancelStatus;
+import com.ceos24.cgv.domain.payment.enums.PaymentStatus;
 import com.ceos24.cgv.domain.payment.exception.PaymentErrorStatus;
 import com.ceos24.cgv.domain.payment.exception.TossPaymentException;
 import com.ceos24.cgv.domain.payment.service.PaymentService.CancelStart;
@@ -28,6 +30,7 @@ public class PaymentFacade {
 		if (payment.isApproved()) {
 			return paymentService.getPayment(userId, payment.getId());
 		}
+		boolean retry = payment.getStatus() == PaymentStatus.UNKNOWN; // startApproval이 돌려준 엔티티는 선점 전 상태를 담고 있다
 
 		TossPaymentResponse toss;
 		try {
@@ -36,9 +39,12 @@ public class PaymentFacade {
 		} catch (TossPaymentException e) {
 			if (e.isResultUnknown()) {
 				paymentService.markUnknown(payment.getId());
-			} else {
-				paymentService.fail(payment.getId());
+				throw e;
 			}
+			if (retry) {
+				return settleRejectedConfirm(payment, e);
+			}
+			paymentService.fail(payment.getId());
 			throw e;
 		}
 
@@ -65,7 +71,23 @@ public class PaymentFacade {
 		if (start.completed() != null) {
 			return start.completed();
 		}
+		return requestCancel(paymentId, start);
+	}
 
+	// 서버 중단이나 결과 불명으로 처리 제한 시간이 지나도록 남은 취소를 같은 멱등키로 다시 요청해 토스의 결과로 정리한다
+	public void recoverStaleCancels() {
+		for (PaymentCancel cancel : paymentService.findStaleCancels()) {
+			Long paymentId = cancel.getPayment().getId();
+			try {
+				requestCancel(paymentId, paymentService.startCancelRecovery(paymentId, cancel.getId()));
+			} catch (RuntimeException e) {
+				log.warn("결제 취소 자동 복구 보류 - paymentId: {}, cancelId: {}, reason: {}", paymentId, cancel.getId(),
+						e.getMessage());
+			}
+		}
+	}
+
+	private PaymentResponse requestCancel(Long paymentId, CancelStart start) {
 		TossPaymentResponse toss;
 		try {
 			toss = tossPaymentClient.cancel(start.paymentKey(), start.reason(), start.amount(), start.idempotencyKey());
@@ -75,7 +97,7 @@ public class PaymentFacade {
 				throw e;
 			}
 			if (start.retry()) {
-				return settleRejectedRetry(userId, paymentId, start, e);
+				return settleRejectedRetry(paymentId, start, e);
 			}
 			paymentService.failCancel(paymentId, start.cancelId());
 			throw e;
@@ -120,8 +142,20 @@ public class PaymentFacade {
 		throw new GeneralException(PaymentErrorStatus.PG_RESULT_UNKNOWN);
 	}
 
+	// 재승인은 앞선 승인이 이미 반영됐을 수 있어(다른 paymentKey로 재요청한 경우 등) 거절만으로 실패를 확정하지 않고 토스 상태로 판단한다
+	private PaymentResponse settleRejectedConfirm(Payment payment, TossPaymentException rejection) {
+		PaymentResponse settled = reconcileWithToss(payment);
+		if (settled.status() == PaymentStatus.FAILED) {
+			throw rejection;
+		}
+		if (settled.status() == PaymentStatus.CANCELED) {
+			throw new GeneralException(PaymentErrorStatus.PAYMENT_COMPENSATED);
+		}
+		return settled;
+	}
+
 	// 재시도는 앞선 요청이 이미 반영됐을 수 있어 거절만으로 실패를 확정하지 않고 토스의 현재 취소 누계로 판단한다
-	private PaymentResponse settleRejectedRetry(Long userId, Long paymentId, CancelStart start, TossPaymentException rejection) {
+	private PaymentResponse settleRejectedRetry(Long paymentId, CancelStart start, TossPaymentException rejection) {
 		TossPaymentResponse current;
 		try {
 			current = tossPaymentClient.getByOrderId(start.tossOrderId());
@@ -132,7 +166,7 @@ public class PaymentFacade {
 		PaymentCancelStatus status = paymentService.settleUnknownCancel(paymentId, start.cancelId(), start.canceledAmount(),
 				current);
 		if (status == PaymentCancelStatus.DONE) {
-			return paymentService.getPayment(userId, paymentId);
+			return paymentService.getPaymentResult(paymentId);
 		}
 		if (status == PaymentCancelStatus.FAILED) {
 			throw rejection;

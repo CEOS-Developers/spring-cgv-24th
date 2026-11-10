@@ -15,4 +15,9 @@ public class PaymentRecoveryScheduler {
 	public void recoverStalePayments() {
 		paymentFacade.recoverStalePayments();
 	}
+
+	@Scheduled(fixedDelay = 60000)
+	public void recoverStaleCancels() {
+		paymentFacade.recoverStaleCancels();
+	}
 }
