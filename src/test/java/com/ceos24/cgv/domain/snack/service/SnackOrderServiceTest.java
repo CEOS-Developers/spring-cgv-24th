@@ -117,7 +117,6 @@ class SnackOrderServiceTest {
         SnackItem snackItem = mock(SnackItem.class);
 
         given(snackItem.getId()).willReturn(100L);
-        given(snackItem.getPrice()).willReturn(6000);
 
         SnackStock stock = SnackStock.builder()
                 .stockQuantity(1)

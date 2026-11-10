@@ -56,6 +56,16 @@ public enum PaymentErrorCode implements BaseErrorCode {
             "PAYMENT4094",
             "현재 결제 상태에서는 미결제 예매 취소를 할 수 없습니다."
     ),
+    PAYMENT_APPROVAL_REJECTED(
+            HttpStatus.UNPROCESSABLE_ENTITY,
+            "PAYMENT4221",
+            "결제 승인 요청이 거절되었습니다. 결제 결과를 확인해주세요."
+    ),
+    PAYMENT_APPROVAL_UNRESOLVED(
+            HttpStatus.BAD_GATEWAY,
+            "PAYMENT5023",
+            "결제 승인 결과를 확인할 수 없습니다. 복구 API로 상태를 확인해주세요."
+    ),
     INVALID_APPROVAL_RESPONSE(
             HttpStatus.BAD_GATEWAY,
             "PAYMENT5021",

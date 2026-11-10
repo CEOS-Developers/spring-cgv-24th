@@ -83,7 +83,8 @@ public class PaymentTransactionService {
             return false;
         }
 
-        if (payment.getStatus() != PaymentStatus.READY) {
+        if (payment.getStatus() != PaymentStatus.READY
+                && payment.getStatus() != PaymentStatus.FAILED) {
             throw new PaymentException(
                     PaymentErrorCode.PAYMENT_NOT_APPROVABLE
             );
@@ -127,6 +128,16 @@ public class PaymentTransactionService {
     }
 
     @Transactional
+    public void markApprovalUnknown(PaymentConfirmRequest request) {
+        Payment payment = lockApprovalRows(request.orderId()).payment();
+        // 복구 요청이 먼저 완료되었다면 확정된 상태를 덮어쓰지 않는다.
+        if (payment.getStatus() == PaymentStatus.APPROVING
+                && Objects.equals(payment.getPaymentKey(), request.paymentKey())) {
+            payment.markApprovalUnknown();
+        }
+    }
+
+    @Transactional
     public TossConfirmResponse completeApproval(
             PaymentConfirmRequest request,
             TossConfirmResponse response
@@ -144,7 +155,8 @@ public class PaymentTransactionService {
             throw new PaymentException(PaymentErrorCode.INVALID_APPROVAL_RESPONSE);
         }
 
-        if (payment.getStatus() != PaymentStatus.APPROVING) {
+        if (payment.getStatus() != PaymentStatus.APPROVING
+                && payment.getStatus() != PaymentStatus.UNKNOWN) {
             throw new PaymentException(PaymentErrorCode.PAYMENT_NOT_APPROVABLE);
         }
 
@@ -152,6 +164,29 @@ public class PaymentTransactionService {
         rows.reservation().confirmPayment();
 
         return response;
+    }
+
+    @Transactional
+    public void completeFailedApproval(
+            PaymentConfirmRequest request,
+            TossConfirmResponse response
+    ) {
+        ApprovalRows rows = lockApprovalRows(request.orderId());
+        Payment payment = rows.payment();
+
+        if (response == null
+                || !("ABORTED".equals(response.status())
+                    || "EXPIRED".equals(response.status()))
+                || !Objects.equals(payment.getOrderId(), response.orderId())
+                || !Objects.equals(payment.getPaymentKey(), response.paymentKey())
+                || !Objects.equals(payment.getAmount(), response.totalAmount())) {
+            throw new PaymentException(PaymentErrorCode.INVALID_APPROVAL_RESPONSE);
+        }
+        if (payment.getStatus() != PaymentStatus.APPROVING
+                && payment.getStatus() != PaymentStatus.UNKNOWN) {
+            throw new PaymentException(PaymentErrorCode.PAYMENT_NOT_APPROVABLE);
+        }
+        payment.failApproval();
     }
 
     @Transactional(readOnly = true)
@@ -458,7 +493,8 @@ public class PaymentTransactionService {
             throw new PaymentException(PaymentErrorCode.PAYMENT_AMOUNT_MISMATCH);
         }
 
-        if (payment.getStatus() != PaymentStatus.APPROVING
+        if ((payment.getStatus() != PaymentStatus.APPROVING
+                && payment.getStatus() != PaymentStatus.UNKNOWN)
                 || !Objects.equals(payment.getPaymentKey(), request.paymentKey())) {
             throw new PaymentException(PaymentErrorCode.PAYMENT_NOT_APPROVABLE);
         }

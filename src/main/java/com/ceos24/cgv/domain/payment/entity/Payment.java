@@ -90,8 +90,8 @@ public class Payment extends BaseTimeEntity {
 
 // 토스에 요청한뒤 응답을 받지 못하더라도 어떤 결제의 결과를 확인해야하는지 알기 위해 추가
     public void startApproval(String paymentKey) {
-        if (status != PaymentStatus.READY) {
-            throw new IllegalStateException("결제 준비 상태에서만 승인을 시작할 수 있습니다.");
+        if (status != PaymentStatus.READY && status != PaymentStatus.FAILED) {
+            throw new IllegalStateException("결제 준비 또는 승인 실패 상태에서만 승인을 시작할 수 있습니다.");
         }
         if (paymentKey == null
                 || paymentKey.isBlank()
@@ -100,15 +100,32 @@ public class Payment extends BaseTimeEntity {
                     PaymentErrorCode.INVALID_PAYMENT_KEY
             );
         }
+        if (status == PaymentStatus.FAILED && paymentKey.equals(this.paymentKey)) {
+            throw new PaymentException(PaymentErrorCode.PAYMENT_NOT_APPROVABLE);
+        }
 
         this.paymentKey = paymentKey;
         this.status = PaymentStatus.APPROVING;
     }
 
+    public void markApprovalUnknown() {
+        if (status != PaymentStatus.APPROVING) {
+            throw new IllegalStateException("승인 처리 중인 결제만 확인 대기 상태로 바꿀 수 있습니다.");
+        }
+        this.status = PaymentStatus.UNKNOWN;
+    }
+
+    public void failApproval() {
+        if (status != PaymentStatus.APPROVING && status != PaymentStatus.UNKNOWN) {
+            throw new IllegalStateException("승인 결과를 확인 중인 결제만 실패 처리할 수 있습니다.");
+        }
+        this.status = PaymentStatus.FAILED;
+    }
+
 
     public void completeApproval(OffsetDateTime approvedAt) {
-        if (status != PaymentStatus.APPROVING) {
-            throw new IllegalStateException("승인 처리 중인 결제만 완료할 수 있습니다.");
+        if (status != PaymentStatus.APPROVING && status != PaymentStatus.UNKNOWN) {
+            throw new IllegalStateException("승인 결과를 확인 중인 결제만 완료할 수 있습니다.");
         }
         if (approvedAt == null) {
             throw new IllegalArgumentException("승인 시각이 필요합니다.");
