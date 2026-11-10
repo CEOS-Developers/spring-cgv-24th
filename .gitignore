@@ -3,6 +3,7 @@
 *.ipr
 *.iws
 *.jar
+!gradle/wrapper/gradle-wrapper.jar
 *.sw?
 *~
 .#*
@@ -44,3 +45,4 @@ secrets.yml
 
 # 보안
 .env
+.local-backups/
