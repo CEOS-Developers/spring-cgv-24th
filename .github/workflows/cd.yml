@@ -12,9 +12,6 @@ concurrency:
   group: cd-alissa159
   cancel-in-progress: false
 
-env:
-  IMAGE: ${{ vars.DOCKER_IMAGE }}:${{ github.sha }}
-
 jobs:
   publish:
     runs-on: ubuntu-24.04
@@ -39,6 +36,7 @@ jobs:
       TZ: Asia/Seoul
       DB_USERNAME: cgv_test
       DB_PASSWORD: cgv_test
+      IMAGE: ${{ vars.DOCKER_IMAGE }}:${{ github.sha }}
     steps:
       - name: 배포 설정 확인
         env:
@@ -93,6 +91,8 @@ jobs:
     needs: publish
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    env:
+      IMAGE: ${{ vars.DOCKER_IMAGE }}:${{ github.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
