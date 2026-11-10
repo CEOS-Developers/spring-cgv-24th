@@ -3704,7 +3704,7 @@ compose는 서비스들을 같은 네트워크에 묶고 서비스 이름을 DNS
 
 ### 한계
 
-- 운영 배포는 아직 jar + systemd 방식입니다. 이미지를 레지스트리(ECR 등)에 올려 EC2가 받아 실행하는 방식으로 바꾸는 것은 「무중단 배포 AWS 실습」에서 다룹니다.
+- 운영 배포는 아직 jar + systemd 방식입니다. 이미지를 레지스트리(ECR 등)에 올려 EC2가 받아 실행하는 방식은 「무중단 배포」의 「이 프로젝트에 도입한다면」에서 정리했습니다.
 - compose는 한 호스트용입니다. 운영 DB는 RDS를 쓰므로 운영에서 compose로 MySQL을 띄우지 않습니다.
 
 ## 무중단 배포
@@ -3812,250 +3812,207 @@ compose는 서비스들을 같은 네트워크에 묶고 서비스 이름을 DNS
 **5) 헬스 체크는 "준비됐는가"를 봐야 한다.**
 지금은 `/v3/api-docs`를 헬스 체크로 씁니다. 앱이 HTTP를 받는다는 것만 확인하고 DB 연결은 보지 않습니다. Spring Boot Actuator의 readiness(`/actuator/health/readiness`)를 쓰면 DB 연결까지 포함해 판단하고, 종료가 시작되면 readiness가 먼저 실패해 로드밸런서가 트래픽을 끊을 수 있습니다.
 
-### 이 프로젝트에 맞는 선택
+### 이 프로젝트에 도입한다면
 
-지금은 EC2 한 대 + RDS입니다. 롤링은 서버가 여러 대여야 하고, 카나리는 비율을 나눌 서버와 지표가 있어야 의미가 있습니다. **서버 한 대에서 바로 적용할 수 있는 것은 블루/그린**입니다. 같은 EC2에 8081(블루) / 8082(그린) 두 컨테이너를 번갈아 띄우고, Nginx가 가리키는 포트만 바꿉니다. 아래 실습 1단계가 이 방식이고, 서버를 늘린 뒤의 롤링·카나리는 2·3단계에서 다룹니다.
-
-## 무중단 배포 AWS 실습 가이드
-
-> 현재 운영 배포(jar + systemd, `deploy/`)는 그대로 두고 따라 할 수 있도록 단계별로 정리했습니다. 각 단계 끝의 「확인」을 통과한 뒤 다음 단계로 넘어갑니다. 2·3단계는 프리티어를 벗어나는 비용이 생길 수 있으니 실습이 끝나면 「정리」를 꼭 합니다.
-
-### 0단계 — 지금의 중단을 먼저 눈으로 본다
-
-무중단이 됐는지 확인하려면 비교 대상이 필요합니다. 배포 동안 0.2초마다 요청을 보내 상태 코드를 기록합니다.
-
-```bash
-# 로컬 PC에서 실행. 배포가 끝나면 Ctrl+C
-while true; do
-  printf '%s %s\n' "$(date +%T)" "$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 http://<EC2_IP>:8080/v3/api-docs)"
-  sleep 0.2
-done | tee deploy-before.log
-```
-
-이 상태에서 `chjpooh2002` 브랜치에 빈 커밋을 push해 배포를 일으킵니다. 로그에 `000`(연결 실패)이 수십 초 이어지는 구간이 지금 배포의 중단 시간입니다. 이 수치를 기록해 둡니다.
-
-### 1단계 — EC2 한 대에서 Docker + Nginx 블루/그린
+지금은 EC2 한 대 + RDS입니다. 롤링은 서버가 여러 대여야 하고, 카나리는 비율을 나눌 서버와 지표가 있어야 의미가 있습니다. **서버 한 대에서 바로 도입할 수 있는 것은 블루/그린**입니다.
 
 ```
                        ┌──────────── EC2 ────────────┐
 사용자 ──:80──▶ Nginx ─┼─▶ cgv-blue  (127.0.0.1:8081) │
                        │   cgv-green (127.0.0.1:8082) │──▶ RDS
                        └─────────────────────────────┘
-GitHub Actions ─ build·push ─▶ ECR ◀─ pull ─ EC2
 ```
 
-**1-1. 이미지 저장소(ECR) 만들기**
+- 이미 만들어 둔 Docker 이미지로 같은 EC2에 8081 / 8082 컨테이너를 번갈아 띄우고, Nginx가 가리키는 포트만 바꿉니다. `nginx reload`는 기존 연결을 끊지 않으므로 전환 자체에 끊김이 없습니다.
+- 새 컨테이너가 헬스 체크를 통과하지 못하면 전환하지 않습니다. 지금 `deploy.sh`는 구버전을 이미 내린 뒤에 헬스 체크를 하므로 실패하면 서비스가 멈춰 있지만, 블루/그린에서는 토스 키를 잘못 넣은 배포도 "배포 실패, 서비스 정상"으로 끝납니다.
+- 이미지는 ECR에 커밋 SHA 태그로 올리고 EC2가 받아 실행합니다. GitHub Actions는 OIDC로, EC2는 인스턴스 역할로 ECR에 접근하면 액세스 키를 어디에도 두지 않아도 됩니다.
+- 1GB 인스턴스에서는 전환하는 동안 JVM 두 개가 동시에 떠 메모리가 빠듯합니다. 스왑과 컨테이너별 메모리 한도를 두고, 옛 컨테이너는 `docker stop -t 40`으로 graceful shutdown 시간을 줘야 합니다.
 
-1. AWS 콘솔 → ECR → 리포지토리 생성 → 이름 `cgv`, 프라이빗.
-2. 수명 주기 정책으로 "최근 이미지 10개만 유지"를 걸어 저장 비용이 쌓이지 않게 합니다.
+서버를 여러 대로 늘리면 ALB + Auto Scaling 그룹의 인스턴스 새로 고침으로 롤링을, 모니터링이 갖춰지면 ALB 가중치 대상 그룹으로 카나리를 이어서 검토할 수 있습니다.
 
-**1-2. GitHub Actions가 키 없이 ECR에 push하도록 — OIDC**
+## CI/CD 파이프라인 설계 고민
 
-액세스 키를 Secrets에 넣는 대신, GitHub이 발급한 토큰으로 AWS 역할을 잠깐 빌립니다. 키가 유출될 일이 없고 만료도 자동입니다.
+> 이 절은 설계 정리입니다. 현재 `.github/workflows/ci-cd.yml`은 바꾸지 않았고, 아래 구조는 블루/그린(이미지 + ECR)을 도입할 때 적용할 방향입니다.
 
-1. IAM → 자격 증명 공급자 → OpenID Connect 추가: URL `https://token.actions.githubusercontent.com`, 대상 `sts.amazonaws.com`.
-2. IAM 역할 생성 → 웹 자격 증명 → 위 공급자 선택 → 조건에 저장소와 브랜치를 제한합니다(`repo:<owner>/spring-cgv-24th:ref:refs/heads/chjpooh2002`). 이 조건이 없으면 아무 저장소나 이 역할을 빌릴 수 있습니다.
-3. 권한: `cgv` 리포지토리에 대한 push 권한(`AmazonEC2ContainerRegistryPowerUser`를 붙이거나, 리포지토리 ARN으로 제한한 인라인 정책).
-4. 역할 ARN을 `production` 환경의 Secret `AWS_ROLE_ARN`으로 등록합니다.
+### 1. 빌드·테스트·배포를 어떤 단위로 나눌까
 
-**1-3. EC2가 ECR에서 pull할 수 있게 — 인스턴스 역할**
+GitHub Actions에서 나누는 단위는 세 층입니다.
 
-1. IAM 역할(신뢰 대상 EC2)에 `AmazonEC2ContainerRegistryReadOnly`를 붙입니다.
-2. EC2 → 인스턴스 → 작업 → 보안 → IAM 역할 수정 → 위 역할 연결.
+| 단위 | 경계 | 같은 단위 안에서 공유되는 것 |
+|---|---|---|
+| step | 명령 하나 | 파일 시스템, 환경 (같은 러너) |
+| job | 러너(가상 머신) 하나 | 없음. 산출물은 artifact로 넘겨야 함 |
+| workflow | YAML 파일 하나, 트리거 단위 | 없음. 다른 workflow와는 `workflow_call` / `workflow_run`으로 연결 |
 
-EC2 안에서는 이 역할로 `aws ecr get-login-password`가 동작하므로, 서버에도 키를 두지 않습니다.
+**지금 구조: workflow 하나, job 둘**
 
-**1-4. EC2에 Docker·Nginx 설치 (Ubuntu 기준)**
-
-```bash
-sudo apt-get update
-sudo apt-get install -y docker.io nginx awscli
-sudo usermod -aG docker $USER   # 다시 로그인해야 적용
+```
+ci-cd.yml
+├─ test   : 빌드 + 테스트 + jar 업로드     (PR, push 모두)
+└─ deploy : jar 다운로드 → EC2 배포         (push + chjpooh2002만, needs: test)
 ```
 
-메모리를 확인합니다. **블루/그린은 전환하는 동안 JVM 두 개가 동시에 뜹니다.** t2/t3.micro(1GB)에서는 메모리가 부족해 둘 중 하나가 OOM으로 죽을 수 있습니다. 스왑을 2GB 정도 만들고, 컨테이너마다 메모리 한도를 둡니다(아래 스크립트의 `--memory 400m`, 힙은 Dockerfile의 `MaxRAMPercentage=75`로 그 안에서 잡힘).
+나누는 기준은 "무엇이 다른가"입니다.
 
-```bash
-sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile
-sudo mkswap /swapfile && sudo swapon /swapfile
-echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+| 기준 | 빌드·테스트 | 배포 | 그래서 |
+|---|---|---|---|
+| 언제 도는가 | PR, push 모두 | 특정 브랜치 push만 | job을 나누고 `if`로 거른다 |
+| 필요한 권한·비밀값 | 없음 (더미 키로 테스트) | EC2 SSH 키, 운영 DB·토스 키 | job을 나눠 `environment: production`을 배포 job에만 둔다. PR은 운영 Secrets에 접근하지 못한다 |
+| 실패 시 다시 돌릴 범위 | 테스트부터 | 배포만 | job이 나뉘어 있으면 "실패한 job만 재실행"이 가능하다 |
+| 동시 실행 | PR은 새 커밋이 오면 이전 실행 취소 | 절대 취소하지 않고 줄 세움 | job 단위 `concurrency`를 따로 둔다 |
+
+**빌드와 테스트는 왜 나누지 않았나.** `./gradlew build` 하나가 컴파일 → 테스트 → jar 생성을 이어서 합니다. 빌드 job과 테스트 job으로 나누면 러너가 달라서 컴파일 결과를 artifact로 넘기거나 다시 컴파일해야 합니다. 나눠서 얻는 것(실패 위치가 job 이름으로 보임)보다 비용이 큽니다. 테스트 리포트 업로드로 실패 위치는 이미 보입니다.
+
+**workflow를 나누는 시점.** 지금은 배포가 항상 "테스트 직후"에만 일어나서 한 파일로 충분합니다. 그런데 아래 2번의 롤백처럼 **빌드 없이 배포만** 하고 싶은 경우가 생기면 배포가 별도 진입점을 가져야 합니다. 그때 배포를 독립 workflow로 떼어내고, CI는 그것을 호출합니다(3번).
+
+```
+ci.yml        빌드·테스트·이미지 push  (PR: 테스트만 / push: 이미지까지)
+deploy.yml    이미지 태그 하나를 받아 배포   ← ci.yml이 호출, 사람이 수동 실행(롤백)도 가능
 ```
 
-**1-5. Nginx — 바라보는 포트를 파일 하나로 분리**
+정리하면 **"트리거·권한·재실행 범위가 다르면 job을 나누고, 진입점이 둘 이상 필요해지면 workflow를 나눈다"**입니다.
 
-전환할 때 고칠 곳을 한 줄로 만들기 위해 대상 주소를 별도 파일에 둡니다.
+### 2. 장애가 나면 어떻게 되돌릴까 — Roll-back 전략
 
-```nginx
-# /etc/nginx/conf.d/service-url.inc
-set $service_url http://127.0.0.1:8081;
-```
+**지금의 한계.** 배포가 `/opt/cgv/cgv.jar`를 덮어쓰므로 이전 버전이 서버에 없습니다. 되돌리려면 `git revert` → push → 테스트 → 빌드 → 배포를 처음부터 다시 거쳐야 하고, 그동안(수 분) 장애가 이어집니다.
 
-```nginx
-# /etc/nginx/sites-available/default 의 server 블록
-server {
-    listen 80;
-    include /etc/nginx/conf.d/service-url.inc;
+**원칙: 롤백은 "다시 빌드"가 아니라 "이미 검증된 산출물을 다시 배포"하는 것.**
+다시 빌드하면 그 사이 바뀐 의존성·베이스 이미지 때문에 예전과 다른 결과물이 나올 수 있고, 시간도 오래 걸립니다. 그래서 산출물을 **바뀌지 않는 이름**으로 보관합니다.
 
-    location / {
-        proxy_pass $service_url;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-```
+- 이미지 태그를 `latest`가 아닌 **커밋 SHA**로 붙입니다(`cgv:9991971`). `latest`는 가리키는 대상이 계속 바뀌어 "이전 버전"이 무엇인지 알 수 없습니다.
+- ECR 수명 주기 정책으로 최근 10개를 남기면, **롤백 가능한 범위 = 최근 10번의 배포**입니다.
 
-`sudo nginx -t && sudo systemctl reload nginx`. `reload`는 Nginx를 재시작하지 않고 설정만 바꿉니다. 기존 연결은 옛 워커가 끝까지 처리하고 새 연결부터 새 설정을 따르므로 **전환 자체에 끊김이 없습니다.** 이것이 블루/그린 전환이 무중단인 이유입니다.
+**롤백을 세 단계로 나눈다.**
 
-보안 그룹에 80번 인바운드를 엽니다. 8081/8082는 열지 않습니다(Nginx만 접근).
+| 단계 | 언제 | 방법 | 걸리는 시간 |
+|---|---|---|---|
+| ① 자동 — 전환하지 않기 | 새 버전이 헬스 체크를 통과하지 못함 | 블루/그린 스크립트가 Nginx를 바꾸지 않고 새 컨테이너만 지움. 엄밀히는 롤백이 아니라 "배포 자체가 일어나지 않음" | 0 (서비스 영향 없음) |
+| ② 즉시 — 옛 색으로 되돌리기 | 전환 후 오류 증가를 발견, 옛 컨테이너가 아직 서버에 있음 | Nginx가 가리키는 포트를 이전 색으로 바꾸고 `nginx reload` | 수 초 |
+| ③ 버전 지정 — 이전 이미지 재배포 | 옛 컨테이너도 이미 없거나, 2~3 버전 전으로 돌아가야 함 | GitHub Actions에서 이전 SHA로 배포 workflow 수동 실행 | 1~2분 (빌드·테스트 없음) |
 
-**1-6. 블루/그린 배포 스크립트**
+①은 블루/그린을 도입하면 배포 스크립트의 헬스 체크로 자연히 생깁니다. 토스 키를 잘못 넣었던 경우가 바로 여기서 막힙니다.
 
-EC2의 `~/cgv-deploy/deploy-bluegreen.sh`로 두는 것을 가정한 뼈대입니다. 흐름은 "안 쓰는 색을 찾는다 → 그 색으로 새 이미지를 띄운다 → 헬스 체크 → Nginx 전환 → 옛 색을 정상 종료"입니다.
-
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-
-IMAGE="$1"                          # 예: <계정>.dkr.ecr.ap-northeast-2.amazonaws.com/cgv:<커밋SHA>
-ENV_FILE=/opt/cgv/cgv.env
-INC=/etc/nginx/conf.d/service-url.inc
-
-# 1) 지금 Nginx가 가리키는 색의 반대를 새 색으로 고른다
-if grep -q 8081 "$INC"; then
-  OLD=blue;  NEW=green; NEW_PORT=8082
-else
-  OLD=green; NEW=blue;  NEW_PORT=8081
-fi
-
-# 2) 새 이미지 받기 (인스턴스 역할로 로그인)
-REGISTRY="${IMAGE%%/*}"
-aws ecr get-login-password --region ap-northeast-2 | docker login --username AWS --password-stdin "$REGISTRY"
-docker pull "$IMAGE"
-
-# 3) 새 색 컨테이너 띄우기 (같은 이름이 남아 있으면 먼저 정리)
-docker rm -f "cgv-$NEW" 2>/dev/null || true
-docker run -d --name "cgv-$NEW" \
-  --env-file "$ENV_FILE" \
-  -p "127.0.0.1:$NEW_PORT:8080" \
-  --memory 400m \
-  --restart unless-stopped \
-  "$IMAGE"
-
-# 4) 새 색이 요청을 받을 때까지 기다린다. 실패하면 Nginx를 건드리지 않고 끝낸다 → 기존 색이 계속 서비스
-for _ in $(seq 1 40); do
-  if curl -fs -o /dev/null "http://127.0.0.1:$NEW_PORT/v3/api-docs"; then
-    # 5) 전환: 파일 한 줄 바꾸고 reload
-    echo "set \$service_url http://127.0.0.1:$NEW_PORT;" | sudo tee "$INC" > /dev/null
-    sudo nginx -t && sudo systemctl reload nginx
-    # 6) 옛 색이 처리 중인 요청을 끝낼 시간을 준다 (Spring 기본 30초 + 여유)
-    docker stop -t 40 "cgv-$OLD" 2>/dev/null || true
-    echo "배포 완료: $OLD → $NEW"
-    exit 0
-  fi
-  sleep 3
-done
-
-echo "새 버전이 120초 안에 응답하지 않았습니다. 기존 $OLD 유지" >&2
-docker logs --tail 100 "cgv-$NEW" >&2
-docker rm -f "cgv-$NEW"
-exit 1
-```
-
-핵심은 4번입니다. 지금 `deploy.sh`는 헬스 체크가 실패해도 이미 구버전을 내린 뒤라 서비스가 죽어 있습니다. 블루/그린에서는 **헬스 체크가 실패하면 전환하지 않으므로** 잘못된 Secrets로 배포해도 기존 버전이 계속 서비스합니다. 토스 키를 잘못 넣었던 경험이 이 단계에서는 "배포 실패, 서비스 정상"으로 끝납니다.
-
-**1-7. 워크플로우 변경**
-
-`deploy` 잡을 "jar 전송"에서 "이미지 빌드·push → EC2에서 스크립트 실행"으로 바꿉니다. `test` 잡은 그대로 두고 `needs: test`로 테스트 통과 후에만 돌게 합니다.
+**GitHub Actions에서 이전 이미지로 롤백 트리거를 걸 수 있을까 — 가능합니다.** `workflow_dispatch`에 입력값을 두면 Actions 화면에서 버튼과 입력칸으로 실행할 수 있습니다.
 
 ```yaml
+# .github/workflows/deploy.yml (롤백·수동 배포 진입점)
+on:
+  workflow_dispatch:
+    inputs:
+      image-tag:
+        description: '배포할 이미지 태그 (커밋 SHA). 롤백이면 이전 정상 버전의 SHA'
+        required: true
+        type: string
+
+jobs:
   deploy:
-    needs: test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/chjpooh2002'
     runs-on: ubuntu-latest
     environment: production
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
     permissions:
       contents: read
-      id-token: write          # OIDC 토큰 발급에 필요
+      id-token: write
     steps:
-      - uses: actions/checkout@v5
-
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ap-northeast-2
-
       - id: ecr
         uses: aws-actions/amazon-ecr-login@v2
-
-      # 태그를 latest가 아니라 커밋 SHA로 둔다. 어떤 커밋이 떠 있는지 알 수 있고, 롤백할 때 이전 SHA로 다시 배포하면 된다.
-      - name: 이미지 빌드·push
-        env:
-          IMAGE: ${{ steps.ecr.outputs.registry }}/cgv:${{ github.sha }}
-        run: |
-          docker build -t "$IMAGE" .
-          docker push "$IMAGE"
-
-      # (환경변수 파일 생성·SSH 키 설정 단계는 기존과 같다. cgv.env는 /opt/cgv/cgv.env로 올린다)
-
-      - name: 블루/그린 전환
-        env:
-          TARGET: ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}
-          IMAGE: ${{ steps.ecr.outputs.registry }}/cgv:${{ github.sha }}
-        run: ssh -i ~/.ssh/ec2_key "$TARGET" "bash ~/cgv-deploy/deploy-bluegreen.sh '$IMAGE'"
+      # 없는 태그로 배포를 시작하면 서버에서 pull이 실패한다. 서버에 가기 전에 먼저 막는다.
+      - name: 이미지 존재 확인
+        run: aws ecr describe-images --repository-name cgv --image-ids imageTag=${{ inputs.image-tag }}
+      - name: 배포
+        run: ssh ... "bash ~/cgv-deploy/deploy-bluegreen.sh '${{ steps.ecr.outputs.registry }}/cgv:${{ inputs.image-tag }}'"
 ```
 
-`test` 잡이 만든 jar 대신 Dockerfile이 다시 빌드한다는 점은 「테스트한 jar를 그대로 배포한다」와 어긋납니다. 실습에서는 단순하게 두고, 더 엄격하게 하려면 Dockerfile을 "빌드된 jar를 복사하는" 형태로 바꿔 `test` 잡의 jar를 그대로 넣습니다.
+이전 정상 SHA는 Actions의 이전 배포 실행 기록이나 `git log`에서 찾습니다. `concurrency: deploy-production`을 일반 배포와 같은 그룹으로 두는 것이 중요합니다. 롤백과 새 배포가 동시에 돌면 어느 쪽이 마지막에 남을지 알 수 없습니다.
 
-**1-8. 기존 systemd 서비스에서 넘어가기**
+**`git revert`와의 관계.** 버전 지정 롤백은 서버만 되돌리고 브랜치는 그대로입니다. 다음 push가 오면 문제 있던 코드가 다시 배포됩니다. 그래서 순서는 **"③으로 서비스부터 살린다 → 원인을 고치거나 `git revert`로 브랜치를 맞춘다"**입니다. 롤백은 장애를 멈추는 수단이고, 브랜치를 바로잡는 일은 따로 남습니다.
 
-```bash
-sudo systemctl disable --now cgv        # 8080을 쓰던 jar 프로세스 종료
-echo 'set $service_url http://127.0.0.1:8081;' | sudo tee /etc/nginx/conf.d/service-url.inc
-# 첫 배포는 OLD=blue(존재하지 않음) → NEW=green 으로 뜬다. 스크립트가 없는 컨테이너 stop은 무시한다.
+**자동 롤백을 어디까지 할까.** 헬스 체크 실패는 기계가 판단할 수 있어 ①을 자동으로 둡니다. "5xx가 늘었다", "결제 승인 실패율이 올랐다"는 기준값과 관찰 시간이 필요하고 오탐도 있어서, 모니터링이 갖춰지기 전까지는 사람이 보고 ②③을 실행합니다. 자동화하려면 CloudWatch 경보 → CodeDeploy 자동 롤백 같은 관리형 기능을 씁니다.
+
+**코드는 되돌려도 DB는 되돌아가지 않는다.** 롤백에서 가장 위험한 부분입니다.
+
+- 새 버전이 컬럼을 추가했다면(`ddl-auto: update`), 옛 버전은 모르는 컬럼을 무시하므로 괜찮습니다. 단 새 컬럼이 `NOT NULL`이고 기본값이 없으면 옛 버전의 INSERT가 실패합니다.
+- 새 버전이 enum 값을 추가하고 그 값으로 행을 저장했다면 위험합니다. `Payment`·`PaymentCancel`은 `@Enumerated(EnumType.STRING)`이라, 옛 버전이 모르는 문자열(예: 새 결제 상태)을 읽는 순간 조회가 예외로 실패합니다. 롤백했더니 결제 조회가 깨지는 상황입니다.
+- 그래서 새 enum 값은 "읽을 수 있는 버전을 먼저 배포 → 그 값을 쓰는 버전을 다음에 배포"로 나눕니다. 무중단 배포의 expand/contract와 같은 원리이고, **롤백 가능성은 결국 스키마 호환성이 결정합니다.**
+
+### 3. Workflow 간 의존성은 어떻게 관리할까
+
+**연결 방법 네 가지**
+
+| 방법 | 연결 단위 | 동작 | 이럴 때 |
+|---|---|---|---|
+| `needs` | 같은 workflow 안의 job | 앞 job이 성공해야 시작. `outputs`로 값 전달 | 지금처럼 한 파일 안에서 순서만 정할 때 |
+| `workflow_call` | workflow → workflow | 호출한 쪽의 job 하나처럼 동작. 입력·Secrets를 넘기고 결과를 기다림 | 같은 배포 로직을 여러 곳(CI, 롤백)에서 다시 쓸 때 |
+| `workflow_run` | workflow → workflow | "어떤 workflow가 끝났다"는 이벤트로 별도 실행 | 느슨하게 이어 붙일 때 (예: CI 끝나면 알림) |
+| composite action | step 묶음 | 여러 step을 action 하나로 묶어 재사용 | job보다 작은 단위(AWS 로그인 + ECR 로그인)를 반복할 때 |
+
+**`workflow_call`로 배포를 재사용하는 구조**
+
+```
+ci.yml (push)                       deploy.yml
+├─ test                             on:
+├─ image (needs: test)                workflow_call:     ← ci.yml이 호출
+│    └─ outputs: image-tag              inputs: image-tag
+└─ deploy (needs: image)              workflow_dispatch: ← 사람이 롤백할 때
+     uses: ./.github/workflows/deploy.yml   inputs: image-tag
+     with: image-tag
 ```
 
-첫 전환 순간에는 블루가 없어 짧은 끊김이 있습니다. 두 번째 배포부터가 무중단입니다.
+배포 로직은 `deploy.yml` 한 곳에만 있고, 일반 배포와 롤백이 **같은 경로**를 탑니다. 롤백 경로를 따로 만들면 평소에 안 쓰여서 정작 장애 때 동작하지 않는 일이 생기는데, 매 배포가 같은 경로를 쓰므로 롤백 경로도 항상 검증됩니다.
 
-**확인**
-- 0단계의 측정 루프를 이번엔 `http://<EC2_IP>/v3/api-docs`(80번)로 돌리고 배포합니다. `000`이나 `502`가 없으면 성공입니다. `deploy-before.log`와 나란히 비교해 README에 기록합니다.
-- 일부러 `TOSS_SECRET_KEY`를 `test_sk_`로 시작하는 값으로 바꿔 배포 → 접두사 검증으로 새 컨테이너가 뜨지 못해 Actions는 실패, 측정 루프는 계속 200인지 확인합니다. 예전에 겪은 Secrets 실수를 일부러 재현하는 것입니다. 확인 후 원래 값으로 되돌립니다.
-- 롤백: `service-url.inc`를 이전 포트로 바꾸고 `reload` (옛 컨테이너가 stop 상태면 `docker start cgv-<색>` 먼저).
+```yaml
+# deploy.yml — 두 진입점이 같은 job을 쓴다
+on:
+  workflow_call:
+    inputs:
+      image-tag: { required: true, type: string }
+    secrets:
+      AWS_ROLE_ARN: { required: true }
+      EC2_SSH_KEY: { required: true }
+      # ... 필요한 것만 명시
+  workflow_dispatch:
+    inputs:
+      image-tag: { required: true, type: string }
+```
 
-### 2단계 — ALB + Auto Scaling 그룹으로 롤링
+```yaml
+# ci.yml — 호출하는 쪽
+jobs:
+  image:
+    needs: test
+    outputs:
+      image-tag: ${{ github.sha }}
+    # ... 빌드·push
+  deploy:
+    needs: image
+    uses: ./.github/workflows/deploy.yml
+    with:
+      image-tag: ${{ needs.image.outputs.image-tag }}
+    secrets: inherit
+```
 
-서버를 여러 대로 늘리고 Nginx 대신 ALB가 트래픽을 나눕니다.
+**`workflow_call`에서 주의할 것**
 
-1. **시작 템플릿**: 1단계의 EC2 설정(Docker, 인스턴스 역할, 보안 그룹)을 사용자 데이터 스크립트로 옮깁니다. 부팅 시 ECR에서 이미지를 받아 `-p 8080:8080`으로 띄웁니다. 환경변수는 SSM Parameter Store에서 읽게 하면 서버에 파일을 올릴 필요가 없습니다.
-2. **대상 그룹**: 포트 8080, 헬스 체크 경로 `/v3/api-docs`, 정상 임계 2회. **등록 취소 지연(deregistration delay)**을 40초 정도로 둡니다. 서버가 빠질 때 ALB가 새 요청은 안 보내고 진행 중인 요청은 이 시간만큼 기다려 줍니다.
-3. **ALB**: 80 리스너 → 위 대상 그룹. 보안 그룹은 ALB만 80 공개, EC2는 ALB 보안 그룹에서 오는 8080만 허용.
-4. **Auto Scaling 그룹**: 원하는 용량 2, 최소 2, 최대 3. 상태 확인 유형을 ELB로 둬서 앱이 죽으면 인스턴스를 교체하게 합니다.
-5. **배포**: 새 이미지 태그로 시작 템플릿 새 버전을 만들고 **인스턴스 새로 고침**을 시작합니다. 최소 정상 비율 50%면 2대 중 1대씩 교체합니다. 워크플로우에서는 `aws autoscaling start-instance-refresh`로 호출합니다.
+| 항목 | 내용 |
+|---|---|
+| Secrets | 호출된 workflow는 Secrets를 자동으로 받지 않습니다. `secrets: inherit`로 전부 넘기거나 이름을 하나씩 넘깁니다. 하나씩 넘기면 배포에 무엇이 필요한지 파일에 드러납니다 |
+| environment | `environment: production`은 **호출된 쪽 job**에 둡니다. 그래야 수동 실행이든 호출이든 같은 보호 규칙(승인자, 브랜치 제한)이 적용됩니다 |
+| permissions | 호출된 workflow는 호출한 쪽이 준 권한보다 넓게 가질 수 없습니다. OIDC를 쓰려면 호출하는 job에도 `id-token: write`가 있어야 합니다 |
+| concurrency | 호출된 workflow 안에 `deploy-production` 그룹을 두면, CI가 부른 배포와 수동 롤백이 같은 줄에 섭니다 |
+| 실패 전파 | 호출된 workflow가 실패하면 호출한 job도 실패로 표시됩니다. 결과를 기다리는 동기 호출이라 CI 화면 하나에서 배포 결과까지 봅니다 |
 
-**확인**: 측정 루프를 ALB DNS로 돌리며 인스턴스 새로 고침 → 200만 나오는지. 새로 고침 중 응답 헤더나 로그로 v1/v2가 섞여 응답하는 구간을 관찰합니다(롤링의 "두 버전 공존").
+**`workflow_run`을 고르지 않은 이유**
 
-스케줄러가 서버 수만큼 돕니다. 이 단계부터는 「어떤 전략이든 공통으로 지켜야 할 것」 4번이 실제 문제가 됩니다.
+`workflow_run`도 "CI가 끝나면 배포"를 만들 수 있지만, 배포에는 맞지 않습니다.
 
-### 3단계 — ALB 가중치로 카나리
+- 별도 실행이라 CI 화면에 배포 결과가 이어서 보이지 않습니다. 어느 커밋의 CI가 어느 배포를 일으켰는지 추적하기 어렵습니다.
+- 앞 workflow의 artifact를 받으려면 실행 ID를 따로 찾아 넘겨야 합니다.
+- 기본 브랜치에 있는 workflow 파일 기준으로 실행됩니다. 작업 브랜치에서 배포 workflow를 고쳐도 반영되지 않아 헷갈립니다.
+- 입력값을 받을 수 없어 롤백처럼 "이 태그로 배포"를 표현할 수 없습니다.
 
-2단계에서 대상 그룹을 둘로 나눕니다(`cgv-stable`, `cgv-canary`, 각각 자기 Auto Scaling 그룹).
-
-1. 리스너 규칙의 전달 대상을 **가중치 대상 그룹**으로 바꿉니다: stable 95 / canary 5.
-2. 새 버전은 canary 그룹에만 배포합니다.
-3. CloudWatch에서 대상 그룹별 `HTTPCode_Target_5XX_Count`, `TargetResponseTime`을 비교합니다. 결제가 있다면 결제 승인 실패 로그 수도 봅니다.
-4. 문제없으면 25 → 50 → 100으로 올리고, 마지막에 stable을 새 버전으로 맞춘 뒤 다시 100/0으로 돌립니다. 문제가 보이면 canary 가중치를 0으로.
-
-**주의**: 같은 사용자의 요청이 매번 다른 버전으로 갈 수 있습니다. 결제처럼 여러 요청이 이어지는 흐름(주문 저장 → 결제위젯 → 승인)이 두 버전에 걸쳐도 동작하는지가 「어떤 전략이든 공통으로 지켜야 할 것」 2번(스키마 호환)과 같은 문제입니다. 필요하면 대상 그룹 고정(stickiness)을 켭니다.
-
-같은 일을 관리형으로 하려면 CodeDeploy(EC2 블루/그린, 또는 ECS의 `Canary10Percent5Minutes` 같은 배포 설정)를 씁니다. 직접 해 본 뒤 쓰면 그 설정들이 무엇을 대신하는지 보입니다.
-
-### 정리 (비용)
-
-실습이 끝나면 생성 역순으로 지웁니다. ALB와 NAT 게이트웨이는 트래픽이 없어도 시간당 과금됩니다.
-
-- [ ] Auto Scaling 그룹 (원하는 용량 0 → 삭제), 시작 템플릿
-- [ ] ALB, 대상 그룹
-- [ ] 2·3단계에서 추가로 만든 EC2
-- [ ] ECR 이미지(수명 주기 정책이 있으면 자동 정리)
-- [ ] 1단계만 유지한다면 EC2 1대 + RDS는 그대로 둬도 됩니다
+알림처럼 결과에 영향을 주지 않는 후속 작업에는 `workflow_run`이 적당합니다. **결과를 기다려야 하고 값을 넘겨야 하면 `workflow_call`, 결과와 무관하게 이어 붙이기만 하면 `workflow_run`**으로 정리했습니다.
