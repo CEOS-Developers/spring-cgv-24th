@@ -168,6 +168,14 @@ public class Reservation {
         paymentProcessing = false;
     }
 
+    // PG가 미승인을 확정한 뒤에만 호출한다. 실패한 결제의 좌석은 즉시 반환한다.
+    public void failPayment(LocalDateTime now) {
+        endPaymentProcessing();
+        if (!expireIfPending(now)) {
+            status = ReservationStatus.Canceled;
+        }
+    }
+
     // 전액 환불이 PG에서 확인된 뒤, 예매 락 안에서만 호출한다.
     public void cancelAfterRefund() {
         if (status != ReservationStatus.Reserved || paymentProcessing) {

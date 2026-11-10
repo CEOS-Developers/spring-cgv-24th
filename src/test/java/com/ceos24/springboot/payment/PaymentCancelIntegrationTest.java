@@ -297,7 +297,7 @@ class PaymentCancelIntegrationTest {
     }
 
     @ParameterizedTest
-    @ValueSource(ints = {409, 429, 500})
+    @ValueSource(ints = {408, 409, 429, 500, 503})
     void pendingOrServerErrorsWithUnchangedLookupRemainUnknown(int status) throws Exception {
         when(toss.cancel(eq(ticket.key()), any(), anyString())).thenThrow(
                 new RestClientResponseException("PG error", status, "error", null, null, null));

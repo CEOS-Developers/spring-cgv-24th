@@ -345,6 +345,24 @@ class StoreOrderPaymentIntegrationTest {
         assertThat(stock(popcornId)).isEqualTo(10);
     }
 
+    @Test
+    void confirmedCommandRejectionBeforeDeadlineRestoresStockOnlyOnce() {
+        var order = create(2);
+        var request = prepare(order.orderId(), "DONE");
+        when(toss.confirm(any(), anyString())).thenThrow(new org.springframework.web.client.RestClientResponseException(
+                "PG rejected", 403, "Forbidden", null, null, null));
+        when(toss.findByPaymentKey(request.paymentKey())).thenReturn(remote(request, "IN_PROGRESS"));
+
+        assertError(() -> approval.confirm(userId, request), ErrorCode.PAYMENT_APPROVAL_FAILED);
+        assertThat(paymentStatus(request.orderId())).isEqualTo(PaymentStatus.FAILED);
+        assertThat(shop.getOrder(userId, order.orderId()).status()).isEqualTo(StoreOrderStatus.CANCELED);
+        assertThat(stock(popcornId)).isEqualTo(10);
+        expiration.expireOrder(order.orderId());
+        shop.cancelOrder(userId, order.orderId());
+        assertThat(stock(popcornId)).isEqualTo(10);
+        verify(toss, times(1)).findByPaymentKey(request.paymentKey());
+    }
+
     private StoreOrderCreateRequest request(int quantity) {
         return new StoreOrderCreateRequest(theaterId, List.of(new OrderItemRequest(popcornId, quantity)));
     }

@@ -47,6 +47,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.client.ResourceAccessException;
+import org.springframework.web.client.RestClientResponseException;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.time.LocalDate;
@@ -387,25 +388,123 @@ class PaymentConfirmIntegrationTest {
         verifyNoInteractions(tossPaymentClient);
     }
 
-    @ParameterizedTest
-    @ValueSource(booleans = {true, false})
-    void failedPaymentDoesNotPreventLaterReservationClosure(boolean expired) {
+    @Test
+    void confirmedFailureBeforeDeadlineImmediatelyReleasesSeats() {
         when(tossPaymentClient.confirm(any(), anyString())).thenReturn(new TossPaymentConfirmResponse(
                 PAYMENT_KEY, prepared.orderId(), AMOUNT, "영화 티켓 예매", "ABORTED", "카드", null, "KRW"));
         assertError(() -> approval.confirm(userId, new PaymentConfirmRequest(PAYMENT_KEY, prepared.orderId(), AMOUNT)),
                 ErrorCode.PAYMENT_APPROVAL_FAILED);
 
-        if (expired) {
-            backdateExpiry();
-            expiration.expireReservation(reservationId);
-        } else {
-            reservationService.cancelReservation(userId, reservationId);
-        }
-
         assertThat(payments.findById(prepared.paymentId()).orElseThrow().getStatus()).isEqualTo(PaymentStatus.FAILED);
         assertThat(reservations.findById(reservationId).orElseThrow().getStatus())
-                .isEqualTo(expired ? ReservationStatus.Expired : ReservationStatus.Canceled);
+                .isEqualTo(ReservationStatus.Canceled);
         assertThat(reservationSeats.findAllByReservation_ReservationId(reservationId)).isEmpty();
+        backdateExpiry();
+        expiration.expireReservation(reservationId);
+        assertThat(reservations.findById(reservationId).orElseThrow().getStatus()).isEqualTo(ReservationStatus.Canceled);
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {400, 401, 403, 404, 422})
+    void definiteCommandRejectionAndVerifiedNonApprovalFailAndReleaseSeats(int status) {
+        when(tossPaymentClient.confirm(any(), anyString())).thenThrow(pgError(status));
+        when(tossPaymentClient.findByPaymentKey(PAYMENT_KEY)).thenAnswer(ignored -> {
+            assertThat(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            // 조회 전에 거절 근거와 UNKNOWN이 이미 커밋되어 있어야 한다.
+            var payment = payments.findById(prepared.paymentId()).orElseThrow();
+            assertThat(payment.isRejectedByPg()).isTrue();
+            assertThat(payment.getStatus()).isEqualTo(PaymentStatus.UNKNOWN);
+            return unapprovedRemote("IN_PROGRESS");
+        });
+        assertError(() -> approval.confirm(userId, new PaymentConfirmRequest(PAYMENT_KEY, prepared.orderId(), AMOUNT)),
+                ErrorCode.PAYMENT_APPROVAL_FAILED);
+        assertThat(payments.findById(prepared.paymentId()).orElseThrow().getStatus()).isEqualTo(PaymentStatus.FAILED);
+        assertThat(reservations.findById(reservationId).orElseThrow().getStatus()).isEqualTo(ReservationStatus.Canceled);
+        assertThat(reservationSeats.findAllByReservation_ReservationId(reservationId)).isEmpty();
+        verify(tossPaymentClient, times(1)).findByPaymentKey(PAYMENT_KEY);
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {408, 409, 429, 500, 503})
+    void uncertainCommandErrorDoesNotTriggerImmediateLookupOrTreatInProgressAsFailure(int status) {
+        when(tossPaymentClient.confirm(any(), anyString())).thenThrow(pgError(status));
+        assertError(() -> approval.confirm(userId, new PaymentConfirmRequest(PAYMENT_KEY, prepared.orderId(), AMOUNT)),
+                ErrorCode.PAYMENT_RESULT_UNKNOWN);
+        verify(tossPaymentClient, never()).findByPaymentKey(anyString());
+        assertThat(payments.findById(prepared.paymentId()).orElseThrow().isRejectedByPg()).isFalse();
+        makeRecoveryDue();
+        when(tossPaymentClient.findByPaymentKey(PAYMENT_KEY)).thenReturn(unapprovedRemote("IN_PROGRESS"));
+        recovery.recoverPayments();
+        assertThat(payments.findById(prepared.paymentId()).orElseThrow().getStatus()).isEqualTo(PaymentStatus.UNKNOWN);
+        assertThat(reservationSeats.findAllByReservation_ReservationId(reservationId)).hasSize(2);
+    }
+
+    @Test
+    void approvedLookupWinsOverCommandRejection() {
+        when(tossPaymentClient.confirm(any(), anyString())).thenThrow(pgError(400));
+        when(tossPaymentClient.findByPaymentKey(PAYMENT_KEY)).thenReturn(approvedRemote());
+        assertThat(approval.confirm(userId, new PaymentConfirmRequest(PAYMENT_KEY, prepared.orderId(), AMOUNT)).status())
+                .isEqualTo(PaymentStatus.DONE);
+        assertStoredCompletion();
+    }
+
+    @Test
+    void rejectedApprovalWithFailedLookupIsRecoveredAfterDeadline() {
+        when(tossPaymentClient.confirm(any(), anyString())).thenThrow(pgError(403));
+        when(tossPaymentClient.findByPaymentKey(PAYMENT_KEY)).thenThrow(new ResourceAccessException("lookup timeout"));
+        assertError(() -> approval.confirm(userId, new PaymentConfirmRequest(PAYMENT_KEY, prepared.orderId(), AMOUNT)),
+                ErrorCode.PAYMENT_RESULT_UNKNOWN);
+        assertThat(payments.findById(prepared.paymentId()).orElseThrow().isRejectedByPg()).isTrue();
+        backdateExpiry();
+        expiration.expireReservation(reservationId);
+        assertThat(reservationSeats.findAllByReservation_ReservationId(reservationId)).hasSize(2);
+
+        doReturn(unapprovedRemote("READY")).when(tossPaymentClient).findByPaymentKey(PAYMENT_KEY);
+        makeRecoveryDue();
+        recovery.recoverPayments();
+        recovery.recoverPayments();
+        assertThat(payments.findById(prepared.paymentId()).orElseThrow().getStatus()).isEqualTo(PaymentStatus.FAILED);
+        assertThat(reservations.findById(reservationId).orElseThrow().getStatus()).isEqualTo(ReservationStatus.Expired);
+        assertThat(reservationSeats.findAllByReservation_ReservationId(reservationId)).isEmpty();
+        verify(tossPaymentClient, times(1)).confirm(any(), anyString());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"NOT_FOUND", "MISMATCH", "WAITING_FOR_DEPOSIT"})
+    void rejectionWithoutVerifiedNonApprovalCannotReleaseSeats(String evidence) {
+        when(tossPaymentClient.confirm(any(), anyString())).thenThrow(pgError(400));
+        if (evidence.equals("NOT_FOUND")) {
+            when(tossPaymentClient.findByPaymentKey(PAYMENT_KEY)).thenThrow(pgError(404));
+        } else if (evidence.equals("MISMATCH")) {
+            when(tossPaymentClient.findByPaymentKey(PAYMENT_KEY)).thenReturn(new TossPaymentConfirmResponse(
+                    PAYMENT_KEY, "wrong-order", AMOUNT, "영화 티켓 예매", "READY", null, null, "KRW"));
+        } else {
+            when(tossPaymentClient.findByPaymentKey(PAYMENT_KEY)).thenReturn(unapprovedRemote(evidence));
+        }
+        assertError(() -> approval.confirm(userId, new PaymentConfirmRequest(PAYMENT_KEY, prepared.orderId(), AMOUNT)),
+                ErrorCode.PAYMENT_RESULT_UNKNOWN);
+        assertThat(payments.findById(prepared.paymentId()).orElseThrow().getStatus()).isEqualTo(PaymentStatus.UNKNOWN);
+        assertThat(reservationSeats.findAllByReservation_ReservationId(reservationId)).hasSize(2);
+    }
+
+    @Test
+    void lookup4xxAfterTimeoutDoesNotBecomeCommandRejection() {
+        when(tossPaymentClient.confirm(any(), anyString())).thenThrow(new ResourceAccessException("timeout"));
+        var request = new PaymentConfirmRequest(PAYMENT_KEY, prepared.orderId(), AMOUNT);
+        assertError(() -> approval.confirm(userId, request), ErrorCode.PAYMENT_RESULT_UNKNOWN);
+        when(tossPaymentClient.findByPaymentKey(PAYMENT_KEY)).thenThrow(pgError(403));
+        assertError(() -> approval.confirm(userId, request), ErrorCode.PAYMENT_RESULT_UNKNOWN);
+        assertThat(payments.findById(prepared.paymentId()).orElseThrow().isRejectedByPg()).isFalse();
+        verify(tossPaymentClient, times(1)).findByPaymentKey(PAYMENT_KEY);
+    }
+
+    private RestClientResponseException pgError(int status) {
+        return new RestClientResponseException("PG error", status, "error", null, null, null);
+    }
+
+    private TossPaymentConfirmResponse unapprovedRemote(String status) {
+        return new TossPaymentConfirmResponse(PAYMENT_KEY, prepared.orderId(), AMOUNT,
+                "영화 티켓 예매", status, null, null, "KRW");
     }
 
     @Test

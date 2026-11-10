@@ -22,6 +22,11 @@ import java.util.UUID;
 )
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Payment {
+    @Column(name = "rejected_by_pg", nullable = false)
+    private boolean rejectedByPg;
+
+    public void recordRejection() { rejectedByPg = true; }
+
     @Embedded
     private PaymentRecovery recovery = new PaymentRecovery();
 

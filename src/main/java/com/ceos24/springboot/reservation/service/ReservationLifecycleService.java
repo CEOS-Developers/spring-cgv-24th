@@ -36,10 +36,8 @@ public class ReservationLifecycleService {
     }
 
     public void failPaymentLocked(Reservation reservation, LocalDateTime now) {
-        reservation.endPaymentProcessing();
-        if (reservation.expireIfPending(now)) {
-            releaseSeats(reservation);
-        }
+        reservation.failPayment(now);
+        releaseSeats(reservation);
     }
 
     public void refundLocked(Reservation reservation) {

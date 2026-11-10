@@ -72,11 +72,7 @@ public class PaymentConfirmTransactionService {
                 payment.startProcessing(request.paymentKey());
                 payment.getRecovery().schedule(now.plus(properties.getRecovery().getProcessingTimeout()));
             }
-            case UNKNOWN -> {
-                validateHeldTarget(target);
-                return context(userId, target, payment, true, null);
-            }
-            case PROCESSING -> {
+            case UNKNOWN, PROCESSING -> {
                 validateHeldTarget(target);
                 return context(userId, target, payment, true, null);
             }
@@ -105,6 +101,11 @@ public class PaymentConfirmTransactionService {
 
     @Transactional
     public PaymentConfirmResponse finish(ConfirmContext context, TossPaymentConfirmResponse remote) {
+        return finish(context, remote, false);
+    }
+
+    @Transactional
+    public PaymentConfirmResponse finish(ConfirmContext context, TossPaymentConfirmResponse remote, boolean rejected) {
         // Every path locks the purchase first, then Payment, then stock if needed.
         LockedTarget target = lockTarget(context.targetType(), context.targetId(), context.userId());
         Payment payment = findPayment(context.orderId(), context.userId());
@@ -112,6 +113,7 @@ public class PaymentConfirmTransactionService {
             return target.response(payment);
         }
         validateHeldTarget(target);
+        if (rejected) { payment.recordRejection(); }
 
         if (!matches(payment, remote)) {
             payment.markUnknown();
@@ -120,7 +122,7 @@ public class PaymentConfirmTransactionService {
                     .atZoneSameInstant(clock.getZone()).toLocalDateTime();
             payment.complete(approvedAt, remote.method());
             target.complete();
-        } else if ("ABORTED".equals(remote.status()) || "EXPIRED".equals(remote.status())) {
+        } else if (isConfirmedFailure(payment, remote)) {
             payment.markFailed();
             if (target.reservation() != null) {
                 reservationLifecycle.failPaymentLocked(target.reservation(), LocalDateTime.now(clock));
@@ -173,6 +175,15 @@ public class PaymentConfirmTransactionService {
                 && Objects.equals(payment.getOrderId(), remote.orderId())
                 && Objects.equals(payment.getAmount(), remote.totalAmount())
                 && Objects.equals(payment.getCurrency(), remote.currency());
+    }
+
+    private boolean isConfirmedFailure(Payment payment, TossPaymentConfirmResponse remote) {
+        if (remote.approvedAt() != null) { return false; }
+        return switch (remote.status() == null ? "" : remote.status()) {
+            case "ABORTED", "EXPIRED" -> true;
+            case "READY", "IN_PROGRESS" -> payment.isRejectedByPg();
+            default -> false;
+        };
     }
 
     private ConfirmContext context(Long userId, LockedTarget target, Payment payment,
