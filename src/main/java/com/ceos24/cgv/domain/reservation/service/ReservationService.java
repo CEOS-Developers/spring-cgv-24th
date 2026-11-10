@@ -149,7 +149,8 @@ public class ReservationService {
         // 승인 흐름과 동일하게 예매 다음 결제 행을 잠근 후 상태를 검사한다.
         Payment payment = paymentRepository.findByReservationIdForUpdate(reservationId)
                 .orElseThrow(() -> new PaymentException(PaymentErrorCode.PAYMENT_NOT_FOUND));
-        if (payment.getStatus() != PaymentStatus.READY) {
+        if (payment.getStatus() != PaymentStatus.READY
+                && payment.getStatus() != PaymentStatus.FAILED) {
             throw new PaymentException(PaymentErrorCode.PAYMENT_NOT_DIRECTLY_CANCELABLE);
         }
 
