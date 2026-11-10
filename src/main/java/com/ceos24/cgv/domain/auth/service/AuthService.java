@@ -12,6 +12,8 @@ import com.ceos24.cgv.global.exception.BusinessException;
 import com.ceos24.cgv.global.exception.ErrorCode;
 import com.ceos24.cgv.global.security.CustomUserDetails;
 import com.ceos24.cgv.global.security.jwt.JwtProvider;
+import io.jsonwebtoken.JwtException;
+import java.time.Duration;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -25,6 +27,8 @@ import org.springframework.transaction.annotation.Transactional;
 @Slf4j
 @Service
 public class AuthService {
+
+    private static final Duration GRACE_PERIOD = Duration.ofSeconds(10);
 
     private final String adminToken;
     private final MemberRepository memberRepository;
@@ -87,13 +91,13 @@ public class AuthService {
 
             CustomUserDetails userDetails = (CustomUserDetails) authentication.getPrincipal();
 
-            String memberId = userDetails.getMemberId().toString();
+            String accessToken =
+                    jwtProvider.createAccessToken(userDetails.getMemberId().toString(), userDetails.getRole());
+            String refreshToken =
+                    jwtProvider.createRefreshToken(userDetails.getMemberId().toString());
 
-            String accessToken = jwtProvider.createAccessToken(memberId);
-            String refreshToken = jwtProvider.createRefreshToken(memberId);
-
-            refreshTokenRepository.deleteByMemberId(Long.parseLong(memberId));
-            refreshTokenRepository.save(new RefreshToken(refreshToken, Long.parseLong(memberId)));
+            refreshTokenRepository.deleteByMemberId(userDetails.getMemberId());
+            refreshTokenRepository.save(new RefreshToken(refreshToken, userDetails.getMemberId()));
 
             return new TokenResponse(accessToken, refreshToken);
         } catch (AuthenticationException e) {
@@ -101,7 +105,7 @@ public class AuthService {
         }
     }
 
-    @Transactional
+    @Transactional(noRollbackFor = BusinessException.class)
     public TokenResponse reissue(String refreshToken) {
         try {
             String memberIdStr = jwtProvider.validateRefreshToken(refreshToken);
@@ -111,27 +115,49 @@ public class AuthService {
                     .orElseThrow(() -> new BusinessException(ErrorCode.AUTH_INVALID_TOKEN));
 
             if (storedToken.isUsed()) {
+                if (storedToken.isWithinGracePeriod(GRACE_PERIOD)) {
+                    log.info("[유예 기간 내 재발급] memberId: {} 동시 요청으로 직전 발급 토큰 반환", memberIdStr);
+                    return new TokenResponse(
+                            storedToken.getReissuedAccessToken(), storedToken.getReissuedRefreshToken());
+                }
+
                 refreshTokenRepository.deleteAllByMemberId(Long.parseLong(memberIdStr));
-                log.error("[재사용 탐지] memberId: {} 의 토큰 탈취 의심", memberIdStr);
+                log.error("[재사용 탐지] memberId: {} 의 토큰 탈취 의심 (유예 기간 만료)", memberIdStr);
                 throw new BusinessException(ErrorCode.AUTH_HIJACK_DETECTED);
-            } else {
-                storedToken.useToken();
             }
 
-            String newAccessToken = jwtProvider.createAccessToken(memberIdStr);
+            Member member = memberRepository
+                    .findById(Long.parseLong(memberIdStr))
+                    .orElseThrow(() -> new BusinessException(ErrorCode.MEMBER_NOT_FOUND));
+
+            String newAccessToken =
+                    jwtProvider.createAccessToken(memberIdStr, member.getRole().getKey());
             String newRefreshToken = jwtProvider.createRefreshToken(memberIdStr);
+
+            storedToken.useToken(newAccessToken, newRefreshToken);
             refreshTokenRepository.save(new RefreshToken(newRefreshToken, Long.parseLong(memberIdStr)));
 
             return new TokenResponse(newAccessToken, newRefreshToken);
         } catch (BusinessException e) {
             throw e;
-        } catch (Exception e) {
+        } catch (JwtException | IllegalArgumentException e) {
+            log.warn("[토큰 재발급 실패] 유효하지 않은 리프레시 토큰: {}", e.getMessage());
             throw new BusinessException(ErrorCode.AUTH_INVALID_TOKEN);
         }
     }
 
     @Transactional
-    public void logout(String refreshToken) {
-        refreshTokenRepository.deleteByToken(refreshToken);
+    public void logout(Long memberId, String refreshToken) {
+        RefreshToken storedToken = refreshTokenRepository
+                .findByToken(refreshToken)
+                .orElseThrow(() -> new BusinessException(ErrorCode.AUTH_INVALID_TOKEN));
+
+        if (!storedToken.getMemberId().equals(memberId)) {
+            log.warn("[로그아웃 실패] 토큰 소유자 불일치: 요청 memberId={}, 토큰 소유 memberId={}", memberId, storedToken.getMemberId());
+            throw new BusinessException(ErrorCode.AUTH_INVALID_TOKEN);
+        }
+
+        // 재발급으로 사용 처리된 이전 토큰이 누적되지 않도록 해당 회원의 토큰을 모두 정리한다.
+        refreshTokenRepository.deleteAllByMemberId(memberId);
     }
 }

@@ -34,8 +34,17 @@ public class MenuStock {
 
     public void decreaseStock(Long quantity) {
         if (this.stock < quantity) {
-            throw new BusinessException(ErrorCode.OUT_OF_STOCK);
+            throw new BusinessException(ErrorCode.ORDER_OUT_OF_STOCK);
+        } else if (quantity <= 0) {
+            throw new BusinessException(ErrorCode.ORDER_INVALID_QUANTITY);
         }
         this.stock -= quantity;
+    }
+
+    public void increaseStock(Long quantity) {
+        if (quantity == null || quantity <= 0) {
+            throw new IllegalArgumentException("복구할 재고 수량은 1개 이상이어야 합니다.");
+        }
+        this.stock += quantity;
     }
 }

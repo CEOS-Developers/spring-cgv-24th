@@ -2,8 +2,6 @@ package com.ceos24.cgv.domain.movie.service;
 
 import com.ceos24.cgv.domain.movie.dto.MovieInfo;
 import com.ceos24.cgv.domain.movie.dto.ScheduleTimeInfo;
-import com.ceos24.cgv.domain.movie.dto.ScreenScheduleInfo;
-import com.ceos24.cgv.domain.movie.dto.ScreeningMovieInfo;
 import com.ceos24.cgv.domain.movie.dto.response.GetMovieResponse;
 import com.ceos24.cgv.domain.movie.dto.response.GetScreeningResponse;
 import com.ceos24.cgv.domain.movie.entity.Movie;
@@ -81,7 +79,7 @@ public class MovieService {
                 screenings.stream().collect(Collectors.groupingBy(Screening::getMovie));
 
         // 3. 그룹핑된 데이터를 응답용 DTO 리스트로 변환
-        List<ScreeningMovieInfo> movieInfos = createScreeningMovieInfos(groupedByMovie);
+        List<GetScreeningResponse.ScreeningMovieInfo> movieInfos = createScreeningMovieInfos(groupedByMovie);
 
         return new GetScreeningResponse(theaterId, movieInfos);
     }
@@ -89,7 +87,8 @@ public class MovieService {
     /**
      * 영화별로 그룹핑된 상영 일정 데이터를 바탕으로 영화 정보(ScreeningMovieInfo) DTO 리스트를 생성합니다.
      */
-    private List<ScreeningMovieInfo> createScreeningMovieInfos(Map<Movie, List<Screening>> groupedByMovie) {
+    private List<GetScreeningResponse.ScreeningMovieInfo> createScreeningMovieInfos(
+            Map<Movie, List<Screening>> groupedByMovie) {
         return groupedByMovie.entrySet().stream()
                 .map(movieEntry -> {
                     Movie movie = movieEntry.getKey();
@@ -99,9 +98,10 @@ public class MovieService {
                     Map<Screen, List<Screening>> groupedByScreen =
                             movieScreenings.stream().collect(Collectors.groupingBy(Screening::getScreen));
 
-                    List<ScreenScheduleInfo> screenInfos = createScreenScheduleInfos(groupedByScreen);
+                    List<GetScreeningResponse.ScreeningMovieInfo.ScreenScheduleInfo> screenInfos =
+                            createScreenScheduleInfos(groupedByScreen);
 
-                    return new ScreeningMovieInfo(movie.getId(), movie.getTitle(), screenInfos);
+                    return new GetScreeningResponse.ScreeningMovieInfo(movie.getId(), movie.getTitle(), screenInfos);
                 })
                 .toList();
     }
@@ -109,14 +109,16 @@ public class MovieService {
     /**
      * 상영관별로 그룹핑된 상영 일정 데이터를 바탕으로 상영관 정보(ScreenScheduleInfo) DTO 리스트를 생성합니다.
      */
-    private List<ScreenScheduleInfo> createScreenScheduleInfos(Map<Screen, List<Screening>> groupedByScreen) {
+    private List<GetScreeningResponse.ScreeningMovieInfo.ScreenScheduleInfo> createScreenScheduleInfos(
+            Map<Screen, List<Screening>> groupedByScreen) {
         return groupedByScreen.entrySet().stream()
                 .map(screenEntry -> {
                     Screen screen = screenEntry.getKey();
                     List<Screening> screenScreenings = screenEntry.getValue();
 
                     List<ScheduleTimeInfo> scheduleInfos = createScheduleTimeInfos(screen, screenScreenings);
-                    return new ScreenScheduleInfo(screen.getId(), screen.getName(), scheduleInfos);
+                    return new GetScreeningResponse.ScreeningMovieInfo.ScreenScheduleInfo(
+                            screen.getId(), screen.getName(), scheduleInfos);
                 })
                 .toList();
     }

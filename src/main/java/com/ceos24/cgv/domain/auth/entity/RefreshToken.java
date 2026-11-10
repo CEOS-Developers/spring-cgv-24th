@@ -1,6 +1,8 @@
 package com.ceos24.cgv.domain.auth.entity;
 
 import jakarta.persistence.*;
+import java.time.Duration;
+import java.time.LocalDateTime;
 import lombok.AccessLevel;
 import lombok.Builder;
 import lombok.Getter;
@@ -23,15 +25,33 @@ public class RefreshToken {
 
     private boolean isUsed = false;
 
+    private LocalDateTime usedAt;
+
+    @Column(length = 512)
+    private String reissuedAccessToken;
+
+    @Column(length = 512)
+    private String reissuedRefreshToken;
+
     @Builder
     public RefreshToken(String token, Long memberId) {
         this.token = token;
         this.memberId = memberId;
     }
 
-    public void useToken() {
+    public void useToken(String newAccessToken, String newRefreshToken) {
         if (!isUsed) {
-            isUsed = true;
+            this.isUsed = true;
+            this.usedAt = LocalDateTime.now();
+            this.reissuedAccessToken = newAccessToken;
+            this.reissuedRefreshToken = newRefreshToken;
         }
+    }
+
+    public boolean isWithinGracePeriod(Duration gracePeriod) {
+        if (this.usedAt == null) {
+            return false;
+        }
+        return Duration.between(this.usedAt, LocalDateTime.now()).compareTo(gracePeriod) <= 0;
     }
 }

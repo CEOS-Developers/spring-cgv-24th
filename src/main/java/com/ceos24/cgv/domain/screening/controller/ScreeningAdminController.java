@@ -5,6 +5,7 @@ import com.ceos24.cgv.domain.screening.service.ScreeningAdminService;
 import com.ceos24.cgv.global.common.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -25,7 +26,7 @@ public class ScreeningAdminController {
 
     @PostMapping("/screenings")
     @Operation(summary = "상영 생성", description = "새로운 상영 일정을 생성합니다.")
-    public ResponseEntity<ApiResponse<Void>> createScreening(@RequestBody CreateScreeningRequest request) {
+    public ResponseEntity<ApiResponse<Void>> createScreening(@Valid @RequestBody CreateScreeningRequest request) {
         screeningAdminService.createScreening(request);
         return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.success(null));
     }
