@@ -9,6 +9,7 @@ import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
 import java.time.Instant;
+import java.util.Objects;
 
 @Entity
 @Getter
@@ -27,6 +28,8 @@ public class PaymentCancel {
 	@Column(nullable = false, unique = true, length = 300)
 	private String idempotencyKey;
 
+	private Integer requestedAmount; // 최초 요청에 담긴 금액. null이면 전액 취소 요청
+
 	@Column(nullable = false)
 	private Integer cancelAmount;
 
@@ -42,16 +45,24 @@ public class PaymentCancel {
 
 	private Instant canceledAt;
 
-	private PaymentCancel(Payment payment, String idempotencyKey, Integer cancelAmount, String cancelReason) {
+	private PaymentCancel(Payment payment, String idempotencyKey, Integer requestedAmount, Integer cancelAmount,
+						  String cancelReason) {
 		this.payment = payment;
 		this.idempotencyKey = idempotencyKey;
+		this.requestedAmount = requestedAmount;
 		this.cancelAmount = cancelAmount;
 		this.cancelReason = cancelReason;
 		this.status = PaymentCancelStatus.REQUESTED;
 	}
 
-	public static PaymentCancel request(Payment payment, String idempotencyKey, Integer cancelAmount, String cancelReason) {
-		return new PaymentCancel(payment, idempotencyKey, cancelAmount, cancelReason);
+	public static PaymentCancel request(Payment payment, String idempotencyKey, Integer requestedAmount, Integer cancelAmount,
+										String cancelReason) {
+		return new PaymentCancel(payment, idempotencyKey, requestedAmount, cancelAmount, cancelReason);
+	}
+
+	public boolean isSameRequest(Long paymentId, Integer requestedAmount, String cancelReason) {
+		return payment.getId().equals(paymentId) && Objects.equals(this.requestedAmount, requestedAmount)
+				&& this.cancelReason.equals(cancelReason);
 	}
 
 	public boolean isPending() {

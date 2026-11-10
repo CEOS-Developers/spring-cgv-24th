@@ -35,12 +35,12 @@ class PaymentTest {
 		Payment payment = donePayment();
 
 		payment.reserveCancel(5_000);
-		payment.applyCanceledStatus();
+		payment.completeCancel(5_000);
 		assertThat(payment.getStatus()).isEqualTo(PaymentStatus.PARTIAL_CANCELED);
 		assertThat(payment.isCancelable()).isTrue();
 
 		payment.reserveCancel(10_000);
-		payment.applyCanceledStatus();
+		payment.completeCancel(10_000);
 		assertThat(payment.getStatus()).isEqualTo(PaymentStatus.CANCELED);
 		assertThat(payment.isCancelable()).isFalse();
 	}
@@ -53,5 +53,40 @@ class PaymentTest {
 		payment.restoreCancel(5_000);
 
 		assertThat(payment.getBalanceAmount()).isEqualTo(15_000);
+	}
+
+	@Test
+	void 처리_중인_취소는_실제_잔액을_줄이지_않고_취소_가능_금액만_줄인다() {
+		Payment payment = donePayment();
+
+		payment.reserveCancel(9_000);
+		payment.reserveCancel(6_000);
+
+		assertThat(payment.getBalanceAmount()).isEqualTo(15_000);
+		assertThat(payment.getPendingCancelAmount()).isEqualTo(15_000);
+		assertThat(payment.getCancelableAmount()).isZero();
+		assertThatThrownBy(() -> payment.reserveCancel(1))
+				.isInstanceOf(GeneralException.class)
+				.extracting(error -> ((GeneralException) error).getCode())
+				.isEqualTo(PaymentErrorStatus.CANCEL_AMOUNT_EXCEEDED);
+	}
+
+	@Test
+	void 함께_예약된_취소_중_하나만_완료되면_전액_취소로_판정하지_않는다() {
+		Payment payment = donePayment();
+		payment.reserveCancel(9_000);
+		payment.reserveCancel(6_000);
+
+		payment.completeCancel(9_000);
+
+		assertThat(payment.getStatus()).isEqualTo(PaymentStatus.PARTIAL_CANCELED);
+		assertThat(payment.getBalanceAmount()).isEqualTo(6_000);
+		assertThat(payment.getPendingCancelAmount()).isEqualTo(6_000);
+
+		payment.restoreCancel(6_000);
+
+		assertThat(payment.getStatus()).isEqualTo(PaymentStatus.PARTIAL_CANCELED);
+		assertThat(payment.getCancelableAmount()).isEqualTo(6_000);
+		assertThat(payment.getCanceledAmount()).isEqualTo(9_000);
 	}
 }

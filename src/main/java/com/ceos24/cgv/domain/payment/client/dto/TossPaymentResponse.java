@@ -14,6 +14,15 @@ public record TossPaymentResponse(
 		return "DONE".equals(status);
 	}
 
+	public boolean isCanceled() {
+		return "CANCELED".equals(status);
+	}
+
+	// ABORTED(승인 실패), EXPIRED(승인 없이 유효 시간 경과)는 이후에도 승인될 수 없는 종결 상태다
+	public boolean isApprovalFailed() {
+		return "ABORTED".equals(status) || "EXPIRED".equals(status);
+	}
+
 	@JsonIgnoreProperties(ignoreUnknown = true)
 	public record Cancel(String transactionKey, Integer cancelAmount, String cancelReason, OffsetDateTime canceledAt) {
 	}

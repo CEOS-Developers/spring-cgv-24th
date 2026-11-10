@@ -25,7 +25,7 @@ public enum PaymentErrorStatus implements BaseErrorCode {
 	ALREADY_CANCELED(HttpStatus.CONFLICT, "PAYMENT409_4", "이미 전액 취소된 결제입니다."),
 	CANCEL_IN_PROGRESS(HttpStatus.CONFLICT, "PAYMENT409_5", "같은 취소 요청이 처리 중입니다."),
 	CANCEL_ALREADY_FAILED(HttpStatus.CONFLICT, "PAYMENT409_6", "실패한 취소 요청입니다. 새 멱등키로 다시 요청해주세요."),
-	IDEMPOTENCY_KEY_CONFLICT(HttpStatus.CONFLICT, "PAYMENT409_7", "다른 결제에 사용된 멱등키입니다.");
+	IDEMPOTENCY_KEY_CONFLICT(HttpStatus.CONFLICT, "PAYMENT409_7", "이미 다른 요청에 사용된 멱등키입니다.");
 
 	private final HttpStatus httpStatus;
 	private final String code;
