@@ -59,6 +59,10 @@ public class PaymentCancelTransactionService {
 
         payment.validateCancelable();
         target.validatePaid();
+        // 새 환불 접수에만 기한을 적용한다. 기존 요청의 조회와 복구는 기한 이후에도 허용한다.
+        if (target.reservation() != null) {
+            target.reservation().validateCancellationDeadline(LocalDateTime.now(clock));
+        }
         if (history.stream().anyMatch(PaymentCancellation::isPending)) {
             throw new GlobalException(ErrorCode.PAYMENT_CANCEL_IN_PROGRESS);
         }

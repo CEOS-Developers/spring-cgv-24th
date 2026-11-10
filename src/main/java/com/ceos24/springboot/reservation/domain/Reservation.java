@@ -110,6 +110,14 @@ public class Reservation {
         status = ReservationStatus.Reserved;
     }
 
+    public void validateCancellationDeadline(LocalDateTime now) {
+        LocalDateTime deadline = LocalDateTime.of(screening.getScreeningDate(), screening.getStartTime())
+                .minusMinutes(20);
+        if (now.isAfter(deadline)) {
+            throw new GlobalException(ErrorCode.RESERVATION_CANCEL_DEADLINE_PASSED);
+        }
+    }
+
     // 예매 취소
     public void cancel() {
         if (paymentProcessing) {

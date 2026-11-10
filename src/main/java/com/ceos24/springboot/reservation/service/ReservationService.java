@@ -14,11 +14,14 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Clock;
+import java.time.LocalDateTime;
 import java.util.List;
 
 @Service
 @RequiredArgsConstructor
 public class ReservationService {
+    private final Clock clock;
     private final ReservationExpirationService expirationService;
     private final ReservationCreateService createService;
     private final ReservationQueryService queryService;
@@ -64,6 +67,8 @@ public class ReservationService {
                     "본인의 예매만 취소할 수 있습니다."
             );
         }
+
+        reservation.validateCancellationDeadline(LocalDateTime.now(clock));
 
         // 취소하기 전 예매 좌석 조회
         List<ReservationSeat> reservationSeats =

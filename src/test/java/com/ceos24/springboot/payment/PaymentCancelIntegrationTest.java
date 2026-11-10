@@ -56,7 +56,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @ActiveProfiles("test")
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 class PaymentCancelIntegrationTest {
-    @Autowired private Clock clock;
+    @MockitoBean(enforceOverride = true) private Clock clock;
     // 실제 MySQL 검증은 별도로 만든 빈 DB에서만 허용한다. 기본 실행은 H2다.
     @DynamicPropertySource
     static void optionalMySql(DynamicPropertyRegistry registry) {
@@ -92,6 +92,8 @@ class PaymentCancelIntegrationTest {
 
     @BeforeEach
     void setUp() {
+        when(clock.getZone()).thenReturn(ZoneId.of("Asia/Seoul"));
+        when(clock.instant()).thenReturn(Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS));
         tx = new TransactionTemplate(manager);
         tx.executeWithoutResult(ignored -> {
             User owner = persist(User.create("취소 구매자", UUID.randomUUID() + "@cancel.test", "unused", "01012345678"));
@@ -151,6 +153,48 @@ class PaymentCancelIntegrationTest {
         assertThat(jdbc.queryForObject("select transaction_key from payment_cancellation", String.class)).isEqualTo("full");
     }
 
+    @ParameterizedTest
+    @ValueSource(ints = {1201, 1200})
+    void fullRefundIsAllowedUntilExactlyTwentyMinutesBeforeScreening(int secondsUntilStart) throws Exception {
+        setTicketScreeningStart(LocalDateTime.now(clock).plusSeconds(secondsUntilStart));
+        when(toss.cancel(eq(ticket.key()), any(), anyString())).thenReturn(remote(ticket, entry("on-time", 28000)));
+
+        postCancel(ticket, "on-time", null).andExpect(status().isOk());
+
+        assertPayment(ticket, PaymentStatus.CANCELED, 0);
+        assertSeats(0);
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {1199, 0, -1, -86400})
+    void fullAndPartialRefundsAfterDeadlineAreRejectedWithoutCallingPg(int secondsUntilStart) throws Exception {
+        setTicketScreeningStart(LocalDateTime.now(clock).plusSeconds(secondsUntilStart));
+
+        postCancel(ticket, "late-full", null).andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("RESERVATION_CANCEL_DEADLINE_PASSED"));
+        postCancel(ticket, "late-partial", 8000L).andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("RESERVATION_CANCEL_DEADLINE_PASSED"));
+
+        verifyNoInteractions(toss);
+        assertPayment(ticket, PaymentStatus.DONE, 28000);
+        assertSeats(1);
+        assertThat(jdbc.queryForObject("select count(*) from payment_cancellation", Long.class)).isZero();
+    }
+
+    @Test
+    void acceptedRefundCanFinishAfterDeadline() throws Exception {
+        setTicketScreeningStart(LocalDateTime.now(clock).plusMinutes(20));
+        when(toss.cancel(eq(ticket.key()), any(), anyString())).thenAnswer(ignored -> {
+            setTicketScreeningStart(LocalDateTime.now(clock).minusDays(1));
+            return remote(ticket, entry("late-response", 28000));
+        });
+
+        postCancel(ticket, "accepted", null).andExpect(status().isOk());
+
+        assertPayment(ticket, PaymentStatus.CANCELED, 0);
+        assertSeats(0);
+    }
+
     @Test
     void multiplePartialCancellationsThenRemainingFullCancellationKeepOriginalAmount() throws Exception {
         var first = entry("first", 8000);
@@ -179,6 +223,7 @@ class PaymentCancelIntegrationTest {
     void repeatedCompletedRequestReturnsSavedResultButNewRequestOnCanceledPaymentIsRejected() throws Exception {
         when(toss.cancel(eq(ticket.key()), any(), anyString())).thenReturn(remote(ticket, entry("once", 28000)));
         postCancel(ticket, "same", null).andExpect(status().isOk());
+        setTicketScreeningStart(LocalDateTime.now(clock).minusDays(1));
         postCancel(ticket, "same", null).andExpect(status().isOk());
         postCancel(ticket, "new", null).andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("PAYMENT_ALREADY_CANCELED"));
@@ -248,6 +293,7 @@ class PaymentCancelIntegrationTest {
         verify(toss, never()).findForCancellation(anyString());
         assertPayment(ticket, PaymentStatus.DONE, 28000);
         assertSeats(1);
+        setTicketScreeningStart(LocalDateTime.now(clock).minusDays(1));
         recovery.recoverPayments();
         verify(toss, never()).findForCancellation(anyString());
         makeCancellationRecoveryDue();
@@ -464,6 +510,12 @@ class PaymentCancelIntegrationTest {
         var keys = ArgumentCaptor.forClass(String.class);
         verify(toss, times(1)).cancel(eq(store.key()), any(), keys.capture());
         verify(toss, times(1)).findForCancellation(store.key());
+    }
+
+    private void setTicketScreeningStart(LocalDateTime start) {
+        jdbc.update("update screening set screening_date=?, start_time=? where screening_id="
+                        + "(select screening_id from reservation where reservation_id=?)",
+                start.toLocalDate(), start.toLocalTime(), ticket.targetId());
     }
 
     private org.springframework.test.web.servlet.ResultActions postCancel(Fixture fixture, String requestId, Long amount) throws Exception {
