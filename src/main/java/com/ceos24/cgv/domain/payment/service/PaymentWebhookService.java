@@ -105,11 +105,11 @@ public class PaymentWebhookService {
             String[] parts = signatureHeader.split(",");
             for (String part : parts) {
                 String token = part.trim();
+                // 형식: "v1:<base64>". base64는 ':'를 포함하지 않지만 패딩 '='를 포함하므로 '='로 자르면 안 된다.
                 String sigValue = token;
-                if (token.contains("=")) {
-                    sigValue = token.substring(token.indexOf('=') + 1).trim();
-                } else if (token.contains(":")) {
-                    sigValue = token.substring(token.indexOf(':') + 1).trim();
+                int colonIdx = token.indexOf(':');
+                if (colonIdx >= 0) {
+                    sigValue = token.substring(colonIdx + 1).trim();
                 }
 
                 if (constantTimeEquals(calculatedSignature, sigValue)) {
