@@ -90,6 +90,7 @@ public class Reservation {
 
     // 예매 전 점유시간 설정
     public boolean expireIfPending(LocalDateTime now) {
+        // 승인 PROCESSING/UNKNOWN 동안 이 플래그를 유지한다. 기한만으로 좌석을 해제하지 않는다.
         if (paymentProcessing
                 || status != ReservationStatus.Pending
                 || expiresAt == null
@@ -107,6 +108,14 @@ public class Reservation {
             throw new IllegalArgumentException("유효한 대기 예매만 확정할 수 있습니다.");
         }
         status = ReservationStatus.Reserved;
+    }
+
+    public void validateCancellationDeadline(LocalDateTime now) {
+        LocalDateTime deadline = LocalDateTime.of(screening.getScreeningDate(), screening.getStartTime())
+                .minusMinutes(20);
+        if (now.isAfter(deadline)) {
+            throw new GlobalException(ErrorCode.RESERVATION_CANCEL_DEADLINE_PASSED);
+        }
     }
 
     // 예매 취소
@@ -165,6 +174,14 @@ public class Reservation {
         }
 
         paymentProcessing = false;
+    }
+
+    // PG가 미승인을 확정한 뒤에만 호출한다. 실패한 결제의 좌석은 즉시 반환한다.
+    public void failPayment(LocalDateTime now) {
+        endPaymentProcessing();
+        if (!expireIfPending(now)) {
+            status = ReservationStatus.Canceled;
+        }
     }
 
     // 전액 환불이 PG에서 확인된 뒤, 예매 락 안에서만 호출한다.

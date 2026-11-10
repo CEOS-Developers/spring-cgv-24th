@@ -16,7 +16,11 @@ public interface StoreInventoryRepository
         extends JpaRepository<StoreInventory, Long> {
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @Query("select i from StoreInventory i where i.theater.theaterId = :theaterId and i.menu.menuId = :menuId")
+    @Query("""
+            select i from StoreInventory i
+            join fetch i.menu m
+            where i.theater.theaterId = :theaterId and m.menuId = :menuId
+            """)
     Optional<StoreInventory> findWithLock(@Param("theaterId") Long theaterId, @Param("menuId") Long menuId);
 
     List<StoreInventory> findAllByTheater(Theater theater);

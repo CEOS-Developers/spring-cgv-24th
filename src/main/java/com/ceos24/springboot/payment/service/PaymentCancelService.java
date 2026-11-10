@@ -5,6 +5,7 @@ import com.ceos24.springboot.global.exception.GlobalException;
 import com.ceos24.springboot.payment.domain.PaymentCancellationStatus;
 import com.ceos24.springboot.payment.dto.*;
 import com.ceos24.springboot.payment.toss.TossPaymentClient;
+import com.ceos24.springboot.payment.toss.TossPaymentErrorPolicy;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClientException;
@@ -29,20 +30,13 @@ public class PaymentCancelService {
             remote = context.lookupOnly() ? toss.findForCancellation(context.paymentKey())
                     : toss.cancel(context.paymentKey(), context.request(), context.pgIdempotencyKey());
         } catch (RestClientResponseException e) {
-            int status = e.getStatusCode().value();
-            rejected = !context.lookupOnly() && status >= 400 && status < 500
-                    && status != 408 && status != 409 && status != 429;
-            remote = lookupOrNull(context.paymentKey());
+            rejected = !context.lookupOnly() && TossPaymentErrorPolicy.isDefinitiveRejection(e);
+            remote = null;
         } catch (RestClientException e) {
-            remote = lookupOrNull(context.paymentKey());
+            remote = null;
         }
         // 트랜잭션 커밋 후 예외를 반환하여 UNKNOWN/FAILED 기록이 롤백되지 않게 한다.
         return requireDone(transactionService.finish(context, remote, rejected));
-    }
-
-    private TossPaymentCancelResponse lookupOrNull(String paymentKey) {
-        try { return toss.findForCancellation(paymentKey); }
-        catch (RestClientException e) { return null; }
     }
 
     private PaymentCancelResponse requireDone(PaymentCancelResponse response) {
