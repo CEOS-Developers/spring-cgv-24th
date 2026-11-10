@@ -2928,3 +2928,587 @@ paymentRepository.save(payment); // JDBC는 블로킹
 
 결국 멱등키는 같은 요청이 두 번 들어와도 결제가 두 번 일어나지 않게 보장하는 역할이고 응답을 받지 못한 요청의 결과를 알려주지는 않는다. 그래서 웹훅을 통해 응답의 결과를 알 수 있게끔 해야한다.
 </details>
+
+## 5주차 Deploy
+
+<details>
+<summary>CI/CD를 통해 배포 자동화하기</summary>
+## Deploy 실습
+
+Deploy 실습
+
+### 0. AWS EC2 인스턴스 생성
+
+1. AWS 콘솔에서 EC2 인스턴스를 생성한다.
+    - AMI → Ubuntu Server TLS
+    - 키 페어 생성 (유형 → ED25519)
+    - 키 페어 다운로드 후 권한 변경하기
+
+      SSH가 보안상 `UNPROTECTED PRIVATE KEY FILE`에러를 내며 접속 거부. → 나만 읽을 수 있게 권한 바꾸자.
+
+        ```bash
+        icacls "%USERPROFILE%\.ssh\<키 페어 이름>.pem" /inheritance:r
+        icacls "%USERPROFILE%\.ssh\<키 페어 이름>.pem" /grant:r"%USERNAME%:R"
+        ```
+
+    - 네트워크 설정
+    - 보안 그룹 생성
+    - 스토리지 구성 (`20 GiB`)
+    - 탄력적 IP 할당 및 연결
+
+### **1. 프로젝트 루트에 Dockerfile 생성**
+
+```docker
+FROM eclipse-temurin:21-jre-alpine
+ENV TZ=Asia/Seoul
+RUN apk add --no-cache tzdata
+RUN addgroup -S spring && adduser -S spring -G spring
+COPY build/libs/*.jar app.jar
+USER spring:spring
+ENTRYPOINT ["java", "-Duser.timezone=Asia/Seoul", "-Djava.security.egd=file:/dev/./urandom", "-jar", "/app.jar"]
+```
+
+**Dockerfile의 역할**
+
+Docker에게 Dockerfile만 던져주면, 알아서 OS를 깔고, Java를 깔고, 파일을 복사하고, 실행 준비까지 해준다.
+
+개발을 하다 보면 로컬에서는 잘 실행되는데, 배포한 EC2 서버에서는 에러가 나는 경우가 있다. (보통 Java 버전이 다르거나 OS 설정이 달라서)
+
+⇒ Dockerfile은 내 코드가 실행되기 위해 필요한 환경(리눅스 OS, Java 21)을 통째로 진공 포장해버린다. 따라서 이 Dockerfile만 있다면, 맥북에서든, 윈도우에서는 100% 똑같이 동작한다.
+
+- **DockerFile 코드 설명**
+
+  > **FROM eclipse-temurin:21-jre-alpine**
+  >
+
+  도커 이미지의 뼈대를 가져오는 명령어이다.
+
+    - `eclipse-temurin`: Java 생태계에서 공식적으로 가장 널리 쓰이고 안정적인 OpenJDK 배포판 이름이다.
+    - `21-jre`: 가장 핵심적인 부분. 개발할 때는 도구가 다 들어있는 JDK가 필요하지만, 이미 개발된 서버를 단순히 실행만 할 때는 JRE(Java Runtime Environment)만 있으면 된다. JDK 대신 JRE를 사용하면 이미지 용량이 절반 이하로 줄어든다.
+    - `alpine`: ‘알파인 리눅스’라는 아주 가벼운 초경량 리눅스 운영체제.
+
+  > **ENV TZ=Asia/Seoul**
+  >
+
+  컨테이너 OS 레벨 환경변수. 이 값 하나로 컨테이너 안의 data 명령, 네이티브 라이브러리, 로그 타임 스탬프가 전부 KST가 된다.
+
+  > **RUN addgroup -S spring && adduser -S spring -G spring**
+  >
+    - `spring`이라는 그룹과 유저를 생성한다.
+    - `-S`는 Alpine의 옵션으로 system 계정(로그인 불가, 홈 디렉토리 없음)으로 만든다는 뜻이다.
+    - `-G spring`은 이 유저를 spring 그룹에 소속시킨다.
+
+  > **COPY build/libs/*.jar app.jar**
+  >
+
+  호스트(현재 GitHub Actions의 실행 환경)에 있는 파일을 도커 컨테이너 안으로 복사하는 명령어이다.
+
+    - `build/libs/*.jar`: 앞선 단계(`./gradlew build`)를 통해 만들어진 Spring Boot의 결과물 (JAR 파일) 경로.
+    - `app.jar`: 컨테이너 내부로 복사할 때 파일 이름을 `app.jar`로 변경. 컨테이너의 최상위 경로(`/`)에 위치하게 된다.
+
+  > **USER spring:spring**
+  >
+    - 이후의 명령과 컨테이너 실행 시점의 프로세스가 root가 아닌 `spring`유저로 동작하도록 전환한다.
+    - 따라서 하위 `ENTRYPOINT`의 `java` 프로세스가 비root로 실행된다.
+
+  > **ENTRYPOINT ["java",”-Duser.timezone=Asia/Seoul”,
+  "-Djava.security.egd=file:/dev/./urandom", "-jar", "/app.jar"]**
+  >
+
+  컨테이너가 켜질 때 가장 먼저, 무조건 실행할 명령어를 지정한다. 이 줄이 없다면 컨테이너는 켜지자마다 바로 종료된다.
+
+    - `"java", "-jar", "/app.jar"`: 터미널에서 `java -jar app.jar`를 입력해서 스프링 부트 서버를 켜는 것과 동일하다.
+    - `"-Duser.timezone=Asia/Seoul"`: JVM 레벨에서 기본 타임존을 직접 지정. 가장 우선순위가 높다.
+    - `"-Djava.security.egd-file:/dev/./urandom"`: 스프링 부트(내장 톰캣)가 처음 실행될 때, 암호화나 세션 생성에 필요한 난수를 리눅스 운영체제로부터 받아온다.
+
+### 2. Docker Hub Repository 생성
+
+public 레포로 만들 경우 직접 만들지 않아도 된다.
+
+### 3. AWS EC2 인스턴스 생성
+
+Ubuntu user name = `ubuntu`
+
+탄력적 IP 설정 및 연결 → 고정된 IPv4 주소를 설정하게 된다.
+
+보안그룹 설정: 인바운드 규칙 (HTTP, SSH, 8080)
+
+**EC2(Ubuntu)에 Docker 설치**
+
+```bash
+# 1. 설치 전 준비 (이전 버전 지우기) - 이전에 깔았던 적이 있다면
+sudo apt remove $(dpkg --get-selections docker.io docker-compose docker-compose-v2 docker-doc podman-docker containerd runc | cut -f1)
+
+# 2. Docker 리포지토리 설정
+sudo apt update
+sudo apt install ca-certificates curl
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+sudo tee /etc/apt/sources.list.d/docker.sources <<EOF
+Types: deb
+URIs: https://download.docker.com/linux/ubuntu
+Suites: $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}")
+Components: stable
+Architectures: $(dpkg --print-architecture)
+Signed-By: /etc/apt/keyrings/docker.asc
+EOF
+
+*sudo apt update*
+
+# 3. Docker Engine 및 플러그인 설치
+sudo apt install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+# 4. 설치 확인 및 테스트
+sudo systemctl status docker
+sudo docker run hello-world
+```
+
+### 4. GitHub Actions : workflow 연결
+
+**깃허브 리포지토리에 Secret 키 생성 (`변수 총 5개`)**
+
+1. DOCKER_PASSWORD (`도커 허브 계정 비밀번호`)
+2. DOCKER_USERNAME (`도커 허브 계정 유저이름`)
+3. EC2_HOST (`EC2 DNS 주소`)
+4. EC2_KEY (`pem 키`)
+5. ENV_VARS(`환경변수 내용을 담은 .env파일`)
+
+**ci.yml**
+
+- PR을 날릴 경우 자동으로 CI 단계가 동작한다.
+
+```yaml
+name: CI # master로 머지되기 전에 테스트로 검증하는 워크플로
+
+on:
+  pull_request:
+    branches: [ "master" ]  # master를 대상으로 하는 PR에서 실행
+
+permissions:
+  contents: read # 오직 읽기 권한만 부여
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    # @SpringBootTest가 뜨려면 DB와 Redis가 떠 있어야 한다.
+    # runner의 localhost로 포트가 열려 application-test.yaml 설정과 그대로 맞는다.
+    services:
+      mysql:
+        image: mysql:8.0  # 잠금/격리 수준 동작이 버전에 따라 달라 로컬과 같은 버전으로 고정
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: cgv_test
+        ports:
+          - 3306:3306
+        # 컨테이너가 떠도 MySQL이 접속을 받기까지는 시간이 걸리므로 준비될 때까지 기다린다
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    # .env는 저장소에 없으므로(gitignore) 플레이스홀더를 채울 값을 직접 넣는다.
+    # 전부 테스트 전용 더미이며 운영 값과 무관하다.
+    env:
+      DB_URL: jdbc:mysql://localhost:3306/cgv_test
+      DB_USERNAME: root
+      DB_PASSWORD: root
+      JWT_SECRET: ci-dummy-jwt-secret-key-not-for-production-use
+      # 토스가 공식 문서에 공개한 테스트 키
+      TOSS_CLIENT_KEY: test_gck_docs_Ovk5rk1EwkEbP0W43n07xlzm
+      TOSS_SECRET_KEY: test_gsk_docs_OaPz8L5KdmQXkzRz3y47BMw6
+
+    steps:
+		    # PR의 소스 코드를 runner 머신 (여기서는 ubuntu-latest)으로 내려받는다.
+      - name: Checkout source code
+        uses: actions/checkout@v7
+        
+				# 프로젝트를 빌드하고 테스트할 수 있도록 JDK 21을 설치한다.
+      - name: Set up JDK 21
+        uses: actions/setup-java@v6
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+				# 실행 환경을 준비하고 의존성 캐시를 설정해 다음 실행부터 빌드를 빠르게 한다.
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+	      # 유닛 테스트와 통합 테스트를 포함한 전체 테스트를 실행해 PR 코드를 검증한다.
+      - name: Run tests
+        run: ./gradlew test
+
+				# 테스트가 실패했을 경우 HTML 테스트 리포트를 아티팩트로 올려 7일간 내려받아 볼 수 있게 한다.
+      - name: Upload test report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report
+          path: build/reports/tests/test
+          retention-days: 7
+```
+
+- `runs-on`, `services`, `env`는 모두 job 단위 설정으로, steps가 실행되기 위해 준비하는 역할이다.
+
+  `runs-on: ubuntu-latest`: job (`여기서는 test`)을 어떤 머신에서 실행할 지 명시한다. 깃허브가 job마다 새 Ubuntu 가상 머신(runner)을 빌려주고, 모든 step은 해당 머신 위에서 실행된다. job이 끝나면 머신은 폐기되므로 매번 깨끗한 환경에서 시작한다.
+
+  `services`: job이 돌아가는 동안 돌아가는 보조 컨테이너이다. (`여기서는 MySQL, Redis`) steps가 시작되기 전에 먼저 뜨고, `--health-cmd`의 헬스체크가 통과할 때까지 기다린 뒤 첫 step이 실행된다.
+
+  `env`: job 안의 모든 step에서 사용하는 환경 변수이다. 로컬의 `.env` 파일 역할을 대신하는 셈.
+
+
+**dev-delploy.yml (PR이 통과되고 타깃 브랜치에 push(merge) 되었을 경우 동작한다.)**
+
+```yaml
+name: Deploy (dev) # master에 반영된 코드를 EC2에 배포하는 워크플로
+
+# 테스트 검증은 PR 단계의 ci.yaml이 담당하므로 여기서는 빌드와 배포만 한다.
+on:
+  push:
+    branches: [ "master" ]  # 직접 push와 PR 머지 모두 push 이벤트로 실행된다
+
+# 워크 플로에 코드 읽기 권한만 부여 (최소 권한)
+permissions:
+  contents: read
+
+# 모든 job에서 공유하는 값 (태그에 커밋 SHA를 넣어 배포 버전 추적)
+env:
+  IMAGE_NAME: ${{ vars.DOCKER_IMAGE_NAME }}
+  IMAGE_TAG: dev-${{ github.sha }}
+
+jobs:
+  # 1단계: 애플리케이션 빌드 후 Docker 이미지를 Docker Hub에 push
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      # 저장소 코드를 runner로 가져옴
+      - name: Checkout source code
+        uses: actions/checkout@v7
+
+      # JDK 21 설치
+      - name: Set up JDK 21
+        uses: actions/setup-java@v6
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      # Gradle 실행 환경 구성 + 의존성 캐싱
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      # 실행 가능한 Spring Boot jar 생성
+      - name: Build with Gradle
+        run: ./gradlew bootJar
+
+      # Secrets에 저장한 계정으로 Docker Hub 로그인
+      - name: Login to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      # Dockerfile로 이미지를 만들고 Docker Hub에 업로드
+      - name: Build and push image
+        run: |
+          docker build -t "$IMAGE_NAME:$IMAGE_TAG" .
+          docker push "$IMAGE_NAME:$IMAGE_TAG"
+
+  # 2단계: EC2에 접속해 새 이미지로 컨테이너 교체
+  deploy:
+    needs: build-and-push  # build-and-push가 성공해야 실행
+    runs-on: ubuntu-latest
+    steps:
+    
+			# 아래 scp 단계를 위해서 코드를 가져온다.
+      - name: Checkout source code
+        uses: actions/checkout@v7
+
+      # EC2에 compose 파일 복사
+      - name: Copy compose files to EC2
+        uses: appleboy/scp-action@v1
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_KEY }}
+          source: "docker-compose.yml"
+          target: "/home/ubuntu/app"
+
+      # EC2에서 애플리케이션 실행
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@v1
+        env:
+          ENV_VARS: ${{ secrets.ENV_VARS }}
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_KEY }}
+          # 지정한 환경변수를 EC2 쪽 스크립트로 전달
+          envs: ENV_VARS,IMAGE_NAME,IMAGE_TAG
+          script: |
+            
+            # 명령이 하나라도 실패하면 즉시 중단
+            set -e
+            
+            # 애플리케이션 배포 디렉토리로 이동
+            cd /home/ubuntu/app
+
+            # 애플리케이션 실행에 필요한 환경변수 파일을 생성
+            printf '%s\n' "$ENV_VARS" > .env
+
+            # 새 이미지 pull -> 변경된 이미지 실행
+            docker compose pull spring-app
+            docker compose up -d
+
+            # 사용하지 않는 이전 이미지 정리
+            docker image prune -af
+```
+
+**참고-** 리눅스 명령어
+
+`cat .env`: .env 파일 내용을 본다.
+
+`ll`: 디렉토리의 내부 파일/디렉토리를 본다.
+
+`sudo docker logs juby`: 내 애플리케이션 로그를 본다.
+
+`sudo docker logs --tail 100 juby`: 컨테이너 로그의 마지막 100줄 확인
+
+**docker.compose.yml**
+
+기존에는 `stop` → `rm` → `rmi` 명령어를 일일이 수행해야 했지만, `docker-compose up -d` 명령어 하나가 기존 컨테이너 중지, 삭제, 새 컨테이너 교체를 알아서 안전하게 처리한다. 추가로 CloudWatch 로그 경로나 리전 설정 등을 바꿀 때 깃허브 액션 스크립트를 수정할 필요 없이, `docker-compose.yml` 파일만 수정하면 된다.
+
+### 5. 실행하기
+
+`http://[IP주소]:[포트번호]` 입력해서 직접 확인.
+
+Nginx 설정 파일을 변경하여 80 요청이 오면 스프링 부트 컨테이너 포트인 8080으로 리버스 프록시 역할을 하게끔 할 수 있다.
+
+**Nginx 설치**
+
+```yaml
+# ubuntu 패키지 목록 최신화
+sudo apt update
+
+# Nginx 웹 서버 설치
+sudo apt install -y nginx
+
+# Nginx 서비스 가동 상태 확인
+sudo systemctl status nginx
+```
+
+**Nginx 설정 파일**
+
+!80포트로 오는 요청을 8080으로 넘긴다.
+
+80포트로 오는 요청을 8080으로 넘긴다.
+
+**EC2 메모리 보완용 스왑메모리 설정**
+
+```bash
+# MySQL CLI 클라이언트 설치
+sudo apt install -y mysql-client
+
+# 스왑메모리 설정
+sudo fallocate -l 2G /swapfile
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+sudo sysctl -w vm.swappiness=10 
+```
+
+### 6. AWS RDS 생성 및 EC2와 연동
+
+1. RDS 콘솔에서 데이터 베이스 생성 (전체 구성)
+2. 엔진 옵션 - MySQL
+3. 스토리지 자동 조정 비활성화
+4. 네트워크 및 연결 설정
+    - VPC: `Default VPC`
+    - 퍼블릭 엑세스: `아니요`
+    - VPC 보안 그룹: 새로 생성
+    - 가용 용역: 기본 설정 없음
+5. EC2 → RDS 보안 그룹 연동
+    - EC2 보안 그룹 ID 복사
+    - RDS 보안 그룹 인바운드 규칙 수정
+6. **SSH 터널링 사용 (내 로컬에서도 RDS에 접근하기 위해)**
+
+   SSH 터널링이란?
+
+   이미 RDS와 통신할 수 있는 권한을 가진 EC2 서버를 중간 다리(`Bastion Host`)로 삼아 연결하는 방식이다. 현재 내 EC2는 언제든지 RDS에 접속할 수 있다. 따라서 인텔리제이가 EC2에 먼저 SSH(22번 포트)로 접속한 뒤, EC2의 프리패스를 빌려 RDS로 들어가는 원리.
+
+   Step 1. [SSH/SSL] 설정 (다리 놓기)
+
+   !image.png
+
+   !image.png
+
+   Step 2. [General] 설정 (최종 목적지 입력)
+
+   !image.png
+
+
+!EC2에 Nginx 설치
+
+EC2에 Nginx 설치
+
+!RDS 생성 및 EC2에서 ssh로 접속된 화면
+
+RDS 생성 및 EC2에서 ssh로 접속된 화면
+
+## CI/CD
+
+<aside>
+❓
+
+고민해보아요 !!
+
+1. **빌드·테스트·배포 프로세스 단위**를 어떻게 구분할까?
+
+   (ex. Build와 Deploy를 하나의 workflow로 묶을지, 분리할지)
+
+2. 장애가 발생하는 경우 **Roll-back 전략**은 어떻게 설계할까?
+
+   (GitHub Actions에서 이전 이미지로 rollback 트리거를 걸 수 있을까?)
+
+3. **Workflow 간 의존성**을 어떻게 관리할까?
+
+   (`workflow_call`로 다른 workflow 호출하기)
+
+</aside>
+
+### 1. 빌드 / 테스트/ 배포 프로세스 구분 단위
+
+실무 기준: PR에서 검증, 머지 후에는 배포 프로세스이다.
+
+```java
+[PR 생성/업데이트]  →  CI 워크플로우: lint → test → build(검증용, 배포는 안 함)
+        │  (모든 체크 통과 + 리뷰 승인 → 머지 가능)
+        ▼
+[main에 머지]       →  CD 워크플로우: build → 이미지 push → staging 배포
+        │
+        ▼
+[태그/릴리스 또는 수동 승인] → production 배포
+```
+
+보통 CI와 CD는 두 파일을 분리한다. (`ci.yml`, `deploy.yml`)
+
+→ 트리거가 다르고 (`PR`, `push/tag`), 권한도 다르기 때문에.
+
+### 2. 장애가 발생하는 경우 롤백 전략
+
+먼저 롤백이 가능하려면 이전 버전이 식별되어야 한다.
+
+- `latest` 태그만 쓰면 안되고, 커밋 SHA로 태그한다.
+
+GitHub Actions에서 이전 이미지로 롤백을 트리거 할 수 있다.
+
+```yaml
+# .github/workflows/rollback.yml
+name: Rollback
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        type: choice
+        options: [staging, production]
+        required: true
+      image_tag:
+        description: "되돌릴 이미지 태그 (예: a1b2c3d)"
+        required: true
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./deploy.sh ${{ inputs.environment }} ${{ inputs.image_tag }}
+```
+
+Actions 탭에서 버튼으로 실행한다.
+
+과거 배포 run의 “Re-run jobs”로도 과거의 버전을 다시 배포할 수 있지만, 해당 시점의 워크플로우 정의와 시크릿 상태에 의존하기 때문에, 전용 롤백 워크플로우를 두는 편이다.
+
+### 3. 워크플로우 간 의존성 관리
+
+| 도구 | 단위 | 사용 시점 |
+| --- | --- | --- |
+| `needs` | 같은 워크플로우 안의 job들 | job의 순서 제어 |
+| `workflow_call` 
+(Reusable Workflow) | 워크플로우 전체를 함수처럼 호출한다. | 여러 서비스에서 같은 배포 절차를 재사용 할때 |
+| `workflow_run` | 워크플로우 A가 끝나면 B를 실행 | 다른 워크플로우의 완료를 이벤트로 받아야할 때 |
+| `repository_dispatch` | 다른 저장소의 워크플로우 실행 |  |
+
+**workflow_call 예시**
+
+```yaml
+# 재사용 배포 템플릿
+# .github/workflows/_deploy.yml
+name: Reusable Deploy
+on:
+  workflow_call:
+    inputs:
+      environment:
+        type: string
+        required: true
+      image_tag:
+        type: string
+        required: true
+    secrets:
+      DEPLOY_TOKEN:
+        required: true
+    outputs:
+      url:
+        value: ${{ jobs.deploy.outputs.url }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    outputs:
+      url: ${{ steps.d.outputs.url }}
+    steps:
+      - id: d
+        run: ./deploy.sh ${{ inputs.environment }} ${{ inputs.image_tag }}
+        env:
+          TOKEN: ${{ secrets.DEPLOY_TOKEN }}
+```
+
+**호출하는 쪽**
+
+```yaml
+jobs:
+  build:
+    # ... image_tag output 생성
+  staging:
+    needs: build
+    uses: ./.github/workflows/_deploy.yml # 앞서 선언한 워크플로 그대로 실행
+    with:
+      environment: staging
+      image_tag: ${{ needs.build.outputs.image_tag }}
+    secrets: inherit          # 호출자의 시크릿을 그대로 넘김
+  production:
+    needs: [build, staging]
+    uses: ./.github/workflows/_deploy.yml
+    with:
+      environment: production
+      image_tag: ${{ needs.build.outputs.image_tag }}
+    secrets: inherit
+```
+
+!RDS에 스키마 (`CGV`)를 생성하지 않았어서 2시간 동안 해맸다…
+
+RDS에 스키마 (`CGV`)를 생성하지 않았어서 2시간 동안 해맸다…
+</details>
