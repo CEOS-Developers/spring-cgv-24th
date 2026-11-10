@@ -38,7 +38,7 @@ public class AuthService {
     private final RefreshTokenRepository refreshTokenRepository;
 
     public AuthService(
-            @Value("${admin.token}") String adminToken,
+            @Value("${ADMIN_TOKEN}") String adminToken,
             MemberRepository memberRepository,
             PasswordEncoder passwordEncoder,
             JwtProvider jwtProvider,

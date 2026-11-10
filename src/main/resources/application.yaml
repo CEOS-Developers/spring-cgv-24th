@@ -1,11 +1,14 @@
+server:
+  port: ${PORT:8080}
+
 spring:
   application:
     name: cgv
 
   datasource:
-    url: jdbc:mysql://localhost:3306/${database}?allowPublicKeyRetrieval=true&useSSL=false&characterEncoding=UTF-8
-    username: root
-    password: ${password}
+    url: jdbc:mysql://${DB_HOST}:${DB_PORT}/${DB_NAME}?allowPublicKeyRetrieval=true&useSSL=false&characterEncoding=UTF-8
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
     driver-class-name: com.mysql.cj.jdbc.Driver
 
   jpa:
@@ -21,14 +24,14 @@ logging:
     org.hibernate.SQL: debug
 
 jwt:
-  secret: ${jwt-secret}
+  secret: ${JWT_SECRET}
   expiration-ms: 3600000
   refresh-expiration-ms: 1209600000
 
 admin:
-  token: ${admin-token}
+  token: ${ADMIN_TOKEN}
 
 toss:
-  secret-key: ${TOSS_SECRET_KEY:test_gsk_docs_OaPz8L5KdmQXkzRz3y47BMw6}
+  secret-key: ${TOSS_SECRET_KEY}
   base-url: https://api.tosspayments.com
-  webhook-secret: ${TOSS_WEBHOOK_SECRET:}
+  webhook-secret: ${TOSS_WEBHOOK_SECRET}
