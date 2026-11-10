@@ -22,7 +22,7 @@ public class JwtProvider {
     private final long refreshExpirationMs;
 
     public JwtProvider(
-            @Value("${JWT_SECRET}") String secret,
+            @Value("${jwt.secret}") String secret,
             @Value("${jwt.expiration-ms}") long expirationMs,
             @Value("${jwt.refresh-expiration-ms}") long refreshExpirationMs) {
         this.secretKey = Keys.hmacShaKeyFor(Decoders.BASE64.decode(secret));

@@ -38,7 +38,7 @@ public class AuthService {
     private final RefreshTokenRepository refreshTokenRepository;
 
     public AuthService(
-            @Value("${ADMIN_TOKEN}") String adminToken,
+            @Value("${admin.token}") String adminToken,
             MemberRepository memberRepository,
             PasswordEncoder passwordEncoder,
             JwtProvider jwtProvider,
@@ -157,11 +157,7 @@ public class AuthService {
             throw new BusinessException(ErrorCode.AUTH_INVALID_TOKEN);
         }
 
-        refreshTokenRepository.delete(storedToken);
-    }
-
-    @Transactional
-    public void logout(String refreshToken) {
-        refreshTokenRepository.deleteByToken(refreshToken);
+        // 재발급으로 사용 처리된 이전 토큰이 누적되지 않도록 해당 회원의 토큰을 모두 정리한다.
+        refreshTokenRepository.deleteAllByMemberId(memberId);
     }
 }
