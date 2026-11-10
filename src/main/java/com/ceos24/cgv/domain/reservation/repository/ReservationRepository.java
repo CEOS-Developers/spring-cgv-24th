@@ -39,13 +39,14 @@ public interface ReservationRepository extends JpaRepository<Reservation, Long> 
 
     @Query(
             """
-        SELECT DISTINCT r
+        SELECT COUNT(r)
         FROM Reservation r
-        LEFT JOIN FETCH r.seatReservations
-        WHERE r.status = :status AND r.expiresAt <= :now
+        WHERE r.member.id = :memberId AND r.status = :status AND r.expiresAt > :now
     """)
-    List<Reservation> findAllExpiredHoldReservations(
-            @Param("status") ReservationStatus status, @Param("now") LocalDateTime now);
+    long countActiveHolds(
+            @Param("memberId") Long memberId,
+            @Param("status") ReservationStatus status,
+            @Param("now") LocalDateTime now);
 
     @Query(
             """

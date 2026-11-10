@@ -17,6 +17,7 @@ import com.ceos24.cgv.global.exception.ErrorCode;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeParseException;
+import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -25,6 +26,9 @@ import org.springframework.stereotype.Service;
 @Service
 @RequiredArgsConstructor
 public class PaymentService {
+
+    private static final Set<String> NON_TERMINAL_CLIENT_ERRORS =
+            Set.of("UNAUTHORIZED_KEY", "INVALID_API_KEY", "FORBIDDEN_REQUEST", "TOO_MANY_REQUESTS");
 
     private final PaymentTransactionService paymentTransactionService;
     private final TossPaymentsClient tossPaymentsClient;
@@ -63,6 +67,14 @@ public class PaymentService {
                             request.orderId());
                     return recoverFromPendingConfirm(request.orderId(), request.paymentKey(), request.amount());
                 }
+                if (NON_TERMINAL_CLIENT_ERRORS.contains(e.getTossCode())) {
+                    // 키 오류/요청 제한 등 재시도 가능한 오류는 결제를 중단 처리하지 않는다. (IN_PROGRESS 유지 → 재시도 시 단건 조회 복구)
+                    log.warn(
+                            "재시도 가능한 토스 4xx 오류로 결제 중단 처리를 보류합니다: orderId={}, code={}",
+                            request.orderId(),
+                            e.getTossCode());
+                    throw e;
+                }
                 paymentTransactionService.recordAbortByOrderId(request.orderId());
                 throw e;
             }
@@ -81,7 +93,8 @@ public class PaymentService {
             executeCompensatingCancel(
                     request.orderId(),
                     tossResponse.paymentKey() != null ? tossResponse.paymentKey() : request.paymentKey(),
-                    request.amount(),
+                    // 클라이언트 요청 금액이 아닌 토스가 실제 승인한 금액으로 전액 보상 취소
+                    tossResponse.totalAmount() != null ? tossResponse.totalAmount() : request.amount(),
                     "비정상 승인 응답 수신으로 인한 자동 보상 취소",
                     integrityEx);
         }
@@ -121,14 +134,9 @@ public class PaymentService {
 
     private PaymentResponse applyApprovedPayment(
             TossPaymentResponse tossResponse, boolean throwBusinessExceptionAfterCompensation) {
+        CompleteResult result;
         try {
-            CompleteResult result = paymentTransactionService.completeApprovedPayment(tossResponse);
-            if (result.alreadyAborted()) {
-                if (throwBusinessExceptionAfterCompensation) {
-                    throw new BusinessException(ErrorCode.PAYMENT_ALREADY_PROCESSED, "이미 중단되거나 보상 취소된 결제입니다.");
-                }
-            }
-            return result.response();
+            result = paymentTransactionService.completeApprovedPayment(tossResponse);
         } catch (Exception dbException) {
             log.error(
                     "결제 승인 후 DB 반영 중 오류 발생으로 자동 보상 취소 진행: orderId={}, error={}",
@@ -162,17 +170,21 @@ public class PaymentService {
 
             return null;
         }
+
+        // 보상 취소 대상이 아닌 정상 흐름의 결과 분기 (위 try 밖에서 처리해야 자기 예외를 다시 포획하지 않는다)
+        if (result.alreadyAborted() && throwBusinessExceptionAfterCompensation) {
+            throw new BusinessException(ErrorCode.PAYMENT_ALREADY_PROCESSED, "이미 중단되거나 보상 취소된 결제입니다.");
+        }
+        return result.response();
     }
 
+    /** amount가 null이면 토스에 전액 취소로 요청한다. */
     private void executeCompensatingCancel(
             String orderId, String paymentKey, Long amount, String reason, RuntimeException exceptionToThrowOnSuccess) {
         log.warn("보상 취소 실행: orderId={}, paymentKey={}, amount={}, reason={}", orderId, paymentKey, amount, reason);
-        boolean cancelSucceeded = false;
         try {
             tossPaymentsClient.cancel(paymentKey, new TossCancelRequest(reason, amount), "COMPENSATION_" + orderId);
             log.info("보상 취소 API 성공: orderId={}", orderId);
-            cancelSucceeded = true;
-            paymentTransactionService.recordCompensatedAbort(orderId, paymentKey);
         } catch (Exception cancelEx) {
             log.error(
                     "보상 취소 실패 (수동 확인 필요): orderId={}, paymentKey={}, error={}",
@@ -185,13 +197,45 @@ public class PaymentService {
                     ErrorCode.PAYMENT_COMPENSATION_FAILED, "시스템 오류 발생 후 자동 결제 취소에도 실패했습니다. 관리자 확인이 필요합니다.");
         }
 
-        if (cancelSucceeded && exceptionToThrowOnSuccess != null) {
+        // 토스 취소는 성공했으므로 DB 기록 실패를 '취소 실패(MANUAL_RECOVERY)'로 오표시하지 않는다.
+        // 결제는 IN_PROGRESS로 남지만 토스가 CANCELED이므로 웹훅/보정 작업이 수렴시킨다.
+        try {
+            paymentTransactionService.recordCompensatedAbort(orderId, paymentKey);
+        } catch (Exception recordEx) {
+            log.error(
+                    "보상 취소는 성공했으나 DB 상태 기록 실패 (웹훅/보정 작업으로 수렴 예정): orderId={}, paymentKey={}, error={}",
+                    orderId,
+                    paymentKey,
+                    recordEx.getMessage(),
+                    recordEx);
+        }
+
+        if (exceptionToThrowOnSuccess != null) {
             throw exceptionToThrowOnSuccess;
         }
     }
 
     public void completeApprovedPaymentFromWebhook(TossPaymentResponse tossResponse) {
         applyApprovedPayment(tossResponse, false);
+    }
+
+    /** 승인 중(IN_PROGRESS) 상태로 오래 남은 결제를 토스 단건 조회 결과로 수렴시킨다. (웹훅 누락 대비) */
+    public void reconcileStuckPayment(String orderId) {
+        String paymentKey = paymentTransactionService.resolvePaymentKeyByOrderId(orderId);
+        if (paymentKey == null || paymentKey.isBlank()) {
+            return;
+        }
+        TossPaymentResponse latest = tossPaymentsClient.getPayment(paymentKey);
+        String status = latest.status();
+        if ("DONE".equals(status)) {
+            completeApprovedPaymentFromWebhook(latest);
+        } else if ("CANCELED".equals(status) || "PARTIAL_CANCELED".equals(status)) {
+            paymentTransactionService.applyCancelWebhook(latest);
+        } else if ("ABORTED".equals(status) || "EXPIRED".equals(status)) {
+            paymentTransactionService.abortPendingPaymentFromWebhook(orderId, paymentKey);
+        } else {
+            log.info("보정 대상 결제가 토스에서도 미확정 상태입니다: orderId={}, status={}", orderId, status);
+        }
     }
 
     public PaymentResponse getPayment(Long memberId, String paymentKey) {

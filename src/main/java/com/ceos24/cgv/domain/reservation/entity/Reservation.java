@@ -19,6 +19,9 @@ import lombok.NoArgsConstructor;
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @Entity
+@Table(
+        name = "reservation",
+        indexes = @Index(name = "idx_reservation_status_expires_at", columnList = "status, expiresAt"))
 public class Reservation {
 
     public static final long HOLD_DURATION_MINUTES = 5L;
@@ -127,6 +130,15 @@ public class Reservation {
         }
         if (isExpired(now)) {
             throw new BusinessException(ErrorCode.RESERVATION_EXPIRED);
+        }
+    }
+
+    /** 결제 승인 진행 중 PG 지연으로 점유가 만료되어 정상 결제가 환불되는 일을 줄이기 위해 만료 시각을 최소 grace까지 연장한다. */
+    public void extendHoldForPayment(LocalDateTime now, long graceMinutes) {
+        validatePayable(now);
+        LocalDateTime minExpiresAt = now.plusMinutes(graceMinutes);
+        if (this.expiresAt.isBefore(minExpiresAt)) {
+            this.expiresAt = minExpiresAt;
         }
     }
 

@@ -91,8 +91,9 @@ public class PaymentWebhookService {
             TossWebhookRequest request) {
         String configuredSecret = tossProperties.webhookSecret();
         if (configuredSecret == null || configuredSecret.isBlank()) {
-            log.debug("toss.webhook-secret이 설정되지 않아 웹훅 서명 검증을 건너뜁니다.");
-            return;
+            // fail-closed: 시크릿 미설정 상태에서는 어떤 웹훅도 수락하지 않는다.
+            log.error("toss.webhook-secret이 설정되지 않아 웹훅을 거부합니다. TOSS_WEBHOOK_SECRET 환경변수를 설정하세요.");
+            throw new BusinessException(ErrorCode.WEBHOOK_INVALID_SIGNATURE, "웹훅 시크릿이 서버에 설정되지 않았습니다.");
         }
 
         // 1. HMAC-SHA256 서명 헤더 검증 (tosspayments-webhook-signature)

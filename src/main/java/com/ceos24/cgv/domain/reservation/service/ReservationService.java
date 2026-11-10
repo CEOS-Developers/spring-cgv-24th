@@ -28,6 +28,9 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class ReservationService {
 
+    /** 사용자 1명이 동시에 보유할 수 있는 결제 대기(HOLD) 예매 건수 상한 */
+    private static final long MAX_ACTIVE_HOLDS = 3L;
+
     private final MemberRepository memberRepository;
     private final ScreeningRepository screeningRepository;
     private final SeatRepository seatRepository;
@@ -40,6 +43,13 @@ public class ReservationService {
         LocalDateTime now = LocalDateTime.now();
         Member member = findMember(memberId);
         Screening screening = findScreening(screeningId);
+
+        if (!screening.getStartTime().isAfter(now)) {
+            throw new BusinessException(ErrorCode.SCREENING_ALREADY_STARTED);
+        }
+        if (reservationRepository.countActiveHolds(memberId, ReservationStatus.HOLD, now) >= MAX_ACTIVE_HOLDS) {
+            throw new BusinessException(ErrorCode.RESERVATION_HOLD_LIMIT_EXCEEDED);
+        }
 
         // 데드락 방지를 위한 중복 제거 및 좌석 번호 오름차순 정렬
         List<Long> sortedSeatNumbers = seatNumbers.stream().distinct().sorted().toList();

@@ -272,6 +272,10 @@ public class Payment {
         if (paymentKey != null && !paymentKey.isBlank()) {
             this.paymentKey = paymentKey;
         }
+        // 이미 종결(중단/전액 취소)된 결제를 수동 복구 대상으로 덮어쓰지 않는다.
+        if (this.status == PaymentStatus.ABORTED || this.status == PaymentStatus.CANCELED) {
+            return;
+        }
         this.status = PaymentStatus.MANUAL_RECOVERY_REQUIRED;
     }
 

@@ -9,4 +9,6 @@ public interface PaymentCancelHistoryRepository extends JpaRepository<PaymentCan
     Optional<PaymentCancelHistory> findByCancelRequestId(String cancelRequestId);
 
     boolean existsByTransactionKey(String transactionKey);
+
+    Optional<PaymentCancelHistory> findByTransactionKey(String transactionKey);
 }
