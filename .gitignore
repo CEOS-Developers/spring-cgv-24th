@@ -36,6 +36,8 @@ manifest.yml
 out
 overridedb.*
 target
+
+!src/main/java/com/ceos24/springboot/payment/service/target/
 .flattened-pom.xml
 secrets.yml
 .gradletasknamecache
