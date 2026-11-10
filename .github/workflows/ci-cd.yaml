@@ -1,0 +1,145 @@
+name: CI-CD
+
+on:
+  push:
+    branches:
+      - taiho0303-blip
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+
+    env:
+      SPRING_PROFILES_ACTIVE: test
+
+    steps:
+      - name: 소스 코드 다운로드
+        uses: actions/checkout@v7
+
+      - name: Java 21 준비
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+
+      - name: Gradle 실행 권한 부여
+        run: chmod +x gradlew
+
+      - name: Java 테스트 및 빌드
+        run: ./gradlew clean build --no-daemon
+
+      - name: 배포할 JAR 보관
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v7
+        with:
+          name: app-jar
+          path: build/libs/*-SNAPSHOT.jar
+          if-no-files-found: error
+          retention-days: 3
+
+  deploy:
+    needs: test-and-build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/taiho0303-blip'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    permissions:
+      contents: read
+      packages: write
+
+    concurrency:
+      group: cgv-production
+      cancel-in-progress: false
+
+    env:
+      IMAGE_TAG: ${{ github.sha }}
+
+    steps:
+      - name: 소스 코드 다운로드
+        uses: actions/checkout@v7
+
+      - name: CI에서 만든 JAR 다운로드
+        uses: actions/download-artifact@v8
+        with:
+          name: app-jar
+          path: build/libs
+
+      - name: Docker 이미지 빌드 및 GHCR 업로드
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          IMAGE="ghcr.io/taiho0303-blip/spring-cgv-24th:${IMAGE_TAG}"
+
+          printf '%s' "$GHCR_TOKEN" |
+            docker login ghcr.io \
+              -u "$GITHUB_ACTOR" --password-stdin
+
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+
+      - name: SSH 설정값 진단
+        env:
+          DEPLOY_HOST: ${{ secrets.EC2_HOST }}
+          HOST_FP: ${{ secrets.EC2_HOST_FINGERPRINT }}
+        run: |
+          python3 - <<'PY'
+          import os
+
+          host = os.environ["DEPLOY_HOST"]
+          actual = os.environ["HOST_FP"]
+          expected = "SHA256:LbDrIH/4CgX7YjMV9/TOw3MOHr6CjiuK6Q0ZSX3N0z4"
+
+          print("접속 주소 일치:", host == "52.78.78.162")
+          print("지문 길이:", len(actual), "(정상: 50)")
+          print("ECDSA 지문 정확히 일치:", actual == expected)
+          print("앞뒤 공백 제거 시 일치:", actual.strip() == expected)
+
+          if host != "52.78.78.162" or actual != expected:
+              raise SystemExit("SSH Secret 값이 확인한 서버 정보와 다릅니다.")
+          PY
+
+      - name: EC2에 접속하여 배포
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          fingerprint: ${{ secrets.EC2_HOST_FINGERPRINT }}
+          envs: IMAGE_TAG
+          command_timeout: 10m
+          script: |
+            set -eu
+
+            cd /home/ubuntu/cgv
+
+            # 새 이미지 다운로드에 성공한 후 버전 설정 반영
+            sudo -n env IMAGE_TAG="$IMAGE_TAG" \
+              docker compose pull app
+
+            sed -i '/^IMAGE_TAG=/d' .env
+            printf '\nIMAGE_TAG=%s\n' "$IMAGE_TAG" >> .env
+
+            sudo -n docker compose up -d --no-deps app
+
+            # 앱 시작을 기다리며 API 응답 확인
+            for attempt in $(seq 1 24); do
+              if curl --connect-timeout 3 --max-time 5 \
+                -fsS http://127.0.0.1:8080/api/movies \
+                > /dev/null; then
+                echo "배포 확인 성공"
+                exit 0
+              fi
+
+              sleep 5
+            done
+
+            echo "배포 후 API 응답 확인 실패"
+            sudo -n docker compose logs --tail=50 app
+            exit 1

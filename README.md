@@ -1473,3 +1473,658 @@ Content-Type: application/json
 승인은 먼저 토스의 `GET /v1/payments/{paymentKey}`로 실제 상태를 조회한다. 이미 `DONE`이면 응답을 확인해 우리 DB에 반영한다. 아직 승인 가능한 상태라면 재전송 허용 기간 안에서 같은 PG 멱등키로 승인을 요청한다. 승인되지 않은 종료 상태를 확인하면 그에 맞게 실패를 반영한다.
 
 취소는 처음 저장한 금액·사유·PG 멱등키로 같은 요청을 다시 보낸다. 응답의 취소 거래, 누적 금액과 잔액이 예상과 일치하는지 확인한 뒤 반영한다. 새 키로 별도의 취소를 시작하는 방식으로 복구하지 않는다.
+
+
+# 5주차 미션
+
+## Docker
+docker를 학습하면서 들었던 질문들을 정리했다.
+
+## 1. 우리 프로젝트에는 어떤 이미지가 필요한가?
+
+Spring Boot 앱과 MySQL을 모두 컨테이너로 실행한다면 기본적으로 이미지 두 종류가 필요하다.
+
+| 이미지 | 포함하는 것 | 준비 방법 |
+| --- | --- | --- |
+| 우리 앱 이미지 | Java 실행 환경과 Spring Boot 실행용 JAR | Dockerfile을 작성해 직접 빌드 |
+| MySQL 이미지 | MySQL 서버 프로그램과 실행에 필요한 파일 | MySQL 공식 이미지를 다운로드 |
+
+
+```text
+우리 앱 이미지 → Spring Boot 컨테이너
+                         │
+                         │ DB 연결
+                         ▼
+MySQL 이미지   → MySQL 컨테이너
+                         │
+                         ▼
+                    DB 데이터 볼륨
+```
+
+## 2. 이미지 하나는 컨테이너 하나에만 대응하는가?
+
+이미지 하나로 여러 컨테이너를 만들 수 있다.
+
+- 이미지: 실행에 필요한 파일과 의존성을 담은 패키지
+- 컨테이너: 이미지를 바탕으로 생성한 실행 인스턴스
+
+```text
+Spring Boot 앱 이미지 하나
+    ├── 앱 컨테이너 A
+    ├── 앱 컨테이너 B
+    └── 앱 컨테이너 C
+```
+
+같은 이미지로 만들어도 각 컨테이너는 별도의 실행 상태를 가진다. 이미지가 저장돼 있어도 컨테이너를 아직 만들지 않았을 수 있고, 생성한 컨테이너가 중지된 상태일 수도 있다.
+
+예를 들어 동일한 앱 이미지로 컨테이너를 여러 개 실행하고, 앞단에서 요청을 나눠 전달하는 구성을 만들 수 있다. 우리 프로젝트는 먼저 앱 컨테이너 하나와 DB 컨테이너 하나로 시작하면 된다.
+
+## 3. 한 컨테이너에서 여러 이미지를 실행할 수 있는가?
+
+컨테이너 하나는 하나의 이미지를 바탕으로 생성한다. 한 컨테이너 안에 여러 프로그램을 포함해 실행하는 것은 가능하다.
+
+```text
+Spring Boot와 MySQL을 함께 포함한 이미지 하나
+                    │
+                    ▼
+             컨테이너 하나
+             ├── Spring Boot 프로세스
+             └── MySQL 프로세스
+```
+
+위 구성은 하나의 이미지에 들어 있는 여러 프로그램을 실행한 경우다. 서로 다른 이미지 두 개를 하나의 컨테이너에서 각각 실행하는 구조는 아니다.
+
+Compose는 이렇게 분리한 서비스들의 실행과 연결을 하나의 YAML 파일로 관리하는 도구다.
+
+## 4. Docker를 사용하지 않을 때와 사용할 때는 무엇이 달라지는가?
+
+### 4.1. 현재 로컬 설정이 가정하는 실행 구조
+
+현재 [application.yaml](src/main/resources/application.yaml)은 `localhost:3306`의 `cgv` 데이터베이스에 접속하도록 설정돼 있다. 아래 그림은 이 설정을 기준으로 설명한 구조이다.
+
+```text
+내 컴퓨터
+├── Java 실행 환경
+│     └── Spring Boot 앱
+│              │
+│              │ localhost:3306으로 접속
+│              ▼
+└── 별도로 실행한 MySQL 서버
+       └── cgv 데이터베이스
+```
+
+IntelliJ나 Gradle로 Spring Boot를 실행하면 Java 프로세스가 생성된다. MySQL은 별도로 실행돼 있어야 하며, 앱이 DB 계정으로 접속해 SQL을 보낸다.
+
+### 4.2. 앱과 DB를 모두 Docker로 실행하는 구조
+
+```text
+내 컴퓨터 또는 EC2
+└── Docker가 관리하는 실행 환경
+      ├── app 컨테이너
+      │     ├── Java 실행 환경
+      │     └── Spring Boot 앱
+      │              │
+      │              │ db:3306으로 접속
+      │              ▼
+      └── db 컨테이너
+            └── MySQL 서버
+                   │
+                   ▼
+              DB 데이터 볼륨
+```
+
+| 항목 | 로컬에서 직접 실행 | Docker로 실행 |
+| --- | --- | --- |
+| 앱의 Java 실행 환경 | 컴퓨터에 준비한 Java 사용 | 앱 이미지에 포함된 Java 사용 |
+| MySQL 실행 환경 | 별도로 설치·준비한 MySQL 사용 | MySQL 이미지로 컨테이너 생성 |
+| 실행 관리 | 앱과 DB를 각각 실행 | Compose로 서비스들을 함께 관리 가능 |
+| 앱에서 DB에 접속할 주소 | 현재 설정은 `localhost:3306` | 같은 Compose 네트워크에서는 `db:3306`처럼 서비스 이름 사용 |
+| DB 데이터 | 기존 MySQL의 데이터 저장 위치에 보관 | 볼륨을 연결해 컨테이너 교체와 별도로 보존 |
+
+컨테이너 안의 `localhost`는 해당 컨테이너 자신이다. 앱 컨테이너가 DB 컨테이너에 접속할 때는 같은 네트워크에 있는 DB 서비스 이름을 사용한다. 위 예시에서는 Compose 서비스 이름을 `db`로 정했다고 가정했다.
+
+외부에서 앱에 접근하려면 포트 매핑도 설정한다. 예를 들어 `8080:8080`은 호스트의 8080번 포트로 들어온 요청을 컨테이너의 8080번 포트에 연결한다. 앱과 DB 사이의 내부 통신을 위해 DB 포트를 외부에 공개할 필요는 없다.
+
+서비스 이름과 포트의 관계는 [Compose 네트워크 문서](https://docs.docker.com/compose/how-tos/networking/)를 참고한다. 볼륨은 컨테이너와 별도로 데이터를 보존하는 저장소이며, 기존 로컬 DB의 데이터를 자동으로 옮기거나 백업하는 기능은 아니다. 자세한 내용은 [Docker 볼륨 문서](https://docs.docker.com/engine/storage/volumes/)에서 확인할 수 있다.
+
+## 5. 현재 프로젝트는 설정값을 어떻게 관리하는가?
+
+### 5.1. Spring Boot가 `.env`를 설정 파일로 읽는다
+
+현재 프로젝트 루트에 `.env` 파일이 있고, `application.yaml`에 다음 설정이 있다.
+
+```yaml
+spring:
+  config:
+    import: "optional:file:./.env[.properties]"
+
+  datasource:
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+
+jwt:
+  secret: ${JWT_SECRET}
+```
+
+| 설정 | 의미 |
+| --- | --- |
+| `file:./.env` | 앱을 실행한 작업 폴더 기준으로 `.env` 파일을 찾음 |
+| `[.properties]` | 파일 내용을 `KEY=value` 형태의 Spring 설정으로 해석 |
+| `${DB_USERNAME}` | Spring이 읽어온 설정 중 해당 이름의 값을 사용 |
+| `optional:` | 파일이 없어도 가져오기 단계는 건너뜀. 필요한 값이 다른 곳에도 없으면 앱 실행은 실패할 수 있음 |
+
+```text
+프로젝트 루트에서 앱 실행
+        ↓
+Spring Boot가 .env를 설정 파일로 읽음
+        ↓
+${DB_USERNAME}, ${JWT_SECRET} 등에 값 연결
+        ↓
+DB 접속과 JWT·결제 연동 설정 등에 사용
+```
+
+
+현재 파일에 있는 설정 이름:
+
+| 설정 이름 | 용도 |
+| --- | --- |
+| `DB_USERNAME`, `DB_PASSWORD` | DB에 접속할 계정 정보 |
+| `JWT_SECRET` | JWT 서명에 사용할 비밀값 |
+| `JWT_ACCESS_EXPIRATION`, `JWT_REFRESH_EXPIRATION` | 토큰 유효 기간 |
+| `TOSS_CLIENT_KEY`, `TOSS_SECRET_KEY` | 토스 결제 연동 설정 |
+
+
+## 6. Compose는 `.env`를 어디서 찾고 어떻게 전달하는가?
+
+### 6.1. 파일을 읽는 단계와 컨테이너에 전달하는 단계
+
+프로젝트를 다음처럼 배치하고 해당 폴더에서 명령을 실행하는 기본 구성을 가정한다.
+
+```text
+spring-cgv-24th/
+├── .env
+├── compose.yaml
+└── src/
+```
+
+```powershell
+docker compose up -d
+```
+
+이 구조에서는 Compose가 기본 규칙에 따라 같은 프로젝트 폴더의 `.env`를 읽는다. Compose의 `${변수명}`을 채울 값으로 사용할 수 있다. 위치를 명시하고 싶으면 `--env-file` 옵션을 사용한다.
+
+중요한 점은 `.env` 파일을 읽는 것만으로 모든 값이 컨테이너에 자동 전달되지는 않는다는 것이다. 서비스의 `environment`나 `env_file` 설정으로 전달을 지정해야 한다.
+
+### 6.2. `environment`로 필요한 값만 지정하기
+
+Compose 예시:
+```yaml
+services:
+  app:
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:mysql://db:3306/cgv
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_ACCESS_EXPIRATION: ${JWT_ACCESS_EXPIRATION}
+      JWT_REFRESH_EXPIRATION: ${JWT_REFRESH_EXPIRATION}
+      TOSS_CLIENT_KEY: ${TOSS_CLIENT_KEY}
+      TOSS_SECRET_KEY: ${TOSS_SECRET_KEY}
+
+  db:
+    environment:
+      MYSQL_DATABASE: cgv
+      MYSQL_USER: ${DB_USERNAME}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+```
+
+이 구성에서는 다음 순서로 값을 사용한다.
+
+```text
+호스트의 .env
+        ↓
+Compose가 ${DB_USERNAME} 등을 실제 값으로 치환
+        ↓
+각 서비스의 environment 설정에 따라 전달
+        ├── app 컨테이너의 DB_USERNAME
+        └── db 컨테이너의 MYSQL_USER
+        ↓
+각 프로그램이 자기 컨테이너의 환경변수를 읽음
+```
+
+Compose가 실행 설정을 해석하는 것이므로 `compose.yaml` 파일 자체의 내용이 바뀌는 것은 아니다.
+
+| 위치 | 처리하는 프로그램 | 역할 |
+| --- | --- | --- |
+| Compose의 `${DB_PASSWORD}` | Docker Compose | 호스트의 `.env` 등에서 값을 찾아 실행 설정에 대입 |
+| 서비스의 `environment` | Compose와 Docker | 지정한 이름과 값으로 컨테이너 환경변수 설정 |
+| `application.yaml`의 `${DB_PASSWORD}` | Spring Boot | 컨테이너에 전달된 환경변수 등에서 값을 찾아 앱 설정에 사용 |
+
+`SPRING_DATASOURCE_URL`은 Spring의 `spring.datasource.url`에 대응한다. 이를 전달하면 현재 YAML의 `localhost` 주소를 Docker 실행 시 `db` 주소로 덮어쓸 수 있다. 실제 연결 옵션은 사용하는 DB 환경에 맞춰 지정한다.
+
+### 6.3. `--env-file`과 `env_file`의 차이
+
+이름이 비슷하지만 역할이 다르다.
+
+| 방법 | 목적 | 상대 경로 기준 |
+| --- | --- | --- |
+| 기본 `.env` 읽기 | Compose의 `${변수명}`을 채울 값 준비 | 위 기본 예시에서는 프로젝트 루트 |
+| 명령행의 `--env-file` | Compose가 변수 치환에 사용할 파일을 명시 | 명령어를 실행한 작업 폴더 |
+| 서비스의 `env_file` | 파일 안의 변수들을 해당 컨테이너의 환경변수로 전달 | Compose 파일 위치 |
+
+
+파일의 변수들을 해당 서비스에 전달하려면 다음처럼 `env_file`을 지정할 수 있다.
+
+```yaml
+services:
+  app:
+    env_file:
+      - ./config/app.env
+```
+
+`app.env`에 있는 `DB_USERNAME=...`, `JWT_SECRET=...` 등을 같은 이름의 컨테이너 환경변수로 전달한다.
+
+## 7. EC2에서는 `.env`와 `compose.yaml`을 함께 빌드하는가?
+
+기본 구성에서는 두 파일을 EC2의 같은 폴더에 준비한다. 두 파일은 컨테이너를 실행할 때 읽는 설정 파일이며, 앱 이미지와 함께 빌드하는 대상은 아니다.
+
+```text
+EC2
+├── /home/ubuntu/cgv/
+│     ├── compose.yaml
+│     └── .env              ← EC2에서 사용할 설정값
+│
+└── Docker
+      ├── Spring Boot 컨테이너
+      └── MySQL 컨테이너
+```
+
+빌드와 실행을 다음처럼 나눌 수 있다.
+
+```text
+내 컴퓨터 또는 GitHub Actions
+  소스 코드
+     ↓
+  실행용 JAR 빌드
+     ↓
+  앱 이미지 빌드
+     ↓
+  이미지 저장소에 업로드
+
+EC2
+  이미지 저장소에서 이미지 다운로드
+             +
+  EC2의 compose.yaml과 .env 준비
+             ↓
+  Compose 실행
+             ↓
+  설정값을 전달하면서 컨테이너 생성·실행
+```
+
+| 대상 | EC2에서 준비하는 방법 |
+| --- | --- |
+| 앱 이미지 | Docker Hub나 GHCR 같은 이미지 저장소에서 다운로드 |
+| `compose.yaml` | Git에서 가져오거나 파일 복사 |
+| `.env` | EC2에서 직접 작성하거나 배포 과정에서 비밀값을 전달해 준비 |
+
+실행에 필요한 파일과 이미지가 준비됐다면, EC2에 SSH로 접속한 셸에서 다음처럼 실행할 수 있다.
+
+```bash
+cd /home/ubuntu/cgv
+docker compose up -d
+```
+
+EC2에서 실행되는 Compose가 EC2에 있는 `.env`를 읽는다. 로컬 컴퓨터에만 있는 `.env`가 자동으로 EC2로 전달되는 것은 아니다. 현재 `.env`는 Git에서 제외돼 있으므로 저장소를 내려받는 것과 별도로 준비해야 한다.
+
+### 이미지에 비밀값을 포함하지 않기
+
+앱 이미지에는 앱과 실행 환경을 넣고, 환경별 비밀값은 실행할 때 외부에서 전달하도록 구성한다. 그러면 동일한 이미지를 로컬과 EC2에서 사용하면서 DB 주소나 API 키를 다르게 설정할 수 있다.
+
+`.gitignore`와 `.dockerignore`는 역할이 다르다.
+
+| 파일 | 역할 |
+| --- | --- |
+| `.gitignore` | Git에서 새 파일을 추적하지 않도록 제외 |
+| `.dockerignore` | Docker 빌드 컨텍스트에서 파일을 제외 |
+
+`.env`가 Git에서 제외돼 있어도 Docker 빌드에서 자동으로 제외되지는 않는다. Docker를 적용할 때 `.dockerignore`에도 `.env`를 추가하고 이미지에 복사하지 않도록 구성한다.
+
+
+
+## 8. EC2 · Nginx · RDS를 이용한 수동 배포
+
+### 8.1. 실제 배포 구조와 각 구성 요소의 역할
+
+```text
+사용자
+  │ HTTP 요청
+  ▼
+EC2의 Nginx :80
+  │ http://127.0.0.1:8080으로 전달
+  ▼
+EC2의 Spring Boot 컨테이너 :8080
+  │ RDS 엔드포인트와 DB 계정으로 접속
+  ▼
+RDS MySQL :3306
+```
+
+| 구성 요소 | 역할 |
+| --- | --- |
+| EC2 | Nginx와 Docker를 실행하는 컴퓨터 |
+| Nginx | 외부 요청을 받아 Spring Boot로 전달하는 리버스 프록시 |
+| Docker | 앱 이미지로 컨테이너를 생성하고 실행 |
+| Spring Boot | API 요청 처리와 비즈니스 로직 수행 |
+| RDS MySQL | AWS가 준비하고 운영하는 MySQL 서버. 앱 데이터 저장 |
+
+EC2와 RDS의 보안 그룹 연동은 DB 접근을 허용하는 네트워크 설정이다.
+실제 접속에는 RDS 엔드포인트, 포트, DB 계정과 사용할 데이터베이스도 필요하다.
+
+### 8.2. Docker 파일
+
+
+**Dockerfile**
+
+```dockerfile
+FROM eclipse-temurin:21-jre-alpine
+
+WORKDIR /app
+
+COPY build/libs/*-SNAPSHOT.jar app.jar
+
+EXPOSE 8080
+
+ENTRYPOINT ["java", "-jar", "app.jar"]
+```
+
+- `FROM`: Java 21 실행 환경을 기반으로 앱 이미지를 만든다.
+- `WORKDIR`: 컨테이너 내부의 작업 폴더를 `/app`으로 지정한다.
+- `COPY`: 미리 빌드한 실행용 JAR을 이미지에 넣는다.
+- `EXPOSE`: 앱이 사용하는 포트를 명시한다.
+- `ENTRYPOINT`: 컨테이너가 시작될 때 JAR을 실행한다.
+
+이 Dockerfile은 JAR을 직접 빌드하지 않는다. 이미지 빌드 전에 Gradle로 `build/libs`에 실행용 JAR을 만들어야 한다.
+
+**.dockerignore**
+
+```gitignore
+.git
+.env
+.env.*
+.idea
+.gradle
+```
+
+비밀값과 개발 도구 관련 파일을 빌드 컨텍스트에서 제외한다. 현재 Dockerfile은 `build/libs`의 JAR을 복사하므로 `build/` 전체를 제외하면 필요한 JAR까지 전달되지 않는다.
+
+**compose.yaml**
+
+```yaml
+services:
+  app:
+    image: ghcr.io/taiho0303-blip/spring-cgv-24th:${IMAGE_TAG:-manual}
+    ports:
+      - "127.0.0.1:8080:8080"
+    env_file:
+      - .env
+    restart: unless-stopped
+```
+
+| 설정 | 의미 |
+| --- | --- |
+| `image` | GHCR에서 가져올 우리 앱 이미지 주소 |
+| `${IMAGE_TAG:-manual}` | `IMAGE_TAG`가 없거나 비어 있으면 `manual` 태그 사용 |
+| `127.0.0.1:8080:8080` | EC2의 루프백 주소 8080번 포트를 앱 컨테이너의 8080번 포트에 연결 |
+| `env_file: .env` | Compose 파일 위치를 기준으로 `.env`를 읽어 앱 컨테이너에 환경변수로 전달 |
+| `restart: unless-stopped` | 수동으로 중지한 경우 등을 제외하고 재시작 정책 적용 |
+
+Nginx는 EC2 호스트에 설치돼 있으므로 `127.0.0.1:8080`으로 앱에 접근할 수 있다. 외부 사용자는 Nginx로 접속한다.
+
+### 9.3. 수동 배포 과정의 순서
+
+| 순서 | 작업 위치 | 할 일 | 확인할 항목 |
+| --- | --- | --- | --- |
+| 1 | AWS · EC2 | EC2와 RDS 준비 및 보안 그룹 연결 | EC2에서 DB 접근 가능 여부 |
+| 2 | EC2 | DB 계정으로 RDS 로그인, 사용할 데이터베이스 준비 | 앱이 사용할 `cgv` DB와 계정 권한 |
+| 3 | 로컬 | Gradle로 실행용 JAR 생성 | `build/libs`의 실행용 JAR |
+| 4 | 로컬 | Dockerfile로 앱 이미지 빌드 | 이미지 생성과 EC2 CPU 아키텍처 일치 여부 |
+| 5 | 로컬 · GHCR | 이미지 저장소에 로그인하고 이미지 업로드 | EC2에서 다운로드할 이미지와 태그 |
+| 6 | EC2 | Docker·Compose 및 배포 사용자 실행 권한 준비 | `docker ps`, `docker compose version` |
+| 7 | EC2 | `compose.yaml` 배치, EC2용 `.env` 준비 | RDS 주소와 DB·JWT·토스 설정 |
+| 8 | EC2 | 이미지 다운로드와 앱 컨테이너 실행 | 앱 로그와 내부 API 응답 |
+| 9 | EC2 | Nginx가 앱으로 요청을 전달하도록 설정 | Nginx 설정 문법과 프록시 대상 |
+| 10 | 로컬 브라우저 등 | EC2 주소로 API 요청 | Nginx를 거친 외부 응답 |
+
+빌드와 실행은 서로 다른 작업이다. JAR과 앱 이미지를 만드는 것은 빌드이고, EC2에서 이미지에 설정값을 전달해 컨테이너를 시작하는 것은 실행이다.
+
+### 9.4. 수동 배포 주요 명령어
+
+```powershell
+.\gradlew.bat clean bootJar
+
+docker build -t ghcr.io/taiho0303-blip/spring-cgv-24th:manual .
+
+docker login ghcr.io -u taiho0303-blip
+docker push ghcr.io/taiho0303-blip/spring-cgv-24th:manual
+```
+
+이미지는 EC2의 CPU 아키텍처에 맞게 빌드해야 한다.
+GHCR의 비공개 이미지에 접근하려면 인증도 필요하다.
+
+EC2에서는 배포 폴더에 Compose 파일과 `.env`를 준비한 뒤 실행한다.
+
+```bash
+cd ~/cgv
+
+docker login ghcr.io -u taiho0303-blip
+docker compose pull app
+docker compose up -d app
+
+docker compose ps
+docker compose logs --tail=100 app
+curl -f http://127.0.0.1:8080/api/movies
+```
+
+내부 API가 응답한 다음 Nginx를 통해 외부에서 접근하는 흐름을 확인한다. 아래는 기존 Nginx `server` 블록 안에 둘 수 있는 프록시 설정 예시다.
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:8080;
+
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+```bash
+sudo nginx -t
+# 문법 검사가 성공한 경우 설정 반영
+sudo systemctl reload nginx
+```
+
+### 8.5. EC2의 `.env`에서 달라지는 부분
+
+로컬 DB 접속 주소 대신 RDS 엔드포인트를 전달한다.
+
+```dotenv
+SPRING_DATASOURCE_URL=jdbc:mysql://RDS_ENDPOINT:3306/cgv
+DB_USERNAME=DB_USER
+DB_PASSWORD=DB_PASSWORD_VALUE
+JWT_SECRET=BASE64_JWT_SECRET_VALUE
+JWT_ACCESS_EXPIRATION=30m
+JWT_REFRESH_EXPIRATION=7d
+TOSS_CLIENT_KEY=TOSS_CLIENT_KEY_VALUE
+TOSS_SECRET_KEY=TOSS_SECRET_KEY_VALUE
+```
+
+
+현재 Compose의 `env_file`이 이 파일을 읽어 컨테이너의 운영체제 환경변수로 전달한다. Spring Boot는 전달받은 `SPRING_DATASOURCE_URL`로 YAML에 지정된 로컬 접속 주소를 덮어쓴다.
+
+## 9. 수동 배포를 준비하며 추가로 정리한 질문
+
+### 9.1. RDS를 사용해도 MySQL 이미지를 실행해야 하는가?
+
+RDS는 AWS가 준비하고 운영하는 DB 서버다. 앱은 RDS 엔드포인트에 MySQL 프로토콜로 접속한다. 현재 배포에서는 EC2에 MySQL 컨테이너를 추가하지 않는다.
+
+| 구성 | EC2에서 실행할 컨테이너 | DB 위치 |
+| --- | --- | --- |
+| 앱과 DB를 모두 Docker로 운영 | 앱, MySQL | EC2의 MySQL 컨테이너 |
+| 현재의 RDS 사용 구성 | 앱 | RDS의 MySQL 서버 |
+
+
+### 9.2. 왜 로컬과 EC2 양쪽에 `compose.yaml`이 있는가?
+
+로컬에서 작성한 배포 설정 원본을 EC2에 전달해 실행하는 것이다. 두 곳에서 다른 설정을 각각 수동 작성한다는 의미는 아니다.
+
+```text
+로컬의 compose.yaml 작성
+          ↓
+Git으로 변경 이력 관리
+          ↓
+배포 시 EC2에 파일 전달
+          ↓
+EC2의 Docker Compose가 읽어서 컨테이너 실행
+```
+
+| 위치 | 역할 |
+| --- | --- |
+| 로컬 프로젝트 | 배포 설정 작성과 버전 관리 |
+| EC2 배포 폴더 | 전달받은 설정으로 실제 컨테이너 실행 |
+
+로컬에서 Compose로 앱을 실행하지 않더라도 파일을 프로젝트에 보관해 서버 배포 설정을 관리할 수 있다. EC2에서 명령을 실행할 때는 EC2에 있는 파일을 읽으므로 그곳에도 배포된 사본이 필요하다.
+
+### 9.3. 새 이미지를 올리면 EC2의 Compose 파일도 바뀌는가?
+
+Docker 이미지와 Compose 파일은 별도의 배포 대상이다. 이미지를 업로드하는 것만으로 EC2의 Compose 파일은 갱신되지 않는다.
+
+| 변경 내용 | 배포할 내용 |
+| --- | --- |
+| 앱 코드 변경 | 새 앱 이미지 다운로드와 컨테이너 교체 |
+| Compose의 포트·실행 설정 변경 | 새 `compose.yaml` 전달 후 컨테이너에 적용 |
+| DB 비밀번호 등 실행 설정 변경 | EC2의 설정값 갱신 후 컨테이너에 다시 전달 |
+
+최초에는 파일을 직접 복사할 수 있고, CD를 구성할 때 SCP나 다른 파일 전달 과정으로 Compose 파일의 갱신까지 자동화할 수 있다.
+
+### 9.4. CI는 무엇이고 CD는 무엇인가?
+
+| 구분 | 의미 | 우리 프로젝트에서 할 작업 |
+| --- | --- | --- |
+| CI | 지속적 통합. 코드 변경을 자동으로 검증 | Java 21 준비, 테스트, 빌드 |
+| CD | 여기서는 지속적 배포. 검증된 버전을 서버에 반영 | 이미지 업로드, EC2 접속, 앱 교체, API 확인 |
+
+
+## 10. GitHub Actions로 CI/CD 구성하기
+
+### 10.1. 수동 배포 과정을 자동화하는 흐름
+
+CI는 변경한 코드의 테스트와 빌드를 자동으로 수행하는 과정이다. CD는 지속적 전달 또는 지속적 배포를 의미한다.
+
+```text
+taiho0303-blip 브랜치에 push
+              ↓
+GitHub Actions: test-and-build (CI)
+  Java 21 준비 → Java 테스트와 JAR 빌드 → JAR 보관
+              ↓ CI 성공 시
+GitHub Actions: deploy (CD)
+  JAR 다운로드 → Docker 이미지 빌드 → GHCR 업로드
+              ↓ SSH 접속
+EC2 /home/ubuntu/cgv
+  새 이미지 다운로드 → .env의 IMAGE_TAG 갱신
+              ↓
+  app 컨테이너 교체 → 내부 API 응답 확인
+```
+
+GitHub Actions의 Runner는 워크플로의 작업을 실행하는 컴퓨터다. Docker 이미지 빌드와 업로드는 GitHub에서 제공하는 Runner에서 실행하고, SSH 액션의 `script`에 작성한 명령은 EC2에서 실행한다.
+
+### 10.2. CI와 CD를 하나의 워크플로에서 관리하기
+
+현재 설정 파일은 `.github/workflows/ci-cd.yaml`이고, GitHub Actions에 표시되는 이름은 `CI-CD`다. 하나의 파일에 `test-and-build`와 `deploy` 두 작업을 정의했다.
+
+| 실행 계기 | test-and-build | deploy |
+| --- | --- | --- |
+| `pull_request` 이벤트 | 테스트와 빌드 실행 | 실행하지 않음 |
+| `taiho0303-blip` 브랜치에 push | 테스트와 빌드, JAR 보관 | CI 성공 후 배포 |
+| 다른 브랜치에 push만 한 경우 | 이 push 설정으로는 실행되지 않음 | 실행하지 않음 |
+
+배포 작업의 핵심 조건은 다음과 같다.
+
+```yaml
+deploy:
+  needs: test-and-build
+  if: github.event_name == 'push' && github.ref == 'refs/heads/taiho0303-blip'
+  runs-on: ubuntu-latest
+  timeout-minutes: 15
+```
+
+- `needs`: 같은 워크플로의 `test-and-build`가 성공해야 배포 작업을 진행한다.
+- `if`: 지정한 브랜치의 push 이벤트에서만 배포한다.
+- `runs-on`: GitHub가 제공하는 Ubuntu Runner에서 작업을 실행한다.
+- `timeout-minutes`: 배포 작업 전체의 실행 시간 제한을 15분으로 설정한다.
+
+`concurrency.group: cgv-production`은 같은 그룹의 배포 작업이 동시에 실행되지 않도록 한다. `cancel-in-progress: false`이므로 새 배포 요청 때문에 이미 실행 중인 배포를 취소하지 않는다.
+
+### 10.3. CD: Docker 이미지 빌드와 GHCR 업로드
+
+배포 작업의 `IMAGE_TAG`에는 `${{ github.sha }}`를 설정했다. 워크플로가 대상으로 하는 커밋의 SHA를 이미지 태그로 사용하므로 어떤 코드 버전을 배포하는지 구분할 수 있다.
+
+```yaml
+- name: Docker 이미지 빌드 및 GHCR 업로드
+  env:
+    GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  run: |
+    set -euo pipefail
+
+    IMAGE="ghcr.io/taiho0303-blip/spring-cgv-24th:${IMAGE_TAG}"
+
+    printf '%s' "$GHCR_TOKEN" |
+      docker login ghcr.io \
+        -u "$GITHUB_ACTOR" --password-stdin
+
+    docker build -t "$IMAGE" .
+    docker push "$IMAGE"
+```
+
+| 코드 | 의미 |
+| --- | --- |
+| `set -euo pipefail` | 처리하지 않은 명령 실패, 미정의 변수 사용, 파이프라인 내부 실패를 작업 실패로 처리 |
+| `IMAGE=...` | GHCR 주소, 이미지 이름, 커밋 SHA 태그를 하나의 변수에 저장 |
+| `GHCR_TOKEN` | GitHub가 작업용으로 제공한 `GITHUB_TOKEN`을 셸에서 사용할 변수 이름 |
+| `GITHUB_ACTOR` | 워크플로를 실행시킨 GitHub 사용자 이름 |
+| `--password-stdin` | 토큰을 명령행 인자 대신 표준 입력으로 전달해 로그인 |
+| `docker build -t "$IMAGE" .` | 현재 폴더를 빌드 컨텍스트로 사용해 Dockerfile로 이미지 생성 |
+| `docker push "$IMAGE"` | 생성한 이미지를 GHCR에 업로드 |
+
+`GITHUB_TOKEN`은 GitHub Actions가 제공하므로 같은 이름의 Secret을 직접 만들 필요가 없다. 배포 job에는 `contents: read`, `packages: write` 권한을 부여했다. 로컬에서 수동으로 업로드한 기존 GHCR 패키지라면 패키지 설정의 `Manage Actions access`에서 이 저장소에 쓰기 권한이 있는지도 확인해야 한다.
+
+이 단계가 끝나면 새 이미지가 GHCR에 저장된다. EC2에서 실행 중인 앱은 다음 SSH 배포 단계에서 교체한다.
+
+### 10.5. SSH 접속에 사용하는 Secrets와 인증의 구분
+
+GitHub 저장소의 `Settings → Secrets and variables → Actions`에 다음 이름으로 값을 등록한다. 실제 개인키와 비밀번호는 보고서나 저장소에 기록하지 않는다.
+
+| Secret 이름 | 넣는 값 | 역할 |
+| --- | --- | --- |
+| `EC2_HOST` | EC2의 공인 IP 또는 접속할 호스트 이름 | 배포 대상 서버 지정 |
+| `EC2_USER` | 현재 서버는 `ubuntu` | SSH 로그인 사용자 지정 |
+| `EC2_SSH_KEY` | `.pem` 개인키 파일의 전체 내용 | EC2 사용자 인증 |
+| `EC2_HOST_FINGERPRINT` | 서버 호스트 키의 `SHA256:...` 지문 | 접속한 서버의 신원 확인 |
+
+개인키는 원본의 시작·끝 줄과 줄바꿈을 포함해 등록한다. 호스트 키 지문은 개인키 내용과 다른 값이며, 서버에서 다음 명령으로 확인할 수 있다.
+
+```bash
+sudo ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
+```
+
+SSH 액션의 `fingerprint`에는 출력 중 `SHA256:...` 부분을 사용한다. `envs: IMAGE_TAG`는 Runner의 이미지 태그 값을 원격 명령에서 사용할 수 있도록 전달하고, `command_timeout: 10m`은 원격 명령의 실행 시간을 제한한다.
+
+인증은 다음 세 경로에서 각각 필요하다.
+
+| 접속 경로 | 현재 사용하는 인증 |
+| --- | --- |
+| GitHub Runner → GHCR 업로드 | 작업용 `GITHUB_TOKEN` |
+| GitHub Runner → EC2 SSH 접속 | `EC2_SSH_KEY` |
+| EC2 → GHCR 이미지 다운로드 | EC2에서 `sudo docker login ghcr.io`로 저장한 인증 정보 |
+
+Runner에서 GHCR에 로그인해도 EC2에 로그인 정보가 전달되지는 않는다. 현재 EC2에서는 Docker 명령에 `sudo`를 사용하므로, 비공개 이미지 다운로드를 위한 로그인도 `sudo docker login ghcr.io -u taiho0303-blip`로 준비한다. 이때 입력하는 비밀번호는 GitHub 로그인 비밀번호가 아니라 패키지 읽기 권한이 있는 PAT(classic)이다.
