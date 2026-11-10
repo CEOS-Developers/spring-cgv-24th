@@ -760,3 +760,56 @@ CSRF 공격은 브라우저가 요청마다 쿠키를 자동으로 첨부하는 
 3. 빠른 응답 반환:
    - 웹훅 처리 시간이 길어져 타임아웃이 나면 토스가 계속 재전송하므로, 무거운 후속 작업은 비동기로 분리하고 웹훅 요청에는 빠르게 `200 OK`를 응답하는 구조가 적합함.
 
+# 5주차 리드미
+
+
+
+- 로컬 환경변수 .env로 깔끔하게 정리. 
+- docker compose up 명령 실행 시 docker-compose.yml 속 환경변수는 .env 값으로 채워진다.
+- intelliJ 실행 명령에 환경변수들을 주입하도록 설정
+- `.env.example` 추가: 변수 이름만 공개하고 값은 `change-me`로 둔 견본 파일. `.env`는 `.gitignore`로 제외하고, 새로 clone한 사람은 `cp -n .env.example .env` 후 값을 채워 사용함.
+- `JWT_SECRETE` 오타를 `JWT_SECRET`으로 수정함. (`application.yaml`, `.env`, `.env.example` 모두 반영)
+- `TOSS_WEBHOOK_SECRET`에는 토스 개발자센터 > API 키 > **보안 키**를 사용함. (결제용 시크릿 키와 다른 키)
+
+### docker-compose 구성
+- `db`(MySQL 8.0)와 `backend`(Spring 앱)를 컨테이너로 한 번에 실행함.
+- MySQL 이미지는 `MYSQL_` 접두사 변수만 읽으므로 `MYSQL_DATABASE`, `MYSQL_ROOT_PASSWORD`로 전달하고, root 계정만 사용함. (`MYSQL_USER=root`는 이미지가 거부함)
+- `backend`에는 `DB_HOST: db`를 compose에서만 덮어써서 컨테이너 안에서는 서비스명으로 DB에 접속하게 함. (`localhost`는 자기 자신을 가리킴)
+- `db`에 healthcheck(`mysqladmin ping`, TCP 접속)를 추가하고 `depends_on`을 `service_healthy` 조건으로 설정해 DB가 준비된 뒤 앱이 시작되게 함.
+- `.dockerignore`로 `.env`, `.git`, `.idea` 등을 빌드 컨텍스트에서 제외함. (`build/libs`는 Dockerfile이 jar를 복사하므로 유지)
+
+### 빌드 시 plain.jar 제거
+- Spring Boot 2.5+는 빌드 시 실행용 `*.jar`(bootJar)와 내 클래스만 담긴 `*-plain.jar`(jar)를 함께 만듦.
+- Dockerfile의 `COPY build/libs/*.jar app.jar`가 파일 2개와 매칭되어 빌드가 실패하므로, `build.gradle`에서 `jar` 태스크를 비활성화해 실행용 jar만 생성하게 함.
+
+### 웹훅 서명 검증 버그 수정
+- 서명 헤더(`v1:<base64>`)를 `=`로 잘라 base64 패딩(`=`)이 값에서 사라져 정상 웹훅도 거부될 수 있었음. `:` 기준으로 접두사만 제거하도록 수정함.
+
+
+### 실행 및 재실행 순서
+- 최초 실행: `./gradlew bootJar` → `docker compose up --build`
+- 코드 수정 후 재실행: jar를 다시 빌드해야 함. Dockerfile이 `build/libs`의 jar를 그대로 복사하므로, `bootJar` 없이 `up`만 하면 옛날 코드가 담긴 이미지가 재사용됨. (실제로 이전 `application.yaml`의 `localhost:3306`이 남아 `Communications link failure`가 발생했음)
+- DB 설정(비밀번호, DB 이름 등) 변경: MySQL 이미지는 데이터 디렉토리가 비어 있을 때만 `MYSQL_*` 값을 적용하므로 `docker compose down -v`로 볼륨을 지운 뒤 다시 실행해야 함. (로컬 DB 데이터가 삭제됨)
+- 실행 확인: `docker compose ps`에서 `cgv-mysql`이 healthy, `cgv-backend`가 Up인지 확인하고 `docker compose logs backend`에서 `Started CgvApplication` 로그와 API 응답을 확인함.
+
+### Dockerfile로 이미지 빌드 후 docker run 실행
+- 순서: `./gradlew clean bootJar` → `docker build -t cgv-app .` → DB 컨테이너 실행(`docker compose up -d db`) → `docker run`
+- 실행 명령: `docker run --rm -p 8080:8080 --env-file .env -e DB_HOST=db --network spring-cgv-24th_cgv-net cgv-app`
+- `docker run`은 앱 컨테이너 하나만 띄우므로 compose와 달리 DB와 환경변수를 직접 챙겨야 함.
+  - `--env-file .env`: `.env`의 변수를 컨테이너 환경변수로 주입함. (compose의 `${}` 치환과 달리 파일 전체가 환경변수가 되고, 값의 따옴표도 그대로 포함됨)
+  - `-e DB_HOST=db`: `.env`의 `DB_HOST`를 덮어씀. 컨테이너 안에서 `localhost`는 자기 자신을 가리키므로 DB 컨테이너의 서비스명을 써야 함.
+  - `--network spring-cgv-24th_cgv-net`: compose가 만든 네트워크에 붙여야 서비스명 `db`로 DB를 찾을 수 있음. (이름은 `docker network ls`로 확인)
+- 확인: 로그에서 `Started CgvApplication`을 확인하고 Postman으로 API를 호출해 DB 쓰기까지 동작하는 것을 확인함.
+
+# 배포 준비
+
+### Dockerfile 멀티스테이지 빌드로 변경
+- 기존 Dockerfile은 로컬에서 미리 빌드한 `build/libs/*.jar`를 복사하는 방식이었음. `build/`는 `.gitignore` 대상이라 저장소에 jar가 없으므로, CI/CD(Railway 등)에서 저장소만 받아 빌드하면 `COPY`가 실패함.
+- 1단계(build): `eclipse-temurin:21-jdk-alpine`에서 `./gradlew bootJar -x test`로 실행 jar를 빌드함. `build.gradle`과 wrapper를 먼저 복사해 의존성 레이어를 캐시하므로 소스만 바뀌면 재빌드가 빨라짐.
+- 2단계(실행): `eclipse-temurin:21-jre-alpine`에 1단계의 jar만 복사함. JDK, Gradle, 소스는 최종 이미지에 포함되지 않음.
+- 테스트는 이미지 빌드에서 제외(`-x test`)하고 CI 단계에서 수행함.
+- `.dockerignore`에 `build`를 추가해 로컬 빌드 산출물이 섞이지 않게 함. (jar를 컨테이너 안에서 빌드하므로 `build/libs` 예외 처리 제거)
+- 이제 `./gradlew bootJar` 없이 `docker build` 또는 `docker compose up --build`만으로 실행됨.
+
+### PORT 환경변수 지원
+- Railway 같은 배포 플랫폼은 `PORT` 환경변수로 컨테이너가 사용할 포트를 지정하므로, `application.yaml`에 `server.port: ${PORT:8080}`을 추가함. 값이 없으면 기본 8080으로 동작하므로 로컬과 docker-compose 실행은 그대로임.
