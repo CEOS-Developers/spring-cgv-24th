@@ -1857,3 +1857,83 @@ Webhook은 이런 변화를 토스 쪽에서 알려주는 **두 번째 통로**�
 
 
 </details>
+
+<details>
+<summary><h2>🚀 배포</h2></summary>
+
+### CI / CD
+
+#### 구성
+
+| 워크플로      | 트리거                            | 하는 일                            |
+|---------------|-----------------------------------|------------------------------------|
+| CI (`ci.yml`) | `alissa159` 대상 PR 오픈/업데이트 | 테스트 & 빌드 검증                 |
+| CD (`cd.yml`) | `alissa159` push (= PR merge)     | 테스트 → DockerHub 푸시 → EC2 배포 |
+
+#### 흐름
+
+**PR 오픈 / 커밋 추가**
+
+1. CI 실행
+2. Checkout
+3. JDK 21 + Gradle 캐시 설정
+4. MySQL 8.4 서비스 컨테이너 실행 (`cgv_test`)
+5. `./gradlew test bootJar` (단위 + 통합 + 동시성 테스트)
+6. `docker build`로 이미지 빌드 확인
+7. `docker compose config`로 Compose 설정 확인
+
+**alissa159 push (PR merge)**
+
+1. CD 실행
+2. Secrets / Variables 누락 확인
+3. Checkout + JDK 21 + MySQL 서비스 컨테이너
+4. `./gradlew test bootJar` (CI와 별개로 한 번 더 테스트)
+5. Docker Buildx로 이미지 빌드
+6. DockerHub에 push (커밋 SHA 태그)
+7. EC2 SSH 접속 (탄력적 IP)
+8. `compose.yml`, `deploy.sh` 전송
+9. `deploy.sh` 실행
+    - `docker compose pull app`
+    - `db` 헬스체크 대기
+    - `app` 컨테이너 교체 후 `/actuator/health` 헬스체크 (최대 180초)
+    - 성공 → `.env`의 `APP_IMAGE`, 배포 이력 갱신 + 이전 이미지 정리
+    - 실패 → 로그 출력 + 직전 성공 이미지로 자동 롤백
+
+#### 안전장치
+
+- CD 안에서도 테스트: CI와 CD는 따로 돌아서 CD가 CI 결과를 기다리지 않음. CD에서 테스트를 다시 돌리고, 실패하면 push/배포까지 가지 않음
+- 동시 배포 방지: concurrency 그룹 `cd-alissa159` + EC2에서 `flock`
+- 헬스체크: `docker compose up --wait`로 app이 healthy가 될 때까지 대기, 180초 넘기면 실패 처리
+- 자동 롤백: 헬스체크 실패 시 `deploy-history.log`에 남은 직전 성공 이미지로 다시 띄우고 헬스체크까지 확인. 롤백이 성공해도 이번 배포는 실패로 표시
+- 이미지 태그: `latest` 없이 git SHA만 사용 → 지금 떠 있는 커밋이 바로 보이고, SHA로 되돌릴 수 있음
+- SSH: `known_hosts`로 서버 검증 (`StrictHostKeyChecking yes`)
+- 액션 버전은 태그 대신 커밋 SHA로 고정
+
+### Docker Compose
+
+| 서비스 | 이미지                           | 포트                            | 헬스체크                |
+|--------|----------------------------------|---------------------------------|-------------------------|
+| app    | DockerHub `<DOCKER_IMAGE>:<SHA>` | `127.0.0.1:8080` (Nginx만 접근) | `curl /actuator/health` |
+| db     | `mysql:8.4`                      | 외부 공개 X (`db:3306`)         | `mysqladmin ping`       |
+
+- Dockerfile은 CI에서 테스트가 끝난 `app.jar`를 JRE 21 이미지에 복사만 함 (이미지 안에서 다시 빌드 X)
+- MySQL 데이터는 named volume (`mysql-data`)에 저장, 배포 때는 app만 교체해서 데이터 유지
+- DB 비밀번호, JWT, 토스 키는 EC2 `.env`에만 두고 GitHub Secrets에는 배포 접속 정보만 등록
+- 메모리 제한 app 768m / db 512m (로컬에서 띄웠을 때 app 약 356MiB, db 약 227MiB)
+
+### 헬스체크 (Actuator)
+
+- `/actuator/health`만 노출, 나머지 엔드포인트 (`env`, `beans` 등)는 비노출
+- `show-details: never` → 응답은 `{"status":"UP"}`만
+- DB 상태 포함 → MySQL이 내려가면 `503 DOWN` (MySQL을 직접 꺼서 확인)
+- `/actuator/health`를 JWT 필터 제외 경로에 추가해서 토큰이 없거나 이상한 토큰이 붙어 있어도 통과
+
+### 로컬 / EC2 DB
+
+|           | 로컬              | 테스트                            | EC2                               |
+|-----------|-------------------|-----------------------------------|-----------------------------------|
+| 프로필    | 기본              | `test`                            | `prod`                            |
+| DB        | 로컬 MySQL        | `cgv_test` (CI는 서비스 컨테이너) | MySQL 컨테이너                    |
+| 접속 주소 | `.env`의 `DB_URL` | `application-test.yml`            | EC2 `.env`의 `DB_URL` (`db:3306`) |
+
+</details>
