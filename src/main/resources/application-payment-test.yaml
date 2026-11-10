@@ -1,0 +1,10 @@
+# Local payment sandbox. Tables are created separately; startup must preserve data.
+spring:
+  datasource:
+    url: jdbc:mysql://localhost:3306/cgv_payment_test?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Seoul
+  jpa:
+    hibernate:
+      ddl-auto: validate
+
+server:
+  port: 8081

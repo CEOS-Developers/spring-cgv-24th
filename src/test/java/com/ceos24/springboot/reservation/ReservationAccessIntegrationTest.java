@@ -23,6 +23,7 @@ import com.ceos24.springboot.theater.domain.Theater;
 import com.ceos24.springboot.user.domain.User;
 import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -35,10 +36,13 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.test.annotation.DirtiesContext;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.time.LocalDate;
+import java.time.Clock;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.Arrays;
@@ -51,11 +55,17 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@SpringBootTest
+@SpringBootTest(properties = {
+        "spring.config.import=",
+        "spring.datasource.url=jdbc:h2:mem:reservation-access-test;MODE=MySQL;DB_CLOSE_DELAY=-1",
+        "spring.jpa.open-in-view=false"
+})
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
-@Transactional
+@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 class ReservationAccessIntegrationTest {
+    @Autowired private Clock clock;
+    @Autowired private PlatformTransactionManager transactionManager;
 
     private static final String PASSWORD = "Test1234!";
 
@@ -97,62 +107,75 @@ class ReservationAccessIntegrationTest {
 
     @BeforeEach
     void setUp() throws Exception {
-        String encodedPassword = passwordEncoder.encode(PASSWORD);
-        userA = persist(User.create("예매자A", "reservation-a@example.com",
-                encodedPassword, "010-1111-1111"));
-        userB = persist(User.create("예매자B", "reservation-b@example.com",
-                encodedPassword, "010-2222-2222"));
-        persist(User.create("예매없음", "reservation-empty@example.com",
-                encodedPassword, "010-3333-3333"));
+        new TransactionTemplate(transactionManager).executeWithoutResult(ignored -> {
+            String encodedPassword = passwordEncoder.encode(PASSWORD);
+            userA = persist(User.create("예매자A", "reservation-a@example.com",
+                    encodedPassword, "010-1111-1111"));
+            userB = persist(User.create("예매자B", "reservation-b@example.com",
+                    encodedPassword, "010-2222-2222"));
+            persist(User.create("예매없음", "reservation-empty@example.com",
+                    encodedPassword, "010-3333-3333"));
 
-        Theater theater = persist(Theater.create("테스트극장", Region.Seoul));
-        Screen screen = persist(Screen.create(
-                theater, "1관", ScreenType.General, 1, 5
-        ));
-        Movie movie = persist(Movie.builder()
-                .titleKr("예매테스트영화")
-                .runtimeMinutes(120)
-                .ageRating(AgeRating.ALL)
-                .build());
-        screening = persist(Screening.builder()
-                .screen(screen)
-                .movie(movie)
-                .screeningDate(LocalDate.now().plusDays(7))
-                .startTime(LocalTime.NOON)
-                .endTime(LocalTime.of(14, 0))
-                .screeningType(ScreeningType.Original)
-                .build());
+            Theater theater = persist(Theater.create("테스트극장", Region.Seoul));
+            Screen screen = persist(Screen.create(
+                    theater, "1관", ScreenType.General, 1, 5
+            ));
+            Movie movie = persist(Movie.builder()
+                    .titleKr("예매테스트영화")
+                    .runtimeMinutes(120)
+                    .ageRating(AgeRating.ALL)
+                    .build());
+            screening = persist(Screening.builder()
+                    .screen(screen)
+                    .movie(movie)
+                    .screeningDate(LocalDate.now(clock).plusDays(7))
+                    .startTime(LocalTime.NOON)
+                    .endTime(LocalTime.of(14, 0))
+                    .screeningType(ScreeningType.Original)
+                    .build());
 
-        oldSeat = persist(Seat.create(screen, "A", 1));
-        newSeatOne = persist(Seat.create(screen, "A", 2));
-        newSeatTwo = persist(Seat.create(screen, "A", 3));
-        otherUserSeat = persist(Seat.create(screen, "A", 4));
-        availableSeat = persist(Seat.create(screen, "A", 5));
-        for (Seat seat : List.of(oldSeat, newSeatOne, newSeatTwo, otherUserSeat, availableSeat)) {
-            persist(ScreeningSeat.create(screening, seat));
-        }
+            oldSeat = persist(Seat.create(screen, "A", 1));
+            newSeatOne = persist(Seat.create(screen, "A", 2));
+            newSeatTwo = persist(Seat.create(screen, "A", 3));
+            otherUserSeat = persist(Seat.create(screen, "A", 4));
+            availableSeat = persist(Seat.create(screen, "A", 5));
+            for (Seat seat : List.of(oldSeat, newSeatOne, newSeatTwo, otherUserSeat, availableSeat)) {
+                persist(ScreeningSeat.create(screening, seat));
+            }
 
-        LocalDateTime base = LocalDateTime.now().minusDays(2);
-        olderA = createReservation(userA, base, List.of(oldSeat));
-        reservationB = createReservation(userB, base.plusDays(1), List.of(otherUserSeat));
-        newerA = createReservation(userA, base.plusDays(2), List.of(newSeatOne, newSeatTwo));
-        // This reservation is unpaid: only Pending reservations can be canceled.
-        jdbcTemplate.update("update reservation set status = 'Pending', expires_at = ? where reservation_id = ?",
-                LocalDateTime.now().plusMinutes(10), newerA.getReservationId());
-        entityManager.flush();
+            LocalDateTime base = LocalDateTime.now(clock).minusDays(2);
+            olderA = createReservation(userA, base, List.of(oldSeat));
+            reservationB = createReservation(userB, base.plusDays(1), List.of(otherUserSeat));
+            newerA = createReservation(userA, base.plusDays(2), List.of(newSeatOne, newSeatTwo));
+            // This reservation is unpaid: only Pending reservations can be canceled.
+            jdbcTemplate.update("update reservation set status = 'Pending', expires_at = ? where reservation_id = ?",
+                    LocalDateTime.now(clock).plusMinutes(10), newerA.getReservationId());
+            entityManager.flush();
 
-        String dayType = screening.getScreeningDate().getDayOfWeek().getValue() >= 6
-                ? "Weekend" : "Weekday";
-        jdbcTemplate.update("""
-                insert into price
-                    (audience_type, day_type, time_type, screen_category, ticket_price)
-                values (?, ?, ?, ?, ?)
-                """, "Adult", dayType, "Normal", "General", 10000);
-        entityManager.clear();
+            String dayType = screening.getScreeningDate().getDayOfWeek().getValue() >= 6
+                    ? "Weekend" : "Weekday";
+            jdbcTemplate.update("""
+                    insert into price
+                        (audience_type, day_type, time_type, screen_category, ticket_price)
+                    values (?, ?, ?, ?, ?)
+                    """, "Adult", dayType, "Normal", "General", 10000);
+            entityManager.clear();
+
+        });
 
         tokenA = login("reservation-a@example.com");
         tokenB = login("reservation-b@example.com");
         emptyUserToken = login("reservation-empty@example.com");
+    }
+
+    @AfterEach
+    void cleanUp() {
+        new TransactionTemplate(transactionManager).executeWithoutResult(ignored -> {
+            for (String table : List.of("reservation_seat", "reservation", "screening_seat",
+                    "screening", "seat", "screen", "theater", "movie", "cgv_user", "price")) {
+                jdbcTemplate.update("delete from " + table);
+            }
+        });
     }
 
     @Test
@@ -238,8 +261,6 @@ class ReservationAccessIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("Canceled"));
 
-        entityManager.flush();
-        entityManager.clear();
         assertThat(reservationRepository.findById(newerA.getReservationId())
                 .orElseThrow().getStatus()).isEqualTo(ReservationStatus.Canceled);
         assertThat(reservationSeatRepository
@@ -259,8 +280,6 @@ class ReservationAccessIntegrationTest {
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("RESERVATION_NOT_FOUND"));
 
-        entityManager.flush();
-        entityManager.clear();
         assertThat(reservationRepository.findById(newerA.getReservationId())
                 .orElseThrow().getStatus()).isEqualTo(ReservationStatus.Pending);
         assertThat(reservationSeatRepository
@@ -297,8 +316,6 @@ class ReservationAccessIntegrationTest {
                 .andReturn().getResponse().getContentAsString();
         ReservationResponse response = jsonMapper.readValue(body, ReservationResponse.class);
 
-        entityManager.flush();
-        entityManager.clear();
         Reservation saved = reservationRepository.findById(response.reservationId()).orElseThrow();
         assertThat(saved.getUser().getId()).isEqualTo(userB.getId());
         assertThat(saved.getTotalPrice()).isEqualTo(10000);

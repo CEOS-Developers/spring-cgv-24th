@@ -23,7 +23,6 @@ public class StoreOrderLifecycleService {
     private final StoreInventoryRepository inventories;
     private final PaymentRepository payments;
 
-    // Caller must already hold the order lock. State and stock commit together.
     public void cancelLocked(StoreOrder order) {
         if (order.cancel()) {
             closePendingPayment(order, false);
@@ -56,7 +55,6 @@ public class StoreOrderLifecycleService {
     }
 
     private void restoreStock(StoreOrder order) {
-        // Every stock-changing flow locks inventories in ascending menu ID order.
         for (OrderItem item : items.findAllByOrderOrderByMenu_MenuIdAsc(order)) {
             inventories.findWithLock(order.getTheater().getTheaterId(), item.getMenu().getMenuId())
                     .orElseThrow(() -> new GlobalException(ErrorCode.STORE_INVENTORY_NOT_FOUND))

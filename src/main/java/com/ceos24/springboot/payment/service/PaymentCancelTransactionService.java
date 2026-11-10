@@ -4,34 +4,28 @@ import com.ceos24.springboot.global.exception.ErrorCode;
 import com.ceos24.springboot.global.exception.GlobalException;
 import com.ceos24.springboot.payment.domain.*;
 import com.ceos24.springboot.payment.dto.*;
+import com.ceos24.springboot.payment.config.TossPaymentProperties;
 import com.ceos24.springboot.payment.repository.PaymentCancellationRepository;
 import com.ceos24.springboot.payment.repository.PaymentRepository;
-import com.ceos24.springboot.reservation.domain.Reservation;
-import com.ceos24.springboot.reservation.domain.ReservationStatus;
-import com.ceos24.springboot.reservation.repository.ReservationRepository;
-import com.ceos24.springboot.reservation.repository.ReservationSeatRepository;
-import com.ceos24.springboot.shop.domain.StoreOrder;
-import com.ceos24.springboot.shop.domain.StoreOrderStatus;
-import com.ceos24.springboot.shop.repository.StoreOrderRepository;
-import com.ceos24.springboot.shop.service.StoreOrderLifecycleService;
+import com.ceos24.springboot.payment.service.target.PaymentTarget;
+import com.ceos24.springboot.payment.service.target.PaymentTargetResolver;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import java.time.Clock;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
 import java.util.*;
 
 @Service
 @RequiredArgsConstructor
 public class PaymentCancelTransactionService {
+    private final Clock clock;
+    private final TossPaymentProperties properties;
     private final PaymentRepository payments;
     private final PaymentCancellationRepository cancellations;
-    private final ReservationRepository reservations;
-    private final ReservationSeatRepository reservationSeats;
-    private final StoreOrderRepository storeOrders;
-    private final StoreOrderLifecycleService storeOrderLifecycle;
+    private final PaymentTargetResolver targetResolver;
 
     public record CancelContext(Long userId, Long paymentId, PaymentTargetType targetType, Long targetId,
                                 Long cancellationId, String paymentKey, String pgIdempotencyKey,
@@ -43,19 +37,20 @@ public class PaymentCancelTransactionService {
         var reference = payments.findTargetById(paymentId, userId)
                 .orElseThrow(() -> new GlobalException(ErrorCode.PAYMENT_NOT_FOUND));
         // 승인과 동일하게 구매 대상 → Payment → 취소 이력 → 재고 순서로 잠근다.
-        LockedTarget target = lockTarget(reference.getTargetType(), reference.getTargetId(), userId);
+        PaymentTarget target = targetResolver.lock(reference.getTargetType(), reference.getTargetId(), userId);
         Payment payment = findPayment(paymentId, userId);
         List<PaymentCancellation> history = cancellations.findAllWithLock(paymentId);
         var existing = history.stream().filter(c -> c.getRequestId().equals(requestId)).findFirst();
         if (existing.isPresent()) {
             PaymentCancellation cancellation = existing.get();
             cancellation.validateSameRequest(request);
-            return context(userId, payment, cancellation,
+            return context(userId, payment, cancellation, true,
                     cancellation.isPending() ? null : PaymentCancelResponse.from(payment, cancellation));
         }
 
         payment.validateCancelable();
-        target.validatePaid();
+        // 새 환불 접수에만 기한을 적용한다. 기존 요청의 조회와 복구는 기한 이후에도 허용한다.
+        target.validateRefund(LocalDateTime.now(clock));
         if (history.stream().anyMatch(PaymentCancellation::isPending)) {
             throw new GlobalException(ErrorCode.PAYMENT_CANCEL_IN_PROGRESS);
         }
@@ -65,13 +60,33 @@ public class PaymentCancelTransactionService {
         if (request.cancelAmount() != null && request.cancelAmount() > payment.getBalanceAmount()) {
             throw new GlobalException(ErrorCode.PAYMENT_CANCEL_AMOUNT_EXCEEDED);
         }
-        PaymentCancellation cancellation = cancellations.save(PaymentCancellation.start(payment, requestId, request));
-        return context(userId, payment, cancellation, null);
+        PaymentCancellation cancellation = cancellations.save(
+                PaymentCancellation.start(payment, requestId, request, LocalDateTime.now(clock)));
+        cancellation.getRecovery().schedule(LocalDateTime.now(clock).plus(properties.getRecovery().getProcessingTimeout()));
+        return context(userId, payment, cancellation, false, null);
+    }
+
+    @Transactional
+    public Optional<CancelContext> claimRecovery(Long cancellationId) {
+        var identity = cancellations.findRecoveryReference(cancellationId).orElse(null);
+        if (identity == null) { return Optional.empty(); }
+        var reference = payments.findTargetById(identity.getPaymentId(), identity.getUserId()).orElseThrow();
+        targetResolver.lock(reference.getTargetType(), reference.getTargetId(), identity.getUserId());
+        Payment payment = findPayment(identity.getPaymentId(), identity.getUserId());
+        PaymentCancellation cancellation = cancellations.findAllWithLock(payment.getId()).stream()
+                .filter(c -> c.getId().equals(cancellationId)).findFirst().orElseThrow();
+        LocalDateTime now = LocalDateTime.now(clock);
+        if (!cancellation.isPending() || !cancellation.getRecovery().isDue(now, cancellation.getCreatedAt(),
+                now.minus(properties.getRecovery().getProcessingTimeout()))) {
+            return Optional.empty();
+        }
+        cancellation.getRecovery().claim(now.plus(properties.getRecovery().getLeaseDuration()));
+        return Optional.of(context(identity.getUserId(), payment, cancellation, true, null));
     }
 
     @Transactional
     public PaymentCancelResponse finish(CancelContext context, TossPaymentCancelResponse remote, boolean rejected) {
-        LockedTarget target = lockTarget(context.targetType(), context.targetId(), context.userId());
+        PaymentTarget target = targetResolver.lock(context.targetType(), context.targetId(), context.userId());
         Payment payment = findPayment(context.paymentId(), context.userId());
         List<PaymentCancellation> history = cancellations.findAllWithLock(payment.getId());
         PaymentCancellation cancellation = history.stream().filter(c -> c.getId().equals(context.cancellationId()))
@@ -80,6 +95,7 @@ public class PaymentCancelTransactionService {
         if (!cancellation.isPending()) {
             return PaymentCancelResponse.from(payment, cancellation);
         }
+        if (rejected) { cancellation.recordRejection(); }
 
         List<TossPaymentCancelResponse.Cancel> additions = verifiedAdditions(payment, remote, history);
         long expectedBalance = cancellation.getBalanceBefore() - cancellation.getCancelAmount();
@@ -92,30 +108,25 @@ public class PaymentCancelTransactionService {
             var approved = additions.getFirst();
             payment.applyCancellation(cancellation.getCancelAmount());
             cancellation.complete(approved.transactionKey(), approved.canceledAt()
-                    .atZoneSameInstant(ZoneId.of("Asia/Seoul")).toLocalDateTime());
+                    .atZoneSameInstant(clock.getZone()).toLocalDateTime());
             if (payment.getBalanceAmount() == 0) {
-                if (target.reservation() != null) {
-                    target.reservation().cancelAfterRefund();
-                    reservationSeats.deleteAllByReservation_ReservationId(target.reservation().getReservationId());
-                } else {
-                    storeOrderLifecycle.refundLocked(target.storeOrder());
-                }
+                target.refund();
             }
-        } else if (rejected && additions != null && additions.isEmpty()
+        } else if (cancellation.isRejectedByPg() && additions != null && additions.isEmpty()
                 && Objects.equals(remote.balanceAmount(), cancellation.getBalanceBefore())) {
             // 명시적 PG 거절 + PG 조회에서 미변경 확인이 모두 있어야 실패로 확정한다.
             cancellation.markFailed();
         } else {
             // 타임아웃, 검증 실패, 비동기 처리 중에는 좌석/재고/잔액을 유지한다.
             cancellation.markUnknown();
+            cancellation.getRecovery().schedule(LocalDateTime.now(clock).plus(properties.getRecovery().getRetryDelay()));
         }
         return PaymentCancelResponse.from(payment, cancellation);
     }
 
     private CancelContext context(Long userId, Payment payment, PaymentCancellation cancellation,
+                                  boolean lookupOnly,
                                   PaymentCancelResponse completed) {
-        // PG 멱등키는 15일 유효하다. 오래된 미확정 요청은 재전송하지 않고 조회만 한다.
-        boolean lookupOnly = !cancellation.getCreatedAt().isAfter(LocalDateTime.now().minusDays(14));
         return new CancelContext(userId, payment.getId(), payment.getTargetType(), payment.getTargetId(),
                 cancellation.getId(), payment.getPaymentKey(), cancellation.getPgIdempotencyKey(),
                 new TossPaymentCancelRequest(cancellation.getCancelReason(), cancellation.getCancelAmount()),
@@ -172,21 +183,4 @@ public class PaymentCancelTransactionService {
                 .orElseThrow(() -> new GlobalException(ErrorCode.PAYMENT_NOT_FOUND));
     }
 
-    private LockedTarget lockTarget(PaymentTargetType type, Long id, Long userId) {
-        return switch (type) {
-            case RESERVATION -> new LockedTarget(reservations.findMyReservationWithLock(id, userId)
-                    .orElseThrow(() -> new GlobalException(ErrorCode.RESERVATION_NOT_FOUND)), null);
-            case STORE_ORDER -> new LockedTarget(null, storeOrders.findMyOrderWithLock(id, userId)
-                    .orElseThrow(() -> new GlobalException(ErrorCode.STORE_ORDER_NOT_FOUND)));
-        };
-    }
-
-    private record LockedTarget(Reservation reservation, StoreOrder storeOrder) {
-        void validatePaid() {
-            if (reservation != null ? reservation.getStatus() != ReservationStatus.Reserved || reservation.isPaymentProcessing()
-                    : storeOrder.getStatus() != StoreOrderStatus.PAID || storeOrder.isPaymentProcessing()) {
-                throw new GlobalException(ErrorCode.PAYMENT_NOT_CANCELABLE);
-            }
-        }
-    }
 }

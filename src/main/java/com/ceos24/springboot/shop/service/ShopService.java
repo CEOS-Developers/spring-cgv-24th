@@ -13,6 +13,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -23,6 +24,7 @@ import java.util.TreeMap;
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class ShopService {
+    private final Clock clock;
     private final StoreInventoryRepository storeInventoryRepository;
     private final MenuRepository menuRepository;
     private final StoreOrderRepository storeOrderRepository;
@@ -69,7 +71,6 @@ public class ShopService {
     @Transactional
     public StoreOrderResponse createOrder(Long userId, StoreOrderCreateRequest request) {
         Map<Long, Integer> quantities = validatedQuantities(request);
-        // Finish expired holds before taking any inventory locks.
         expirationService.releaseExpiredForTheater(request.theaterId());
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new GlobalException(ErrorCode.PAYMENT_USER_REQUIRED));
@@ -79,7 +80,6 @@ public class ShopService {
         List<OrderMenu> orderMenus = new ArrayList<>();
         int totalAmount = 0;
         try {
-            // Sorted, merged IDs prevent reverse lock order and duplicate order lines.
             for (var entry : quantities.entrySet()) {
                 StoreInventory inventory = storeInventoryRepository
                         .findWithLock(theater.getTheaterId(), entry.getKey())
@@ -98,7 +98,8 @@ public class ShopService {
         }
 
         StoreOrder order = storeOrderRepository.save(StoreOrder.builder()
-                .user(user).theater(theater).totalAmount(totalAmount).build());
+                .user(user).theater(theater).totalAmount(totalAmount)
+                .now(LocalDateTime.now(clock)).build());
         List<OrderItem> items = orderMenus.stream().map(item -> OrderItem.builder()
                 .order(order).menu(item.menu()).quantity(item.quantity()).build()).toList();
         return StoreOrderResponse.from(order, orderItemRepository.saveAll(items));
@@ -115,7 +116,7 @@ public class ShopService {
     public StoreOrderResponse cancelOrder(Long userId, Long orderId) {
         StoreOrder order = storeOrderRepository.findMyOrderWithLock(orderId, userId)
                 .orElseThrow(() -> new GlobalException(ErrorCode.STORE_ORDER_NOT_FOUND));
-        lifecycle.expireLocked(order, LocalDateTime.now());
+        lifecycle.expireLocked(order, LocalDateTime.now(clock));
         lifecycle.cancelLocked(order);
         return StoreOrderResponse.from(order, orderItemRepository.findAllByOrderOrderByMenu_MenuIdAsc(order));
     }

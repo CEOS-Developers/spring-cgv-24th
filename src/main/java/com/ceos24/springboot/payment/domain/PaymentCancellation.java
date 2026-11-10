@@ -15,12 +15,21 @@ import java.util.UUID;
 @Entity
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
-@Table(name = "payment_cancellation", uniqueConstraints = {
+@Table(name = "payment_cancellation", indexes = @Index(name = "idx_cancellation_recovery",
+        columnList = "status,next_recovery_at,cancellation_id"), uniqueConstraints = {
         @UniqueConstraint(name = "uk_payment_cancel_request", columnNames = {"payment_id", "request_id"}),
         @UniqueConstraint(name = "uk_payment_cancel_transaction", columnNames = "transaction_key"),
         @UniqueConstraint(name = "uk_payment_cancel_idempotency", columnNames = "pg_idempotency_key")
 })
 public class PaymentCancellation {
+    @Embedded
+    private PaymentRecovery recovery = new PaymentRecovery();
+
+    // PG의 명시적 거절도 조회로 미변경을 확인한 뒤에만 FAILED로 확정한다.
+    @Column(name = "rejected_by_pg", nullable = false)
+    private boolean rejectedByPg;
+
+    public void recordRejection() { rejectedByPg = true; }
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     @Column(name = "cancellation_id")
@@ -63,7 +72,7 @@ public class PaymentCancellation {
     @Column(name = "canceled_at")
     private LocalDateTime canceledAt;
 
-    public static PaymentCancellation start(Payment payment, String requestId, PaymentCancelRequest request) {
+    public static PaymentCancellation start(Payment payment, String requestId, PaymentCancelRequest request, LocalDateTime now) {
         PaymentCancellation result = new PaymentCancellation();
         result.payment = payment;
         result.requestId = requestId;
@@ -73,7 +82,7 @@ public class PaymentCancellation {
         result.balanceBefore = payment.getBalanceAmount();
         result.cancelReason = request.cancelReason();
         result.status = PaymentCancellationStatus.PROCESSING;
-        result.createdAt = LocalDateTime.now();
+        result.createdAt = Objects.requireNonNull(now, "now");
         return result;
     }
 

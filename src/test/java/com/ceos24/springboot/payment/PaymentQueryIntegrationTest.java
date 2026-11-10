@@ -22,6 +22,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.ResourceAccessException;
 
+import java.time.Clock;
 import java.time.LocalDateTime;
 
 import static org.mockito.Mockito.*;
@@ -33,6 +34,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @ActiveProfiles("test")
 @Transactional
 class PaymentQueryIntegrationTest {
+    @Autowired private Clock clock;
     @Autowired private MockMvc mvc;
     @Autowired private JwtProvider jwt;
     @Autowired private EntityManager entityManager;
@@ -79,7 +81,7 @@ class PaymentQueryIntegrationTest {
 
     @Test
     void storeOrderPaymentUsesTheSameDetailEndpoint() throws Exception {
-        Payment payment = completed(owner, PaymentTargetType.STORE_ORDER, 502L, LocalDateTime.now().withNano(0));
+        Payment payment = completed(owner, PaymentTargetType.STORE_ORDER, 502L, LocalDateTime.now(clock).withNano(0));
         flush();
         mvc.perform(get("/api/payments/{id}", payment.getId()).header("Authorization", bearer(owner)))
                 .andExpect(status().isOk())
@@ -90,7 +92,7 @@ class PaymentQueryIntegrationTest {
 
     @Test
     void anotherUsersPaymentAndMissingPaymentHaveSameNotFoundResponse() throws Exception {
-        Payment payment = completed(other, PaymentTargetType.RESERVATION, 503L, LocalDateTime.now());
+        Payment payment = completed(other, PaymentTargetType.RESERVATION, 503L, LocalDateTime.now(clock));
         flush();
         for (Long id : new Long[]{payment.getId(), Long.MAX_VALUE}) {
             mvc.perform(get("/api/payments/{id}", id).header("Authorization", bearer(owner)))
@@ -121,7 +123,7 @@ class PaymentQueryIntegrationTest {
 
     @Test
     void historyIsOwnedFilteredPagedAndOrderedByApprovalTimeThenId() throws Exception {
-        LocalDateTime recent = LocalDateTime.now().minusDays(1).withNano(0);
+        LocalDateTime recent = LocalDateTime.now(clock).minusDays(1).withNano(0);
         Payment oldest = completed(owner, PaymentTargetType.RESERVATION, 1L, recent.minusDays(1));
         Payment tiedFirst = completed(owner, PaymentTargetType.STORE_ORDER, 2L, recent);
         Payment tiedSecond = completed(owner, PaymentTargetType.RESERVATION, 3L, recent);
@@ -176,7 +178,7 @@ class PaymentQueryIntegrationTest {
     }
 
     private Payment payment(User user, PaymentTargetType type, Long targetId) {
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now(clock);
         Payment payment = Payment.prepare(user, type, targetId, 28000L, now, now.plusMinutes(10));
         entityManager.persist(payment);
         return payment;

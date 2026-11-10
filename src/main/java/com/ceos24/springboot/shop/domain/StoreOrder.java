@@ -9,9 +9,9 @@ import lombok.AccessLevel;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
-import org.hibernate.annotations.CreationTimestamp;
 
 import java.time.LocalDateTime;
+import java.util.Objects;
 
 @Entity
 @Getter
@@ -36,7 +36,6 @@ public class StoreOrder {
     @Column(name = "total_amount")
     private Integer totalAmount;
 
-    @CreationTimestamp
     @Column(name = "order_at", updatable = false)
     private LocalDateTime orderAt;
 
@@ -54,13 +53,15 @@ public class StoreOrder {
     public StoreOrder(
             User user,
             Theater theater,
-            Integer totalAmount
+            Integer totalAmount,
+            LocalDateTime now
     ) {
         this.user = user;
         this.theater = theater;
         this.totalAmount = totalAmount;
         this.status = StoreOrderStatus.PENDING;
-        this.expiresAt = LocalDateTime.now().plusMinutes(10);
+        this.orderAt = Objects.requireNonNull(now, "now");
+        this.expiresAt = now.plusMinutes(10);
     }
 
     public void validatePayable(LocalDateTime now) {
