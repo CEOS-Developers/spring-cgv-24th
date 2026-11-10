@@ -13,6 +13,7 @@ import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 import com.ceos24.cgv.domain.reservation.entity.Reservation;
 
+import java.time.Duration;
 import java.util.UUID;
 import java.time.Instant;
 
@@ -21,6 +22,12 @@ import java.time.Instant;
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @Table(name = "payments")
 public class Payment {
+
+	// 승인·보상 한 번의 최대 소요(토스 호출 2회, 각 연결 3초 + 읽기 30초)보다 충분히 길어야 진행 중인 요청을 가로채지 않는다
+	public static final Duration PROCESSING_TIMEOUT = Duration.ofMinutes(5);
+
+	private static final String CONFIRM_KEY_PREFIX = "confirm-";
+	private static final String COMPENSATION_KEY_PREFIX = "compensate-";
 
 	@Id
 	@GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -52,11 +59,16 @@ public class Payment {
 	private Integer amount; //최초 결제 금액
 
 	@Column(nullable = false)
-	private Integer balanceAmount; //취소 가능한 잔액
+	private Integer balanceAmount; //취소 완료분만 반영한 실제 잔액
+
+	@Column(nullable = false)
+	private Integer pendingCancelAmount; //토스 결과를 기다리는 취소 금액
 
 	private String method; //결제수단
 
 	private Instant approvedAt;
+
+	private Instant processingStartedAt; //마지막으로 IN_PROGRESS를 선점한 시각
 
 	private Payment(Order order, Reservation reservation, String orderName, Integer amount) {
 		this.order = order;
@@ -65,6 +77,7 @@ public class Payment {
 		this.orderName = orderName;
 		this.amount = amount;
 		this.balanceAmount = amount;
+		this.pendingCancelAmount = 0;
 		this.status = PaymentStatus.READY;
 	}
 
@@ -85,14 +98,23 @@ public class Payment {
 		return status == PaymentStatus.DONE;
 	}
 
+	public boolean isSettleable() {
+		return status == PaymentStatus.IN_PROGRESS || status == PaymentStatus.UNKNOWN;
+	}
+
 	// 결제 1건의 승인은 논리적으로 한 번뿐이므로 토스 주문번호에서 고정된 멱등키를 만든다 (재시도해도 같은 키)
 	public String getConfirmIdempotencyKey() {
-		return "confirm-" + tossOrderId;
+		return CONFIRM_KEY_PREFIX + tossOrderId;
 	}
 
 	// 승인 후 주문 확정에 실패해 자동 취소할 때 쓰는 멱등키 (재시도해도 같은 키)
 	public String getCompensationIdempotencyKey() {
-		return "compensate-" + tossOrderId;
+		return COMPENSATION_KEY_PREFIX + tossOrderId;
+	}
+
+	// 클라이언트 키가 서버의 승인·보상 키와 같으면 보상 기록이 유니크 충돌로 막히고, 토스에서도 다른 요청의 결과를 돌려받을 수 있다
+	public static boolean isServerIdempotencyKey(String idempotencyKey) {
+		return idempotencyKey.startsWith(CONFIRM_KEY_PREFIX) || idempotencyKey.startsWith(COMPENSATION_KEY_PREFIX);
 	}
 
 	public void approve(String paymentKey, String method, Instant approvedAt) {
@@ -106,18 +128,28 @@ public class Payment {
 		return status == PaymentStatus.DONE || status == PaymentStatus.PARTIAL_CANCELED;
 	}
 
+	public int getCancelableAmount() {
+		return balanceAmount - pendingCancelAmount;
+	}
+
+	public int getCanceledAmount() {
+		return amount - balanceAmount;
+	}
+
 	public void reserveCancel(int amount) {
-		if (amount <= 0 || amount > balanceAmount) {
+		if (amount <= 0 || amount > getCancelableAmount()) {
 			throw new GeneralException(PaymentErrorStatus.CANCEL_AMOUNT_EXCEEDED);
 		}
-		this.balanceAmount -= amount;
+		this.pendingCancelAmount += amount;
 	}
 
 	public void restoreCancel(int amount) {
-		this.balanceAmount += amount;
+		this.pendingCancelAmount -= amount;
 	}
 
-	public void applyCanceledStatus() {
+	public void completeCancel(int amount) {
+		this.pendingCancelAmount -= amount;
+		this.balanceAmount -= amount;
 		this.status = (balanceAmount == 0) ? PaymentStatus.CANCELED : PaymentStatus.PARTIAL_CANCELED;
 	}
 

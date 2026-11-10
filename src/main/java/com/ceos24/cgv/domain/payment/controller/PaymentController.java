@@ -48,7 +48,7 @@ public class PaymentController {
 		return ApiResponse.onSuccess(paymentService.getPayment(userDetails.getUserId(), paymentId));
 	}
 
-	@Operation(summary = "결제 결과 대사 API", description = "결과 불명(UNKNOWN) 결제를 토스에 조회해 승인 확정 또는 실패 처리합니다.")
+	@Operation(summary = "결제 결과 대사 API", description = "결과 불명(UNKNOWN)이거나 승인 시작 후 5분이 지난(IN_PROGRESS) 결제를 토스에 조회해 승인 확정, 보상 취소 반영 또는 실패 처리합니다.")
 	@PostMapping("/{paymentId}/reconcile")
 	public ApiResponse<PaymentResponse> reconcile(
 			@AuthenticationPrincipal CustomUserDetails userDetails,
@@ -57,7 +57,7 @@ public class PaymentController {
 		return ApiResponse.onSuccess(paymentFacade.reconcile(userDetails.getUserId(), paymentId));
 	}
 
-	@Operation(summary = "결제 취소 API", description = "결제를 전체 또는 부분 취소합니다. 금액을 생략하면 취소 가능 잔액 전액을 취소하며, Idempotency-Key 헤더가 필수입니다.")
+	@Operation(summary = "결제 취소 API", description = "결제를 전체 또는 부분 취소합니다. 금액을 생략하면 취소 가능 잔액 전액을 취소하며, Idempotency-Key 헤더가 필수입니다(최대 300자, confirm-·compensate-로 시작하는 키 불가).")
 	@PostMapping("/{paymentId}/cancel")
 	public ApiResponse<PaymentResponse> cancel(
 			@AuthenticationPrincipal CustomUserDetails userDetails,
