@@ -5,6 +5,7 @@ import com.ceos24.springboot.global.exception.GlobalException;
 import com.ceos24.springboot.payment.domain.PaymentCancellationStatus;
 import com.ceos24.springboot.payment.dto.*;
 import com.ceos24.springboot.payment.toss.TossPaymentClient;
+import com.ceos24.springboot.payment.toss.TossPaymentErrorPolicy;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClientException;
@@ -29,9 +30,7 @@ public class PaymentCancelService {
             remote = context.lookupOnly() ? toss.findForCancellation(context.paymentKey())
                     : toss.cancel(context.paymentKey(), context.request(), context.pgIdempotencyKey());
         } catch (RestClientResponseException e) {
-            int status = e.getStatusCode().value();
-            rejected = !context.lookupOnly() && status >= 400 && status < 500
-                    && status != 408 && status != 409 && status != 429;
+            rejected = !context.lookupOnly() && TossPaymentErrorPolicy.isDefinitiveRejection(e);
             remote = null;
         } catch (RestClientException e) {
             remote = null;
