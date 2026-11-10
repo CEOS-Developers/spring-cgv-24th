@@ -1,0 +1,45 @@
+name: CGV-PROJECT CD
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cd-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Grant execute permission
+        run: chmod +x ./gradlew
+
+      - name: Build and test with Gradle
+        run: ./gradlew clean build --no-daemon
+
+      - name: Build Docker image
+        run: docker build --tag "cgv-app:${GITHUB_SHA}" .
+
+      # Image publication requires authorization for the target registry.
+      # SSH deployment will be added after the deployment server is ready.
