@@ -54,3 +54,8 @@ spotless {
 tasks.named('test') {
 	useJUnitPlatform()
 }
+
+// 실행용 bootJar만 생성하고 plain.jar는 만들지 않음 (Dockerfile의 build/libs/*.jar 매칭 오류 방지)
+tasks.named('jar') {
+	enabled = false
+}
