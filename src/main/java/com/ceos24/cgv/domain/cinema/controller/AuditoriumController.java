@@ -67,4 +67,3 @@ public class AuditoriumController {
         return ResponseEntity.status(code.getStatus()).body(body);
     }
 }
-
