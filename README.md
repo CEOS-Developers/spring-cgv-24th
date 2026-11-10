@@ -3561,3 +3561,501 @@ em.createNativeQuery("alter table branch_like add index ix_tmp (user_id), "
 - 서버가 여러 대면 같은 이벤트를 동시에 처리할 수 있습니다. 행 잠금과 상태 재확인으로 한 번만 반영되지만 토스 조회는 중복됩니다. 스케줄러와 같은 한계입니다.
 - 로컬 개발 중에는 웹훅이 오지 않습니다. 이 기간에는 스케줄러만으로 정리합니다.
 - 웹훅 처리 스레드 풀이 가득 차면 처리가 밀립니다. 저장은 이미 끝났으므로 유실되지 않고 스케줄러가 이어서 처리합니다.
+
+## CI/CD — GitHub Actions 자동 배포
+
+워크플로우는 `.github/workflows/ci-cd.yml`, 서버 쪽 스크립트와 최초 설정 방법은 `deploy/README.md`에 있습니다.
+
+```
+PR ─────────────▶ test (./gradlew build = 컴파일 + 테스트 + bootJar)
+push(chjpooh2002) ▶ test ──needs──▶ deploy (jar·env 전송 → systemd 재시작 → 헬스 체크)
+```
+
+### 테스트는 배포의 관문이다
+
+`./gradlew build`는 `test` 태스크를 포함합니다. 테스트가 하나라도 실패하면 `build`가 실패하고, `deploy` 잡은 `needs: test`라 아예 시작되지 않습니다. 테스트를 "따로 한 번 돌려 보는 것"이 아니라 배포로 가는 유일한 길목에 둔 것입니다. 동시성 테스트는 Testcontainers로 MySQL을 띄우는데, ubuntu 러너에는 Docker가 기본으로 있어 별도 설정 없이 돕니다.
+
+실패했을 때 원인을 볼 수 있어야 관문이 의미가 있습니다. 실패하면 HTML 테스트 리포트를 아티팩트로 올려, 로그를 뒤지지 않고 어떤 테스트가 왜 실패했는지 바로 봅니다.
+
+### 테스트한 jar를 그대로 배포한다
+
+`deploy` 잡이 다시 빌드하지 않고 `test` 잡이 올린 jar를 내려받아 배포합니다. 다시 빌드하면 테스트를 통과한 것과 다른 산출물이 나갈 수 있습니다. "검증한 것과 배포한 것이 같다"는 보장이 빌드 한 번에서 나옵니다. 같은 이유로 `bootJar` 이름을 `cgv.jar`로 고정하고 plain jar는 만들지 않습니다. 배포 스크립트가 어떤 jar를 골라야 할지 고민할 일이 없습니다.
+
+### CI는 성공했는데 CD는 실패한 경험 — 비밀값은 CI가 검증하지 못한다
+
+토스 키 Secrets 2개를 잘못 넣었을 때 CI는 성공하고 CD만 실패했습니다. 테스트는 `src/test/resources/application.yaml`의 더미 키로 돌고 토스를 실제로 호출하지 않으니 운영 Secrets가 틀려도 알 수 없습니다. 운영 비밀값은 배포 단계에서 처음 쓰이므로, 이 값이 맞는지는 배포 후 헬스 체크가 잡아야 합니다.
+
+그래서 `deploy.sh`는 `systemctl restart`로 끝내지 않고 앱이 실제로 응답할 때까지 최대 120초 기다립니다. `restart`는 프로세스를 띄우기만 하고 성공을 보장하지 않습니다. 확인 없이 끝내면 "배포 성공" 초록불 뒤에서 앱이 죽어 있게 됩니다. 응답이 없으면 최근 로그를 출력하고 실패로 끝내 잘못된 설정이 Actions 화면에 바로 드러납니다.
+
+### 그 밖에 배운 것
+
+| 항목 | 이유 |
+|---|---|
+| `environment: production` | Secrets를 저장소 전체가 아니라 배포 환경에만 둡니다. PR 워크플로우는 운영 비밀값에 접근할 수 없습니다 |
+| `concurrency` | PR은 새 커밋이 오면 이전 실행을 취소합니다. 배포는 중간에 끊기면 서버가 반쯤 바뀐 상태로 남으므로 취소하지 않고 줄을 세웁니다 |
+| `chmod +x gradlew` | Windows에서 커밋하면 실행 권한이 빠져 있을 수 있습니다 |
+| `-Duser.timezone=Asia/Seoul` | 테스트는 `main()`을 거치지 않아 러너 기본 시간대(UTC)로 돕니다. 운영과 같은 시간대에서 검증해야 "상영 20분 전" 같은 경계가 맞습니다 |
+| 환경변수 파일을 배포마다 새로 생성 | 서버에서 손으로 고친 값이 다음 배포에 덮이거나 남는 일이 없습니다. 값의 원본은 GitHub Secrets 하나입니다 |
+
+### 한계
+
+- 배포는 `systemctl restart`라 재시작하는 수십 초 동안 요청을 받지 못합니다. 「무중단 배포」에서 다룹니다.
+- 배포가 실패해도 이전 버전으로 자동으로 돌아가지 않습니다. 이전 jar를 보관하지 않기 때문입니다.
+
+## Docker로 애플리케이션 컨테이너화
+
+### 무엇을 만들었나
+
+| 파일 | 역할 |
+|---|---|
+| `Dockerfile` | 소스를 받아 이미지 안에서 빌드하고, JRE만 있는 실행 이미지를 만듭니다 |
+| `.dockerignore` | `.env`·`build`·`.git` 등을 빌드 컨텍스트에서 뺍니다 |
+| `docker-compose.yml` | MySQL 8.0 + 앱을 한 번에 띄웁니다. 비밀값은 로컬 `.env`를 그대로 씁니다 |
+
+```bash
+# 이미지만 빌드하고 실행 (DB는 호스트 MySQL 사용)
+docker build -t cgv:local .
+docker run --rm -p 8080:8080 --env-file .env -e DB_HOST=host.docker.internal cgv:local
+
+# 앱 + DB 한 번에
+docker compose up -d --build
+docker compose logs -f app
+docker compose down        # 컨테이너만 삭제, DB 데이터는 볼륨에 남음
+docker compose down -v     # DB 데이터까지 삭제
+```
+
+### 멀티 스테이지 빌드 — 빌드 도구는 실행 이미지에 넣지 않는다
+
+```dockerfile
+FROM eclipse-temurin:21-jdk AS build   # 1단계: JDK + Gradle로 jar 생성
+...
+FROM eclipse-temurin:21-jre            # 2단계: JRE + jar 내용만
+COPY --from=build /workspace/extracted/... ./
+```
+
+jar를 실행하는 데 컴파일러와 Gradle 캐시는 필요 없습니다. 한 단계로 만들면 JDK와 수백 MB의 Gradle 캐시가 그대로 실행 이미지에 남습니다. 두 단계로 나누면 최종 이미지는 마지막 `FROM` 이후만 담기므로 작고, 공격에 쓰일 수 있는 도구도 줄어듭니다.
+
+로컬에서 미리 `./gradlew bootJar`를 하고 jar만 복사하는 방법도 있습니다. 하지만 그러면 이미지 결과가 빌드한 사람의 JDK 버전·로컬 파일 상태에 따라 달라집니다. 이미지 안에서 빌드하면 Dockerfile만 있으면 누가 어디서 빌드해도 같은 결과가 나옵니다.
+
+### 레이어 캐시 — 자주 바뀌는 것을 나중에
+
+Docker 이미지는 명령 한 줄마다 레이어가 쌓이고, 어떤 레이어의 입력이 바뀌면 그 아래 레이어는 모두 다시 만듭니다. 그래서 **잘 안 바뀌는 것을 위에, 자주 바뀌는 것을 아래에** 둡니다.
+
+```dockerfile
+COPY gradlew settings.gradle build.gradle ./   # 의존성 목록 (가끔 바뀜)
+COPY gradle gradle
+RUN ./gradlew dependencies                      # 의존성 다운로드 → 캐시됨
+COPY src src                                    # 소스 (자주 바뀜)
+RUN ./gradlew bootJar -x test
+```
+
+소스만 고쳤다면 `build.gradle`이 그대로라 의존성 다운로드 레이어는 캐시에서 재사용합니다.
+
+같은 원리를 실행 이미지에도 적용했습니다. fat jar 하나를 통째로 `COPY`하면 코드 한 줄만 바뀌어도 의존성 수십 MB가 든 레이어 전체가 새로 만들어지고, 서버는 그걸 다시 받아야 합니다. Spring Boot의 `jarmode=tools extract --layers`로 jar를 `dependencies` / `spring-boot-loader` / `snapshot-dependencies` / `application` 네 층으로 풀어 각각 `COPY`했습니다. 코드만 바뀐 배포에서는 `application` 레이어(수백 KB)만 바뀝니다.
+
+### 이미지 안에서는 테스트를 건너뛴다 (`-x test`)
+
+테스트는 CI가 이미 돌립니다. 그리고 동시성 테스트는 Testcontainers로 MySQL 컨테이너를 띄우는데, `docker build` 안에서는 Docker를 쓸 수 없어 실패합니다. 이미지 빌드는 "패키징"만 맡고, "검증"은 CI 잡이 맡도록 책임을 나눴습니다.
+
+### 비밀값은 이미지에 넣지 않는다
+
+이미지에 들어간 파일은 레이어에 영원히 남습니다. 나중 단계에서 지워도 이전 레이어를 꺼내 보면 그대로 있습니다. 그래서 `.dockerignore`로 `.env`를 빌드 컨텍스트에서 아예 빼고, 비밀값은 `--env-file` / `env_file`로 **실행 시점에만** 넣습니다. 같은 이미지를 로컬·운영에 그대로 쓰고 환경변수만 바꾸는 구조이기도 합니다. `application.yaml`이 처음부터 `${DB_HOST}` 같은 환경변수로 짜여 있어 Dockerfile을 위해 설정을 고칠 필요가 없었습니다.
+
+### 컨테이너 안의 localhost는 컨테이너 자신이다
+
+처음 헷갈리는 부분입니다. 로컬에서는 `DB_HOST`가 기본값 `localhost`인데, 컨테이너 안에서 `localhost`는 앱 컨테이너 자기 자신이라 MySQL이 없습니다.
+
+| 상황 | DB_HOST |
+|---|---|
+| 앱을 호스트에서 실행 | `localhost` |
+| 앱만 컨테이너, DB는 호스트 MySQL | `host.docker.internal` (Docker Desktop) |
+| compose로 둘 다 컨테이너 | `db` (서비스 이름) |
+
+compose는 서비스들을 같은 네트워크에 묶고 서비스 이름을 DNS 이름으로 등록합니다. 그래서 `docker-compose.yml`에서 `.env`를 읽은 뒤 `DB_HOST: db`만 덮어썼습니다.
+
+### depends_on만으로는 DB가 준비됐다는 뜻이 아니다
+
+`depends_on: [db]`는 DB 컨테이너가 **시작된** 뒤 앱을 띄울 뿐, MySQL이 **접속을 받을 수 있는** 상태인지는 보지 않습니다. MySQL은 첫 실행 때 초기화에 수십 초가 걸리고, 그 사이 앱이 뜨면 커넥션 실패로 바로 죽습니다. DB에 `mysqladmin ping` 헬스체크를 두고 `condition: service_healthy`로 기다리게 했습니다.
+
+### 그 밖의 선택
+
+| 선택 | 이유 |
+|---|---|
+| non-root 사용자(`spring`)로 실행 | 컨테이너가 탈취돼도 root 권한을 넘겨주지 않습니다 |
+| `-XX:MaxRAMPercentage=75` | JVM은 컨테이너 메모리 한도를 인식하지만 기본은 힙에 1/4만 씁니다. 컨테이너 안에는 이 프로세스뿐이라 비율을 높였습니다 |
+| `TZ=Asia/Seoul` | 앱은 `main()`에서 시간대를 고정하지만, 로그 시각과 MySQL 서버 시각도 맞춰 두면 확인할 때 헷갈리지 않습니다 |
+| DB 포트를 `3307`로 공개 | 호스트에 로컬 MySQL(3306)이 이미 떠 있어도 충돌하지 않습니다. 앱은 내부 네트워크로 `db:3306`에 접속합니다 |
+| `db-data` 볼륨 | 컨테이너를 지워도 DB 데이터는 남습니다. 컨테이너는 언제든 버리고 다시 만드는 것이고, 상태는 볼륨에 둡니다 |
+| MySQL은 root 계정 사용 | 로컬 `.env`가 `DB_USERNAME=root`입니다. `MYSQL_USER`에 root를 넣으면 이미지가 거부하므로 `MYSQL_ROOT_PASSWORD`만 맞췄습니다. 다른 계정을 쓰려면 `MYSQL_USER`/`MYSQL_PASSWORD`를 추가합니다 |
+
+### 실행 확인
+
+| 항목 | 결과 |
+|---|---|
+| 이미지 크기 | 585MB (JRE 베이스 포함). 그중 의존성 레이어 66MB, 애플리케이션 레이어 1.41MB |
+| `docker compose up` | DB가 `healthy`가 된 뒤 앱이 시작됨 |
+| 앱 기동 | 약 30초 뒤 `/v3/api-docs` 200 |
+| 실행 사용자 / 시간대 | `spring` / KST |
+| local 프로필 샘플 데이터 | compose의 MySQL에 지점·회차가 들어감 |
+
+`docker history cgv:local`로 보면 코드만 바꿔 다시 빌드했을 때 새로 만들어지는 레이어는 1.41MB짜리 `application` 하나입니다.
+
+**잘못된 설정은 일찍 죽는 게 낫다.** 처음 compose로 띄웠을 때 앱이 바로 종료됐습니다. 로컬 `.env`의 토스 키가 결제위젯 키(`test_gck_` / `test_gsk_`)가 아니라 API 개별 연동 키(`test_ck_` / `test_sk_`)였고, `TossPaymentsProperties`의 접두사 검증이 시작 시점에 막은 것입니다. 이 검증이 없었다면 앱은 정상으로 떠 있다가 첫 결제 승인에서 `INVALID_API_KEY`로 실패했을 겁니다. CD에서 Secrets를 잘못 넣었을 때 배포가 실패로 드러난 것도 같은 구조입니다. 시작 검증이 기동을 막고, 배포 스크립트의 헬스 체크가 그걸 실패로 보고합니다.
+
+### 한계
+
+- 운영 배포는 아직 jar + systemd 방식입니다. 이미지를 레지스트리(ECR 등)에 올려 EC2가 받아 실행하는 방식으로 바꾸는 것은 「무중단 배포 AWS 실습」에서 다룹니다.
+- compose는 한 호스트용입니다. 운영 DB는 RDS를 쓰므로 운영에서 compose로 MySQL을 띄우지 않습니다.
+
+## 무중단 배포
+
+### 지금 배포는 왜 중단되나
+
+현재 배포는 `systemctl restart cgv`입니다. 기존 프로세스가 내려가고 새 프로세스가 뜨는 사이, 앱이 요청을 받을 수 있게 되기까지 약 30초 동안 8080 포트에는 아무도 없습니다. 이 사이 들어온 요청은 연결 거부로 실패하고, 처리 중이던 요청도 함께 끊깁니다. 서버가 한 대이고 "끄고 → 켜는" 순서라서 생기는 문제입니다.
+
+무중단 배포의 핵심은 순서를 **"새 버전을 먼저 띄우고 → 준비됐는지 확인하고 → 트래픽을 옮기고 → 구버전을 끈다"**로 바꾸는 것입니다. 그러려면 두 가지가 필요합니다.
+
+1. **트래픽을 옮겨 줄 앞단** — 로드밸런서(ALB)나 리버스 프록시(Nginx). 클라이언트는 앞단 주소만 알고, 뒤의 서버가 바뀌는 것은 모릅니다.
+2. **준비 여부를 판단할 헬스 체크** — 프로세스가 떴는지가 아니라 요청을 처리할 수 있는지를 봅니다.
+
+세 가지 전략은 "트래픽을 어떤 단위로 옮기는가"가 다릅니다.
+
+### 롤링 (Rolling)
+
+```
+시작        [v1] [v1] [v1] [v1]
+1대 교체    [v2] [v1] [v1] [v1]   ← 1대를 빼고 v2로 바꾼 뒤 다시 넣는다
+2대 교체    [v2] [v2] [v1] [v1]
+완료        [v2] [v2] [v2] [v2]
+```
+
+서버 여러 대를 **한 대(또는 몇 대)씩** 차례로 교체합니다. 교체할 서버를 로드밸런서에서 빼고, 새 버전을 올리고, 헬스 체크를 통과하면 다시 넣습니다.
+
+- **장점:** 추가 서버가 거의 필요 없어 가장 저렴합니다. AWS Auto Scaling 그룹의 인스턴스 새로 고침, Kubernetes Deployment의 기본 방식입니다.
+- **단점:**
+  - 교체 중에는 처리 용량이 줄어듭니다(4대 중 1대 빠지면 75%). 그래서 "최대 몇 대까지 동시에 뺄지(maxUnavailable)", "몇 대까지 더 띄울지(maxSurge)"를 정합니다.
+  - 배포하는 동안 **v1과 v2가 동시에 요청을 받습니다**. 같은 사용자의 연속 요청이 다른 버전으로 갈 수 있습니다.
+  - 롤백도 다시 한 대씩 되돌리는 롤링이라 느립니다.
+
+### 블루/그린 (Blue/Green)
+
+```
+배포 전     LB ──▶ [Blue v1]          [Green v2] (띄워서 검증 중, 트래픽 없음)
+전환        LB ──────────────────────▶ [Green v2]
+                  [Blue v1] (대기 — 롤백용)
+```
+
+현재 버전(블루)과 **똑같은 환경을 한 벌 더**(그린) 만들어 새 버전을 올립니다. 그린을 충분히 검증한 뒤 로드밸런서가 가리키는 대상을 **한 번에** 그린으로 바꿉니다. 블루는 바로 지우지 않고 남겨 둡니다.
+
+- **장점:**
+  - 롤백이 즉시입니다. 앞단이 블루를 다시 가리키게 하면 끝입니다.
+  - 전환이 한 순간이라 두 버전이 섞여 응답하는 시간이 짧습니다.
+  - 트래픽을 받기 전에 실제 운영 환경과 같은 곳에서 새 버전을 확인할 수 있습니다.
+- **단점:**
+  - 전환하는 동안 자원이 두 배 듭니다.
+  - **DB는 보통 하나를 같이 씁니다.** 그린이 스키마를 바꾸면 블루가 깨질 수 있고, 그러면 "즉시 롤백"이 불가능해집니다(아래 「어떤 전략이든 공통으로 지켜야 할 것」 2번 참고).
+  - 한 번에 100%를 넘기므로, 검증에서 못 잡은 버그는 전체 사용자에게 곧바로 노출됩니다.
+
+### 카나리 (Canary)
+
+```
+1단계   LB ──95%──▶ [v1]     ──5%──▶ [v2]    ← 오류율·응답 시간 관찰
+2단계   LB ──50%──▶ [v1]     ──50%─▶ [v2]
+완료    LB ─────────────────100%──▶ [v2]
+```
+
+광산의 카나리아처럼 **일부 트래픽만** 새 버전으로 보내 먼저 위험을 감지합니다. 지표(5xx 비율, 응답 시간, 결제 승인 실패율 등)가 괜찮으면 비율을 늘리고, 나빠지면 0%로 되돌립니다.
+
+- **장점:** 문제가 있어도 영향받는 사용자가 일부입니다. 테스트 환경에서 재현되지 않는 실제 트래픽 문제를 작은 범위에서 잡습니다.
+- **단점:**
+  - **지표를 보고 판단할 체계가 있어야 의미가 있습니다.** 모니터링 없이 비율만 나누면 "천천히 하는 롤링"일 뿐입니다.
+  - 트래픽을 비율로 나누는 앞단이 필요합니다(ALB 가중치 대상 그룹, Nginx `weight`, 서비스 메시 등).
+  - 두 버전이 공존하는 기간이 셋 중 가장 깁니다.
+
+### 비교
+
+| | 롤링 | 블루/그린 | 카나리 |
+|---|---|---|---|
+| 트래픽 이동 단위 | 서버 단위 | 전체 한 번에 | 비율 단위 |
+| 추가 자원 | 적음 (0 ~ 일부) | 2배 (전환 동안) | 적음 (일부) |
+| 두 버전 공존 | 배포하는 동안 | 전환 순간만 | 가장 김 |
+| 롤백 속도 | 느림 (다시 롤링) | 즉시 (앞단 전환) | 빠름 (비율 0%) |
+| 문제 노출 범위 | 교체된 서버 비율만큼 | 전체 | 설정한 비율만큼 |
+| 필요한 것 | 서버 여러 대 + LB | 환경 두 벌 + 전환 가능한 앞단 | 가중치 라우팅 + 모니터링 |
+| 서버 1대일 때 | 불가능 | **가능** (같은 서버에 포트 둘) | 사실상 의미 없음 |
+
+### 어떤 전략이든 공통으로 지켜야 할 것
+
+**1) 구버전은 "하던 일을 끝내고" 꺼져야 한다 — graceful shutdown.**
+트래픽을 새 버전으로 옮겨도, 구버전이 처리 중이던 요청을 바로 죽이면 그 요청은 실패합니다. Spring Boot(3.4 이상)는 기본으로 graceful shutdown이 켜져 있어 종료 신호(SIGTERM)를 받으면 새 요청을 받지 않고 처리 중인 요청을 기다립니다. 기본 대기 한도는 30초(`spring.lifecycle.timeout-per-shutdown-phase`)입니다. 주의할 점이 두 가지 있습니다.
+
+- `docker stop`은 기본 **10초** 뒤 강제 종료(SIGKILL)합니다. Spring의 30초를 다 기다리지 않으므로 `docker stop -t 40`처럼 늘려야 합니다.
+- 토스 승인 호출의 읽기 타임아웃은 **60초**라 종료 대기보다 깁니다. 승인 도중 종료되면 그 결제는 T2를 못 하고 `IN_PROGRESS`로 남습니다. 이 경우는 이미 「외부 API 통신과 예외 처리」에서 만든 결과 불명 정리 스케줄러가 2분 뒤 토스 조회로 맞춥니다. **배포로 인한 강제 종료도 "결과를 모르는 실패" 중 하나**이고, 그 경로가 이미 있어서 무중단 배포를 위해 결제 코드를 고칠 필요는 없습니다.
+
+**2) DB 스키마는 신·구 버전 모두와 호환돼야 한다 — expand / contract.**
+어떤 전략이든 v1과 v2는 같은 DB를 잠시라도 같이 씁니다. v2가 컬럼 이름을 바꾸면 그 순간 v1이 깨집니다. 그래서 스키마 변경을 나눠서 배포합니다.
+
+| 단계 | 배포 내용 | v1과 호환? |
+|---|---|---|
+| expand | 새 컬럼 추가, 코드는 옛/새 컬럼 둘 다 씀 | ○ |
+| migrate | 기존 데이터를 새 컬럼으로 옮김 | ○ |
+| contract | 다음 배포에서 옛 컬럼 사용 제거 → 삭제 | v1이 사라진 뒤라 무관 |
+
+지금 운영 프로필은 `ddl-auto: update`라 컬럼·테이블 **추가만** 자동 반영되고 삭제·변경은 반영되지 않습니다. 우연히 expand 단계만 일어나는 셈이라 무중단 배포와 크게 충돌하지는 않지만, 스키마 변경을 코드로 관리하려면 Flyway 같은 마이그레이션 도구가 필요합니다.
+
+**3) 상태를 서버 메모리에 두지 않는다.**
+인증은 JWT라 서버 세션이 없고, 리프레시 토큰은 DB에 있습니다. 요청이 어느 서버(어느 버전)로 가든 같은 결과가 나오므로 "같은 사용자를 같은 서버로 보내기(sticky session)"가 필요 없습니다. 세션 기반이었다면 서버를 바꾸는 순간 로그인이 풀렸을 겁니다.
+
+**4) 두 인스턴스가 동시에 떠 있는 순간이 생긴다 — 스케줄러.**
+결과 불명 결제 정리 스케줄러는 인스턴스마다 돕니다. 블루와 그린이 겹치는 동안 같은 결제를 두 번 정리하려 할 수 있습니다. 행 잠금과 상태 재확인으로 반영은 한 번만 되고 토스 조회만 중복됩니다(「Webhook」의 한계와 같음). 서버가 계속 여러 대라면 ShedLock 같은 분산 락이 필요합니다.
+
+**5) 헬스 체크는 "준비됐는가"를 봐야 한다.**
+지금은 `/v3/api-docs`를 헬스 체크로 씁니다. 앱이 HTTP를 받는다는 것만 확인하고 DB 연결은 보지 않습니다. Spring Boot Actuator의 readiness(`/actuator/health/readiness`)를 쓰면 DB 연결까지 포함해 판단하고, 종료가 시작되면 readiness가 먼저 실패해 로드밸런서가 트래픽을 끊을 수 있습니다.
+
+### 이 프로젝트에 맞는 선택
+
+지금은 EC2 한 대 + RDS입니다. 롤링은 서버가 여러 대여야 하고, 카나리는 비율을 나눌 서버와 지표가 있어야 의미가 있습니다. **서버 한 대에서 바로 적용할 수 있는 것은 블루/그린**입니다. 같은 EC2에 8081(블루) / 8082(그린) 두 컨테이너를 번갈아 띄우고, Nginx가 가리키는 포트만 바꿉니다. 아래 실습 1단계가 이 방식이고, 서버를 늘린 뒤의 롤링·카나리는 2·3단계에서 다룹니다.
+
+## 무중단 배포 AWS 실습 가이드
+
+> 현재 운영 배포(jar + systemd, `deploy/`)는 그대로 두고 따라 할 수 있도록 단계별로 정리했습니다. 각 단계 끝의 「확인」을 통과한 뒤 다음 단계로 넘어갑니다. 2·3단계는 프리티어를 벗어나는 비용이 생길 수 있으니 실습이 끝나면 「정리」를 꼭 합니다.
+
+### 0단계 — 지금의 중단을 먼저 눈으로 본다
+
+무중단이 됐는지 확인하려면 비교 대상이 필요합니다. 배포 동안 0.2초마다 요청을 보내 상태 코드를 기록합니다.
+
+```bash
+# 로컬 PC에서 실행. 배포가 끝나면 Ctrl+C
+while true; do
+  printf '%s %s\n' "$(date +%T)" "$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 http://<EC2_IP>:8080/v3/api-docs)"
+  sleep 0.2
+done | tee deploy-before.log
+```
+
+이 상태에서 `chjpooh2002` 브랜치에 빈 커밋을 push해 배포를 일으킵니다. 로그에 `000`(연결 실패)이 수십 초 이어지는 구간이 지금 배포의 중단 시간입니다. 이 수치를 기록해 둡니다.
+
+### 1단계 — EC2 한 대에서 Docker + Nginx 블루/그린
+
+```
+                       ┌──────────── EC2 ────────────┐
+사용자 ──:80──▶ Nginx ─┼─▶ cgv-blue  (127.0.0.1:8081) │
+                       │   cgv-green (127.0.0.1:8082) │──▶ RDS
+                       └─────────────────────────────┘
+GitHub Actions ─ build·push ─▶ ECR ◀─ pull ─ EC2
+```
+
+**1-1. 이미지 저장소(ECR) 만들기**
+
+1. AWS 콘솔 → ECR → 리포지토리 생성 → 이름 `cgv`, 프라이빗.
+2. 수명 주기 정책으로 "최근 이미지 10개만 유지"를 걸어 저장 비용이 쌓이지 않게 합니다.
+
+**1-2. GitHub Actions가 키 없이 ECR에 push하도록 — OIDC**
+
+액세스 키를 Secrets에 넣는 대신, GitHub이 발급한 토큰으로 AWS 역할을 잠깐 빌립니다. 키가 유출될 일이 없고 만료도 자동입니다.
+
+1. IAM → 자격 증명 공급자 → OpenID Connect 추가: URL `https://token.actions.githubusercontent.com`, 대상 `sts.amazonaws.com`.
+2. IAM 역할 생성 → 웹 자격 증명 → 위 공급자 선택 → 조건에 저장소와 브랜치를 제한합니다(`repo:<owner>/spring-cgv-24th:ref:refs/heads/chjpooh2002`). 이 조건이 없으면 아무 저장소나 이 역할을 빌릴 수 있습니다.
+3. 권한: `cgv` 리포지토리에 대한 push 권한(`AmazonEC2ContainerRegistryPowerUser`를 붙이거나, 리포지토리 ARN으로 제한한 인라인 정책).
+4. 역할 ARN을 `production` 환경의 Secret `AWS_ROLE_ARN`으로 등록합니다.
+
+**1-3. EC2가 ECR에서 pull할 수 있게 — 인스턴스 역할**
+
+1. IAM 역할(신뢰 대상 EC2)에 `AmazonEC2ContainerRegistryReadOnly`를 붙입니다.
+2. EC2 → 인스턴스 → 작업 → 보안 → IAM 역할 수정 → 위 역할 연결.
+
+EC2 안에서는 이 역할로 `aws ecr get-login-password`가 동작하므로, 서버에도 키를 두지 않습니다.
+
+**1-4. EC2에 Docker·Nginx 설치 (Ubuntu 기준)**
+
+```bash
+sudo apt-get update
+sudo apt-get install -y docker.io nginx awscli
+sudo usermod -aG docker $USER   # 다시 로그인해야 적용
+```
+
+메모리를 확인합니다. **블루/그린은 전환하는 동안 JVM 두 개가 동시에 뜹니다.** t2/t3.micro(1GB)에서는 메모리가 부족해 둘 중 하나가 OOM으로 죽을 수 있습니다. 스왑을 2GB 정도 만들고, 컨테이너마다 메모리 한도를 둡니다(아래 스크립트의 `--memory 400m`, 힙은 Dockerfile의 `MaxRAMPercentage=75`로 그 안에서 잡힘).
+
+```bash
+sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile
+sudo mkswap /swapfile && sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+```
+
+**1-5. Nginx — 바라보는 포트를 파일 하나로 분리**
+
+전환할 때 고칠 곳을 한 줄로 만들기 위해 대상 주소를 별도 파일에 둡니다.
+
+```nginx
+# /etc/nginx/conf.d/service-url.inc
+set $service_url http://127.0.0.1:8081;
+```
+
+```nginx
+# /etc/nginx/sites-available/default 의 server 블록
+server {
+    listen 80;
+    include /etc/nginx/conf.d/service-url.inc;
+
+    location / {
+        proxy_pass $service_url;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+`sudo nginx -t && sudo systemctl reload nginx`. `reload`는 Nginx를 재시작하지 않고 설정만 바꿉니다. 기존 연결은 옛 워커가 끝까지 처리하고 새 연결부터 새 설정을 따르므로 **전환 자체에 끊김이 없습니다.** 이것이 블루/그린 전환이 무중단인 이유입니다.
+
+보안 그룹에 80번 인바운드를 엽니다. 8081/8082는 열지 않습니다(Nginx만 접근).
+
+**1-6. 블루/그린 배포 스크립트**
+
+EC2의 `~/cgv-deploy/deploy-bluegreen.sh`로 두는 것을 가정한 뼈대입니다. 흐름은 "안 쓰는 색을 찾는다 → 그 색으로 새 이미지를 띄운다 → 헬스 체크 → Nginx 전환 → 옛 색을 정상 종료"입니다.
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+IMAGE="$1"                          # 예: <계정>.dkr.ecr.ap-northeast-2.amazonaws.com/cgv:<커밋SHA>
+ENV_FILE=/opt/cgv/cgv.env
+INC=/etc/nginx/conf.d/service-url.inc
+
+# 1) 지금 Nginx가 가리키는 색의 반대를 새 색으로 고른다
+if grep -q 8081 "$INC"; then
+  OLD=blue;  NEW=green; NEW_PORT=8082
+else
+  OLD=green; NEW=blue;  NEW_PORT=8081
+fi
+
+# 2) 새 이미지 받기 (인스턴스 역할로 로그인)
+REGISTRY="${IMAGE%%/*}"
+aws ecr get-login-password --region ap-northeast-2 | docker login --username AWS --password-stdin "$REGISTRY"
+docker pull "$IMAGE"
+
+# 3) 새 색 컨테이너 띄우기 (같은 이름이 남아 있으면 먼저 정리)
+docker rm -f "cgv-$NEW" 2>/dev/null || true
+docker run -d --name "cgv-$NEW" \
+  --env-file "$ENV_FILE" \
+  -p "127.0.0.1:$NEW_PORT:8080" \
+  --memory 400m \
+  --restart unless-stopped \
+  "$IMAGE"
+
+# 4) 새 색이 요청을 받을 때까지 기다린다. 실패하면 Nginx를 건드리지 않고 끝낸다 → 기존 색이 계속 서비스
+for _ in $(seq 1 40); do
+  if curl -fs -o /dev/null "http://127.0.0.1:$NEW_PORT/v3/api-docs"; then
+    # 5) 전환: 파일 한 줄 바꾸고 reload
+    echo "set \$service_url http://127.0.0.1:$NEW_PORT;" | sudo tee "$INC" > /dev/null
+    sudo nginx -t && sudo systemctl reload nginx
+    # 6) 옛 색이 처리 중인 요청을 끝낼 시간을 준다 (Spring 기본 30초 + 여유)
+    docker stop -t 40 "cgv-$OLD" 2>/dev/null || true
+    echo "배포 완료: $OLD → $NEW"
+    exit 0
+  fi
+  sleep 3
+done
+
+echo "새 버전이 120초 안에 응답하지 않았습니다. 기존 $OLD 유지" >&2
+docker logs --tail 100 "cgv-$NEW" >&2
+docker rm -f "cgv-$NEW"
+exit 1
+```
+
+핵심은 4번입니다. 지금 `deploy.sh`는 헬스 체크가 실패해도 이미 구버전을 내린 뒤라 서비스가 죽어 있습니다. 블루/그린에서는 **헬스 체크가 실패하면 전환하지 않으므로** 잘못된 Secrets로 배포해도 기존 버전이 계속 서비스합니다. 토스 키를 잘못 넣었던 경험이 이 단계에서는 "배포 실패, 서비스 정상"으로 끝납니다.
+
+**1-7. 워크플로우 변경**
+
+`deploy` 잡을 "jar 전송"에서 "이미지 빌드·push → EC2에서 스크립트 실행"으로 바꿉니다. `test` 잡은 그대로 두고 `needs: test`로 테스트 통과 후에만 돌게 합니다.
+
+```yaml
+  deploy:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/chjpooh2002'
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      id-token: write          # OIDC 토큰 발급에 필요
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ap-northeast-2
+
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # 태그를 latest가 아니라 커밋 SHA로 둔다. 어떤 커밋이 떠 있는지 알 수 있고, 롤백할 때 이전 SHA로 다시 배포하면 된다.
+      - name: 이미지 빌드·push
+        env:
+          IMAGE: ${{ steps.ecr.outputs.registry }}/cgv:${{ github.sha }}
+        run: |
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+
+      # (환경변수 파일 생성·SSH 키 설정 단계는 기존과 같다. cgv.env는 /opt/cgv/cgv.env로 올린다)
+
+      - name: 블루/그린 전환
+        env:
+          TARGET: ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}
+          IMAGE: ${{ steps.ecr.outputs.registry }}/cgv:${{ github.sha }}
+        run: ssh -i ~/.ssh/ec2_key "$TARGET" "bash ~/cgv-deploy/deploy-bluegreen.sh '$IMAGE'"
+```
+
+`test` 잡이 만든 jar 대신 Dockerfile이 다시 빌드한다는 점은 「테스트한 jar를 그대로 배포한다」와 어긋납니다. 실습에서는 단순하게 두고, 더 엄격하게 하려면 Dockerfile을 "빌드된 jar를 복사하는" 형태로 바꿔 `test` 잡의 jar를 그대로 넣습니다.
+
+**1-8. 기존 systemd 서비스에서 넘어가기**
+
+```bash
+sudo systemctl disable --now cgv        # 8080을 쓰던 jar 프로세스 종료
+echo 'set $service_url http://127.0.0.1:8081;' | sudo tee /etc/nginx/conf.d/service-url.inc
+# 첫 배포는 OLD=blue(존재하지 않음) → NEW=green 으로 뜬다. 스크립트가 없는 컨테이너 stop은 무시한다.
+```
+
+첫 전환 순간에는 블루가 없어 짧은 끊김이 있습니다. 두 번째 배포부터가 무중단입니다.
+
+**확인**
+- 0단계의 측정 루프를 이번엔 `http://<EC2_IP>/v3/api-docs`(80번)로 돌리고 배포합니다. `000`이나 `502`가 없으면 성공입니다. `deploy-before.log`와 나란히 비교해 README에 기록합니다.
+- 일부러 `TOSS_SECRET_KEY`를 `test_sk_`로 시작하는 값으로 바꿔 배포 → 접두사 검증으로 새 컨테이너가 뜨지 못해 Actions는 실패, 측정 루프는 계속 200인지 확인합니다. 예전에 겪은 Secrets 실수를 일부러 재현하는 것입니다. 확인 후 원래 값으로 되돌립니다.
+- 롤백: `service-url.inc`를 이전 포트로 바꾸고 `reload` (옛 컨테이너가 stop 상태면 `docker start cgv-<색>` 먼저).
+
+### 2단계 — ALB + Auto Scaling 그룹으로 롤링
+
+서버를 여러 대로 늘리고 Nginx 대신 ALB가 트래픽을 나눕니다.
+
+1. **시작 템플릿**: 1단계의 EC2 설정(Docker, 인스턴스 역할, 보안 그룹)을 사용자 데이터 스크립트로 옮깁니다. 부팅 시 ECR에서 이미지를 받아 `-p 8080:8080`으로 띄웁니다. 환경변수는 SSM Parameter Store에서 읽게 하면 서버에 파일을 올릴 필요가 없습니다.
+2. **대상 그룹**: 포트 8080, 헬스 체크 경로 `/v3/api-docs`, 정상 임계 2회. **등록 취소 지연(deregistration delay)**을 40초 정도로 둡니다. 서버가 빠질 때 ALB가 새 요청은 안 보내고 진행 중인 요청은 이 시간만큼 기다려 줍니다.
+3. **ALB**: 80 리스너 → 위 대상 그룹. 보안 그룹은 ALB만 80 공개, EC2는 ALB 보안 그룹에서 오는 8080만 허용.
+4. **Auto Scaling 그룹**: 원하는 용량 2, 최소 2, 최대 3. 상태 확인 유형을 ELB로 둬서 앱이 죽으면 인스턴스를 교체하게 합니다.
+5. **배포**: 새 이미지 태그로 시작 템플릿 새 버전을 만들고 **인스턴스 새로 고침**을 시작합니다. 최소 정상 비율 50%면 2대 중 1대씩 교체합니다. 워크플로우에서는 `aws autoscaling start-instance-refresh`로 호출합니다.
+
+**확인**: 측정 루프를 ALB DNS로 돌리며 인스턴스 새로 고침 → 200만 나오는지. 새로 고침 중 응답 헤더나 로그로 v1/v2가 섞여 응답하는 구간을 관찰합니다(롤링의 "두 버전 공존").
+
+스케줄러가 서버 수만큼 돕니다. 이 단계부터는 「어떤 전략이든 공통으로 지켜야 할 것」 4번이 실제 문제가 됩니다.
+
+### 3단계 — ALB 가중치로 카나리
+
+2단계에서 대상 그룹을 둘로 나눕니다(`cgv-stable`, `cgv-canary`, 각각 자기 Auto Scaling 그룹).
+
+1. 리스너 규칙의 전달 대상을 **가중치 대상 그룹**으로 바꿉니다: stable 95 / canary 5.
+2. 새 버전은 canary 그룹에만 배포합니다.
+3. CloudWatch에서 대상 그룹별 `HTTPCode_Target_5XX_Count`, `TargetResponseTime`을 비교합니다. 결제가 있다면 결제 승인 실패 로그 수도 봅니다.
+4. 문제없으면 25 → 50 → 100으로 올리고, 마지막에 stable을 새 버전으로 맞춘 뒤 다시 100/0으로 돌립니다. 문제가 보이면 canary 가중치를 0으로.
+
+**주의**: 같은 사용자의 요청이 매번 다른 버전으로 갈 수 있습니다. 결제처럼 여러 요청이 이어지는 흐름(주문 저장 → 결제위젯 → 승인)이 두 버전에 걸쳐도 동작하는지가 「어떤 전략이든 공통으로 지켜야 할 것」 2번(스키마 호환)과 같은 문제입니다. 필요하면 대상 그룹 고정(stickiness)을 켭니다.
+
+같은 일을 관리형으로 하려면 CodeDeploy(EC2 블루/그린, 또는 ECS의 `Canary10Percent5Minutes` 같은 배포 설정)를 씁니다. 직접 해 본 뒤 쓰면 그 설정들이 무엇을 대신하는지 보입니다.
+
+### 정리 (비용)
+
+실습이 끝나면 생성 역순으로 지웁니다. ALB와 NAT 게이트웨이는 트래픽이 없어도 시간당 과금됩니다.
+
+- [ ] Auto Scaling 그룹 (원하는 용량 0 → 삭제), 시작 템플릿
+- [ ] ALB, 대상 그룹
+- [ ] 2·3단계에서 추가로 만든 EC2
+- [ ] ECR 이미지(수명 주기 정책이 있으면 자동 정리)
+- [ ] 1단계만 유지한다면 EC2 1대 + RDS는 그대로 둬도 됩니다
