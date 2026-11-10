@@ -1,0 +1,23 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:cgv-test;MODE=MySQL;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: false
+
+jwt:
+  secret: MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE=
+  access-token-expiration: 30m
+  refresh-token-expiration: 7d
+  issuer: cgv-test
+
+toss:
+  payments:
+    client-key: test_ck_example
+    secret-key: test_sk_example
+    base-url: https://api.tosspayments.com
