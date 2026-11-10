@@ -435,9 +435,6 @@ CSRF 공격은 브라우저가 요청마다 쿠키를 자동으로 첨부하는 
 
 현재 JWT 검증 로직은 예외 발생 시 필터 계층에서 즉각적인 401 에러 응답을 반환하지 않고, 예외 원인을 `request attribute` 에 저장한 뒤 `AuthenticationEntryPoint` 로 위임하여 인가 단계에서 처리되도록 설계했다. 이러면 전체 영화 조회와 같이 `permitAll()` 로 설정된 공개 경로에 접근할 때 클라이언트가 만료되거나 잘못된 토큰을 전송하더라도 예외를 발생시키지 않고 인증 정보가 빈 익명 사용자로서 정상적인 조회를 보장할 수 있다.
 
-
-
-
 # 4주차 README
 
 ## 1. 객체지향 코드 리팩토링
@@ -760,67 +757,171 @@ CSRF 공격은 브라우저가 요청마다 쿠키를 자동으로 첨부하는 
 3. 빠른 응답 반환:
    - 웹훅 처리 시간이 길어져 타임아웃이 나면 토스가 계속 재전송하므로, 무거운 후속 작업은 비동기로 분리하고 웹훅 요청에는 빠르게 `200 OK`를 응답하는 구조가 적합함.
 
-# 5주차 리드미
+# 5주차 README
+
+## 1. 코드 리팩토링 및 구조 개선
+
+4주차에서 엔티티에 책임을 넘긴 데 이어, 이번에는 그동안 코드리뷰로 받은 피드백을 반영하여 인증·예매·결제 전반에서 계층 간 책임을 나누고 예외 처리와 트랜잭션 경계를 정리함.
+
+### 1-1. 인증 (Spring Security & JWT 피드백 반영)
+
+- 입력 검증: 요청 DTO에 `@NotBlank`, `@Email` 등 Bean Validation을 적용하고 컨트롤러에서 `@Valid`로 검증. 검증 실패는 `GlobalExceptionHandler`가 일관된 형식으로 응답.
+- `logout` 보안 강화: 인가를 필수로 하고, 요청한 토큰의 소유자가 로그인한 사용자와 다르면 401로 거부함.
+- 인가 설정 정리: `/api/auth/**` 전체 허용 대신 `signup`, `login`, `reissue` 3개 경로만 `permitAll`로 두고, 어드민 컨트롤러는 클래스 레벨 `@PreAuthorize("hasRole('ADMIN')")`로 보호함.
+- 응답 형식 통일: 필터, `AuthenticationEntryPoint`, `AccessDeniedHandler`의 오류도 `GlobalExceptionHandler`를 거쳐 `ApiResponse` 단일 형식으로 내려가게 개선함.
+
+### 1-2. 좌석·예매 도메인 개편
+
+- 기존 문제
+  - `ScreeningSeat`가 `Screening`에 직접 종속되어, 상영 회차를 만들 때마다 상영관 좌석 수만큼 row를 `INSERT`했고 같은 좌석 정보가 회차마다 중복 저장됨.
+  - `Reservation`과 `ScreeningSeat`가 1:1이라 한 번에 여러 좌석을 예매하거나 일부만 취소할 수 없었음.
+
+- 개선 구조
+  - `Seat`: 상영관에 속한 물리 좌석 마스터. 상영관 생성 시 한 번만 만듦.
+  - `SeatReservation`: 회차·좌석·예매를 잇는 점유 테이블. 예약된 좌석만 row로 저장함.
+  - `Reservation` 1 : N `SeatReservation` 구조로 복수 좌석 예매와 부분 취소를 지원.
+
+- 동시성 제어: 4주차의 비관적 락 대신 `(screening_id, seat_id)` 복합 UNIQUE 제약을 선택.
+  - 좌석 도메인을 개편하여 빈 좌석은 `SeatReservation` row 자체가 없어 `FOR UPDATE`로 잠글 대상이 없게 됨.
+  - 그렇다고 물리 좌석에 락을 걸면 서로 다른 회차(14:00, 19:00)의 같은 번호 좌석끼리도 불필요하게 대기하게 됨.
+  - 복수 좌석은 `distinct().sorted()`로 항상 같은 순서로 `INSERT`해 락 순서를 맞추고, 유니크 위반은 `saveAndFlush` 후 `ALREADY_RESERVED`(409)로 변환함.
+
+- 임시 점유(`HOLD`)와 만료
+  - 예매 상태는 `HOLD`(5분) → `CONFIRMED` / `CANCELED` / `EXPIRED`로 전이하며, 각 전이 메서드가 현재 상태를 검증함.
+  - 만료는 좌석 조회 시 지연 평가, 예매 시 만료 점유 해제, 스케줄러 정리의 세 경로로 처리하며, 스케줄러는 건별 `REQUIRES_NEW`로 한 건의 실패가 다른 건에 영향을 주지 않게 함.
+  - 예매 시점의 `ticketPrice`와 `totalPrice`를 저장해 이후 가격이 바뀌어도 영향받지 않게 함.
+
+### 1-3. 결제 트랜잭션 구조 개선
+
+- 기존 문제 
+  - `confirmPayment`, `cancelPayment` 전체가 `@Transactional`이라 토스 API 응답을 기다리는 동안 DB 커넥션과 락을 계속 점유함.
+  - 승인 요청이 타임아웃되면 토스에서 실제로 승인됐는지 모른 채 실패로 처리됨.
+  - `Payment`와 `Order`가 `@OneToOne`이라 결제가 취소·거절된 주문은 재결제할 수 없었음.
+  - `/api/payments/**` 전체가 `permitAll`이라 인증 없이 접근 가능했음.
+
+- 개선 내용
+  - 책임 분리: 트랜잭션이 없는 오케스트레이터 `PaymentService`와, 짧은 트랜잭션만 담당하는 `PaymentTransactionService`로 나눔.
+  - 실행 흐름: 사전 검증, `IN_PROGRESS → 토스 호출(DB 락 없음) → 승인 확정 또는 보상 취소
+  - 락 순서: 대상(예매/주문) → `Payment` 순으로 통일해 교착 가능성을 줄임.
+  - 타임아웃 복구: `IN_PROGRESS` 상태로 남은 결제는 토스 단건 조회로 실제 상태를 확인해 수렴시킴.
+  - 재결제: `Payment`-`Order`를 `@ManyToOne`으로 바꿔 한 주문에 여러 결제 시도를 허용함.
+  - 접근 제어: `/api/payments/**`의 `permitAll`을 제거하고 웹훅 경로만 허용하며, 결제 소유자 검증을 추가함.
+  - 멱등키: 승인은 `orderId`, 보상 취소는 `COMPENSATION_`+`orderId`, 일반 취소는 클라이언트의 `cancelRequestId`를 토스 `Idempotency-Key`로 전달함.
+
+- 예매와 결제 취소의 역할 분리
+  - 결제가 끝난 예매는 예매 API로 취소할 수 없고, 결제 취소 API를 통해서만 취소됨.
+  - 부분 취소 시 요청 금액을 서버가 계산한 값과 교차 검증해 위변조를 막음.
+
+### 1-4. 웹훅을 통한 비동기 상태 동기화
+
+- 필요한 이유: 사용자가 결제창에서 이탈해 `/confirm`이 호출되지 않거나, 운영자가 토스 콘솔에서 직접 환불한 경우를 서버 상태와 맞추기 위함. 
+- 2중 검증
+  - 1차: HMAC-SHA256 서명 검증. 비교는 `MessageDigest.isEqual`로 상수 시간 비교해 타이밍 공격을 방어함.
+  - 2차: 웹훅 본문을 믿지 않고 `paymentKey`로 토스 단건 조회를 호출해 응답을 기준으로 처리함.
+- 이벤트별 처리
+  - `DONE`: 승인이 누락된 결제를 확정함. 이미 `DONE`이면 기존 결과를 반환(멱등). 5분 점유가 만료된 뒤 도착하면 좌석을 되살리지 않고 자동 환불 후 `ABORTED`로 기록하며, 토스에는 `200 OK`를 회신해 재전송을 막음.
+  - `CANCELED`/`PARTIAL_CANCELED`: 잔액과 취소 이력을 동기화하고 `transactionKey`로 중복 반영을 방지함. 전액 취소는 좌석·재고를 복구하고, 콘솔 부분 취소는 어떤 품목인지 알 수 없어 경고 로그만 남김.
+  - `ABORTED`/`EXPIRED`: `READY`·`IN_PROGRESS` 결제를 `ABORTED`로 종결함.
 
 
+---
 
-- 로컬 환경변수 .env로 깔끔하게 정리. 
-- docker compose up 명령 실행 시 docker-compose.yml 속 환경변수는 .env 값으로 채워진다.
-- intelliJ 실행 명령에 환경변수들을 주입하도록 설정
-- `.env.example` 추가: 변수 이름만 공개하고 값은 `change-me`로 둔 견본 파일. `.env`는 `.gitignore`로 제외하고, 새로 clone한 사람은 `cp -n .env.example .env` 후 값을 채워 사용함.
-- `JWT_SECRETE` 오타를 `JWT_SECRET`으로 수정함. (`application.yaml`, `.env`, `.env.example` 모두 반영)
-- `TOSS_WEBHOOK_SECRET`에는 토스 개발자센터 > API 키 > **보안 키**를 사용함. (결제용 시크릿 키와 다른 키)
+## 2. Docker 컨테이너화
 
-### docker-compose 구성
-- `db`(MySQL 8.0)와 `backend`(Spring 앱)를 컨테이너로 한 번에 실행함.
-- MySQL 이미지는 `MYSQL_` 접두사 변수만 읽으므로 `MYSQL_DATABASE`, `MYSQL_ROOT_PASSWORD`로 전달하고, root 계정만 사용함. (`MYSQL_USER=root`는 이미지가 거부함)
-- `backend`에는 `DB_HOST: db`를 compose에서만 덮어써서 컨테이너 안에서는 서비스명으로 DB에 접속하게 함. (`localhost`는 자기 자신을 가리킴)
-- `db`에 healthcheck(`mysqladmin ping`, TCP 접속)를 추가하고 `depends_on`을 `service_healthy` 조건으로 설정해 DB가 준비된 뒤 앱이 시작되게 함.
-- `.dockerignore`로 `.env`, `.git`, `.idea` 등을 빌드 컨텍스트에서 제외함. (`build/libs`는 Dockerfile이 jar를 복사하므로 유지)
+### 2-1. 환경변수 정리 (`.env`)
 
-### 빌드 시 plain.jar 제거
-- Spring Boot 2.5+는 빌드 시 실행용 `*.jar`(bootJar)와 내 클래스만 담긴 `*-plain.jar`(jar)를 함께 만듦.
-- Dockerfile의 `COPY build/libs/*.jar app.jar`가 파일 2개와 매칭되어 빌드가 실패하므로, `build.gradle`에서 `jar` 태스크를 비활성화해 실행용 jar만 생성하게 함.
+- 기존에 여러 곳에서 관리되던 로컬 환경변수를 `.env`로 모으고, `docker compose up` 시 `docker-compose.yml`의 `${}`가 `.env` 값으로 채워지게 함. IntelliJ 실행 설정에도 같은 환경변수를 주입함.
+- `.env`는 `.gitignore`로 제외하고, 견본 파일인 `.env.example`를 커밋하도록 함.
 
-### 웹훅 서명 검증 버그 수정
-- 서명 헤더(`v1:<base64>`)를 `=`로 잘라 base64 패딩(`=`)이 값에서 사라져 정상 웹훅도 거부될 수 있었음. `:` 기준으로 접두사만 제거하도록 수정함.
+### 2-2. Dockerfile로 이미지 빌드 후 `docker run` 실행
 
+- 사용한 실행 명령
 
-### 실행 및 재실행 순서
-- 최초 실행: `./gradlew bootJar` → `docker compose up --build`
-- 코드 수정 후 재실행: jar를 다시 빌드해야 함. Dockerfile이 `build/libs`의 jar를 그대로 복사하므로, `bootJar` 없이 `up`만 하면 옛날 코드가 담긴 이미지가 재사용됨. (실제로 이전 `application.yaml`의 `localhost:3306`이 남아 `Communications link failure`가 발생했음)
-- DB 설정(비밀번호, DB 이름 등) 변경: MySQL 이미지는 데이터 디렉토리가 비어 있을 때만 `MYSQL_*` 값을 적용하므로 `docker compose down -v`로 볼륨을 지운 뒤 다시 실행해야 함. (로컬 DB 데이터가 삭제됨)
-- 실행 확인: `docker compose ps`에서 `cgv-mysql`이 healthy, `cgv-backend`가 Up인지 확인하고 `docker compose logs backend`에서 `Started CgvApplication` 로그와 API 응답을 확인함.
+```bash
+docker build -t cgv-app .
+docker compose up -d db
+docker run --rm -p 8080:8080 --env-file .env -e DB_HOST=db --network spring-cgv-24th_cgv-net cgv-app
+```
 
-### Dockerfile로 이미지 빌드 후 docker run 실행
-- 순서: `./gradlew clean bootJar` → `docker build -t cgv-app .` → DB 컨테이너 실행(`docker compose up -d db`) → `docker run`
-- 실행 명령: `docker run --rm -p 8080:8080 --env-file .env -e DB_HOST=db --network spring-cgv-24th_cgv-net cgv-app`
 - `docker run`은 앱 컨테이너 하나만 띄우므로 compose와 달리 DB와 환경변수를 직접 챙겨야 함.
-  - `--env-file .env`: `.env`의 변수를 컨테이너 환경변수로 주입함. (compose의 `${}` 치환과 달리 파일 전체가 환경변수가 되고, 값의 따옴표도 그대로 포함됨)
+  - `--env-file .env`: `.env`의 변수를 컨테이너 환경변수로 주입함. compose의 `${}` 치환과 달리 파일 전체가 환경변수가 되고, 값의 따옴표도 그대로 포함됨.
   - `-e DB_HOST=db`: `.env`의 `DB_HOST`를 덮어씀. 컨테이너 안에서 `localhost`는 자기 자신을 가리키므로 DB 컨테이너의 서비스명을 써야 함.
-  - `--network spring-cgv-24th_cgv-net`: compose가 만든 네트워크에 붙여야 서비스명 `db`로 DB를 찾을 수 있음. (이름은 `docker network ls`로 확인)
-- 확인: 로그에서 `Started CgvApplication`을 확인하고 Postman으로 API를 호출해 DB 쓰기까지 동작하는 것을 확인함.
+  - `--network spring-cgv-24th_cgv-net`: compose가 만든 네트워크에 붙여야 서비스명 `db`로 DB를 찾을 수 있음. 이름은 `docker network ls`로 확인함.
+- 빌드 시 `plain.jar` 제거
+  - Spring Boot 2.5+는 빌드 시 실행용 `*.jar`(bootJar)와 내 클래스만 담긴 `*-plain.jar`를 함께 만듦.
+  - Dockerfile의 `COPY build/libs/*.jar app.jar`가 파일 2개와 매칭되어 빌드가 실패하므로, `build.gradle`에서 `jar` 태스크를 비활성화해 실행용 jar만 생성하게 함.
 
-# 배포 준비
+### 2-3. docker-compose로 앱 + DB 실행
 
-### Dockerfile 멀티스테이지 빌드로 변경
-- 기존 Dockerfile은 로컬에서 미리 빌드한 `build/libs/*.jar`를 복사하는 방식이었음. `build/`는 `.gitignore` 대상이라 저장소에 jar가 없으므로, CI/CD(Railway 등)에서 저장소만 받아 빌드하면 `COPY`가 실패함.
-- 1단계(build): `eclipse-temurin:21-jdk-alpine`에서 `./gradlew bootJar -x test`로 실행 jar를 빌드함. `build.gradle`과 wrapper를 먼저 복사해 의존성 레이어를 캐시하므로 소스만 바뀌면 재빌드가 빨라짐.
-- 2단계(실행): `eclipse-temurin:21-jre-alpine`에 1단계의 jar만 복사함. JDK, Gradle, 소스는 최종 이미지에 포함되지 않음.
-- 테스트는 이미지 빌드에서 제외(`-x test`)하고 CI 단계에서 수행함.
-- `.dockerignore`에 `build`를 추가해 로컬 빌드 산출물이 섞이지 않게 함. (jar를 컨테이너 안에서 빌드하므로 `build/libs` 예외 처리 제거)
-- 이제 `./gradlew bootJar` 없이 `docker build` 또는 `docker compose up --build`만으로 실행됨.
+- `db`(MySQL 8.0)와 `backend`(Spring 앱)를 한 번에 실행함.
+- MySQL 이미지는 `MYSQL_` 접두사 변수만 읽으므로 `MYSQL_DATABASE`, `MYSQL_ROOT_PASSWORD`로 전달하고 root 계정만 사용하도록 함.
+- `backend`에는 `DB_HOST: db`를 compose에서만 덮어써, 컨테이너 안에서는 서비스명으로 DB에 접속하게 함.
+- `db`에 healthcheck를 추가하고 `depends_on`을 `service_healthy` 조건으로 설정해, DB가 준비된 뒤 앱이 시작되도록 설정함.
+- `.dockerignore`로 `.env`, `.git`, `.idea` 등을 빌드 컨텍스트에서 제외함.
 
-### PORT 환경변수 지원
-- Railway 같은 배포 플랫폼은 `PORT` 환경변수로 컨테이너가 사용할 포트를 지정하므로, `application.yaml`에 `server.port: ${PORT:8080}`을 추가함. 값이 없으면 기본 8080으로 동작하므로 로컬과 docker-compose 실행은 그대로임.
+### 2-4. 실행·재실행 시 주의할 점
 
-### GitHub Actions CI 구성
-- `.github/workflows/ci.yml`: `master`에 push되거나 `master` 대상 PR이 올라오면 JDK 21 환경에서 `./gradlew test`를 실행함.
-- 배포는 Railway가 담당함. Railway를 GitHub 저장소와 연동하고 "Wait for CI"를 켜서 Actions 테스트가 통과한 커밋만 배포되게 함. 따라서 Docker Hub push와 EC2 SSH 배포 단계는 제거함.
-- Actions는 CI, Railway는 CD로 역할을 나눔. 이미지는 Railway가 Dockerfile로 직접 빌드함.
+- 최초 실행: `docker compose up --build`
+- 발생했던 이슈
+  - 초기에는 Dockerfile이 로컬 `build/libs`의 jar를 그대로 복사해서, `bootJar` 없이 `up`만 하면 옛 코드가 담긴 이미지가 재사용되고 실행 실패함.(DB 연결 문제 코드가 남아있었기 때문)
+  - Dockerfile을 멀티스테이지 방식으로 바꾸면서 컨테이너 안에서 항상 새로 빌드하게 되어 해결됨.
+- DB 설정 변경: MySQL 이미지는 데이터 디렉토리가 비어 있을 때만 `MYSQL_*` 값을 적용하므로, 비밀번호나 DB 이름을 바꿨다면 `docker compose down -v`로 볼륨을 지운 뒤 다시 실행해야 함. 
 
-### 테스트 정리
-- CI를 켜기 전 `./gradlew test`를 실행해 보니 `compileTestJava`가 실패함. 좌석 도메인 개편으로 사라진 `ScreeningSeat`, `ScreeningSeatRepository` 등을 테스트가 참조하고 있었음. (커밋된 HEAD 기준으로도 동일하게 실패)
-- 컴파일이 안 되는 테스트 6개(`OrderServiceTest`, `PaymentIdempotencyTest`, `ReservationServiceTest`, `ReservationConcurrencyTest`, `ScreeningSeatServiceTest`, `ScreeningAdminServiceTest`)와 없어진 `SeatRepository` mock 때문에 NPE가 나던 `ScreenAdminServiceTest`를 삭제함. 예매/결제 쪽 테스트는 개편된 도메인에 맞게 이후 다시 작성할 예정임.
-- 나머지 실패(`CgvApplicationTests` 등 6건)는 `JwtProvider`, `AuthService`의 `@Value`가 `${JWT_SECRET}`, `${ADMIN_TOKEN}` 환경변수를 직접 읽도록 바뀌어 테스트 설정(`jwt.secret`, `admin.token`)을 찾지 못한 것이 원인이었음. `${jwt.secret}`, `${admin.token}`으로 되돌려 해결함. `application.yaml`이 해당 키를 환경변수에 연결하므로 운영 동작은 동일함.
-- 정리 후 `./gradlew test` 통과 확인.
+---
+
+## 3. CI/CD 파이프라인
+
+### 3-1. 전체 구조: Actions는 CI, Railway는 CD
+
+- 배포 흐름
+  1. `master`에 push하거나 `master` 대상 PR을 올림.
+  2. GitHub Actions가 JDK 21 환경에서 `./gradlew test`를 실행함.
+  3. 테스트가 통과하면 Railway가 해당 커밋을 Dockerfile로 직접 빌드하고 배포함.
+
+- 역할 분담
+  - GitHub Actions(CI): 코드를 검증하는 역할만 맡음.
+  - Railway(CD): 이미지를 빌드하고 서버에 올리는 역할. GitHub 저장소와 연동한 뒤 "Wait for CI"를 켜서, Actions 결과를 기다린 뒤 배포하도록 설정함.
+
+### 3-2. 멀티스테이지 Dockerfile
+
+- 기존 방식의 문제
+  - 원래는 로컬에서 미리 빌드한 `build/libs/*.jar`를 이미지에 복사하는 구조였음.
+  - 근데 `build/`는 `.gitignore` 대상이라 GitHub에는 jar가 없음. 따라서 Railway처럼 GitHub에서 코드를 받아 빌드하는 환경에서는 `COPY`가 실패함.
+
+- 변경 후
+  - 1단계(build): `eclipse-temurin:21-jdk-alpine`에서 `./gradlew bootJar -x test`로 실행 jar를 빌드함. (테스트는 CI 단계에서 함)
+  - 2단계(실행): `eclipse-temurin:21-jre-alpine`에 1단계의 jar만 복사. JDK, Gradle, 소스는 최종 이미지에 포함되지 않아 이미지가 가벼워짐.
+  - 이제 `./gradlew bootJar` 없이 `docker build` 또는 `docker compose up --build`만으로 실행됨.
+
+- 빌드 속도를 위한 구성
+  - `build.gradle`과 Gradle wrapper를 소스보다 먼저 복사해 의존성 다운로드를 별도 레이어로 캐시함. 소스만 바뀌면 의존성 레이어를 재사용함.
+  - `.dockerignore`에 `build`를 추가해 로컬 빌드 산출물이 컨텍스트에 섞이지 않게 함.
+
+### 3-3. GitHub Actions 워크플로 (`ci.yml`)
+
+- 실행 조건: `master`에 push되거나 `master`를 대상으로 PR이 올라오면 실행됨.
+- 구성 단계
+  1. `actions/checkout`: 저장소 코드를 runner로 가져옴.
+  2. `actions/setup-java`: JDK 21(Temurin)을 설치함.
+  3. `gradle/actions/setup-gradle`: Gradle 실행 환경을 구성하고 의존성을 캐싱함.
+  4. `./gradlew test`: 전체 테스트를 실행함. 테스트는 `src/test/resources/application.yaml`의 H2 설정을 사용하므로 별도 DB 없이 실행됨.
+- 최소 권한: `permissions: contents: read`로 코드 읽기 권한만 부여함.
+
+### 3-4. 테스트 정리 (CI 도입 전 이슈)
+
+CI를 켜기 전 로컬에서 `./gradlew test`를 실행해 보니 테스트가 통과하지 않았음. 
+
+- 원인: 컴파일 불가 테스트
+  - 좌석 도메인 개편으로 사라진 `ScreeningSeat`, `ScreeningSeatRepository` 등을 테스트가 참조하여 `compileTestJava`가 실패.
+  - 컴파일이 안 되는 테스트 6개와, 없어진 `SeatRepository` mock 때문에 NPE가 나던 `ScreenAdminServiceTest`를 삭제함.
+  - 예매·결제 테스트는 개편된 도메인에 맞게 이후 추가해 나갈 예정.
+
+### 3-5. Railway 배포 설정 및 동작 확인
+
+- 환경변수
+  - 배포 환경에는 `.env`가 없으므로 DB, JWT, 관리자 토큰, 토스 키 등은 Railway의 Variables에 직접 등록해 주입함.
+- PORT 지원
+  - Railway는 `PORT` 환경변수로 컨테이너가 사용할 포트를 지정하므로 `application.yaml`에 `server.port: ${PORT:8080}`을 추가함. 
+- 동작 확인
+  - push부터 CI 테스트, 배포까지 자동으로 동작하는 것을 확인함.
+  - 배포된 서버에 Postman으로 요청을 보내 정상 응답을 확인함.
