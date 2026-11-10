@@ -48,13 +48,14 @@ public class PaymentConfirmTransactionService {
 
     @Transactional
     public ConfirmContext begin(Long userId, PaymentConfirmRequest request) {
-        // Read only
+
         var reference = paymentRepository.findTarget(request.orderId(), userId)
                 .orElseThrow(() -> new GlobalException(ErrorCode.PAYMENT_NOT_FOUND));
         LockedTarget target = lockTarget(reference.getTargetType(), reference.getTargetId(), userId);
         Payment payment = findPayment(request.orderId(), userId);
         validateRequest(payment, target, request);
 
+        // FAILED를 INVALID_PAYMENT_STATUS로 거절
         if (payment.getStatus() == PaymentStatus.DONE) {
             if (!target.isCompleted()) {
                 throw new GlobalException(ErrorCode.INVALID_PAYMENT_STATUS);
@@ -104,9 +105,9 @@ public class PaymentConfirmTransactionService {
         return finish(context, remote, false);
     }
 
+    // FAILED 재처리 막음.
     @Transactional
     public PaymentConfirmResponse finish(ConfirmContext context, TossPaymentConfirmResponse remote, boolean rejected) {
-        // Every path locks the purchase first, then Payment, then stock if needed.
         LockedTarget target = lockTarget(context.targetType(), context.targetId(), context.userId());
         Payment payment = findPayment(context.orderId(), context.userId());
         if (payment.getStatus() == PaymentStatus.DONE || payment.getStatus() == PaymentStatus.FAILED) {
@@ -130,7 +131,6 @@ public class PaymentConfirmTransactionService {
                 storeOrderLifecycle.failPaymentLocked(target.storeOrder(), LocalDateTime.now(clock));
             }
         } else {
-            // Never release stock/seats based only on a timeout or an unsupported state.
             payment.markUnknown();
         }
         if (payment.getStatus() == PaymentStatus.UNKNOWN) {
