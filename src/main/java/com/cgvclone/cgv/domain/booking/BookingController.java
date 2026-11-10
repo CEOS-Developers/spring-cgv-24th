@@ -4,6 +4,8 @@ import static org.springframework.http.HttpStatus.CREATED;
 import static org.springframework.http.HttpStatus.NO_CONTENT;
 
 import com.cgvclone.cgv.domain.booking.dto.BookingCreateRequest;
+import com.cgvclone.cgv.domain.auth.CustomUserDetails;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -20,16 +22,18 @@ public class BookingController {
     private final BookingService bookingService;
 
     @PostMapping
-    public ResponseEntity<Void> createBooking(@RequestBody BookingCreateRequest request) {
-        bookingService.createBooking(request);
+    public ResponseEntity<Void> createBooking(@RequestBody BookingCreateRequest request,
+            @AuthenticationPrincipal CustomUserDetails user) {
+        bookingService.createBooking(user.getUserId(), request);
         return ResponseEntity
                 .status(CREATED)
                 .build();
     }
 
     @PostMapping("/{bookingId}/cancel")
-    public ResponseEntity<Void> cancelBooking(@PathVariable Long bookingId) {
-        bookingService.cancelBooking(bookingId);
+    public ResponseEntity<Void> cancelBooking(@PathVariable Long bookingId,
+            @AuthenticationPrincipal CustomUserDetails user) {
+        bookingService.cancelBooking(user.getUserId(), bookingId);
         return ResponseEntity
                 .status(NO_CONTENT)
                 .build();

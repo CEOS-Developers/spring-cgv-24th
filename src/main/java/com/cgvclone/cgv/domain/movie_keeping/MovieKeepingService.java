@@ -25,9 +25,7 @@ public class MovieKeepingService {
                 .orElseThrow(() -> new GlobalException(ErrorCode.MOVIE_KEEPING_NOT_FOUND));
     }
 
-    public void keepMovie(Long movieId) {
-        // TODO: 인증인가 스터디 후 User 지정 필요
-        Long currentUserId = 1L;
+    public void keepMovie(Long currentUserId, Long movieId) {
         User user = userService.getUser(currentUserId);
 
         Movie movie = movieService.getMovieEntity(movieId);
@@ -42,9 +40,7 @@ public class MovieKeepingService {
         movieKeepingRepository.save(movieKeeping);
     }
 
-    public void cancelMovieKeeping(Long movieId) {
-        // TODO: 인증인가 스터디 후 User 지정 필요
-        Long currentUserId = 1L;
+    public void cancelMovieKeeping(Long currentUserId, Long movieId) {
         User user = userService.getUser(currentUserId);
 
         Movie movie = movieService.getMovieEntity(movieId);

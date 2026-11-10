@@ -7,6 +7,8 @@ spring:
     password: ${MYSQL_PASSWORD}
     driver-class-name: com.mysql.cj.jdbc.Driver
   jpa:
+    # 승인 준비/완료 사이에 영속성 컨텍스트를 공유해 오래된 주문 상태를 재사용하지 않는다.
+    open-in-view: false
     hibernate:
       ddl-auto: create
     defer-datasource-initialization: true
@@ -20,3 +22,13 @@ spring:
 logging:
   level:
     org.hibernate.SQL: debug
+
+jwt:
+  secret: ${JWT_SECRET}
+  access-token-expiration: 30m
+  issuer: cgv
+  audience: cgv-api
+
+toss:
+  client-key: ${TOSS_CLIENT_KEY:}
+  secret-key: ${TOSS_SECRET_KEY:}

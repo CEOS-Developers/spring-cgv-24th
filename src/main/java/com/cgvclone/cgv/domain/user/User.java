@@ -3,6 +3,8 @@ package com.cgvclone.cgv.domain.user;
 import com.cgvclone.cgv.common.BaseEntity;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
@@ -35,4 +37,8 @@ public class User extends BaseEntity {
 
     @Column(nullable = false, length = 50)
     private String name;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    private UserRole role = UserRole.USER;
 }

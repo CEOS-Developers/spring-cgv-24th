@@ -25,9 +25,7 @@ public class CinemaKeepingService {
                 .orElseThrow(() -> new GlobalException(ErrorCode.CINEMA_KEEPING_NOT_FOUND));
     }
 
-    public void keepCinema(Long cinemaId) {
-        // TODO: 인증인가 스터디 후 User 지정 필요
-        Long currentUserId = 1L;
+    public void keepCinema(Long currentUserId, Long cinemaId) {
         User user = userService.getUser(currentUserId);
 
         Cinema cinema = cinemaService.getCinemaEntity(cinemaId);
@@ -42,9 +40,7 @@ public class CinemaKeepingService {
         cinemaKeepingRepository.save(cinemaKeeping);
     }
 
-    public void cancelCinemaKeeping(Long cinemaId) {
-        // TODO: 인증인가 스터디 후 User 지정 필요
-        Long currentUserId = 1L;
+    public void cancelCinemaKeeping(Long currentUserId, Long cinemaId) {
         User user = userService.getUser(currentUserId);
 
         Cinema cinema = cinemaService.getCinemaEntity(cinemaId);
