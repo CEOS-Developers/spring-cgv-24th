@@ -7,14 +7,8 @@ import com.ceos24.springboot.payment.dto.*;
 import com.ceos24.springboot.payment.config.TossPaymentProperties;
 import com.ceos24.springboot.payment.repository.PaymentCancellationRepository;
 import com.ceos24.springboot.payment.repository.PaymentRepository;
-import com.ceos24.springboot.reservation.domain.Reservation;
-import com.ceos24.springboot.reservation.domain.ReservationStatus;
-import com.ceos24.springboot.reservation.repository.ReservationRepository;
-import com.ceos24.springboot.reservation.service.ReservationLifecycleService;
-import com.ceos24.springboot.shop.domain.StoreOrder;
-import com.ceos24.springboot.shop.domain.StoreOrderStatus;
-import com.ceos24.springboot.shop.repository.StoreOrderRepository;
-import com.ceos24.springboot.shop.service.StoreOrderLifecycleService;
+import com.ceos24.springboot.payment.service.target.PaymentTarget;
+import com.ceos24.springboot.payment.service.target.PaymentTargetResolver;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -31,10 +25,7 @@ public class PaymentCancelTransactionService {
     private final TossPaymentProperties properties;
     private final PaymentRepository payments;
     private final PaymentCancellationRepository cancellations;
-    private final ReservationRepository reservations;
-    private final ReservationLifecycleService reservationLifecycle;
-    private final StoreOrderRepository storeOrders;
-    private final StoreOrderLifecycleService storeOrderLifecycle;
+    private final PaymentTargetResolver targetResolver;
 
     public record CancelContext(Long userId, Long paymentId, PaymentTargetType targetType, Long targetId,
                                 Long cancellationId, String paymentKey, String pgIdempotencyKey,
@@ -46,7 +37,7 @@ public class PaymentCancelTransactionService {
         var reference = payments.findTargetById(paymentId, userId)
                 .orElseThrow(() -> new GlobalException(ErrorCode.PAYMENT_NOT_FOUND));
         // 승인과 동일하게 구매 대상 → Payment → 취소 이력 → 재고 순서로 잠근다.
-        LockedTarget target = lockTarget(reference.getTargetType(), reference.getTargetId(), userId);
+        PaymentTarget target = targetResolver.lock(reference.getTargetType(), reference.getTargetId(), userId);
         Payment payment = findPayment(paymentId, userId);
         List<PaymentCancellation> history = cancellations.findAllWithLock(paymentId);
         var existing = history.stream().filter(c -> c.getRequestId().equals(requestId)).findFirst();
@@ -58,11 +49,8 @@ public class PaymentCancelTransactionService {
         }
 
         payment.validateCancelable();
-        target.validatePaid();
         // 새 환불 접수에만 기한을 적용한다. 기존 요청의 조회와 복구는 기한 이후에도 허용한다.
-        if (target.reservation() != null) {
-            target.reservation().validateCancellationDeadline(LocalDateTime.now(clock));
-        }
+        target.validateRefund(LocalDateTime.now(clock));
         if (history.stream().anyMatch(PaymentCancellation::isPending)) {
             throw new GlobalException(ErrorCode.PAYMENT_CANCEL_IN_PROGRESS);
         }
@@ -83,7 +71,7 @@ public class PaymentCancelTransactionService {
         var identity = cancellations.findRecoveryReference(cancellationId).orElse(null);
         if (identity == null) { return Optional.empty(); }
         var reference = payments.findTargetById(identity.getPaymentId(), identity.getUserId()).orElseThrow();
-        lockTarget(reference.getTargetType(), reference.getTargetId(), identity.getUserId());
+        targetResolver.lock(reference.getTargetType(), reference.getTargetId(), identity.getUserId());
         Payment payment = findPayment(identity.getPaymentId(), identity.getUserId());
         PaymentCancellation cancellation = cancellations.findAllWithLock(payment.getId()).stream()
                 .filter(c -> c.getId().equals(cancellationId)).findFirst().orElseThrow();
@@ -98,7 +86,7 @@ public class PaymentCancelTransactionService {
 
     @Transactional
     public PaymentCancelResponse finish(CancelContext context, TossPaymentCancelResponse remote, boolean rejected) {
-        LockedTarget target = lockTarget(context.targetType(), context.targetId(), context.userId());
+        PaymentTarget target = targetResolver.lock(context.targetType(), context.targetId(), context.userId());
         Payment payment = findPayment(context.paymentId(), context.userId());
         List<PaymentCancellation> history = cancellations.findAllWithLock(payment.getId());
         PaymentCancellation cancellation = history.stream().filter(c -> c.getId().equals(context.cancellationId()))
@@ -122,11 +110,7 @@ public class PaymentCancelTransactionService {
             cancellation.complete(approved.transactionKey(), approved.canceledAt()
                     .atZoneSameInstant(clock.getZone()).toLocalDateTime());
             if (payment.getBalanceAmount() == 0) {
-                if (target.reservation() != null) {
-                    reservationLifecycle.refundLocked(target.reservation());
-                } else {
-                    storeOrderLifecycle.refundLocked(target.storeOrder());
-                }
+                target.refund();
             }
         } else if (cancellation.isRejectedByPg() && additions != null && additions.isEmpty()
                 && Objects.equals(remote.balanceAmount(), cancellation.getBalanceBefore())) {
@@ -199,21 +183,4 @@ public class PaymentCancelTransactionService {
                 .orElseThrow(() -> new GlobalException(ErrorCode.PAYMENT_NOT_FOUND));
     }
 
-    private LockedTarget lockTarget(PaymentTargetType type, Long id, Long userId) {
-        return switch (type) {
-            case RESERVATION -> new LockedTarget(reservations.findMyReservationWithLock(id, userId)
-                    .orElseThrow(() -> new GlobalException(ErrorCode.RESERVATION_NOT_FOUND)), null);
-            case STORE_ORDER -> new LockedTarget(null, storeOrders.findMyOrderWithLock(id, userId)
-                    .orElseThrow(() -> new GlobalException(ErrorCode.STORE_ORDER_NOT_FOUND)));
-        };
-    }
-
-    private record LockedTarget(Reservation reservation, StoreOrder storeOrder) {
-        void validatePaid() {
-            if (reservation != null ? reservation.getStatus() != ReservationStatus.Reserved || reservation.isPaymentProcessing()
-                    : storeOrder.getStatus() != StoreOrderStatus.PAID || storeOrder.isPaymentProcessing()) {
-                throw new GlobalException(ErrorCode.PAYMENT_NOT_CANCELABLE);
-            }
-        }
-    }
 }

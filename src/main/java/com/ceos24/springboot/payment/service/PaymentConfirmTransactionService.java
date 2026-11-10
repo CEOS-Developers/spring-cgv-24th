@@ -6,14 +6,8 @@ import com.ceos24.springboot.payment.domain.*;
 import com.ceos24.springboot.payment.dto.*;
 import com.ceos24.springboot.payment.config.TossPaymentProperties;
 import com.ceos24.springboot.payment.repository.PaymentRepository;
-import com.ceos24.springboot.reservation.domain.Reservation;
-import com.ceos24.springboot.reservation.domain.ReservationStatus;
-import com.ceos24.springboot.reservation.repository.ReservationRepository;
-import com.ceos24.springboot.reservation.service.ReservationLifecycleService;
-import com.ceos24.springboot.shop.domain.StoreOrder;
-import com.ceos24.springboot.shop.domain.StoreOrderStatus;
-import com.ceos24.springboot.shop.repository.StoreOrderRepository;
-import com.ceos24.springboot.shop.service.StoreOrderLifecycleService;
+import com.ceos24.springboot.payment.service.target.PaymentTarget;
+import com.ceos24.springboot.payment.service.target.PaymentTargetResolver;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -29,10 +23,7 @@ public class PaymentConfirmTransactionService {
     private final Clock clock;
     private final TossPaymentProperties properties;
     private final PaymentRepository paymentRepository;
-    private final ReservationRepository reservationRepository;
-    private final ReservationLifecycleService reservationLifecycle;
-    private final StoreOrderRepository storeOrderRepository;
-    private final StoreOrderLifecycleService storeOrderLifecycle;
+    private final PaymentTargetResolver targetResolver;
 
     public record ConfirmContext(
             Long userId,
@@ -51,7 +42,7 @@ public class PaymentConfirmTransactionService {
 
         var reference = paymentRepository.findTarget(request.orderId(), userId)
                 .orElseThrow(() -> new GlobalException(ErrorCode.PAYMENT_NOT_FOUND));
-        LockedTarget target = lockTarget(reference.getTargetType(), reference.getTargetId(), userId);
+        PaymentTarget target = targetResolver.lock(reference.getTargetType(), reference.getTargetId(), userId);
         Payment payment = findPayment(request.orderId(), userId);
         validateRequest(payment, target, request);
 
@@ -69,7 +60,7 @@ public class PaymentConfirmTransactionService {
                 if (payment.getExpiresAt() == null || !payment.getExpiresAt().isAfter(now)) {
                     throw new GlobalException(target.expiredError());
                 }
-                target.begin(now);
+                target.beginPayment(now);
                 payment.startProcessing(request.paymentKey());
                 payment.getRecovery().schedule(now.plus(properties.getRecovery().getProcessingTimeout()));
             }
@@ -87,7 +78,7 @@ public class PaymentConfirmTransactionService {
         var identity = paymentRepository.findRecoveryReference(paymentId).orElse(null);
         if (identity == null) { return Optional.empty(); }
         var reference = paymentRepository.findTarget(identity.getOrderId(), identity.getUserId()).orElseThrow();
-        LockedTarget target = lockTarget(reference.getTargetType(), reference.getTargetId(), identity.getUserId());
+        PaymentTarget target = targetResolver.lock(reference.getTargetType(), reference.getTargetId(), identity.getUserId());
         Payment payment = findPayment(identity.getOrderId(), identity.getUserId());
         LocalDateTime now = LocalDateTime.now(clock);
         if ((payment.getStatus() != PaymentStatus.UNKNOWN && payment.getStatus() != PaymentStatus.PROCESSING)
@@ -108,7 +99,7 @@ public class PaymentConfirmTransactionService {
     // FAILED 재처리 막음.
     @Transactional
     public PaymentConfirmResponse finish(ConfirmContext context, TossPaymentConfirmResponse remote, boolean rejected) {
-        LockedTarget target = lockTarget(context.targetType(), context.targetId(), context.userId());
+        PaymentTarget target = targetResolver.lock(context.targetType(), context.targetId(), context.userId());
         Payment payment = findPayment(context.orderId(), context.userId());
         if (payment.getStatus() == PaymentStatus.DONE || payment.getStatus() == PaymentStatus.FAILED) {
             return target.response(payment);
@@ -122,14 +113,10 @@ public class PaymentConfirmTransactionService {
             LocalDateTime approvedAt = remote.approvedAt()
                     .atZoneSameInstant(clock.getZone()).toLocalDateTime();
             payment.complete(approvedAt, remote.method());
-            target.complete();
+            target.completePayment();
         } else if (isConfirmedFailure(payment, remote)) {
             payment.markFailed();
-            if (target.reservation() != null) {
-                reservationLifecycle.failPaymentLocked(target.reservation(), LocalDateTime.now(clock));
-            } else {
-                storeOrderLifecycle.failPaymentLocked(target.storeOrder(), LocalDateTime.now(clock));
-            }
+            target.failPayment(LocalDateTime.now(clock));
         } else {
             payment.markUnknown();
         }
@@ -139,21 +126,12 @@ public class PaymentConfirmTransactionService {
         return target.response(payment);
     }
 
-    private LockedTarget lockTarget(PaymentTargetType type, Long id, Long userId) {
-        return switch (type) {
-            case RESERVATION -> new LockedTarget(reservationRepository.findMyReservationWithLock(id, userId)
-                    .orElseThrow(() -> new GlobalException(ErrorCode.RESERVATION_NOT_FOUND)), null);
-            case STORE_ORDER -> new LockedTarget(null, storeOrderRepository.findMyOrderWithLock(id, userId)
-                    .orElseThrow(() -> new GlobalException(ErrorCode.STORE_ORDER_NOT_FOUND)));
-        };
-    }
-
     private Payment findPayment(String orderId, Long userId) {
         return paymentRepository.findMyPaymentWithLock(orderId, userId)
                 .orElseThrow(() -> new GlobalException(ErrorCode.PAYMENT_NOT_FOUND));
     }
 
-    private void validateRequest(Payment payment, LockedTarget target, PaymentConfirmRequest request) {
+    private void validateRequest(Payment payment, PaymentTarget target, PaymentConfirmRequest request) {
         if (payment.getTargetType() != target.type()
                 || !Objects.equals(payment.getTargetId(), target.id())
                 || !Objects.equals(payment.getAmount(), request.amount())
@@ -163,7 +141,7 @@ public class PaymentConfirmTransactionService {
         }
     }
 
-    private void validateHeldTarget(LockedTarget target) {
+    private void validateHeldTarget(PaymentTarget target) {
         if (!target.isHeld()) {
             throw new GlobalException(ErrorCode.INVALID_PAYMENT_STATUS);
         }
@@ -186,62 +164,11 @@ public class PaymentConfirmTransactionService {
         };
     }
 
-    private ConfirmContext context(Long userId, LockedTarget target, Payment payment,
+    private ConfirmContext context(Long userId, PaymentTarget target, Payment payment,
                                    boolean lookupOnly, PaymentConfirmResponse completed) {
         return new ConfirmContext(userId, target.type(), target.id(), payment.getOrderId(),
                 payment.getPaymentKey(), payment.getAmount(), payment.getConfirmIdempotencyKey(),
                 lookupOnly, completed);
     }
 
-    // Domain-specific state transitions stay in the respective entities/services.
-    private record LockedTarget(Reservation reservation, StoreOrder storeOrder) {
-        PaymentTargetType type() {
-            return reservation != null ? PaymentTargetType.RESERVATION : PaymentTargetType.STORE_ORDER;
-        }
-
-        Long id() {
-            return reservation != null ? reservation.getReservationId() : storeOrder.getOrderId();
-        }
-
-        Long amount() {
-            Integer value = reservation != null ? reservation.getTotalPrice() : storeOrder.getTotalAmount();
-            return value == null ? null : value.longValue();
-        }
-
-        boolean isCompleted() {
-            return reservation != null ? reservation.getStatus() == ReservationStatus.Reserved
-                    : storeOrder.getStatus() == StoreOrderStatus.PAID;
-        }
-
-        boolean isHeld() {
-            return reservation != null
-                    ? reservation.getStatus() == ReservationStatus.Pending && reservation.isPaymentProcessing()
-                    : storeOrder.getStatus() == StoreOrderStatus.PENDING && storeOrder.isPaymentProcessing();
-        }
-
-        ErrorCode expiredError() {
-            return reservation != null ? ErrorCode.RESERVATION_EXPIRED : ErrorCode.STORE_ORDER_EXPIRED;
-        }
-
-        void begin(LocalDateTime now) {
-            if (reservation != null) {
-                reservation.beginPayment(now);
-            } else {
-                storeOrder.beginPayment(now);
-            }
-        }
-
-        void complete() {
-            if (reservation != null) {
-                reservation.completePayment();
-            } else {
-                storeOrder.completePayment();
-            }
-        }
-
-        PaymentConfirmResponse response(Payment payment) {
-            return reservation != null ? PaymentConfirmResponse.from(payment, reservation)
-                    : PaymentConfirmResponse.from(payment, storeOrder);
-        }
-    }
 }
