@@ -24,9 +24,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
@@ -38,6 +43,7 @@ public class ReservationService {
     private final ReservationRepository reservationRepository;
     private final ReservationSeatRepository reservationSeatRepository;
     private final Clock clock;
+    private final PlatformTransactionManager transactionManager;
 
     @Transactional
     public ReservationResDTO createReservation(Long memberId, ReservationReqDTO.CreateReservationDTO request) {
@@ -91,15 +97,23 @@ public class ReservationService {
         seats.forEach(ScreeningSeat::release);
     }
 
-    @Transactional
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public void releaseUnpaidSeats() {
         LocalDateTime now = LocalDateTime.now(clock);
-        List<Reservation> reservations = reservationRepository.findForSeatReleaseForUpdate(
-                ReservationStatus.PENDING_PAYMENT, ReservationStatus.PAYMENT_FAILED, now);
-        for (Reservation reservation : reservations) {
-            List<ScreeningSeat> seats = screeningSeatRepository.findAllByReservationIdForUpdate(reservation.getId());
-            if (reservation.releaseSeats(now)) {
-                seats.forEach(ScreeningSeat::release);
+        TransactionTemplate transaction = new TransactionTemplate(transactionManager);
+        List<Long> reservationIds = transaction.execute(status -> reservationRepository.findReservationIdsForSeatRelease(
+                ReservationStatus.PENDING_PAYMENT, ReservationStatus.PAYMENT_FAILED, now));
+        for (Long reservationId : reservationIds) {
+            try {
+                transaction.executeWithoutResult(status -> {
+                    Reservation reservation = reservationRepository.findByIdForUpdate(reservationId).orElse(null);
+                    if (reservation != null && reservation.releaseSeats(now)) {
+                        screeningSeatRepository.findAllByReservationIdForUpdate(reservationId)
+                                .forEach(ScreeningSeat::release);
+                    }
+                });
+            } catch (RuntimeException error) {
+                log.warn("미결제 예매 좌석 해제 실패: reservationId={}", reservationId, error);
             }
         }
     }

@@ -17,10 +17,9 @@ public interface ReservationRepository extends JpaRepository<Reservation, Long> 
     @Query("select r from Reservation r where r.id = :id")
     Optional<Reservation> findByIdForUpdate(@Param("id") Long id);
 
-    @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @Query("select r from Reservation r where (r.status = :pending and r.expiresAt <= :now) "
+    @Query("select r.id from Reservation r where (r.status = :pending and r.expiresAt <= :now) "
             + "or r.status = :failed order by r.id")
-    List<Reservation> findForSeatReleaseForUpdate(
+    List<Long> findReservationIdsForSeatRelease(
             @Param("pending") ReservationStatus pending, @Param("failed") ReservationStatus failed,
             @Param("now") LocalDateTime now);
 }

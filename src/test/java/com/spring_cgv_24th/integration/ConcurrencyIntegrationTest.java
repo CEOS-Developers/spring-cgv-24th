@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -22,6 +23,7 @@ import com.spring_cgv_24th.domain.payment.gateway.PaymentGateway;
 import com.spring_cgv_24th.domain.payment.service.PaymentService;
 import com.spring_cgv_24th.domain.reservation.dto.ReservationReqDTO;
 import com.spring_cgv_24th.domain.reservation.service.ReservationService;
+import com.spring_cgv_24th.domain.screening.repository.ScreeningSeatRepository;
 import com.spring_cgv_24th.domain.store.dto.StoreOrderReqDTO;
 import com.spring_cgv_24th.domain.store.dto.StoreOrderResDTO;
 import com.spring_cgv_24th.domain.store.service.StoreService;
@@ -53,9 +55,10 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
-@SpringBootTest
+@SpringBootTest(properties = "payment.recovery-batch-size=2")
 class ConcurrencyIntegrationTest {
 
     private static final LocalDateTime NOW = LocalDateTime.of(2026, 10, 30, 12, 0);
@@ -70,6 +73,7 @@ class ConcurrencyIntegrationTest {
     @Autowired private PaymentService paymentService;
     @MockitoBean private Clock clock;
     @MockitoBean private PaymentGateway gateway;
+    @MockitoSpyBean private ScreeningSeatRepository screeningSeatRepository;
 
     private long memberId, theaterId, auditoriumId, screeningId, seatId, productId;
 
@@ -183,6 +187,23 @@ class ConcurrencyIntegrationTest {
         assertThat(count("select count(*) from screening_seat where screening_seat_id = ? and reservation_id is not null", seatId))
                 .isEqualTo(occupied);
         assertThat(targetStatus(target)).isEqualTo(status);
+    }
+
+    @Test
+    void failedSeatReleaseDoesNotRollBackOrBlockOtherReservations() {
+        Target first = reservationTarget(List.of(seatId));
+        Target failed = reservationTarget(List.of(insertSeat(2, FIRST_SEAT_PRICE).id()));
+        Target last = reservationTarget(List.of(insertSeat(3, FIRST_SEAT_PRICE).id()));
+        doThrow(new IllegalStateException("좌석 잠금 실패"))
+                .when(screeningSeatRepository).findAllByReservationIdForUpdate(failed.id());
+        setTime(NOW.plusMinutes(10));
+
+        reservationService.releaseUnpaidSeats();
+
+        assertThat(List.of(targetStatus(first), targetStatus(failed), targetStatus(last)))
+                .containsExactly("EXPIRED", "PENDING_PAYMENT", "EXPIRED");
+        assertThat(jdbc.queryForList("select reservation_id from screening_seat where screening_id = ? order by column_no",
+                Long.class, screeningId)).containsExactly(null, failed.id(), null);
     }
 
     // 결제 승인과 복구
@@ -336,24 +357,41 @@ class ConcurrencyIntegrationTest {
     }
 
     @Test
-    void failedLookupDoesNotBlockRecoveryOfOtherPayments() {
+    void failedLookupDoesNotBlockLaterBatchesAndIsRetriedNextRound() {
         Target order = paymentTarget(PaymentTargetType.STORE_ORDER);
         Target reservation = paymentTarget(PaymentTargetType.RESERVATION);
+        Target laterReservation = reservationTarget(List.of(insertSeat(2, FIRST_SEAT_PRICE).id()));
         when(gateway.confirm(anyString(), anyString(), anyLong(), anyString())).thenThrow(new PaymentGateway.Failure(false));
         assertThrows(CustomException.class,
                 () -> paymentService.confirm(memberId, order.type(), order.id(), paymentRequest(order)));
         assertThrows(CustomException.class, () -> paymentService.confirm(memberId, reservation.type(), reservation.id(),
                 new PaymentReqDTO("reservation-payment-key", reservation.orderId(), reservation.amount())));
+        assertThrows(CustomException.class, () -> paymentService.confirm(memberId, laterReservation.type(), laterReservation.id(),
+                new PaymentReqDTO("later-payment-key", laterReservation.orderId(), laterReservation.amount())));
         when(gateway.find("payment-key")).thenThrow(new PaymentGateway.Failure(false));
         when(gateway.find("reservation-payment-key")).thenReturn(new PaymentGateway.Result(
                 "reservation-payment-key", reservation.orderId(), "DONE", "KRW", reservation.amount(), reservation.amount(),
                 "카드", NOW.atZone(ZONE).toOffsetDateTime()));
+        when(gateway.find("later-payment-key")).thenReturn(new PaymentGateway.Result(
+                "later-payment-key", laterReservation.orderId(), "DONE", "KRW",
+                laterReservation.amount(), laterReservation.amount(), "카드", NOW.atZone(ZONE).toOffsetDateTime()));
         setTime(NOW.plusMinutes(10));
 
         paymentService.recoverUnresolvedPayments();
 
         assertThat(targetStatus(order)).isEqualTo("PAYMENT_PROCESSING");
         assertThat(targetStatus(reservation)).isEqualTo("CONFIRMED");
+        assertThat(targetStatus(laterReservation)).isEqualTo("PAYMENT_PROCESSING");
+        verify(gateway, never()).find("later-payment-key");
+
+        paymentService.recoverUnresolvedPayments();
+
+        assertThat(targetStatus(laterReservation)).isEqualTo("CONFIRMED");
+        verify(gateway, times(1)).find("payment-key");
+
+        paymentService.recoverUnresolvedPayments();
+
+        verify(gateway, times(2)).find("payment-key");
         assertResources(order, true);
         assertResources(reservation, true);
     }

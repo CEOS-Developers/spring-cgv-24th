@@ -43,6 +43,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.PlatformTransactionManager;
 
 @ExtendWith(MockitoExtension.class)
 class ReservationServiceTest {
@@ -56,6 +57,7 @@ class ReservationServiceTest {
     @Mock private ScreeningSeatRepository screeningSeatRepository;
     @Mock private ReservationRepository reservationRepository;
     @Mock private ReservationSeatRepository reservationSeatRepository;
+    @Mock private PlatformTransactionManager transactionManager;
     private ReservationService reservationService;
 
     @BeforeEach
@@ -63,7 +65,7 @@ class ReservationServiceTest {
         Clock clock = Clock.fixed(NOW.atZone(ZONE).toInstant(), ZONE);
         reservationService = new ReservationService(
                 memberRepository, screeningRepository, screeningSeatRepository,
-                reservationRepository, reservationSeatRepository, clock);
+                reservationRepository, reservationSeatRepository, clock, transactionManager);
     }
 
     @Test
@@ -150,7 +152,7 @@ class ReservationServiceTest {
         when(advancingClock.getZone()).thenReturn(ZONE);
         ReservationService service = new ReservationService(
                 memberRepository, screeningRepository, screeningSeatRepository,
-                reservationRepository, reservationSeatRepository, advancingClock);
+                reservationRepository, reservationSeatRepository, advancingClock, transactionManager);
         Screening screening = screening(NOW);
         ScreeningSeat seat = seat(screening);
         when(screeningRepository.findById(1L)).thenReturn(Optional.of(screening));
@@ -280,7 +282,7 @@ class ReservationServiceTest {
         when(advancingClock.getZone()).thenReturn(ZONE);
         ReservationService service = new ReservationService(
                 memberRepository, screeningRepository, screeningSeatRepository,
-                reservationRepository, reservationSeatRepository, advancingClock);
+                reservationRepository, reservationSeatRepository, advancingClock, transactionManager);
         Screening screening = screening(NOW);
         Reservation reservation = Reservation.builder().member(owner()).screening(screening)
                 .totalPrice(14_000).reservedAt(NOW).build();

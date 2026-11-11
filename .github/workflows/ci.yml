@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  pull_request:
+    branches: ["master"]
+  workflow_call:
+    inputs:
+      checkout_ref:
+        description: 배포할 merge 커밋 SHA
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_DATABASE: cgv_ci
+          MYSQL_USER: cgv_ci
+          MYSQL_PASSWORD: cgv_ci_password
+          MYSQL_ROOT_PASSWORD: cgv_ci_root_password
+        ports:
+          - "3306:3306"
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 --silent"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+          --health-start-period 30s
+    env:
+      TZ: Asia/Seoul
+      SPRING_DATASOURCE_URL: "jdbc:mysql://127.0.0.1:3306/cgv_ci?allowPublicKeyRetrieval=true&sslMode=DISABLED&characterEncoding=UTF-8&connectionTimeZone=%2B09:00&forceConnectionTimeZoneToSession=true"
+      SPRING_DATASOURCE_USERNAME: cgv_ci
+      SPRING_DATASOURCE_PASSWORD: cgv_ci_password
+      # 통합 테스트는 CI 전용 키를 사용한다.
+      SPRING_APPLICATION_JSON: >-
+        {"jwt":{"secret":"Y2ktb25seS1jZ3Ytand0LXNpZ25pbmcta2V5LTMyLWJ5dGVz","issuer":"cgv-ci","audience":"cgv-ci","access-token-expiration":"15m","refresh-token-expiration":"7d"}}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.checkout_ref || github.sha }}
+          persist-credentials: false
+
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+
+      - name: 테스트 및 실행용 JAR 빌드
+        id: gradle
+        run: bash ./gradlew test bootJar --console=plain
+
+      - name: 실패한 테스트 리포트 보관
+        if: failure() && steps.gradle.outcome == 'failure'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-report
+          path: build/reports/tests/test
+          if-no-files-found: ignore
+          retention-days: 7
+          overwrite: true
+
+      - name: PR의 Docker 이미지 빌드 확인
+        if: inputs.checkout_ref == ''
+        run: docker build --platform linux/amd64 --tag spring-cgv-24th:ci .
+
+      - name: PR의 Compose 설정 확인
+        if: inputs.checkout_ref == ''
+        env:
+          COMPOSE_MYSQL_ROOT_PASSWORD: cgv_ci_root_password
+          COMPOSE_MYSQL_PASSWORD: cgv_ci_password
+          JWT_SECRET: ci-config-check
+          JWT_ISSUE: cgv-ci
+          JWT_AUDIENCE: cgv-ci
+          JWT_ACCESS_TOKEN_EXPIRATION: 15m
+          REFRESH_TOKEN_EXPIRATION: 7d
+          TOSS_SECRET_KEY: test_sk_ci
+        run: docker compose --env-file /dev/null config --quiet
+
+      - name: 테스트한 커밋의 JAR 전달
+        if: inputs.checkout_ref != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: boot-jar
+          path: build/libs/spring-cgv-24th-0.0.1-SNAPSHOT.jar
+          if-no-files-found: error
+          overwrite: true
+
