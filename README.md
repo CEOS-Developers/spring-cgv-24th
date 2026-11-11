@@ -7,21 +7,25 @@ CEOS 24기 백엔드 스터디 - CGV 클론 코딩 프로젝트
 ### 1. AWS 배포 구성
 
 학습용 단일 서버와 단일 DB를 기준으로 EC2와 RDS를 분리했습니다.
-EC2는 공개 서브넷에서 HTTP 요청을 받고, 같은 VPC의 비공개 RDS에 접속합니다.
+공개 서브넷의 EC2에서 Nginx가 HTTPS 요청을 받고, 앱은 같은 VPC의 비공개 RDS에 접속합니다.
 
 | 구성 | 적용 내용 |
 | --- | --- |
 | EC2 | 서울 리전, Ubuntu 24.04, `t3.micro`, 암호화된 gp3 20GB, swap 1GB |
 | RDS | MySQL 8.4.8, `db.t4g.micro`, 단일 AZ, 암호화된 gp3 20GB |
-| 앱 | Java 21, `linux/amd64` 이미지, 호스트 80 → 컨테이너 8080 |
+| Nginx | 호스트 80과 443에서 요청을 받고, TLS 처리 후 앱으로 전달 |
+| 앱 | Java 21, `linux/amd64` 이미지, 호스트 `127.0.0.1:8080` → 컨테이너 8080 |
 | 네트워크 | RDS 퍼블릭 접근 비활성화, EC2 보안 그룹에서 오는 3306만 허용 |
 | SSH | 개발자 IP만 허용하고 배포 중에는 해당 runner IP의 `/32` 규칙을 임시 추가 |
 
-- [Swagger](http://3.39.137.141/swagger-ui/index.html)
-- [상태 확인](http://3.39.137.141/actuator/health)
-- [영화 목록](http://3.39.137.141/api/v1/movies)
+- [Swagger](https://3.39.137.141.nip.io/swagger-ui/index.html)
+- [상태 확인](https://3.39.137.141.nip.io/actuator/health)
+- [영화 목록](https://3.39.137.141.nip.io/api/v1/movies)
 
-고정 IP를 연결했으며 현재 HTTP로 접근합니다. 도메인과 HTTPS는 적용하지 않았습니다.
+고정 IP에 연결되는 `3.39.137.141.nip.io`에 Certbot의 webroot 방식으로 Let's Encrypt 인증서를 발급했습니다.
+Nginx는 인증 경로를 HTTP로 제공하고 나머지 HTTP 요청을 HTTPS로 이동시킵니다. [Nginx 설정](deploy/nginx/cgv.conf)
+`certbot.timer`가 인증서 갱신을 예약합니다. 갱신이 끝나면 훅이 Nginx 설정을 검사한 뒤 다시 불러옵니다. [갱신 훅](deploy/nginx/reload-nginx.sh)
+
 새 전용 DB에 배포했으므로 초기 영화 데이터는 없습니다.
 
 ### 2. Docker와 실행 설정
@@ -49,7 +53,8 @@ docker compose up -d --build --wait
 curl --fail http://localhost/actuator/health
 ```
 
-RDS 서버에서는 접속 URL, 앱 전용 DB 계정, 비밀번호를 `.env`에 설정하고 실행합니다.
+RDS 서버에서는 `APP_PORT=8080`, 접속 URL, 앱 전용 DB 계정, 비밀번호를 `.env`에 설정하고 실행합니다.
+Spring은 Nginx가 전달하는 `Host`와 `X-Forwarded-Proto`를 사용해 외부 HTTPS 주소를 구성합니다.
 현재 연결 URL은 `sslMode=REQUIRED`로 TLS 암호화를 사용합니다.
 `payment-demo` 프로필은 H2 전용이므로 배포에 사용하지 않습니다.
 
@@ -99,7 +104,11 @@ SSH 호스트 키는 서버 생성 로그와 대조해 고정했습니다.
 | 실패 배포 복구 | 기동 실패 이미지 투입 후 이전 이미지가 healthy로 복구, 배포 명령은 실패 코드 1 반환 |
 | workflow 구문 | actionlint, ShellCheck 통과 |
 
-자동 배포 파일과 연결 설정은 준비했으며 **GitHub Actions의 실제 실행은 push 후 확인해야 합니다.**
+2026-11-11 HTTPS 적용 전에 `Wannys26` 브랜치의 GitHub Actions 테스트와 자동 배포가 성공했습니다. [실행 기록](https://github.com/Wannys26/spring-cgv-24th/actions/runs/42946939717)
+
+같은 날 HTTPS 적용 후 Swagger, health, 영화 목록이 모두 200을 반환했고 OpenAPI의 서버 주소도 HTTPS로 표시됐습니다.
+Certbot 모의 갱신과 갱신 훅을 통한 Nginx 설정 다시 불러오기도 확인했습니다.
+
 이번 배포에서 토스의 실제 승인과 취소를 다시 검증한 것은 아닙니다.
 
 ### 5. 구현하며 확인한 점
