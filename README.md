@@ -3,7 +3,7 @@ CEOS 24기 백엔드 스터디 - CGV 클론 코딩 프로젝트
 
 ## ERD
 ![erd.png](erd.png)
-[ERD Cloud 가서 보기](https://www.erdcloud.com/d/aBzYHMExGpfHZXSEE)
+[dbdiagram.io 가서 보기](https://dbdiagram.io/d/6af6cef04e0bad6598a16b62)
 
 - 테이블들의 PK값은 변하지 않도록 별개의 단일 id를 만드는 방식으로 통일했습니다.
   - `@GeneratedValue(strategy = GenerationType.IDENTITY)`
