@@ -11,6 +11,7 @@ services:
       - "127.0.0.1:8080:8080"
     environment:
       SPRING_PROFILES_ACTIVE: prod
+      # TODO: 이후 validate로 수정
       SPRING_JPA_HIBERNATE_DDL_AUTO: update
       SPRING_SQL_INIT_MODE: never
       SPRING_DATASOURCE_URL: jdbc:mysql://${MYSQL_HOST:?required}:3306/${MYSQL_DATABASE:?required}
