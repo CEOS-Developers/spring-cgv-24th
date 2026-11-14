@@ -1,0 +1,20 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:cgv-test;MODE=MySQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    username: sa
+    password: ""
+    driver-class-name: org.h2.Driver
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+  sql:
+    init:
+      mode: never
+
+jwt:
+  # 테스트에서만 사용하는 공개된 키. 실제 환경에서는 사용하지 않는다.
+  secret: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+
+toss:
+  client-key: ""
+  secret-key: ""

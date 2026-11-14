@@ -1,0 +1,23 @@
+# 이 파일만 사용한다: docker compose -f compose.prod.yaml up -d
+# .env에 APP_IMAGE=<레지스트리>/<계정>/cgv:<배포 태그>를 추가한다.
+# 최초 배포 전 운영 DB에 테이블과 schema.sql의 추가 제약조건을 별도로 적용한다.
+name: cgv-prod
+
+services:
+  app:
+    image: ${IMAGE_NAME:?required}:${IMAGE_TAG:?required}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      # TODO: 이후 validate로 수정
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      SPRING_SQL_INIT_MODE: never
+      SPRING_DATASOURCE_URL: jdbc:mysql://${MYSQL_HOST:?required}:3306/${MYSQL_DATABASE:?required}
+      SPRING_DATASOURCE_USERNAME: ${MYSQL_USER:?required}
+      SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD:?required}
+
+      JWT_SECRET: ${JWT_SECRET:?required}
+      TOSS_CLIENT_KEY: ${TOSS_CLIENT_KEY:?required}
+      TOSS_SECRET_KEY: ${TOSS_SECRET_KEY:?required}

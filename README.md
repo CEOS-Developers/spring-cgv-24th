@@ -3,7 +3,7 @@ CEOS 24기 백엔드 스터디 - CGV 클론 코딩 프로젝트
 
 ## ERD
 ![erd.png](erd.png)
-[ERD Cloud 가서 보기](https://www.erdcloud.com/d/aBzYHMExGpfHZXSEE)
+[dbdiagram.io 가서 보기](https://dbdiagram.io/d/6af6cef04e0bad6598a16b62)
 
 - 테이블들의 PK값은 변하지 않도록 별개의 단일 id를 만드는 방식으로 통일했습니다.
   - `@GeneratedValue(strategy = GenerationType.IDENTITY)`
@@ -265,3 +265,160 @@ WHERE cinema_id = :cinemaId AND goods_id = :goodsId
 - [ ] **취소 멱등성·동시성:** 취소 건별 멱등키와 결과 저장, 중복·동시 부분 취소 시 이중 환불과 잔액 오류 방지 및 테스트.
 - [ ] **승인 복구·주문 만료:** 확정 실패와 결과 불명을 구분하고 PG 조회로 상태 대조. 장기 `CONFIRMING`·멱등키 유효기간 경과·미결제 주문의 재고 회수 정책 구현.
 - [ ] **선택 — Webhook:** 이벤트 검증·중복 방어를 포함해 가상계좌 입금, 승인 누락, 취소 결과 동기화.
+
+# 5주차 과제
+
+## 1. 이번 주 목표와 배포 결과
+
+이번 주에는 기존 CGV API를 **Docker로 실행하고, 테스트를 통과한 코드를 GitHub Actions로 EC2에 자동 배포하는 환경**을 구성했습니다. 로컬에서만 실행되던 애플리케이션을 서버에서도 같은 방식으로 빌드·실행하고, 코드 변경부터 배포 상태 확인까지 연결하는 데 집중했습니다.
+
+- **배포 주소:** [http://43.202.206.26](http://43.202.206.26)
+- **API 문서:** [Swagger UI](http://43.202.206.26/swagger-ui/index.html)
+- **공개 API 확인:** [영화 목록 조회](http://43.202.206.26/movies)
+- **서버 상태 확인:** [Actuator Health](http://43.202.206.26/actuator/health)
+
+2026-11-13 기준으로 Swagger UI와 영화 목록 조회의 HTTP 200 응답, 헬스 체크의 HTTP 200 및 `status: UP` 응답을 확인했습니다.
+
+## 2. Docker로 빌드와 실행 환경 통일하기
+
+### 멀티 스테이지 Dockerfile
+
+로컬에서 만든 JAR를 복사하는 대신, **Docker 이미지 빌드 과정 안에서 JAR까지 생성**하도록 했습니다. 프로젝트의 Java 버전에 맞춰 빌드와 실행 모두 Java 21을 사용합니다.
+
+```text
+빌드 단계: eclipse-temurin:21-jdk
+  Gradle Wrapper·빌드 설정 복사 → 의존성 준비 → 소스 복사 → bootJar
+                              ↓ 생성된 JAR만 복사
+실행 단계: eclipse-temurin:21-jre
+  java -jar app.jar → Spring Boot 실행(8080)
+```
+
+| 적용한 내용 | 선택한 이유 |
+| --- | --- |
+| JDK 빌드 단계와 JRE 실행 단계 분리 | 최종 이미지에는 빌드 도구·소스 대신 실행에 필요한 JRE와 JAR만 포함 |
+| Gradle 설정·의존성 처리를 소스 복사보다 먼저 배치 | 소스만 바뀌었을 때 앞 단계의 Docker 빌드 캐시를 재사용 |
+| `ENTRYPOINT ["java", "-jar", "app.jar"]` | 컨테이너 실행 시 애플리케이션 시작 명령을 고정 |
+| `.dockerignore` 추가 | `.git`, 로컬 빌드 결과, IDE 설정, `.env`, 초기화 SQL 등을 빌드 컨텍스트에서 제외 |
+
+`EXPOSE 8080`은 이미지가 사용하는 포트를 설명하는 설정이고, 실제 호스트 포트 연결은 Compose의 `ports`로 지정했습니다. 관련 파일: [Dockerfile](Dockerfile), [.dockerignore](.dockerignore)
+
+## 3. 로컬과 운영 환경을 나누어 구성하기
+
+같은 애플리케이션을 실행하더라도 로컬은 MySQL까지 함께 띄우고, 운영은 외부 DB(RDS)에 연결하도록 Compose 파일을 분리했습니다.
+
+| 구분 | 로컬: `docker-compose.yaml` | 운영: `compose.prod.yaml` |
+| --- | --- | --- |
+| 애플리케이션 준비 | `build: .`로 이미지 빌드 | Docker Hub의 커밋 태그 이미지 사용 |
+| DB | `mysql:8.4` 컨테이너 | `MYSQL_HOST`로 지정한 외부 MySQL |
+| DB 접속 주소 | `jdbc:mysql://db:3306/...` | `jdbc:mysql://${MYSQL_HOST}:3306/...` |
+| 앱 포트 | `8080:8080` | `127.0.0.1:8080:8080` |
+| 데이터 보관 | `mysql-data` named volume | 앱 컨테이너와 분리된 외부 DB |
+| SQL 초기화 | `ddl-auto=update`, `sql.init.mode=never` | `ddl-auto=update`, `sql.init.mode=never` |
+| 재시작 정책 | `unless-stopped` | `unless-stopped` |
+
+### 로컬: 컨테이너 간 통신과 데이터 보존
+
+- 앱 컨테이너에서 `localhost`는 앱 자신을 가리키므로, MySQL에는 서비스 이름인 `db`로 접속합니다. Compose가 만드는 기본 네트워크에서 서비스 이름으로 통신할 수 있어 별도의 고정 IP를 지정하지 않았습니다. [Docker Compose 네트워크 문서](https://docs.docker.com/compose/how-tos/networking/)
+- DB의 3306 포트는 호스트에 공개하지 않고 앱과 같은 Compose 네트워크 안에서 사용합니다.
+- `mysqladmin ping` 헬스 체크와 `depends_on: condition: service_healthy`를 연결해 DB 헬스 체크가 통과한 뒤 앱을 시작합니다.
+- `mysql-data:/var/lib/mysql`로 DB 데이터를 저장합니다. 컨테이너의 쓰기 레이어는 **컨테이너 삭제 시** 사라지므로 데이터를 별도 볼륨에 보관했습니다. 단순 중지·재시작만으로 쓰기 레이어가 삭제되는 것은 아닙니다. [Docker 저장소 문서](https://docs.docker.com/engine/storage/)
+
+필수 환경변수를 `.env`에 준비한 뒤 다음과 같이 실행할 수 있습니다.
+
+```bash
+docker compose up -d --build
+docker compose ps
+docker compose logs -f app
+docker compose down
+```
+
+`down`은 컨테이너와 네트워크를 정리하지만 named volume은 유지합니다. `down -v`는 DB 볼륨까지 삭제하므로 데이터 보존이 필요할 때는 사용하지 않습니다.
+
+### 운영: 요청 경로와 설정 주입
+
+```text
+클라이언트 → EC2 공개 HTTP 주소(80) → Nginx
+          → 호스트 127.0.0.1:8080 → Spring Boot 컨테이너(8080)
+          → 외부 MySQL(RDS)
+```
+
+운영 Compose에서는 앱 포트를 호스트의 루프백 주소에만 연결했습니다. 배포 주소의 응답 헤더에서도 Nginx를 확인했으며, 워크플로우의 헬스 체크는 EC2의 `http://127.0.0.1/actuator/health` 로 요청하므로 80번 포트에서 앱으로 전달하는 프록시 구성이 전제됩니다. Nginx 설치·설정 파일은 현재 저장소에 포함되어 있지 않습니다.
+
+DB 접속 정보, JWT 키, 토스 키는 이미지에 넣지 않고 실행 시 환경변수로 주입합니다. 기본 `application.yaml`의 `ddl-auto=create`, SQL 초기화 설정은 Compose 환경변수로 덮어써서, 재배포 때마다 테이블과 더미 데이터를 다시 초기화하지 않도록 했습니다.
+
+다만 **`ddl-auto=update`가 `schema.sql`의 모든 추가 제약까지 만들어 주는 것은 아닙니다.** 복합 FK, 활성 좌석 generated column과 UNIQUE 인덱스는 운영 DB에 별도로 적용·확인해야 합니다. 현재 Docker 이미지에서는 `schema.sql`과 `data.sql`을 제외하고 자동 실행도 비활성화했습니다.
+
+관련 파일: [로컬 Compose](docker-compose.yaml), [운영 Compose](compose.prod.yaml), [추가 DB 제약](src/main/resources/schema.sql)
+
+## 4. CI에서 실행할 수 있도록 테스트 환경 분리하기
+
+GitHub Actions의 Runner에는 제 로컬 MySQL이나 환경변수가 없습니다. 따라서 기존 컨텍스트 로딩 테스트가 로컬 환경에 의존하지 않도록 **H2와 `test` 프로필**을 추가했습니다.
+
+- 테스트 런타임에만 H2 의존성을 추가하고, MySQL 호환 모드의 인메모리 DB를 사용합니다.
+- `@ActiveProfiles("test")`로 테스트 설정을 적용하고 `create-drop`으로 테스트용 테이블을 생성·정리합니다.
+- MySQL 전용 초기화 SQL은 실행하지 않으며, 공개된 테스트 전용 JWT 키를 사용합니다. 운영 키는 필요하지 않습니다.
+- MockMvc로 헬스 체크의 익명 접근과 기존 보호 경로의 인증 요구를 함께 검증하도록 추가했습니다.
+
+## 5. GitHub Actions로 테스트부터 배포 확인까지 연결하기
+
+하나의 [워크플로우](.github/workflows/deploy.yml) 안에서 작업을 세 Job으로 나누고, `needs`로 앞 단계가 성공해야 다음 단계로 진행하도록 했습니다.
+
+```mermaid
+flowchart LR
+    PR[master 대상 PR] --> TEST[테스트]
+    PUSH[master에 push] --> TEST
+    TEST -->|push 이벤트이고 테스트 성공| BUILD[이미지 빌드 · Docker Hub Push]
+    BUILD --> DEPLOY[EC2 Compose 배포]
+    DEPLOY --> HEALTH[HTTP 헬스 체크]
+```
+
+**현재 트리거는 `master` 기준**입니다. `week5` 브랜치에 push하는 것만으로는 배포되지 않으며, `master` 대상 PR에서는 테스트만, `master`에 push되면 테스트부터 배포까지 실행하도록 구성했습니다.
+
+| Job | 실행 내용 |
+| --- | --- |
+| `test` | Ubuntu Runner에 JDK 21·Gradle 환경 구성 → `./gradlew test --no-daemon` |
+| `build-and-push` | 테스트 성공 후 push 이벤트에서만 실행 → Buildx로 `linux/amd64` 이미지 빌드 → Docker Hub 업로드 |
+| `deploy` | 운영 Compose 파일을 EC2로 복사 → SSH 접속 → `.env` 생성 → 설정 검증 → 이미지 pull → 앱 교체 → 헬스 체크 |
+
+### 배포 단계에서 신경 쓴 부분
+
+1. **배포 버전 추적:** 이미지에 `dev-${github.sha}` 형식의 태그를 붙여 어떤 커밋으로 만든 이미지인지 구분합니다.
+2. **순차 배포:** deploy Job에 같은 `concurrency` 그룹과 `cancel-in-progress: false`를 지정해 실행 중인 배포가 취소되거나 다른 배포와 동시에 EC2를 변경하지 않도록 합니다.
+3. **환경변수 파일 생성:** `printf`로 Secrets의 여러 줄 설정을 `.env`에 기록하고 이미지 이름·태그를 덧붙입니다. `umask 077`로 새 파일의 접근 권한도 제한합니다.
+4. **실행 전 검증:** `set -eu`로 명령 실패·미정의 변수 사용 시 중단하고, `docker compose ... config --quiet`로 필수 변수와 설정을 확인한 다음 이미지를 가져옵니다.
+5. **앱 교체:** `docker compose -f compose.prod.yaml up -d --no-deps app`으로 앱을 갱신합니다. 운영 DB는 별도 서버에 있으므로 교체 대상에 포함되지 않습니다.
+6. **배포 후 확인:** 헬스 체크를 최대 30회 시도하고, 실패하면 2초 대기 후 재시도합니다. HTTP 성공과 `status: UP`을 확인하면 성공으로 종료하고, 끝까지 실패하면 앱 로그 80줄을 출력한 뒤 Job을 실패 처리합니다.
+
+컨테이너가 실행됐다는 사실만으로 배포를 성공 처리하지 않고 HTTP 응답까지 확인하도록 했습니다. 다만 현재 헬스 체크는 **새 커밋의 실행 여부까지 식별하거나 실패 시 이전 이미지로 자동 복구하지는 않습니다.**
+
+### 설정·보안·속도 최적화
+
+| 항목 | 현재 적용 내용 |
+| --- | --- |
+| GitHub Variables | `DOCKER_IMAGE_NAME`: Docker Hub 이미지 경로 |
+| GitHub Secrets | `DOCKER_USERNAME`, `DOCKER_PASSWORD`, `EC2_HOST`, `EC2_KEY`, `ENV_VARS` |
+| `ENV_VARS`에 필요한 값 | `MYSQL_HOST`, `MYSQL_DATABASE`, `MYSQL_USER`, `MYSQL_PASSWORD`, `JWT_SECRET`, `TOSS_CLIENT_KEY`, `TOSS_SECRET_KEY` |
+| 저장소·이미지에서 비밀정보 제외 | `.gitignore`와 `.dockerignore`에 `.env`, `.env.*` 제외 규칙 추가 |
+| Workflow 권한 | `permissions: contents: read`로 저장소 읽기 권한만 부여 |
+| Gradle 캐시 | 테스트 Job의 `gradle/actions/setup-gradle` 사용 |
+| Docker 캐시 | Buildx의 `cache-from: type=gha`, `cache-to: type=gha,mode=max` 사용 |
+
+로컬 Compose를 실행할 때는 위 운영 변수 대신 해당 파일에서 사용하는 MySQL 설정과 `MYSQL_ROOT_PASSWORD`도 준비해야 합니다. 운영 이미지 이름·태그는 워크플로우가 `.env`에 추가하므로 수동 배포 시에는 `IMAGE_NAME`, `IMAGE_TAG`를 직접 지정해야 합니다.
+
+## 6. 시행착오와 배운 점
+
+| 작업 중 수정한 부분 | 원인·변경 내용 | 배운 점 |
+| --- | --- | --- |
+| CI에서 Gradle Wrapper 실행 오류 | 기존 `.gitignore`의 `*.jar` 규칙으로 Wrapper JAR가 누락되어, `!/gradle/wrapper/gradle-wrapper.jar` 예외 규칙과 실제 파일 추가 | 로컬에 파일이 있어도 새 Runner가 받은 저장소에는 없을 수 있음. 빌드 실행에 필요한 파일도 버전 관리 대상인지 확인해야 함 |
+| 테스트의 로컬 MySQL 의존 | H2 의존성·테스트 프로필·테스트용 JWT 키를 추가하고 SQL 초기화 비활성화 | 자동화 환경에서는 로컬 설정에 기대지 않는 테스트가 필요하며, 테스트가 보장하는 범위도 구분해야 함 |
+| 운영 `ddl-auto` 변경 | 처음에는 `validate`였으나 현재 `update`로 변경 | `validate`는 기존 스키마를 검사할 뿐 생성하지 않음. 앱 배포와 DB 스키마 준비를 함께 고려해야 하며, 장기적으로는 명시적인 마이그레이션 관리가 필요 |
+| 헬스 체크의 인증 요구 | 토큰 없이 배포 상태를 확인할 수 있도록 `GET /actuator/health`에 `permitAll()` 추가 | 정상 실행 중이어도 상태 확인 경로가 인증에 막히면 배포 검증이 실패할 수 있음. 필요한 경로만 공개하고 기존 보호 경로는 테스트로 확인 |
+
+이번 작업을 통해 **이미지 생성, 컨테이너 실행, 실제 서비스의 정상 응답은 각각 확인해야 하는 단계**라는 점을 배웠습니다. 또한 앱 컨테이너는 교체할 수 있게 만들되, DB 데이터와 실행 환경 설정은 그 생명주기에서 분리해야 한다는 점을 실제 구성에 적용했습니다.
+
+## 7. 다음 개선점
+
+- [ ] **DB 마이그레이션:** Flyway 또는 Liquibase로 테이블·추가 제약 변경을 관리하고, 적용 후 `ddl-auto=validate` 사용 검토.
+- [ ] **실패 시 롤백:** 직전 정상 이미지 태그를 기록하고 새 배포의 헬스 체크 실패 시 복구. 현재는 실패 표시와 로그 출력까지만 구현.
+- [ ] **배포 중 가용성:** 현재 단일 앱 컨테이너 교체 방식에서 발생할 수 있는 중단을 줄이기 위해 Blue-Green 배포 검토.
+- [ ] **불필요한 실행 줄이기:** README 등 문서만 수정한 경우를 위한 경로 필터 추가. 현재는 문서 변경도 이벤트 조건에 맞으면 실행됨.

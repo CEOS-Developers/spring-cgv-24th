@@ -3,6 +3,7 @@
 *.ipr
 *.iws
 *.jar
+!/gradle/wrapper/gradle-wrapper.jar
 *.sw?
 *~
 .#*
@@ -41,3 +42,7 @@ secrets.yml
 .sts4-cache
 
 .idea
+
+.env
+.env.*
+!.env.example
