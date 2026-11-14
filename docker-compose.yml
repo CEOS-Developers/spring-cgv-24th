@@ -34,6 +34,9 @@ services:
       ADMIN_TOKEN: ${ADMIN_TOKEN}
       TOSS_SECRET_KEY: ${TOSS_SECRET_KEY}
       TOSS_WEBHOOK_SECRET: ${TOSS_WEBHOOK_SECRET}
+    volumes:
+      # 컨테이너를 지워도 로그 파일이 남도록 호스트 폴더에 연결
+      - ./logs:/app/logs
     depends_on:
       db:
         condition: service_healthy

@@ -22,4 +22,7 @@ COPY --from=build /workspace/build/libs/*.jar app.jar
 
 EXPOSE 8080
 
+# 도커 이미지는 배포용이므로 prod 프로필로 실행 (INFO 레벨, SQL 로그 끔, 파일 로그 켬)
+ENV SPRING_PROFILES_ACTIVE=prod
+
 ENTRYPOINT ["java", "-jar", "app.jar"]

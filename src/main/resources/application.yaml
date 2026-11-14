@@ -5,6 +5,10 @@ spring:
   application:
     name: cgv
 
+  profiles:
+    # 프로필을 따로 주지 않으면 dev (로컬 실행용). 도커 이미지는 Dockerfile에서 prod로 지정
+    default: dev
+
   datasource:
     url: jdbc:mysql://${DB_HOST}:${DB_PORT}/${DB_NAME}?allowPublicKeyRetrieval=true&useSSL=false&characterEncoding=UTF-8
     username: ${DB_USERNAME}
@@ -14,14 +18,12 @@ spring:
   jpa:
     hibernate:
       ddl-auto: update
-    show-sql: true
-    properties:
-      hibernate:
-        format_sql: true
+    # SQL은 System.out으로 직접 출력되어 traceId·레벨 제어가 안 되므로 끄고, logger(org.hibernate.SQL)만 사용
+    show-sql: false
 
 logging:
-  level:
-    org.hibernate.SQL: debug
+  # 이 시간(ms) 이상 걸린 요청은 warn + slow=true로 기록 (부하테스트 p95 측정 후 조정)
+  slow-request-threshold-ms: 500
 
 jwt:
   secret: ${JWT_SECRET}

@@ -43,3 +43,6 @@ secrets.yml
 .idea
 schema.sql
 /docs/
+
+# 애플리케이션 로그 파일 (docker compose 볼륨)
+/logs/
