@@ -5,6 +5,7 @@ import com.ceos24.cgv.domain.payment.dto.TossConfirmRequest;
 import com.ceos24.cgv.domain.payment.dto.TossErrorResponse;
 import com.ceos24.cgv.domain.payment.dto.TossPaymentResponse;
 import com.ceos24.cgv.domain.payment.exception.TossPaymentException;
+import com.ceos24.cgv.global.logging.LogMasker;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import lombok.extern.slf4j.Slf4j;
@@ -35,7 +36,7 @@ public class TossPaymentsClientImpl implements TossPaymentsClient {
     @Override
     public TossPaymentResponse confirm(TossConfirmRequest request, String idempotencyKey) {
         log.info(
-                "Requesting Toss payment confirm: orderId={}, amount={}, idempotencyKey={}",
+                "toss_confirm_request orderId={} amount={} idempotencyKey={}",
                 request.orderId(),
                 request.amount(),
                 idempotencyKey);
@@ -52,14 +53,17 @@ public class TossPaymentsClientImpl implements TossPaymentsClient {
                     .onStatus(HttpStatusCode::isError, (req, res) -> handleTossError(res))
                     .body(TossPaymentResponse.class);
         } catch (ResourceAccessException e) {
-            log.error("토스 결제 승인 API 네트워크 타임아웃/접속 실패: orderId={}, error={}", request.orderId(), e.getMessage());
+            log.error(
+                    "toss_confirm_network_failure orderId={} type={}",
+                    request.orderId(),
+                    e.getClass().getSimpleName());
             throw TossPaymentException.timeout("토스 결제 승인 API 호출 중 네트워크 타임아웃이 발생했습니다.", e);
         }
     }
 
     @Override
     public TossPaymentResponse getPayment(String paymentKey) {
-        log.info("Requesting Toss payment inquiry: paymentKey={}", paymentKey);
+        log.info("toss_inquiry_request paymentKey={}", LogMasker.mask(paymentKey));
         try {
             return tossQueryRestClient
                     .get()
@@ -68,7 +72,11 @@ public class TossPaymentsClientImpl implements TossPaymentsClient {
                     .onStatus(HttpStatusCode::isError, (req, res) -> handleTossError(res))
                     .body(TossPaymentResponse.class);
         } catch (ResourceAccessException e) {
-            log.error("토스 결제 조회 API 네트워크 타임아웃/접속 실패: paymentKey={}, error={}", paymentKey, e.getMessage());
+            // 예외 메시지에 요청 URL(=paymentKey)이 섞일 수 있어 예외 종류만 남긴다
+            log.error(
+                    "toss_inquiry_network_failure paymentKey={} type={}",
+                    LogMasker.mask(paymentKey),
+                    e.getClass().getSimpleName());
             throw TossPaymentException.timeout("토스 결제 조회 API 호출 중 네트워크 타임아웃이 발생했습니다.", e);
         }
     }
@@ -76,8 +84,8 @@ public class TossPaymentsClientImpl implements TossPaymentsClient {
     @Override
     public TossPaymentResponse cancel(String paymentKey, TossCancelRequest request, String idempotencyKey) {
         log.info(
-                "Requesting Toss payment cancel: paymentKey={}, cancelAmount={}, idempotencyKey={}",
-                paymentKey,
+                "toss_cancel_request paymentKey={} cancelAmount={} idempotencyKey={}",
+                LogMasker.mask(paymentKey),
                 request.cancelAmount(),
                 idempotencyKey);
         RestClient.RequestBodySpec requestSpec = tossCommandRestClient
@@ -96,10 +104,10 @@ public class TossPaymentsClientImpl implements TossPaymentsClient {
                     .body(TossPaymentResponse.class);
         } catch (ResourceAccessException e) {
             log.error(
-                    "토스 결제 취소 API 네트워크 타임아웃/접속 실패: paymentKey={}, cancelAmount={}, error={}",
-                    paymentKey,
+                    "toss_cancel_network_failure paymentKey={} cancelAmount={} type={}",
+                    LogMasker.mask(paymentKey),
                     request.cancelAmount(),
-                    e.getMessage());
+                    e.getClass().getSimpleName());
             throw TossPaymentException.timeout("토스 결제 취소 API 호출 중 네트워크 타임아웃이 발생했습니다.", e);
         }
     }
@@ -113,13 +121,13 @@ public class TossPaymentsClientImpl implements TossPaymentsClient {
                 error = objectMapper.readValue(body, TossErrorResponse.class);
             }
         } catch (Exception e) {
-            log.error("Failed to parse Toss error response body", e);
+            log.error("toss_error_body_parse_failed", e);
         }
 
         String code = error != null ? error.code() : "UNKNOWN_ERROR";
         String message = error != null ? error.message() : "토스 결제 대행사 통신 중 오류가 발생했습니다.";
 
-        log.error("Toss API error response: httpStatus={}, code={}, message={}", status.value(), code, message);
+        log.error("toss_api_error httpStatus={} code={} message={}", status.value(), code, message);
 
         if (status.is4xxClientError()) {
             throw TossPaymentException.clientError(code, message);
