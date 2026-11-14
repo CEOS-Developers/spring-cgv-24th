@@ -1,6 +1,7 @@
 package com.ceos24.cgv.global.security.jwt;
 
 import com.ceos24.cgv.global.exception.ErrorCode;
+import com.ceos24.cgv.global.logging.MdcLoggingFilter;
 import com.ceos24.cgv.global.security.ApiUserDetails;
 import io.jsonwebtoken.ExpiredJwtException;
 import io.jsonwebtoken.JwtException;
@@ -11,6 +12,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -34,6 +36,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 SecurityContext context = SecurityContextHolder.createEmptyContext();
                 context.setAuthentication(authentication);
                 SecurityContextHolder.setContext(context);
+                MDC.put(MdcLoggingFilter.MEMBER_ID, String.valueOf(userDetails.memberId()));
             }
         } catch (ExpiredJwtException e) {
             log.warn("만료된 토큰입니다: {}", e.getMessage());
