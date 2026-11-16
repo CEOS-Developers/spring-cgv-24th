@@ -15,6 +15,7 @@ import org.springframework.security.config.annotation.web.configurers.AbstractHt
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.AnonymousAuthenticationFilter;
+import org.springframework.security.web.util.matcher.AndRequestMatcher;
 import org.springframework.security.web.util.matcher.OrRequestMatcher;
 import org.springframework.security.web.util.matcher.RequestMatcher;
 import tools.jackson.databind.ObjectMapper;
@@ -28,13 +29,15 @@ import static org.springframework.security.web.servlet.util.matcher.PathPatternR
 @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
 public class SecurityConfig {
     private static final String PAYMENT_DEMO_PROFILE = "payment-demo";
+    private static final String MONITORING_PROFILE = "monitoring";
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http, JwtService jwtService,
                                                    ObjectMapper objectMapper,
                                                    Environment environment) throws Exception {
-        RequestMatcher publicApiMatcher = new PublicApiRequestMatcher(
-                environment.acceptsProfiles(Profiles.of(PAYMENT_DEMO_PROFILE)));
+        RequestMatcher publicApiMatcher = new OrRequestMatcher(
+                new PublicApiRequestMatcher(environment.acceptsProfiles(Profiles.of(PAYMENT_DEMO_PROFILE))),
+                prometheusScrapeMatcher(environment));
         RestAuthenticationEntryPoint entryPoint = new RestAuthenticationEntryPoint(objectMapper);
         RequestMatcher userApiMatcher = new OrRequestMatcher(
                 pathPattern(POST, "/api/v1/movies/{movieId}/likes"),
@@ -79,5 +82,16 @@ public class SecurityConfig {
                 .addFilterBefore(new JwtAuthenticationFilter(jwtService, entryPoint, publicApiMatcher),
                         AnonymousAuthenticationFilter.class);
         return http.build();
+    }
+
+    private static RequestMatcher prometheusScrapeMatcher(Environment environment) {
+        int managementPort = environment.getProperty("management.server.port", Integer.class, -1);
+        int applicationPort = environment.getProperty("server.port", Integer.class, 8080);
+        if (!environment.acceptsProfiles(Profiles.of(MONITORING_PROFILE))
+                || managementPort <= 0 || managementPort == applicationPort) {
+            return request -> false;
+        }
+        return new AndRequestMatcher(pathPattern(GET, "/actuator/prometheus"),
+                request -> request.getLocalPort() == managementPort);
     }
 }

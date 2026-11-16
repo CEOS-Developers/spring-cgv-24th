@@ -1,5 +1,6 @@
 package com.ceos.cgv.global.exception;
 
+import com.ceos.cgv.global.observability.RequestFailure;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -19,6 +20,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(BusinessException.class)
     public ResponseEntity<ErrorResponse> handleBusinessException(BusinessException exception) {
         ErrorCode errorCode = exception.getErrorCode();
+        RequestFailure.set(errorCode.name(), exception);
         return ResponseEntity.status(errorCode.httpStatus())
                 .body(new ErrorResponse(
                         errorCode.httpStatus().value(),
@@ -31,6 +33,7 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponse> handleIllegalArgumentException(
             IllegalArgumentException exception
     ) {
+        RequestFailure.set(ErrorCode.INVALID_REQUEST.name(), exception);
         return ResponseEntity.badRequest().body(new ErrorResponse(
                 HttpStatus.BAD_REQUEST.value(),
                 ErrorCode.INVALID_REQUEST.name(),
@@ -43,6 +46,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler({MethodArgumentNotValidException.class, HttpMessageNotReadableException.class,
             MissingRequestHeaderException.class, MethodArgumentTypeMismatchException.class})
     public ResponseEntity<ErrorResponse> handleInvalidRequest(Exception exception) {
+        RequestFailure.set(ErrorCode.INVALID_REQUEST.name(), exception);
         return ResponseEntity.badRequest().body(new ErrorResponse(
                 HttpStatus.BAD_REQUEST.value(),
                 ErrorCode.INVALID_REQUEST.name(),
@@ -59,13 +63,21 @@ public class GlobalExceptionHandler {
         // 405, 415 등 프레임워크가 지정한 HTTP 상태와 헤더를 보존한다.
         if (exception instanceof org.springframework.web.ErrorResponse error) {
             HttpStatus status = HttpStatus.resolve(error.getStatusCode().value());
+            String code = status == null ? "HTTP_ERROR" : status.name();
+            RequestFailure.set(code, exception);
             return ResponseEntity.status(error.getStatusCode()).headers(error.getHeaders())
                     .body(new ErrorResponse(error.getStatusCode().value(),
-                            status == null ? "HTTP_ERROR" : status.name(),
+                            code,
                             status == null ? "요청을 처리할 수 없습니다." : status.getReasonPhrase()));
         }
-        log.error("처리되지 않은 서버 오류", exception);
         ErrorCode error = ErrorCode.INTERNAL_SERVER_ERROR;
+        if (!RequestFailure.set(error.name(), exception)) {
+            log.atError()
+                    .addKeyValue("event", "unexpected_exception")
+                    .addKeyValue("errorCode", error.name())
+                    .addKeyValue("exceptionType", exception.getClass().getSimpleName())
+                    .log("Unexpected server error");
+        }
         return ResponseEntity.status(error.httpStatus())
                 .body(new ErrorResponse(error.httpStatus().value(), error.name(), error.message()));
     }

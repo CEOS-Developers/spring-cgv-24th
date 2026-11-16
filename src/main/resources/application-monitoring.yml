@@ -1,0 +1,26 @@
+management:
+  server:
+    port: 8081
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+
+logging:
+  level:
+    org.apache.coyote.http11.Http11Processor: "OFF"
+  file:
+    name: /app/logs/cgv.log
+  structured:
+    format:
+      console: logstash
+      file: logstash
+  logback:
+    rollingpolicy:
+      max-file-size: 10MB
+      max-history: 3
+      total-size-cap: 50MB

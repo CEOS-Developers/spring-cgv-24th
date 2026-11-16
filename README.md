@@ -2,6 +2,48 @@
 
 CEOS 24기 백엔드 스터디 - CGV 클론 코딩 프로젝트
 
+## 6주차 모니터링과 로깅
+
+Spring Boot Actuator에서 노출한 메트릭을 Prometheus가 주기적으로 수집합니다. 앱의 JSON 로그 파일은 Alloy가 읽어서 Loki에 보냅니다. Grafana는 Prometheus와 Loki를 조회해 같은 시간 범위의 지표와 로그를 보여줍니다.
+
+### 로컬 실행
+
+새 로컬 DB를 쓰도록 Compose 프로젝트를 분리합니다. `.env.example`을 바탕으로 `.env`에 DB와 JWT 설정을 채우고 `APP_PORT=8080`, `GRAFANA_PORT=3000`, `GRAFANA_ADMIN_PASSWORD`를 설정합니다. Grafana의 기본 사용자 이름은 `admin`입니다.
+
+```bash
+docker compose -p cgv-monitoring -f compose.yml -f compose.monitoring.yml up -d --build
+curl -i http://127.0.0.1:8080/api/v1/movies
+```
+
+[CGV 대시보드](http://127.0.0.1:3000/d/cgv-overview/cgv-overview)는 컨테이너를 올릴 때 생성됩니다. 앱과 Grafana는 루프백에서 열립니다. Actuator 관리 포트 `8081`, Prometheus, Loki는 Compose 네트워크에서 접근합니다. 로그 파일은 앱이 쓰고 Alloy가 읽기 전용으로 읽습니다. 애플리케이션 로그는 크기와 보관 기간을 제한하고, Prometheus와 Loki에도 보관 기간을 설정했습니다.
+
+### 대시보드 구성
+
+| 확인할 질문 | 지표 |
+| --- | --- |
+| 앱에서 메트릭을 가져올 수 있는가 | Prometheus `up` |
+| 어느 API가 느려졌거나 실패했는가 | 초당 요청 수, 경로별 p95 응답 시간, 5xx 비율 |
+| 서버 자원이 밀리고 있는가 | JVM 힙 메모리, Hikari 사용 중인 연결 수와 대기 수 |
+| 예매나 결제에서 어떤 문제가 났는가 | 좌석 선점 충돌 사유별 건수, 승인·취소 결과 미확정 응답 수 |
+
+좌석 선점 충돌은 일반적인 경쟁에서도 발생하고, 결제 미확정 응답은 HTTP `202`로 반환될 수 있습니다. 두 사례를 별도 지표로 두면 5xx 비율에 잡히지 않는 상황도 찾을 수 있습니다. 결제 지표는 작업 응답 기준이라 같은 작업을 재조회하거나 재시도할 때 다시 집계될 수 있습니다.
+
+### 로그 확인
+
+API 응답의 `X-Request-Id`를 복사해 Grafana Explore의 Loki 데이터 소스에서 요청을 찾을 수 있습니다. 요청 로그에는 메서드, 경로 템플릿, HTTP 상태, 소요 시간과 오류 코드를 남깁니다. 인증 헤더, 요청 본문, URL 쿼리와 결제 키는 수집 필드에서 제외했습니다.
+
+Alloy는 요청 종료, 결제 미확정, 서버 오류, 매점 주문 정리 실패 이벤트를 Loki로 보냅니다. JDBC 원본 오류 메시지와 Tomcat의 잘못된 요청 파싱 메시지는 입력값이 포함될 수 있어 해당 로깅을 끕니다.
+
+```logql
+{app="cgv"} | json | requestId="응답의-X-Request-Id"
+{app="cgv"} | json | errorCode="SEAT_HELD"
+{app="cgv"} | json | event="payment_operation" | status="UNKNOWN"
+```
+
+### 검증
+
+로컬 Compose에서 영화 목록 요청과 같은 좌석을 두 사용자가 선점하는 상황을 실행했습니다. Prometheus의 좌석 충돌 카운터가 증가하고, Grafana에서 `X-Request-Id`와 `SEAT_HELD`로 `409` 로그를 찾을 수 있었습니다. 결제 결과 미확정 로그와 카운터는 PG 테스트 대역으로 확인했습니다.
+
 ## 6주차 결제 리팩토링과 매점 결제
 
 공통 결제는 PG 요청, 승인 금액 검증, 멱등성, 결과 복구를 담당합니다. 영화 예매는 좌석 상태를, 매점 주문은 주문 상태와 재고를 담당합니다. PG 호출은 DB 트랜잭션 밖에서 실행하고, 결제 결과와 좌석 또는 재고 변경은 같은 DB 트랜잭션에서 확정합니다.

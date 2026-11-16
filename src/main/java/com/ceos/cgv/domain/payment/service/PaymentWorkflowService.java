@@ -3,7 +3,9 @@ package com.ceos.cgv.domain.payment.service;
 import com.ceos.cgv.domain.payment.dto.request.PaymentCancelRequest;
 import com.ceos.cgv.domain.payment.dto.request.PaymentConfirmRequest;
 import com.ceos.cgv.domain.payment.dto.response.PaymentOperationResponse;
+import com.ceos.cgv.domain.payment.enums.PaymentOperationStatus;
 import com.ceos.cgv.domain.payment.enums.PaymentOperationType;
+import com.ceos.cgv.domain.payment.enums.PaymentTargetType;
 import com.ceos.cgv.domain.payment.gateway.CancelPaymentCommand;
 import com.ceos.cgv.domain.payment.gateway.ConfirmPaymentCommand;
 import com.ceos.cgv.domain.payment.gateway.GatewayFailureType;
@@ -18,26 +20,55 @@ import com.ceos.cgv.domain.payment.service.transaction.PaymentTransactionService
 import com.ceos.cgv.global.exception.BusinessException;
 import com.ceos.cgv.global.exception.ErrorCode;
 
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Supplier;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 @Transactional(propagation = Propagation.NEVER)
 public class PaymentWorkflowService {
     private static final int FINALIZE_MAX_ATTEMPTS = 3;
     private static final long FINALIZE_BACKOFF_MILLIS = 50;
+    private static final String RESPONSE_METRIC = "cgv.payment.operation.responses";
+    private static final Set<String> SAFE_FAILURE_CODES = Set.of(
+            "FAILURE_SAVE_PENDING", "GATEWAY_OUTCOME_UNKNOWN", "COMPENSATION_SAVE_PENDING",
+            "FINALIZATION_PENDING", "INVALID_APPROVAL_RESULT", "INVALID_CANCELLATION_RESULT",
+            "TRANSPORT_ERROR", "TIMEOUT", "INVALID_RESPONSE", "UNKNOWN_HTTP_ERROR",
+            "ALREADY_PROCESSING_REQUEST", "ALREADY_PROCESSED_PAYMENT", "ALREADY_CANCELED_PAYMENT",
+            "ALREADY_REFUND_PAYMENT", "IDEMPOTENT_REQUEST_PROCESSING", "PROVIDER_ERROR",
+            "FAILED_PAYMENT_INTERNAL_SYSTEM_PROCESSING", "FAILED_INTERNAL_SYSTEM_PROCESSING",
+            "UNKNOWN_PAYMENT_ERROR", "UNAUTHORIZED_KEY", "INVALID_API_KEY",
+            "NOT_MATCHES_REFUNDABLE_AMOUNT", "NOT_FOUND_PAYMENT", "NOT_FOUND");
 
     private final PaymentTransactionService transactionService;
     private final PaymentGateway paymentGateway;
     private final PaymentTargetRegistry paymentTargets;
+    private final ObjectProvider<MeterRegistry> meterRegistry;
+
+    @PostConstruct
+    void registerUnknownResponseCounters() {
+        meterRegistry.ifAvailable(registry -> {
+            for (PaymentOperationType type : PaymentOperationType.values()) {
+                for (PaymentTargetType target : PaymentTargetType.values()) {
+                    responseCounter(registry, type, PaymentOperationStatus.UNKNOWN, target);
+                }
+            }
+        });
+    }
 
     public PaymentOperationResponse confirm(Long userId, UUID key, PaymentConfirmRequest request) {
         verifyGatewayReady();
@@ -52,7 +83,7 @@ public class PaymentWorkflowService {
                 throw new BusinessException(ErrorCode.PAYMENT_REQUEST_CONFLICT);
             }
         }
-        return execute(userId, work, false);
+        return executeAndRecord(userId, work, false);
     }
 
     public PaymentOperationResponse cancel(
@@ -68,12 +99,36 @@ public class PaymentWorkflowService {
                 throw new BusinessException(ErrorCode.PAYMENT_REQUEST_CONFLICT);
             }
         }
-        return execute(userId, work, false);
+        return executeAndRecord(userId, work, false);
     }
 
     public PaymentOperationResponse reconcile(Long userId, Long operationId) {
         verifyGatewayReady();
-        return execute(userId, transactionService.recovery(userId, operationId), true);
+        return executeAndRecord(userId, transactionService.recovery(userId, operationId), true);
+    }
+
+    private PaymentOperationResponse executeAndRecord(Long userId, PaymentWork work, boolean recovery) {
+        PaymentOperationResponse response = execute(userId, work, recovery);
+        meterRegistry.ifAvailable(registry ->
+                responseCounter(registry, response.type(), response.status(), work.targetType()).increment());
+        if (response.status() == PaymentOperationStatus.UNKNOWN) {
+            String failureCode = response.failureCode();
+            log.atWarn()
+                    .addKeyValue("event", "payment_operation")
+                    .addKeyValue("operationId", response.operationId())
+                    .addKeyValue("type", response.type().name())
+                    .addKeyValue("status", response.status().name())
+                    .addKeyValue("target", work.targetType().name())
+                    .addKeyValue("failureCode", failureCode != null && SAFE_FAILURE_CODES.contains(failureCode)
+                            ? failureCode : "UNKNOWN")
+                    .log("Payment operation outcome is unknown");
+        }
+        return response;
+    }
+
+    private Counter responseCounter(MeterRegistry registry, PaymentOperationType type,
+                                    PaymentOperationStatus status, PaymentTargetType target) {
+        return registry.counter(RESPONSE_METRIC, "type", type.name(), "status", status.name(), "target", target.name());
     }
 
     private PaymentOperationResponse execute(Long userId, PaymentWork work, boolean recovery) {

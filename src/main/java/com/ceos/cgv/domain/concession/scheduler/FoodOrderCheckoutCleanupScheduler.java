@@ -3,6 +3,8 @@ package com.ceos.cgv.domain.concession.scheduler;
 import com.ceos.cgv.domain.concession.repository.FoodOrderRepository;
 import com.ceos.cgv.domain.concession.repository.FoodOrderRepository.ExpiredCheckout;
 import com.ceos.cgv.domain.concession.service.payment.FoodOrderPaymentService;
+import com.ceos.cgv.global.exception.BusinessException;
+import com.ceos.cgv.global.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.PageRequest;
@@ -48,7 +50,14 @@ public class FoodOrderCheckoutCleanupScheduler {
             try {
                 foodOrders.expireIfElapsed(candidate.getOrderId());
             } catch (RuntimeException exception) {
-                log.warn("Could not expire food checkout {}", candidate.getOrderId(), exception);
+                ErrorCode errorCode = exception instanceof BusinessException businessException
+                        ? businessException.getErrorCode() : ErrorCode.INTERNAL_SERVER_ERROR;
+                log.atWarn()
+                        .addKeyValue("event", "food_checkout_cleanup_failed")
+                        .addKeyValue("orderId", candidate.getOrderId())
+                        .addKeyValue("exceptionType", exception.getClass().getSimpleName())
+                        .addKeyValue("errorCode", errorCode.name())
+                        .log("Could not expire food checkout");
             }
         }
     }

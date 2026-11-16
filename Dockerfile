@@ -14,7 +14,8 @@ RUN apt-get update \
     && apt-get install --yes --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system --gid 10001 app \
-    && useradd --system --uid 10001 --gid app --no-create-home --shell /usr/sbin/nologin app
+    && useradd --system --uid 10001 --gid app --no-create-home --shell /usr/sbin/nologin app \
+    && install -d -o 10001 -g 10001 /app/logs
 WORKDIR /app
 COPY --from=build --chown=10001:10001 /workspace/app.jar ./app.jar
 
