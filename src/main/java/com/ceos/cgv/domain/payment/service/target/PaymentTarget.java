@@ -1,11 +1,14 @@
 package com.ceos.cgv.domain.payment.service.target;
 
 import com.ceos.cgv.domain.payment.entity.PaymentOrder;
+import com.ceos.cgv.domain.payment.enums.PaymentTargetType;
 import com.ceos.cgv.global.exception.ErrorCode;
 
 import java.util.List;
 
 public interface PaymentTarget {
+    PaymentTargetType targetType();
+
     void beginApproval(PaymentOrder order, Long userId);
 
     void completeApproval(PaymentOrder order, Long userId);

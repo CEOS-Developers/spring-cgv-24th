@@ -42,6 +42,8 @@ public class SecurityConfig {
                 pathPattern(GET, "/api/v1/reservations/{reservationId}"),
                 pathPattern(DELETE, "/api/v1/reservations/{reservationId}"),
                 pathPattern(POST, "/api/v1/food-orders"),
+                pathPattern(POST, "/api/v1/food-orders/checkout"),
+                pathPattern(DELETE, "/api/v1/food-orders/{orderId}/checkout"),
                 pathPattern(GET, "/api/v1/food-orders/{orderId}"),
                 pathPattern(GET, "/api/v1/payment-config"),
                 pathPattern(POST, "/api/v1/payment-orders"),

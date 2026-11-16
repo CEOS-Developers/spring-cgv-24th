@@ -2,6 +2,7 @@ package com.ceos.cgv.domain.payment.dto.response;
 
 import com.ceos.cgv.domain.payment.enums.PaymentStatus;
 import com.ceos.cgv.domain.payment.gateway.GatewayCancellation;
+import com.fasterxml.jackson.annotation.JsonInclude;
 
 import lombok.Builder;
 
@@ -12,7 +13,8 @@ import java.util.List;
 public record PaymentResponse(
         Long paymentId,
         String orderId,
-        Long reservationId,
+        @JsonInclude(JsonInclude.Include.NON_NULL) Long reservationId,
+        @JsonInclude(JsonInclude.Include.NON_NULL) Long foodOrderId,
         String paymentKey,
         PaymentStatus status,
         Long activeOperationId,

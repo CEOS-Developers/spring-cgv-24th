@@ -60,7 +60,7 @@ class FoodOrderServiceTest {
         when(product.getId()).thenReturn(3L);
         when(product.getPrice()).thenReturn(1200L);
         Inventory inventory = new Inventory(cinema, product, 5);
-        given(userRepository.findById(1L)).willReturn(Optional.of(user));
+        given(userRepository.findByIdForUpdate(1L)).willReturn(Optional.of(user));
         given(cinemaRepository.findById(2L)).willReturn(Optional.of(cinema));
         given(productRepository.findAllById(Set.of(3L))).willReturn(List.of(product));
         given(inventoryRepository.findByCinema_IdAndProduct_IdForUpdate(2L, 3L)).willReturn(Optional.of(inventory));
@@ -84,7 +84,7 @@ class FoodOrderServiceTest {
         when(cinema.getId()).thenReturn(2L);
         when(product.getId()).thenReturn(3L);
         Inventory inventory = new Inventory(cinema, product, 1);
-        given(userRepository.findById(1L)).willReturn(Optional.of(user));
+        given(userRepository.findByIdForUpdate(1L)).willReturn(Optional.of(user));
         given(cinemaRepository.findById(2L)).willReturn(Optional.of(cinema));
         given(productRepository.findAllById(Set.of(3L))).willReturn(List.of(product));
         given(inventoryRepository.findByCinema_IdAndProduct_IdForUpdate(2L, 3L)).willReturn(Optional.of(inventory));
@@ -111,7 +111,7 @@ class FoodOrderServiceTest {
 
         Inventory inventory3 = new Inventory(cinema, product3, 5);
         Inventory inventory1 = new Inventory(cinema, product1, 5);
-        given(userRepository.findById(1L)).willReturn(Optional.of(user));
+        given(userRepository.findByIdForUpdate(1L)).willReturn(Optional.of(user));
         given(cinemaRepository.findById(2L)).willReturn(Optional.of(cinema));
         given(productRepository.findAllById(Set.of(3L, 1L)))
                 .willReturn(List.of(product3, product1));
@@ -128,7 +128,8 @@ class FoodOrderServiceTest {
                         new FoodOrderItemRequest(1L, 2),
                         new FoodOrderItemRequest(3L, 2))));
 
-        InOrder lockOrder = inOrder(inventoryRepository);
+        InOrder lockOrder = inOrder(userRepository, inventoryRepository);
+        lockOrder.verify(userRepository).findByIdForUpdate(1L);
         lockOrder.verify(inventoryRepository).findByCinema_IdAndProduct_IdForUpdate(2L, 1L);
         lockOrder.verify(inventoryRepository).findByCinema_IdAndProduct_IdForUpdate(2L, 3L);
         then(inventoryRepository).shouldHaveNoMoreInteractions();
@@ -155,7 +156,7 @@ class FoodOrderServiceTest {
 
         Inventory inventory3 = new Inventory(cinema, product3, 2);
         Inventory inventory1 = new Inventory(cinema, product1, 5);
-        given(userRepository.findById(1L)).willReturn(Optional.of(user));
+        given(userRepository.findByIdForUpdate(1L)).willReturn(Optional.of(user));
         given(cinemaRepository.findById(2L)).willReturn(Optional.of(cinema));
         given(productRepository.findAllById(Set.of(3L, 1L)))
                 .willReturn(List.of(product3, product1));
@@ -173,7 +174,8 @@ class FoodOrderServiceTest {
                 .extracting(exception -> ((BusinessException) exception).getErrorCode())
                 .isEqualTo(ErrorCode.STOCK_NOT_ENOUGH);
 
-        InOrder lockOrder = inOrder(inventoryRepository);
+        InOrder lockOrder = inOrder(userRepository, inventoryRepository);
+        lockOrder.verify(userRepository).findByIdForUpdate(1L);
         lockOrder.verify(inventoryRepository).findByCinema_IdAndProduct_IdForUpdate(2L, 1L);
         lockOrder.verify(inventoryRepository).findByCinema_IdAndProduct_IdForUpdate(2L, 3L);
         assertThat(inventory1.getStockQuantity()).isEqualTo(5);
