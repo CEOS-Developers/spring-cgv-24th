@@ -21,7 +21,7 @@ public class RestAuthenticationEntryPoint implements AuthenticationEntryPoint {
     public void commence(HttpServletRequest request, HttpServletResponse response,
                          AuthenticationException authException) throws IOException {
         SecurityErrorCode error = (SecurityErrorCode) request.getAttribute(ERROR_ATTRIBUTE);
-        SecurityErrorWriter.write(response, objectMapper,
+        SecurityErrorWriter.write(request, response, objectMapper,
                 error == null ? SecurityErrorCode.TOKEN_NOT_EXIST : error);
     }
 }

@@ -8,6 +8,7 @@ import com.ceos.cgv.domain.reservation.service.hold.SeatHoldExpiryService;
 import com.ceos.cgv.domain.user.enums.UserRole;
 import com.ceos.cgv.global.security.jwt.JwtService;
 import com.jayway.jsonpath.JsonPath;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -45,6 +46,7 @@ class SeatHoldControllerIntegrationTest {
     @Autowired SeatHoldCleanupService cleanupService;
     @Autowired ReservationRepository reservationRepository;
     @Autowired SeatHoldExpiryService expiryService;
+    @Autowired MeterRegistry meterRegistry;
     @MockitoSpyBean(name = "seatHoldClock") Clock seatHoldClock;
 
     @BeforeEach
@@ -150,6 +152,9 @@ class SeatHoldControllerIntegrationTest {
 
     @Test
     void 다른_회원의_유효_선점_좌석은_막고_다른_좌석은_허용한다() throws Exception {
+        for (String reason : new String[]{"SEAT_BUSY", "SEAT_HELD", "SEAT_ALREADY_RESERVED"}) {
+            assertThat(meterRegistry.get("cgv.seat.hold.conflicts").tag("reason", reason).counter().count()).isZero();
+        }
         String occupied = """
                 {"screeningId":8616,"seats":[{"seatRow":"A","seatNumber":1}]}
                 """;
@@ -173,6 +178,8 @@ class SeatHoldControllerIntegrationTest {
                                 {"screeningId":8616,"seats":[{"seatRow":"A","seatNumber":2}]}
                                 """))
                 .andExpect(status().isCreated());
+        assertThat(meterRegistry.get("cgv.seat.hold.conflicts").tag("reason", "SEAT_HELD").counter().count())
+                .isEqualTo(1);
     }
 
     @Test
