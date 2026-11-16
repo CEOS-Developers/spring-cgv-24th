@@ -1,0 +1,63 @@
+name: cgv
+
+services:
+  app:
+    image: ${APP_IMAGE:?APP_IMAGE를 .env에 설정하세요}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${APP_PORT:-8080}:8080"
+    environment:
+      TZ: Asia/Seoul
+      SPRING_PROFILES_ACTIVE: prod
+      DB_URL: ${DB_URL:?DB_URL을 .env에 설정하세요}
+      DB_USERNAME: ${DB_USERNAME:?DB_USERNAME을 .env에 설정하세요}
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD를 .env에 설정하세요}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET을 .env에 설정하세요}
+      TOSS_CLIENT_KEY: ${TOSS_CLIENT_KEY:?TOSS_CLIENT_KEY를 .env에 설정하세요}
+      TOSS_SECRET_KEY: ${TOSS_SECRET_KEY:?TOSS_SECRET_KEY를 .env에 설정하세요}
+      ADMIN_SEED_ENABLED: ${ADMIN_SEED_ENABLED:-false}
+      ADMIN_LOGIN_ID: ${ADMIN_LOGIN_ID:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+    mem_limit: ${APP_MEM_LIMIT:-768m}
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:8080/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 90s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  db:
+    image: mysql:8.4
+    restart: unless-stopped
+    command: ["--performance-schema=OFF"]
+    environment:
+      TZ: Asia/Seoul
+      MYSQL_DATABASE: ${DB_NAME:?DB_NAME을 .env에 설정하세요}
+      MYSQL_USER: ${DB_USERNAME:?DB_USERNAME을 .env에 설정하세요}
+      MYSQL_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD를 .env에 설정하세요}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD를 .env에 설정하세요}
+    mem_limit: ${DB_MEM_LIMIT:-512m}
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "--silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+volumes:
+  mysql-data:

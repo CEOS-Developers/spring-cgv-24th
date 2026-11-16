@@ -8,6 +8,7 @@ public final class SecurityPaths {
             "/swagger-ui.html",
             "/swagger-ui/**",
             "/v3/api-docs/**",
+            "/actuator/health",
             "/error"
     };
 

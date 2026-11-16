@@ -159,9 +159,10 @@ public class ReservationService {
                 .toList();
     }
 
+    // 승인 시작(startPaying)·만료 처리의 조건부 UPDATE와 겹쳐도 최신 상태를 보고 판단하도록 행을 잠근다
     @Transactional
     public void cancel(Long reservationId, Long userId) {
-        Reservation reservation = reservationRepository.findById(reservationId)
+        Reservation reservation = reservationRepository.findByIdForUpdate(reservationId)
                 .orElseThrow(() -> new GeneralException(ReservationErrorStatus.RESERVATION_NOT_FOUND));
 
         if (!reservation.isOwnedBy(userId)) {

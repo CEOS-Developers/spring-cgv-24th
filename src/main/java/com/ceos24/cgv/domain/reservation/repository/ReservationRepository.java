@@ -1,7 +1,9 @@
 package com.ceos24.cgv.domain.reservation.repository;
 
 import com.ceos24.cgv.domain.reservation.entity.Reservation;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -19,6 +21,10 @@ public interface ReservationRepository extends JpaRepository<Reservation, Long> 
             "JOIN FETCH sc.theater " +
             "WHERE r.id = :id")
     Optional<Reservation> findByIdWithDetails(@Param("id") Long id);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT r FROM Reservation r WHERE r.id = :id")
+    Optional<Reservation> findByIdForUpdate(@Param("id") Long id);
 
     @Query("SELECT r FROM Reservation r " +
             "JOIN FETCH r.schedule s " +

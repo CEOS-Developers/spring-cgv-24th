@@ -238,7 +238,7 @@ class ReservationServiceTest {
         var schedule = schedule(1L, movie(1L), screen, LocalDateTime.now(clock).plusMinutes(30));
         var reservation = reservation(100L, user, schedule, "A1");
         var payment = Payment.forReservation(reservation, "테스트 영화 1매");
-        when(reservationRepository.findById(100L)).thenReturn(Optional.of(reservation));
+        when(reservationRepository.findByIdForUpdate(100L)).thenReturn(Optional.of(reservation));
         when(paymentRepository.findByReservationId(100L)).thenReturn(Optional.of(payment));
 
         reservationService.cancel(100L, 1L);
@@ -251,7 +251,7 @@ class ReservationServiceTest {
     @Test
     void 결제_완료된_예매는_결제_취소_API로_취소해야_한다() {
         var reservation = reservationWithStatus(ReservationStatus.RESERVED);
-        when(reservationRepository.findById(100L)).thenReturn(Optional.of(reservation));
+        when(reservationRepository.findByIdForUpdate(100L)).thenReturn(Optional.of(reservation));
         when(paymentRepository.findByReservationId(100L))
                 .thenReturn(Optional.of(Payment.forReservation(reservation, "테스트 영화 1매")));
 
@@ -266,7 +266,7 @@ class ReservationServiceTest {
     @Test
     void 결제_기록이_없는_예매완료_건은_기존대로_취소한다() {
         var reservation = reservationWithStatus(ReservationStatus.RESERVED);
-        when(reservationRepository.findById(100L)).thenReturn(Optional.of(reservation));
+        when(reservationRepository.findByIdForUpdate(100L)).thenReturn(Optional.of(reservation));
         when(paymentRepository.findByReservationId(100L)).thenReturn(Optional.empty());
 
         reservationService.cancel(100L, 1L);
@@ -278,7 +278,7 @@ class ReservationServiceTest {
     @Test
     void 결제가_진행_중인_예매는_취소할_수_없다() {
         var reservation = reservationWithStatus(ReservationStatus.PAYING);
-        when(reservationRepository.findById(100L)).thenReturn(Optional.of(reservation));
+        when(reservationRepository.findByIdForUpdate(100L)).thenReturn(Optional.of(reservation));
 
         assertThatThrownBy(() -> reservationService.cancel(100L, 1L))
                 .isInstanceOf(GeneralException.class)
@@ -418,7 +418,7 @@ class ReservationServiceTest {
         var screen = screen(1L, theater);
         var schedule = schedule(1L, movie(1L), screen, LocalDateTime.now(clock).plusMinutes(10));
         var reservation = reservation(100L, user, schedule, "A1");
-        when(reservationRepository.findById(100L)).thenReturn(Optional.of(reservation));
+        when(reservationRepository.findByIdForUpdate(100L)).thenReturn(Optional.of(reservation));
 
         assertThatThrownBy(() -> reservationService.cancel(100L, 1L))
                 .isInstanceOf(GeneralException.class)
