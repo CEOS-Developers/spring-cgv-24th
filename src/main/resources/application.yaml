@@ -42,3 +42,20 @@ toss:
     base-url: https://api.tosspayments.com
     connect-timeout: 5s
     read-timeout: 60s
+
+management:
+  server:
+    port: 9091
+
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics,prometheus
+
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
