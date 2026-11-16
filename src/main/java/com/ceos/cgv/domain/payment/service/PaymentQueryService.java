@@ -15,8 +15,6 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.Optional;
-
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
@@ -53,16 +51,6 @@ public class PaymentQueryService {
         if (!operation.getUserId().equals(userId))
             throw new BusinessException(ErrorCode.ACCESS_DENIED);
         return paymentResponses.operation(operation);
-    }
-
-    public Optional<Long> paymentIdForReservation(Long userId, Long reservationId) {
-        return paymentRepository
-                .findByOrder_ReservationId(reservationId)
-                .map(
-                        payment -> {
-                            owned(payment, userId);
-                            return payment.getId();
-                        });
     }
 
     public static void owned(Payment payment, Long userId) {

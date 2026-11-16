@@ -2,9 +2,7 @@ package com.ceos.cgv.domain.payment.service;
 
 import com.ceos.cgv.domain.payment.dto.request.PaymentCancelRequest;
 import com.ceos.cgv.domain.payment.dto.request.PaymentConfirmRequest;
-import com.ceos.cgv.domain.payment.dto.request.PaymentOrderCreateRequest;
 import com.ceos.cgv.domain.payment.dto.response.PaymentOperationResponse;
-import com.ceos.cgv.domain.payment.dto.response.PaymentOrderResponse;
 import com.ceos.cgv.domain.payment.enums.PaymentOperationType;
 import com.ceos.cgv.domain.payment.gateway.CancelPaymentCommand;
 import com.ceos.cgv.domain.payment.gateway.ConfirmPaymentCommand;
@@ -12,10 +10,10 @@ import com.ceos.cgv.domain.payment.gateway.GatewayFailureType;
 import com.ceos.cgv.domain.payment.gateway.GatewayPayment;
 import com.ceos.cgv.domain.payment.gateway.PaymentGateway;
 import com.ceos.cgv.domain.payment.gateway.PaymentGatewayException;
-import com.ceos.cgv.domain.payment.service.result.PaymentOrderCreationResult;
 import com.ceos.cgv.domain.payment.service.result.PaymentWork;
+import com.ceos.cgv.domain.payment.service.target.PaymentTarget;
+import com.ceos.cgv.domain.payment.service.target.PaymentTarget.FinalizationFailure;
 import com.ceos.cgv.domain.payment.service.transaction.PaymentTransactionService;
-import com.ceos.cgv.domain.reservation.service.ReservationService;
 import com.ceos.cgv.global.exception.BusinessException;
 import com.ceos.cgv.global.exception.ErrorCode;
 
@@ -26,7 +24,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Supplier;
 
@@ -39,17 +36,7 @@ public class PaymentWorkflowService {
 
     private final PaymentTransactionService transactionService;
     private final PaymentGateway paymentGateway;
-    private final PaymentQueryService queryService;
-    private final ReservationService reservationService;
-
-    public PaymentOrderResponse createOrder(Long userId, PaymentOrderCreateRequest request) {
-        return transactionService.createOrder(userId, request).response();
-    }
-
-    public PaymentOrderCreationResult createOrderResult(
-            Long userId, PaymentOrderCreateRequest request) {
-        return transactionService.createOrder(userId, request);
-    }
+    private final PaymentTarget paymentTarget;
 
     public PaymentOperationResponse confirm(Long userId, UUID key, PaymentConfirmRequest request) {
         verifyGatewayReady();
@@ -86,16 +73,6 @@ public class PaymentWorkflowService {
     public PaymentOperationResponse reconcile(Long userId, Long operationId) {
         verifyGatewayReady();
         return execute(userId, transactionService.recovery(userId, operationId), true);
-    }
-
-    public PaymentOperationResponse cancelReservation(Long userId, Long reservationId, UUID key) {
-        Optional<Long> paymentId = queryService.paymentIdForReservation(userId, reservationId);
-        if (paymentId.isEmpty()) {
-            reservationService.cancel(reservationId, userId);
-            return null;
-        }
-        if (key == null) throw new BusinessException(ErrorCode.INVALID_REQUEST);
-        return cancel(userId, paymentId.get(), key, new PaymentCancelRequest(null, "예매 전체 취소"));
     }
 
     private PaymentOperationResponse execute(Long userId, PaymentWork work, boolean recovery) {
@@ -161,7 +138,8 @@ public class PaymentWorkflowService {
         } catch (BusinessException exception) {
             if (work.type() == PaymentOperationType.CONFIRM
                     && !work.compensating()
-                    && permanentConfirmationFailure(exception.getErrorCode())) {
+                    && paymentTarget.classifyFinalizationFailure(exception.getErrorCode())
+                            == FinalizationFailure.COMPENSATE_APPROVAL) {
                 try {
                     return execute(
                             userId,
@@ -206,20 +184,14 @@ public class PaymentWorkflowService {
         }
     }
 
-    private boolean permanentConfirmationFailure(ErrorCode code) {
-        return code == ErrorCode.SEAT_OWNER_MISMATCH
-                || code == ErrorCode.RESERVATION_NOT_FOUND
-                || code == ErrorCode.HOLD_NOT_ACTIVE
-                || code == ErrorCode.SCREENING_SEATS_NOT_READY;
-    }
-
-    // PG 결과를 받은 뒤의 확정은 짧은 좌석 NOWAIT 충돌에만 새 트랜잭션으로 몇 번 더 시도한다.
+    // PG 응답을 다시 보내지 않고 DB 확정만 새 트랜잭션에서 재시도한다.
     private <T> T finalizeWithRetry(Supplier<T> finalization) {
         for (int attempt = 1; ; attempt++) {
             try {
                 return finalization.get();
             } catch (BusinessException exception) {
-                if (exception.getErrorCode() != ErrorCode.SEAT_BUSY
+                if (paymentTarget.classifyFinalizationFailure(exception.getErrorCode())
+                                != FinalizationFailure.RETRY
                         || attempt >= FINALIZE_MAX_ATTEMPTS) throw exception;
                 try {
                     Thread.sleep(FINALIZE_BACKOFF_MILLIS * attempt);

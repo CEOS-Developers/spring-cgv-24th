@@ -1,33 +1,24 @@
 package com.ceos.cgv.domain.payment.service.transaction;
 
-import com.ceos.cgv.domain.payment.config.PaymentPricingProperties;
 import com.ceos.cgv.domain.payment.config.PaymentRecoveryProperties;
 import com.ceos.cgv.domain.payment.dto.request.PaymentCancelRequest;
 import com.ceos.cgv.domain.payment.dto.request.PaymentConfirmRequest;
-import com.ceos.cgv.domain.payment.dto.request.PaymentOrderCreateRequest;
 import com.ceos.cgv.domain.payment.dto.response.PaymentOperationResponse;
 import com.ceos.cgv.domain.payment.entity.Payment;
 import com.ceos.cgv.domain.payment.entity.PaymentOperation;
-import com.ceos.cgv.domain.payment.entity.PaymentOrder;
-import com.ceos.cgv.domain.payment.entity.PaymentOrderSeat;
 import com.ceos.cgv.domain.payment.enums.PaymentOperationType;
 import com.ceos.cgv.domain.payment.enums.PaymentStatus;
 import com.ceos.cgv.domain.payment.gateway.GatewayCancellation;
 import com.ceos.cgv.domain.payment.gateway.GatewayPayment;
 import com.ceos.cgv.domain.payment.gateway.GatewayPaymentStatus;
 import com.ceos.cgv.domain.payment.repository.PaymentOperationRepository;
-import com.ceos.cgv.domain.payment.repository.PaymentOrderRepository;
 import com.ceos.cgv.domain.payment.repository.PaymentRepository;
 import com.ceos.cgv.domain.payment.service.PaymentJson;
 import com.ceos.cgv.domain.payment.service.PaymentPayload;
 import com.ceos.cgv.domain.payment.service.PaymentQueryService;
 import com.ceos.cgv.domain.payment.service.PaymentResponses;
-import com.ceos.cgv.domain.payment.service.result.PaymentOrderCreationResult;
 import com.ceos.cgv.domain.payment.service.result.PaymentWork;
-import com.ceos.cgv.domain.reservation.enums.ReservationStatus;
-import com.ceos.cgv.domain.reservation.service.payment.PaymentReservationSeat;
-import com.ceos.cgv.domain.reservation.service.payment.PaymentReservationSnapshot;
-import com.ceos.cgv.domain.reservation.service.payment.ReservationPaymentService;
+import com.ceos.cgv.domain.payment.service.target.PaymentTarget;
 import com.ceos.cgv.global.exception.BusinessException;
 import com.ceos.cgv.global.exception.ErrorCode;
 
@@ -52,65 +43,15 @@ import java.util.UUID;
 @RequiredArgsConstructor
 @Transactional(isolation = Isolation.READ_COMMITTED)
 public class PaymentTransactionService {
-    private static final int MAX_ORDER_NAME_LENGTH = 100;
-
-    private final PaymentOrderRepository paymentOrderRepository;
     private final PaymentRepository paymentRepository;
     private final PaymentOperationRepository paymentOperationRepository;
-    private final ReservationPaymentService reservationPaymentService;
-    private final PaymentPricingProperties pricingProperties;
+    private final PaymentTarget paymentTarget;
     private final PaymentRecoveryProperties recoveryProperties;
     private final PaymentResponses paymentResponses;
     private final PaymentJson paymentJson;
     private final PaymentPayload paymentPayload;
     private final Clock paymentClock;
     private final EntityManager entityManager;
-
-    public PaymentOrderCreationResult createOrder(Long userId, PaymentOrderCreateRequest request) {
-        if (request == null || request.reservationId() == null || request.reservationId() <= 0)
-            throw new BusinessException(ErrorCode.INVALID_REQUEST);
-        PaymentReservationSnapshot snapshot =
-                reservationPaymentService.lockOwned(request.reservationId(), userId);
-        Optional<PaymentOrder> existing =
-                paymentOrderRepository.findByReservationId(request.reservationId());
-        if (existing.isPresent())
-            return new PaymentOrderCreationResult(
-                    false,
-                    paymentResponses.order(
-                            paymentRepository
-                                    .findByOrder_Id(existing.get().getId())
-                                    .orElseThrow()));
-        if (snapshot.status() != ReservationStatus.HELD)
-            throw new BusinessException(ErrorCode.HOLD_NOT_ACTIVE);
-        if (snapshot.expiresAt() == null || !paymentClock.instant().isBefore(snapshot.expiresAt()))
-            throw new BusinessException(ErrorCode.HOLD_EXPIRED);
-        List<PaymentOrderSeat> seats =
-                snapshot.seats().stream()
-                        .filter(seat -> seat.canceledAt() == null)
-                        .map(
-                                seat ->
-                                        PaymentOrderSeat.builder()
-                                                .reservedSeatId(seat.reservedSeatId())
-                                                .seatRow(seat.seatRow())
-                                                .seatNumber(seat.seatNumber())
-                                                .build())
-                        .toList();
-        PaymentOrder order =
-                paymentOrderRepository.save(
-                        PaymentOrder.builder()
-                                .orderId(UUID.randomUUID().toString())
-                                .reservationId(snapshot.reservationId())
-                                .userId(userId)
-                                .orderName(createOrderName(snapshot.movieTitle(), seats.size()))
-                                .seatPrice(pricingProperties.seatPrice())
-                                .expiresAt(snapshot.expiresAt())
-                                .seats(seats)
-                                .build());
-        return new PaymentOrderCreationResult(
-                true,
-                paymentResponses.order(
-                        paymentRepository.saveAndFlush(Payment.builder().order(order).build())));
-    }
 
     public PaymentWork claimApproval(Long userId, UUID key, PaymentConfirmRequest request) {
         String hash = paymentPayload.confirm(request);
@@ -159,7 +100,7 @@ public class PaymentTransactionService {
             throw new BusinessException(ErrorCode.PAYMENT_STATE_CONFLICT);
         if (paymentRepository.existsByPaymentKey(request.paymentKey()))
             throw new BusinessException(ErrorCode.PAYMENT_KEY_CONFLICT);
-        reservationPaymentService.startPayment(payment.getOrder().getReservationId(), userId);
+        paymentTarget.beginApproval(payment.getOrder(), userId);
         PaymentOperation operation =
                 newOperation(
                         userId,
@@ -189,22 +130,8 @@ public class PaymentTransactionService {
                 paymentOperationRepository.findByUserIdAndTypeAndRequestKey(
                         userId, PaymentOperationType.CANCEL, key.toString());
         if (existing.isPresent()) return replay(existing.get(), hash);
-        List<Long> active =
-                payment.getOrder().getSeats().stream()
-                        .filter(seat -> seat.getCanceledAt() == null)
-                        .map(PaymentOrderSeat::getReservedSeatId)
-                        .sorted()
-                        .toList();
-        // 남은 좌석이 없는 전체 취소는 잘못된 좌석 요청이 아니라 이미 끝난 취소다.
-        if (request.reservedSeatIds() == null && active.isEmpty())
-            throw new BusinessException(ErrorCode.RESERVATION_ALREADY_CANCELED);
-        List<Long> requested =
-                request.reservedSeatIds() == null
-                        ? active
-                        : request.reservedSeatIds().stream().sorted().toList();
-        if (requested.isEmpty() || !active.containsAll(requested)) {
-            throw new BusinessException(ErrorCode.INVALID_SEAT);
-        }
+        List<Long> itemIds =
+                paymentTarget.selectCancellationItems(payment.getOrder(), request.reservedSeatIds());
         if (payment.getActiveOperationId() != null) {
             return work(
                     paymentOperationRepository
@@ -215,20 +142,7 @@ public class PaymentTransactionService {
         if (payment.getStatus() != PaymentStatus.DONE
                 && payment.getStatus() != PaymentStatus.PARTIALLY_CANCELED)
             throw new BusinessException(ErrorCode.PAYMENT_STATE_CONFLICT);
-        PaymentReservationSnapshot reservation =
-                reservationPaymentService.lockOwned(payment.getOrder().getReservationId(), userId);
-        if (reservation.status() != ReservationStatus.RESERVED)
-            throw new BusinessException(ErrorCode.PAYMENT_STATE_CONFLICT);
-        List<Long> reservationActive =
-                reservation.seats().stream()
-                        .filter(seat -> seat.canceledAt() == null)
-                        .map(PaymentReservationSeat::reservedSeatId)
-                        .toList();
-        if (requested.isEmpty()
-                || !active.containsAll(requested)
-                || !reservationActive.containsAll(requested))
-            throw new BusinessException(ErrorCode.INVALID_SEAT);
-        long amount = Math.multiplyExact(payment.getOrder().getSeatPrice(), requested.size());
+        long amount = paymentTarget.cancellationAmount(payment.getOrder(), userId, itemIds);
         if (amount > payment.getBalanceAmount())
             throw new BusinessException(ErrorCode.PAYMENT_AMOUNT_MISMATCH);
         PaymentOperation operation =
@@ -240,7 +154,7 @@ public class PaymentTransactionService {
                         hash,
                         amount,
                         payment.getBalanceAmount(),
-                        requested,
+                        itemIds,
                         request.reason());
         payment.claimCancellation(operation.getId());
         paymentRepository.flush();
@@ -262,8 +176,7 @@ public class PaymentTransactionService {
                 && (result.status() == GatewayPaymentStatus.ABORTED
                         || result.status() == GatewayPaymentStatus.EXPIRED)
                 && result.cancellations().isEmpty()) {
-            reservationPaymentService.releaseFailedPayment(
-                    payment.getOrder().getReservationId(), userId);
+            paymentTarget.releaseFailedApproval(payment.getOrder(), userId);
             payment.failedApproval();
             operation.fail(
                     "GATEWAY_" + result.status().name(),
@@ -276,8 +189,7 @@ public class PaymentTransactionService {
                 && validCancellation(operation, result)) {
             operation.startCompensation("EXTERNALLY_CANCELED");
             payment.compensate();
-            reservationPaymentService.releaseFailedPayment(
-                    payment.getOrder().getReservationId(), userId);
+            paymentTarget.releaseFailedApproval(payment.getOrder(), userId);
             payment.compensated(result, paymentJson.write(result.cancellations()));
             operation.fail(
                     "APPROVAL_EXTERNALLY_CANCELED",
@@ -306,8 +218,7 @@ public class PaymentTransactionService {
             operation.unknown("INVALID_APPROVAL_RESULT");
             return paymentResponses.operation(operation);
         }
-        reservationPaymentService.confirmPayment(
-                payment.getOrder().getReservationId(), operation.getUserId());
+        paymentTarget.completeApproval(payment.getOrder(), operation.getUserId());
         payment.approve(result, paymentJson.write(result.cancellations()));
         operation.succeed(paymentJson.write(paymentResponses.payment(payment)));
         return paymentResponses.operation(operation);
@@ -322,18 +233,13 @@ public class PaymentTransactionService {
             return paymentResponses.operation(operation);
         }
         if (operation.isCompensating()) {
-            reservationPaymentService.releaseFailedPayment(
-                    payment.getOrder().getReservationId(), userId);
+            paymentTarget.releaseFailedApproval(payment.getOrder(), userId);
             payment.compensated(result, paymentJson.write(result.cancellations()));
             operation.fail(
                     "APPROVAL_COMPENSATED", paymentJson.write(paymentResponses.payment(payment)));
         } else {
-            List<Long> ids = paymentJson.seatIds(operation.getSeatIdsJson());
-            // 예매 좌석과 주문 좌석의 취소 시각이 같도록 한 번만 읽는다.
-            Instant canceledAt = paymentClock.instant();
-            reservationPaymentService.cancelPaidSeats(
-                    payment.getOrder().getReservationId(), userId, ids, canceledAt);
-            payment.getOrder().cancelSeats(ids, canceledAt);
+            List<Long> itemIds = paymentJson.cancellationItemIds(operation.getSeatIdsJson());
+            paymentTarget.completeCancellation(payment.getOrder(), userId, itemIds);
             payment.canceled(result, paymentJson.write(result.cancellations()));
             operation.succeed(paymentJson.write(paymentResponses.payment(payment)));
         }
@@ -349,8 +255,7 @@ public class PaymentTransactionService {
         }
         Payment payment = operation.getPayment();
         if (operation.getType() == PaymentOperationType.CONFIRM) {
-            reservationPaymentService.releaseFailedPayment(
-                    payment.getOrder().getReservationId(), userId);
+            paymentTarget.releaseFailedApproval(payment.getOrder(), userId);
             payment.failedApproval();
         } else payment.failedCancellation();
         operation.fail(code, paymentJson.write(paymentResponses.payment(payment)));
@@ -405,8 +310,7 @@ public class PaymentTransactionService {
             operation.unknown(code);
             return paymentResponses.operation(operation);
         }
-        reservationPaymentService.releaseFailedPayment(
-                payment.getOrder().getReservationId(), userId);
+        paymentTarget.releaseFailedApproval(payment.getOrder(), userId);
         payment.failedApproval();
         operation.fail("GATEWAY_NOT_FOUND", paymentJson.write(paymentResponses.payment(payment)));
         return paymentResponses.operation(operation);
@@ -418,19 +322,6 @@ public class PaymentTransactionService {
         operation.startCompensation(code);
         operation.getPayment().compensate();
         return work(operation, true);
-    }
-
-    private static String createOrderName(String movieTitle, int seatCount) {
-        String suffix = " " + seatCount + "석";
-        int titleEnd = Math.min(movieTitle.length(), MAX_ORDER_NAME_LENGTH - suffix.length());
-        // Java와 JavaScript의 UTF-16 길이 한도를 지키면서 서로게이트 쌍을 보존한다.
-        if (titleEnd > 0
-                && titleEnd < movieTitle.length()
-                && Character.isHighSurrogate(movieTitle.charAt(titleEnd - 1))
-                && Character.isLowSurrogate(movieTitle.charAt(titleEnd))) {
-            titleEnd--;
-        }
-        return movieTitle.substring(0, titleEnd) + suffix;
     }
 
     private boolean matches(Payment payment, GatewayPayment result) {
@@ -508,7 +399,7 @@ public class PaymentTransactionService {
             String hash,
             long amount,
             long previous,
-            List<Long> seats,
+            List<Long> itemIds,
             String reason) {
         return paymentOperationRepository.saveAndFlush(
                 PaymentOperation.builder()
@@ -519,7 +410,7 @@ public class PaymentTransactionService {
                         .payloadHash(hash)
                         .requestAmount(amount)
                         .previousBalance(previous)
-                        .seatIdsJson(paymentJson.write(seats))
+                        .seatIdsJson(paymentJson.write(itemIds))
                         .reason(reason)
                         .build());
     }
@@ -538,7 +429,9 @@ public class PaymentTransactionService {
                 payment.getOrder().getOrderId(),
                 compensation ? payment.getOrder().getTotalAmount() : operation.getRequestAmount(),
                 compensation ? payment.getOrder().getTotalAmount() : operation.getPreviousBalance(),
-                compensation ? "예약 확정 실패 보상 취소" : operation.getReason(),
+                compensation
+                        ? paymentTarget.approvalCompensationReason()
+                        : operation.getReason(),
                 compensation ? operation.getCompensationKey() : operation.getGatewayKey(),
                 compensation,
                 invoke,

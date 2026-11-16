@@ -3,12 +3,17 @@ package com.ceos.cgv.domain.payment.schema;
 import com.ceos.cgv.domain.payment.dto.request.PaymentCancelRequest;
 import com.ceos.cgv.domain.payment.dto.response.PaymentOperationResponse;
 import com.ceos.cgv.domain.payment.dto.response.PaymentOrderResponse;
+import com.ceos.cgv.domain.payment.dto.response.PaymentSeatResponse;
+import com.ceos.cgv.domain.payment.entity.PaymentOrder;
 import com.ceos.cgv.domain.payment.enums.PaymentOperationStatus;
 import com.ceos.cgv.domain.payment.gateway.GatewayPayment;
+import com.ceos.cgv.domain.payment.repository.PaymentOrderRepository;
+import com.ceos.cgv.domain.payment.repository.PaymentRepository;
 import com.ceos.cgv.domain.payment.support.PaymentIntegrationFixture;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -30,6 +35,9 @@ import static org.mockito.Mockito.when;
 @EnabledIfSystemProperty(named = "cgv.test.database", matches = "mysql")
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
 class PaymentSchemaUpgradeIntegrationTest extends PaymentIntegrationFixture {
+    @Autowired private PaymentOrderRepository paymentOrderRepository;
+    @Autowired private PaymentRepository paymentRepository;
+
     @ParameterizedTest
     @ValueSource(strings = {"'HELD','RESERVED','EXPIRED','RELEASED','CANCELED'",
             "'CANCELED','EXPIRED','HELD','RELEASED','RESERVED'"})
@@ -79,13 +87,47 @@ class PaymentSchemaUpgradeIntegrationTest extends PaymentIntegrationFixture {
                 new PaymentCancelRequest(List.of(order.seats().getFirst().reservedSeatId()), "스키마 검증"))
                 .result().balanceAmount()).isEqualTo(10000);
         assertThat(canceledSeats(order)).isEqualTo(1);
+        PaymentOrderResponse reloaded = queries.order(USER_ID, order.orderId());
+        assertThat(reloaded.seats().getFirst().canceledAt()).isNotNull();
+        assertThat(reloaded.seats().getLast().canceledAt()).isNull();
         assertThat(jdbc.queryForObject("SELECT count(*) FROM reservations WHERE reservation_id BETWEEN 9001 AND 9005", Integer.class)).isEqualTo(5);
         assertThat(jdbc.queryForObject("SELECT count(*) FROM reserved_seats WHERE reserved_seat_id BETWEEN 9101 AND 9105", Integer.class)).isEqualTo(5);
         verifyConstraints(order, approved.operationId());
+        verifyExistingPaymentSnapshot();
         assertThat(jdbc.queryForObject("SELECT count(*) FROM information_schema.tables WHERE table_schema=DATABASE()"
                 + " AND table_name IN('payment_order','payment_order_seat','payment','payment_operation') AND engine='InnoDB'", Integer.class)).isEqualTo(4);
         System.out.printf("Payment schema upgrade: engine=MySQL version=%s preserved_reservations=5 preserved_reserved_seats=5 nullable_defaults=5 payment_tables=4 jpa_order_approval_partial_cancel=PASS unique_fk_checks=PASS snapshot_scalar_fk=0 baseline_enum=%s%n",
                 jdbc.queryForObject("SELECT VERSION()", String.class), enumBefore);
+    }
+
+    private void verifyExistingPaymentSnapshot() {
+        String orderId = "legacy-payment-order";
+        long reservationId = 9002L;
+        jdbc.update("""
+                INSERT INTO payment_order(created_at,updated_at,order_id,reservation_id,user_id,order_name,seat_price,total_amount,expires_at)
+                VALUES(CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,?,?,?,'legacy',12000,24000,CURRENT_TIMESTAMP)
+                """, orderId, reservationId, USER_ID);
+        Long id = jdbc.queryForObject("SELECT id FROM payment_order WHERE order_id=?", Long.class, orderId);
+        jdbc.update("""
+                INSERT INTO payment_order_seat(payment_order_id,seat_index,reserved_seat_id,seat_row,seat_number,canceled_at)
+                VALUES(?,1,99001,'A',1,NULL), (?,0,99002,'B',2,CURRENT_TIMESTAMP)
+                """, id, id);
+        jdbc.update("""
+                INSERT INTO payment(created_at,updated_at,payment_order_id,payment_key,status,balance_amount)
+                VALUES(CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,?,'legacy-payment-key','PARTIALLY_CANCELED',12000)
+                """, id);
+
+        PaymentOrderResponse existing = queries.order(USER_ID, orderId);
+        assertThat(existing.reservationId()).isEqualTo(reservationId);
+        assertThat(existing.seatPrice()).isEqualTo(12000L);
+        assertThat(existing.totalAmount()).isEqualTo(24000L);
+        assertThat(existing.seats()).extracting(PaymentSeatResponse::reservedSeatId)
+                .containsExactly(99002L, 99001L);
+        assertThat(existing.seats().getFirst().canceledAt()).isNotNull();
+        assertThat(existing.seats().getLast().canceledAt()).isNull();
+        assertThat(paymentOrderRepository.findByReservationId(reservationId).map(PaymentOrder::getId)).contains(id);
+        assertThat(paymentRepository.findByOrder_ReservationId(reservationId)).hasValueSatisfying(
+                payment -> assertThat(payment.getId()).isEqualTo(existing.paymentId()));
     }
 
     private void verifyConstraints(PaymentOrderResponse order, Long operationId) {

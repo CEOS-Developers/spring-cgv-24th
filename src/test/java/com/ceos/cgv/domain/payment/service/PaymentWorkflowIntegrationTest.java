@@ -12,6 +12,7 @@ import com.ceos.cgv.domain.payment.infrastructure.toss.TossPaymentGateway;
 import com.ceos.cgv.domain.payment.infrastructure.toss.config.TossPaymentProperties;
 import com.ceos.cgv.domain.reservation.dto.*;
 import com.ceos.cgv.domain.reservation.service.hold.SeatHoldService;
+import com.ceos.cgv.domain.reservation.service.payment.ReservationPaymentApplicationService;
 import com.ceos.cgv.domain.reservation.service.payment.ReservationPaymentService;
 import com.ceos.cgv.global.exception.*;
 
@@ -43,6 +44,7 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
 class PaymentWorkflowIntegrationTest extends com.ceos.cgv.support.DatabaseIntegrationTest {
     @Autowired PaymentWorkflowService service;
+    @Autowired ReservationPaymentApplicationService reservationPaymentApplication;
     @Autowired org.springframework.test.web.servlet.MockMvc mvc;
     @Autowired com.ceos.cgv.global.security.jwt.JwtService jwt;
     @Autowired PaymentQueryService queries;
@@ -116,7 +118,9 @@ class PaymentWorkflowIntegrationTest extends com.ceos.cgv.support.DatabaseIntegr
                 holds.create(8711L, UUID.randomUUID(), new SeatHoldCreateRequest(8715L, seats))
                         .response()
                         .reservationId();
-        return service.createOrder(8711L, new PaymentOrderCreateRequest(id));
+        return reservationPaymentApplication
+                .createOrder(8711L, new PaymentOrderCreateRequest(id))
+                .response();
     }
 
     GatewayPayment done(PaymentOrderResponse order) {
@@ -170,8 +174,9 @@ class PaymentWorkflowIntegrationTest extends com.ceos.cgv.support.DatabaseIntegr
     void 주문은_선점당_하나이며_승인은_좌석을_확정한다() {
         PaymentOrderResponse order = order(2);
         assertThat(
-                        service.createOrder(
+                        reservationPaymentApplication.createOrder(
                                         8711L, new PaymentOrderCreateRequest(order.reservationId()))
+                                .response()
                                 .paymentId())
                 .isEqualTo(order.paymentId());
         PaymentOperationResponse result = confirm(order);
@@ -934,7 +939,9 @@ class PaymentWorkflowIntegrationTest extends com.ceos.cgv.support.DatabaseIntegr
                         .response()
                         .reservationId();
         PaymentOrderResponse second =
-                service.createOrder(8718L, new PaymentOrderCreateRequest(secondHold));
+                reservationPaymentApplication
+                        .createOrder(8718L, new PaymentOrderCreateRequest(secondHold))
+                        .response();
         assertThatThrownBy(
                         () ->
                                 service.confirm(
@@ -1675,7 +1682,7 @@ class PaymentWorkflowIntegrationTest extends com.ceos.cgv.support.DatabaseIntegr
                 .isEqualTo(ErrorCode.INTERNAL_SERVER_ERROR);
         assertThatThrownBy(
                         () ->
-                                service.cancelReservation(
+                                reservationPaymentApplication.cancelReservation(
                                         8711L, order.reservationId(), UUID.randomUUID()))
                 .isInstanceOf(BusinessException.class)
                 .extracting(error -> ((BusinessException) error).getErrorCode())
@@ -2056,7 +2063,7 @@ class PaymentWorkflowIntegrationTest extends com.ceos.cgv.support.DatabaseIntegr
                 .isEqualTo(ErrorCode.RESERVATION_ALREADY_CANCELED);
         assertThatThrownBy(
                         () ->
-                                service.cancelReservation(
+                                reservationPaymentApplication.cancelReservation(
                                         8711L, order.reservationId(), UUID.randomUUID()))
                 .isInstanceOf(BusinessException.class)
                 .extracting(error -> ((BusinessException) error).getErrorCode())
