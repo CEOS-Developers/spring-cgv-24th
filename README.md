@@ -2389,3 +2389,129 @@ Webhook은 아직 구현하지 않았지만 추후에 구현해야겠다고 생�
 
 
 </details>
+
+---
+
+<details>
+<summary>5주차 미션</summary>
+
+## Docker로 실행 환경을 만들고 GitHub Actions로 배포하기
+
+Spring Boot 앱을 Docker 이미지로 만들고, 로컬에서는 Compose로 앱과 MySQL을 함께 실행했다. 
+<br>배포 환경은 EC2에서 Nginx와 앱을 컨테이너로 실행하고 MySQL은 RDS를 사용하도록 구성했다.
+
+배포된 Swagger UI : http://15.165.195.218/swagger-ui/index.html#/
+
+```text
+로컬: 브라우저 → localhost:8080 → Spring Boot(app) → MySQL(db:3306)
+배포: 브라우저 → EC2 Nginx(:80) → Spring Boot(cgv-app:8080) → RDS MySQL(:3306)
+```
+
+### Dockerfile
+
+>`Dockerfile` 은 Gradle의 `bootJar`로 만든 실행용 JAR을 Java 21 런타임 이미지에 복사한다. 
+
+Gradle 빌드는 이미지 밖에서 실행하기 때문에 최종 이미지에는 앱을 실행하는 데 필요한 JAR과 런타임만 들어간다. .dockerignore에서도 실행용 JAR 하나만 빌드 컨텍스트에 포함하도록 했다.
+
+### 로컬에서 앱과 MySQL 실행
+
+`docker-compose.yaml`에는 `app`과 `db`를 정의했다. 
+<br>Compose 네트워크에서 앱은 MySQL에 `db:3306`으로 접속한다. 
+
+DB 헬스체크가 앱 계정으로 `SELECT 1`을 실행해 성공한 뒤 앱을 시작하도록 했다.
+
+저장소 루트의 `.env`에 `COMPOSE_MYSQL_ROOT_PASSWORD`와 `COMPOSE_MYSQL_PASSWORD`, JWT·토스 테스트 설정을 넣고 아래 명령으로 실행한다. 호스트에서는 `127.0.0.1:8080`으로 앱에 접속한다.
+
+```bash
+bash ./gradlew bootJar
+docker compose up -d --build
+docker compose ps
+curl -i http://127.0.0.1:8080/api/movies
+```
+
+`db`가 `healthy`이고 앱이 `200`을 반환하면 연결된 것이다. 새 DB라면 영화 목록이 비어 있을 수 있다. `docker compose down`으로 종료해도 이름이 지정된 DB 볼륨은 남는다.
+
+![Docker Desktop에서 실행 중인 spring-cgv-24th Compose 프로젝트](docs/5주차/docker-desktop-containers.png)
+
+- `spring-cgv-24th` : 앱과 MySQL을 묶은 Compose 프로젝트
+- `spring-cgv-local` : 단독 실행을 확인할 때 만든 앱 컨테이너
+
+### CI, CD
+
+| 워크플로 | 실행 조건 | 하는 일 |
+|------| --- | --- |
+| CI   | `master`를 대상으로 PR을 열거나 업데이트할 때 | Java 21과 테스트 전용 MySQL로 `test bootJar`를 실행하고, Docker 이미지 빌드와 Compose 설정을 확인한다. 테스트가 실패하면 Gradle 리포트를 보관한다. |
+| CD   | PR이 실제로 `master`에 병합됐을 때 | 병합된 커밋으로 CI를 다시 호출한다. 통과하면 CI가 만든 JAR로 `linux/amd64` 이미지를 빌드하고, 병합 커밋 SHA를 태그로 붙여 Docker Hub에 올린다. 이후 EC2에 배포한다. |
+
+```text
+PR 열기 or 업데이트 → Gradle 테스트 → Docker 빌드·Compose 설정 검사
+PR 병합 → 병합 커밋 테스트 → JAR 전달 → Docker Hub 게시 → EC2 배포 → API 응답 확인
+```
+
+PR을 열었을 때 테스트한 코드와 최종 병합 커밋이 달라질 수 있으니 배포 직전에 실제 병합 커밋을 다시 검증하고, 그때 만든 JAR을 이미지에 넣어 테스트한 버전과 배포하는 버전을 맞췄다.
+
+### 환경변수 설정 값
+
+| 위치 | 설정                                                                                                  |
+| --- |-----------------------------------------------------------------------------------------------------|
+| GitHub Actions Variables | `DOCKERHUB_USERNAME`, `EC2_HOST`                                                                    
+| GitHub Actions Secrets | `DOCKERHUB_TOKEN`,`EC2_SSH_KEY`,`EC2_KNOWN_HOSTS`                                                   
+| EC2의 `~/cgv-deploy/.env` | `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`, JWT,TOSS 시크릿 키 |
+
+### 검증 결과
+
+| 확인 항목             | 결과 |
+|-------------------| --- |
+| 로컬 Docker,Compose | 앱 컨테이너가 비관리자 계정으로 실행되고, Compose의 MySQL에 연결한 상태에서 `GET /api/movies`가 HTTP `200`을 반환했다. |
+| PR CI             | Gradle 테스트, Docker 이미지 빌드, Compose 설정 검사를 통과했다. [CI 실행 기록](https://github.com/9dongs/spring-cgv-24th/actions/runs/42796552971) |
+| 병합 후 테스트와 이미지 게시  | `master` 병합으로 CD가 시작됐고, 병합 커밋 테스트와 Docker Hub 이미지 게시를 통과했다. [CD 실행 기록](https://github.com/9dongs/spring-cgv-24th/actions/runs/42801466207) |
+| EC2 배포            | 환경변수 파일을 수정하고 CD를 다시 실행했다. Nginx를 통한 `GET /api/movies`가 HTTP `200`을 반환해 배포를 통과했고, 브라우저에서 공개 Swagger 화면이 열리는 것도 확인했다. [성공한 배포 기록](https://github.com/9dongs/spring-cgv-24th/actions/runs/42801466207/job/129793286692) |
+
+Swagger에서 `GET /api/movies`를 펼치고 **Try it out → Execute**를 누르면 배포된 API의 응답을 확인할 수 있었다.
+
+### 겪었던 오류 
+#### 첫 배포에서 `502`가 발생
+
+첫 배포에서는 Nginx 설정 검사를 통과했지만, Nginx가 앱의 `8080`번 포트에 접속할 때 `Connection refused`가 발생했다. EC2에서 RDS에 직접 접속해 `SELECT 1`이 성공하는 것을 확인한 뒤, 같은 이미지로 앱을 실행해 시작 로그를 확인했다.
+
+EC2의 `.env`에서 줄바꿈이 깨져 사용자명과 비밀번호 등 다음 줄의 설정이 `SPRING_DATASOURCE_URL` 값에 이어져 있었다. MySQL 드라이버가 이 JDBC URL을 거부하면서 Spring Boot가 기동하지 못했다. `.env`를 `KEY=value` 한 줄에 하나씩 다시 저장하고 CD를 재실행하자 `GET /api/movies`가 HTTP `200`을 반환했다.
+
+### 무중단 배포 방식 비교
+
+| 방식    | 트래픽을 전환하는 방법 | 검토할 점 |
+|-------| --- | --- |
+| 롤링    | 여러 앱 인스턴스를 한 번에 일부씩 새 버전으로 교체한다. | 교체 중에도 요청을 받을 인스턴스가 남아 있어야 한다. |
+| 블루/그린 | 기존 앱을 실행한 채 새 앱을 띄워 검증한 뒤 트래픽을 한 번에 전환한다. | 앱 두 개를 동시에 띄울 자원이 필요하다. 문제가 생기면 연결을 이전 앱으로 되돌릴 수 있다. |
+| 카나리   | 일부 트래픽만 새 앱에 보내고, 응답과 오류를 확인한 뒤 비율을 늘린다. | 트래픽 비율을 조절하고 버전별 상태를 관찰할 수 있어야 한다. |
+
+현재 CD는 앱 컨테이너 하나를 교체하므로 교체 중에 요청이 잠시 끊길 수 있다. 
+
+단일 EC2에서 무중단으로 확장한다면 새 앱을 먼저 실행하고 정상 응답을 확인한 뒤 Nginx의 연결 대상을 바꾸는 블루/그린 방식을 고려할 수 있다. 
+
+두 버전이 함께 떠 있는 동안에는 DB 스키마 호환성과 결제 만료 스케줄러의 동시 실행을 확인해야 한다고 한다.
+
+### 새롭게 알게 된 점
+
+배포 플로우를 알게 되었다.
+```text
+브라우저 → EC2의 Nginx 컨테이너 → Spring Boot 컨테이너 → AWS RDS(MySQL) 
+```
+
+컨테이너에서 `localhost`는 그 컨테이너 자신을 가리킨다. 
+
+앱 컨테이너에서 Mac의 MySQL에 접근할 때는 `host.docker.internal`을 썼고, Compose에서는 `db`, EC2에서는 RDS 엔드포인트를 쓴다. 
+
+연결 오류와 실제 DB 이름을 먼저 확인해야 한다는 걸 배웠다.
+
+Docker 이미지는 배포할 코드 버전을 담고, EC2의 `.env`는 RDS 접속 정보처럼 앱이 실행될 때 필요한 설정을 전달한다. 이 둘을 분리해 둔 덕분에 `.env`를 고친 뒤 새 커밋을 만들 필요 없이 같은 버전을 다시 배포할 수 있었다.
+
+```text
+EC2에서 Docker Hub 이미지 내려받기
+  → .env를 전달해 새 앱 컨테이너 시작
+  → Nginx 설정 검사 후 다시 읽기
+  → Nginx를 거쳐 GET /api/movies가 HTTP 200을 반환하는지 확인
+```
+
+영화 목록 API는 RDS를 조회하므로, 이 요청 한 번으로 Nginx가 앱에 요청을 전달하는지와 앱이 DB에 연결되는지를 함께 확인할 수 있었다.
+
+</details>

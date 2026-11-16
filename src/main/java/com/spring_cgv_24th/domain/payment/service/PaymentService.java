@@ -31,7 +31,9 @@ import java.util.UUID;
 import java.util.function.BiConsumer;
 import lombok.extern.slf4j.Slf4j;
 import org.hibernate.exception.ConstraintViolationException;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Propagation;
@@ -54,11 +56,15 @@ public class PaymentService {
     private final ReservationService reservationService;
     private final Clock clock;
     private final TransactionTemplate transaction;
+    private final PageRequest recoveryPage;
+    private long lastAttemptedPaymentId;
+    private long recoveryEndPaymentId;
 
     public PaymentService(StoreOrderRepository orderRepository, StoreOrderItemRepository itemRepository,
                           ReservationRepository reservationRepository, PaymentRepository paymentRepository,
                           PaymentGateway gateway, StoreService storeService, ReservationService reservationService,
-                          Clock clock, PlatformTransactionManager transactionManager) {
+                          Clock clock, PlatformTransactionManager transactionManager,
+                          @Value("${payment.recovery-batch-size:5}") int recoveryBatchSize) {
         this.orderRepository = orderRepository;
         this.itemRepository = itemRepository;
         this.reservationRepository = reservationRepository;
@@ -68,6 +74,7 @@ public class PaymentService {
         this.reservationService = reservationService;
         this.clock = clock;
         this.transaction = new TransactionTemplate(transactionManager);
+        this.recoveryPage = PageRequest.ofSize(recoveryBatchSize);
     }
 
     public PaymentResDTO confirm(Long memberId, PaymentTargetType type, Long targetId, PaymentReqDTO request) {
@@ -263,20 +270,38 @@ public class PaymentService {
         return result;
     }
 
-    public void recoverUnresolvedPayments() {
-        List<PaymentSnapshot> payments = transaction.execute(status -> paymentRepository.findUnresolvedPayments(
-                        List.of(PaymentStatus.PROCESSING, PaymentStatus.UNKNOWN),
-                        List.of(PaymentStatus.CANCEL_PROCESSING, PaymentStatus.CANCEL_UNKNOWN,
-                                PaymentStatus.CANCEL_REJECTED_VERIFY), LocalDateTime.now(clock))
-                .stream().map(PaymentSnapshot::from).toList());
-        for (PaymentSnapshot payment : payments) {
+    public synchronized void recoverUnresolvedPayments() {
+        LocalDateTime now = LocalDateTime.now(clock);
+        List<RecoveryCandidate> candidates = transaction.execute(status -> loadRecoveryBatch(now));
+        for (RecoveryCandidate candidate : candidates) {
+            lastAttemptedPaymentId = candidate.id();
             try {
-                refreshPayment(payment);
+                refreshPayment(candidate.snapshot());
             } catch (RuntimeException error) {
-                log.warn("미확정 결제 재조회 실패: targetType={}, targetId={}",
-                        payment.payment().targetType(), payment.payment().targetId(), error);
+                log.warn("미확정 결제 재조회 실패: paymentId={}", candidate.id(), error);
             }
         }
+        if (candidates.size() < recoveryPage.getPageSize() || lastAttemptedPaymentId == recoveryEndPaymentId) {
+            lastAttemptedPaymentId = 0;
+        }
+    }
+
+    private List<RecoveryCandidate> loadRecoveryBatch(LocalDateTime now) {
+        List<Payment> candidates = lastAttemptedPaymentId == 0 ? List.of() : findRecoveryCandidates(now);
+        if (candidates.isEmpty()) {
+            lastAttemptedPaymentId = 0;
+            // 순회 중 새 결제가 추가돼도 앞쪽 미확정 건의 재시도를 계속 미루지 않는다.
+            recoveryEndPaymentId = paymentRepository.findLastPaymentId();
+            candidates = findRecoveryCandidates(now);
+        }
+        return candidates.stream().map(RecoveryCandidate::from).toList();
+    }
+
+    private List<Payment> findRecoveryCandidates(LocalDateTime now) {
+        return paymentRepository.findUnresolvedPayments(
+                List.of(PaymentStatus.PROCESSING, PaymentStatus.UNKNOWN),
+                List.of(PaymentStatus.CANCEL_PROCESSING, PaymentStatus.CANCEL_UNKNOWN, PaymentStatus.CANCEL_REJECTED_VERIFY),
+                now, lastAttemptedPaymentId, recoveryEndPaymentId, recoveryPage);
     }
 
     private PaymentResDTO refreshPayment(PaymentSnapshot current) {
@@ -479,5 +504,11 @@ public class PaymentService {
     }
 
     private record PreparedPayment(PaymentSnapshot snapshot, boolean submit) {
+    }
+
+    private record RecoveryCandidate(long id, PaymentSnapshot snapshot) {
+        static RecoveryCandidate from(Payment payment) {
+            return new RecoveryCandidate(payment.getId(), PaymentSnapshot.from(payment));
+        }
     }
 }

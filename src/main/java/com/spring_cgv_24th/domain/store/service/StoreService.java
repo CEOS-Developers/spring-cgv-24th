@@ -119,9 +119,9 @@ public class StoreService {
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public void releaseUnpaidOrderStock() {
         LocalDateTime now = LocalDateTime.now(clock);
-        List<Long> orderIds = storeOrderRepository
-                .findOrderIdsForStockRelease(StoreOrderStatus.PENDING_PAYMENT, StoreOrderStatus.PAYMENT_FAILED, now);
         TransactionTemplate transaction = new TransactionTemplate(transactionManager);
+        List<Long> orderIds = transaction.execute(status -> storeOrderRepository.findOrderIdsForStockRelease(
+                StoreOrderStatus.PENDING_PAYMENT, StoreOrderStatus.PAYMENT_FAILED, now));
         for (Long orderId : orderIds) {
             try {
                 transaction.executeWithoutResult(status -> {

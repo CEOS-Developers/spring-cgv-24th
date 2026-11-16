@@ -1,0 +1,201 @@
+name: CD
+
+on:
+  pull_request:
+    branches: ["master"]
+    types: [closed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cgv-ec2
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    if: >-
+      github.repository == '9dongs/spring-cgv-24th' &&
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    uses: ./.github/workflows/ci.yml
+    with:
+      checkout_ref: ${{ github.event.pull_request.merge_commit_sha }}
+
+  publish:
+    needs: ci
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      image: ${{ steps.publish.outputs.image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          persist-credentials: false
+
+      - name: CI에서 생성한 JAR 받기
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: boot-jar
+          path: build/libs
+
+      - name: Docker Hub 이미지 게시
+        id: publish
+        shell: bash
+        env:
+          DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [[ ! "$DOCKERHUB_USERNAME" =~ ^[a-z0-9][a-z0-9_-]*$ || -z "$DOCKERHUB_TOKEN" ]]; then
+            echo "::error::DOCKERHUB_USERNAME 변수와 DOCKERHUB_TOKEN 시크릿을 확인하세요."
+            exit 1
+          fi
+
+          commit=$(git rev-parse HEAD)
+          image="docker.io/$DOCKERHUB_USERNAME/spring-cgv-24th:$commit"
+          printf '%s' "$DOCKERHUB_TOKEN" | docker login --username "$DOCKERHUB_USERNAME" --password-stdin
+          docker build --platform linux/amd64 --tag "$image" .
+          docker push "$image"
+          printf 'image=%s\n' "$image" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    needs: publish
+    # EC2_HOST를 등록하기 전에는 이미지 게시까지만 실행한다.
+    if: vars.EC2_HOST != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: EC2에 배포하고 Nginx 경유 응답 확인
+        shell: bash
+        env:
+          IMAGE: ${{ needs.publish.outputs.image }}
+          EC2_HOST: ${{ vars.EC2_HOST }}
+          EC2_USER: ${{ vars.EC2_USER || 'ubuntu' }}
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          EC2_KNOWN_HOSTS: ${{ secrets.EC2_KNOWN_HOSTS }}
+        run: |
+          if [[ ! "$EC2_HOST" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ || ! "$EC2_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+            echo "::error::EC2_HOST에는 EC2 공개 IPv4 또는 DNS 이름을, EC2_USER에는 SSH 사용자명을 입력하세요."
+            exit 1
+          fi
+          if [[ -z "$EC2_SSH_KEY" || -z "$EC2_KNOWN_HOSTS" ]]; then
+            echo "::error::EC2_SSH_KEY와 EC2_KNOWN_HOSTS 시크릿을 등록하세요."
+            exit 1
+          fi
+
+          umask 077
+          ssh_dir=$(mktemp -d)
+          trap 'rm -rf -- "$ssh_dir"' EXIT
+          printf '%s\n' "$EC2_SSH_KEY" > "$ssh_dir/key"
+          printf '%s\n' "$EC2_KNOWN_HOSTS" > "$ssh_dir/known_hosts"
+
+          ssh -T -i "$ssh_dir/key" \
+            -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=10 \
+            -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$ssh_dir/known_hosts" \
+            "$EC2_USER@$EC2_HOST" bash -s -- "$IMAGE" <<'REMOTE'
+          set -euo pipefail
+
+          image=$1
+          docker=(sudo -n docker)
+          env_file="$HOME/cgv-deploy/.env"
+          nginx_conf=/etc/nginx/conf.d/default.conf
+          previous=cgv-app-previous
+
+          if [[ ! -s "$env_file" ]]; then
+            echo "EC2의 ~/cgv-deploy/.env에 RDS 및 앱 설정을 준비하세요." >&2
+            exit 1
+          fi
+          if [[ $("${docker[@]}" container inspect -f '{{.State.Running}}' ceos-nginx) != true ]]; then
+            echo "EC2에서 ceos-nginx 컨테이너를 먼저 실행하세요." >&2
+            exit 1
+          fi
+          if "${docker[@]}" container inspect "$previous" >/dev/null 2>&1; then
+            echo "이전 배포의 백업 컨테이너 $previous 상태를 먼저 확인하세요." >&2
+            exit 1
+          fi
+
+          "${docker[@]}" pull "$image"
+          if ! "${docker[@]}" network inspect cgv-net >/dev/null 2>&1; then
+            "${docker[@]}" network create cgv-net
+          fi
+          if [[ $("${docker[@]}" container inspect -f '{{if index .NetworkSettings.Networks "cgv-net"}}yes{{end}}' ceos-nginx) != yes ]]; then
+            "${docker[@]}" network connect cgv-net ceos-nginx
+          fi
+
+          config_dir=$(mktemp -d)
+          previous_saved=false
+          previous_running=false
+          app_replaced=false
+          proxy_changed=false
+          restore_on_failure() {
+            local result=$?
+            if (( result != 0 )); then
+              echo "배포 실패. 기존 앱과 Nginx 설정을 복구합니다." >&2
+              if "$app_replaced"; then
+                "${docker[@]}" container inspect -f '앱 상태: {{.State.Status}} (종료 코드 {{.State.ExitCode}})' cgv-app >&2 || true
+                "${docker[@]}" rm -f cgv-app || true
+              fi
+              if "$previous_saved" && "${docker[@]}" rename "$previous" cgv-app && "$previous_running"; then
+                "${docker[@]}" start cgv-app || true
+              fi
+              if "$proxy_changed"; then
+                "${docker[@]}" cp "$config_dir/previous.conf" "ceos-nginx:$nginx_conf" &&
+                  "${docker[@]}" exec ceos-nginx nginx -t &&
+                  "${docker[@]}" exec ceos-nginx nginx -s reload || true
+              fi
+            fi
+            rm -rf -- "$config_dir"
+          }
+          trap restore_on_failure EXIT
+          "${docker[@]}" cp "ceos-nginx:$nginx_conf" "$config_dir/previous.conf"
+
+          if previous_running=$("${docker[@]}" container inspect -f '{{.State.Running}}' cgv-app 2>/dev/null); then
+            "${docker[@]}" rename cgv-app "$previous"
+            previous_saved=true
+            if "$previous_running"; then
+              "${docker[@]}" stop "$previous"
+            fi
+          fi
+
+          app_replaced=true
+          "${docker[@]}" run -d --name cgv-app \
+            --network cgv-net \
+            --env-file "$env_file" \
+            --restart unless-stopped \
+            "$image"
+
+          cat > "$config_dir/default.conf" <<'NGINX'
+          server {
+              listen 80;
+
+              location / {
+                  proxy_pass http://cgv-app:8080;
+                  proxy_set_header Host $host;
+                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto $scheme;
+              }
+          }
+          NGINX
+
+          # 앱이 교체될 때마다 Nginx가 새 컨테이너 주소를 찾도록 다시 읽는다.
+          proxy_changed=true
+          "${docker[@]}" cp "$config_dir/default.conf" "ceos-nginx:$nginx_conf"
+          "${docker[@]}" exec ceos-nginx nginx -t
+          "${docker[@]}" exec ceos-nginx nginx -s reload
+
+          for attempt in {1..30}; do
+            status=$(curl --silent --max-time 3 --output /dev/null --write-out '%{http_code}' \
+              http://127.0.0.1/api/movies || true)
+            if [[ "$status" == 200 ]]; then
+              if "$previous_saved"; then
+                "${docker[@]}" rm "$previous" || echo "백업 컨테이너를 정리하지 못했습니다." >&2
+              fi
+              echo "배포 확인: GET /api/movies HTTP 200"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "GET /api/movies가 HTTP 200을 반환하지 않았습니다. 마지막 상태: $status" >&2
+          exit 1
+          REMOTE
