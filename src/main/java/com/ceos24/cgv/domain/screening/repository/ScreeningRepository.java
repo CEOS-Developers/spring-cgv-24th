@@ -3,11 +3,15 @@ package com.ceos24.cgv.domain.screening.repository;
 import com.ceos24.cgv.domain.movie.entity.Movie;
 import com.ceos24.cgv.domain.screening.entity.Screening;
 import java.util.List;
+import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface ScreeningRepository extends JpaRepository<Screening, Long> {
+
+    @Query("SELECT s FROM Screening s JOIN FETCH s.screen WHERE s.id = :screeningId")
+    Optional<Screening> findByIdWithScreen(@Param("screeningId") Long screeningId);
 
     @Query(
             """

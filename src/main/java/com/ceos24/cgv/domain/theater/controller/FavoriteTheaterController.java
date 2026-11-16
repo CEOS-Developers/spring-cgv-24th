@@ -3,7 +3,7 @@ package com.ceos24.cgv.domain.theater.controller;
 import com.ceos24.cgv.domain.theater.dto.response.GetTheaterResponse;
 import com.ceos24.cgv.domain.theater.service.FavoriteTheaterService;
 import com.ceos24.cgv.global.common.ApiResponse;
-import com.ceos24.cgv.global.security.CustomUserDetails;
+import com.ceos24.cgv.global.security.ApiUserDetails;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -23,24 +23,24 @@ public class FavoriteTheaterController {
     @Operation(summary = "찜한 영화관 추가", description = "해당 회원의 찜한 영화관을 추가합니다.")
     @PostMapping("/theaters/{theaterId}/favorite")
     public ResponseEntity<ApiResponse<Void>> addFavoriteTheater(
-            @PathVariable Long theaterId, @AuthenticationPrincipal CustomUserDetails userDetails) {
-        favoriteTheaterService.addFavoriteTheater(theaterId, userDetails.getMemberId());
+            @PathVariable Long theaterId, @AuthenticationPrincipal ApiUserDetails userDetails) {
+        favoriteTheaterService.addFavoriteTheater(theaterId, userDetails.memberId());
         return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.success(null));
     }
 
     @Operation(summary = "찜한 영화관 삭제", description = "등록된 찜한 영화관을 삭제합니다.")
     @DeleteMapping("/favoriteTheaters/{favoriteTheaterId}")
     public ResponseEntity<ApiResponse<Void>> deleteFavoriteTheater(
-            @PathVariable Long favoriteTheaterId, @AuthenticationPrincipal CustomUserDetails userDetails) {
-        favoriteTheaterService.deleteFavoriteTheater(favoriteTheaterId, userDetails.getMemberId());
+            @PathVariable Long favoriteTheaterId, @AuthenticationPrincipal ApiUserDetails userDetails) {
+        favoriteTheaterService.deleteFavoriteTheater(favoriteTheaterId, userDetails.memberId());
         return ResponseEntity.ok(ApiResponse.success(null));
     }
 
     @Operation(summary = "찜한 영화관 목록 조회", description = "사용자가 찜한 영화관 목록을 조회합니다.")
     @GetMapping("/favoriteTheaters")
     public ResponseEntity<ApiResponse<GetTheaterResponse>> getAllFavoriteTheaters(
-            @AuthenticationPrincipal CustomUserDetails userDetails) {
+            @AuthenticationPrincipal ApiUserDetails userDetails) {
         return ResponseEntity.ok(
-                ApiResponse.success(favoriteTheaterService.getAllFavoriteTheaters(userDetails.getMemberId())));
+                ApiResponse.success(favoriteTheaterService.getAllFavoriteTheaters(userDetails.memberId())));
     }
 }

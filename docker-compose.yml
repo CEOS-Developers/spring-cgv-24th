@@ -1,0 +1,48 @@
+services:
+  db:
+    image: mysql:8.0
+    container_name: cgv-mysql
+    environment:
+      MYSQL_DATABASE: ${DB_NAME}
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD}
+    ports:
+      - "3306:3306"
+    volumes:
+      - db-data:/var/lib/mysql
+    healthcheck:
+      # 127.0.0.1(TCP)로 확인: 초기화 중 임시 서버(소켓 전용)에는 성공하지 않도록 함
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    networks:
+      - cgv-net
+
+  backend:
+    build: .
+    container_name: cgv-backend
+    ports:
+      - "8080:8080"
+    environment:
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_NAME: ${DB_NAME}
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET}
+      ADMIN_TOKEN: ${ADMIN_TOKEN}
+      TOSS_SECRET_KEY: ${TOSS_SECRET_KEY}
+      TOSS_WEBHOOK_SECRET: ${TOSS_WEBHOOK_SECRET}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - cgv-net
+
+volumes:
+  db-data:
+
+networks:
+  cgv-net:
+    driver: bridge

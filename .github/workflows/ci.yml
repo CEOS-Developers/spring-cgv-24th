@@ -1,0 +1,36 @@
+name: ci
+
+# master 브랜치에 push되거나 master로 PR이 올라오면 실행
+# (배포는 Railway가 GitHub 연동 + "Wait for CI"로 담당하므로 이 워크플로는 CI만 수행)
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+
+# 워크플로에 코드 읽기 권한만 부여 (최소 권한)
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      # 저장소 코드를 runner로 가져옴
+      - name: Checkout source code
+        uses: actions/checkout@v7
+
+      # JDK 21 설치
+      - name: Set up JDK
+        uses: actions/setup-java@v6
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      # Gradle 실행 환경 구성 + 의존성 캐싱
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      # 테스트 실행 (src/test/resources/application.yaml의 H2 설정 사용)
+      - name: Test with Gradle
+        run: ./gradlew test

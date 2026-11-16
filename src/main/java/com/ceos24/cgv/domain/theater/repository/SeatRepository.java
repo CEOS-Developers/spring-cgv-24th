@@ -6,7 +6,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface SeatRepository extends JpaRepository<Seat, Long> {
 
-    List<Seat> findByScreeningId(Long screeningId);
+    List<Seat> findByScreenIdOrderBySeatNumberAsc(Long screenId);
 
-    Seat findByScreeningIdAndSeatNumber(Long screeningId, Long seatNumber);
+    List<Seat> findAllByScreenIdAndSeatNumberInOrderBySeatNumberAsc(Long screenId, List<Long> seatNumbers);
 }
