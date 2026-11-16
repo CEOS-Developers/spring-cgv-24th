@@ -4,7 +4,8 @@ spring:
   datasource:
     # innodb_lock_wait_timeout: 기본 50초. 좌석 경합으로 막힌 스레드는 커넥션을 쥔 채
     # 기다리므로, 한도가 길면 좌석 하나의 경합이 풀을 말려 무관한 API까지 같이 죽는다.
-    url: jdbc:mysql://localhost:3306/${DB_NAME}?useSSL=false&characterEncoding=UTF-8&sessionVariables=innodb_lock_wait_timeout=3
+    # serverTimezone: 드라이버가 시각 값을 변환할 때 쓰는 기준. 생략하면 JVM 기본값을 따르므로 앱의 업무 시간대와 명시적으로 맞춘다.
+    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/${DB_NAME}?useSSL=false&characterEncoding=UTF-8&serverTimezone=Asia/Seoul&sessionVariables=innodb_lock_wait_timeout=3
     username: ${DB_USERNAME}
     password: ${DB_PASSWORD}
     driver-class-name: com.mysql.cj.jdbc.Driver
@@ -72,3 +73,21 @@ spring:
     init:
       mode: always
       data-locations: classpath:db/local-sample-data.sql
+---
+# 배포 서버(EC2 + RDS). 배포마다 앱이 재시작되므로 create로 두면 그때마다 운영 데이터가 지워진다.
+# 바인딩 값 로그는 비밀번호 해시·토큰 해시·paymentKey까지 남기므로 운영 로그에서는 끈다.
+spring:
+  config:
+    activate:
+      on-profile: prod
+  jpa:
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        format_sql: false
+
+logging:
+  level:
+    org.hibernate.SQL: info
+    org.hibernate.orm.jdbc.bind: info

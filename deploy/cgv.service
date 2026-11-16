@@ -1,0 +1,18 @@
+# __USER__, __JAVA__ 는 deploy.sh가 EC2의 실제 값으로 바꿔 설치한다.
+[Unit]
+Description=CGV Spring Boot application
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=__USER__
+WorkingDirectory=/opt/cgv
+EnvironmentFile=/opt/cgv/cgv.env
+ExecStart=__JAVA__ -jar /opt/cgv/cgv.jar
+# JVM은 SIGTERM으로 정상 종료돼도 143으로 끝난다. 실패로 기록되지 않게 한다.
+SuccessExitStatus=143
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

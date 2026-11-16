@@ -1,0 +1,18 @@
+# 빌드 컨텍스트에 들어간 파일은 이미지 레이어에 남을 수 있다. 비밀값은 실행 시점에 환경변수로만 넣는다.
+.env
+*.env
+
+# 이미지 안에서 새로 빌드하므로 로컬 산출물은 필요 없고, 크기만 키워 빌드를 느리게 한다.
+.git
+.gradle
+build
+out
+bin
+.idea
+.vscode
+.claude
+*.iml
+docs
+deploy
+README.md
+HELP.md
