@@ -1,0 +1,44 @@
+name: ceos-app
+
+services:
+  # Spring Boot 애플리케이션 (DB는 외부 RDS를 사용하므로 컨테이너로 띄우지 않음)
+  spring-app:
+    # CI에서 전달하는 IMAGE_NAME / IMAGE_TAG 로 교체됨
+    image: ${IMAGE_NAME}:${IMAGE_TAG}
+    container_name: spring-app
+    # DB_URL, DB_USERNAME, DB_PASSWORD, JWT_SECRET, TOSS_* 를 컨테이너 환경변수로 주입
+    env_file:
+      - .env
+    environment:
+      # 컨테이너 안에서 localhost 는 자기 자신이므로 redis 서비스명으로 연결
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+      TZ: Asia/Seoul
+    ports:
+      - "8080:8080"
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # 좌석 점유 분산 락용 Redis (외부 노출 없이 내부 네트워크로만 접근)
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  redis-data:
