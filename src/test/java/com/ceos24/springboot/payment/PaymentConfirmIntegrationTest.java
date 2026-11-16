@@ -13,6 +13,8 @@ import com.ceos24.springboot.payment.dto.TossPaymentConfirmRequest;
 import com.ceos24.springboot.payment.dto.TossPaymentConfirmResponse;
 import com.ceos24.springboot.payment.repository.PaymentRepository;
 import com.ceos24.springboot.payment.service.PaymentService;
+import com.ceos24.springboot.payment.service.PaymentRecoveryScheduler;
+import com.ceos24.springboot.payment.service.PaymentConfirmTransactionService;
 import com.ceos24.springboot.payment.toss.TossPaymentClient;
 import com.ceos24.springboot.reservation.domain.Reservation;
 import com.ceos24.springboot.reservation.domain.ReservationSeat;
@@ -45,6 +47,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.client.ResourceAccessException;
+import org.springframework.web.client.RestClientResponseException;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.time.LocalDate;
@@ -88,6 +91,8 @@ class PaymentConfirmIntegrationTest {
     @Autowired private PlatformTransactionManager transactionManager;
     @Autowired private JdbcTemplate jdbc;
     @Autowired private PaymentService paymentService;
+    @Autowired private PaymentRecoveryScheduler recovery;
+    @Autowired private PaymentConfirmTransactionService confirmationTransactions;
     @Autowired private PaymentRepository payments;
     @Autowired private ReservationRepository reservations;
     @Autowired private ReservationSeatRepository reservationSeats;
@@ -287,12 +292,13 @@ class PaymentConfirmIntegrationTest {
     }
 
     @Test
-    void uncertainApprovalKeepsSeatsAfterDeadlineAndRecoversWithSameIdempotencyKey() {
+    void uncertainApprovalKeepsSeatsAfterDeadlineAndRecoversWithoutReposting() {
         var request = new PaymentConfirmRequest(PAYMENT_KEY, prepared.orderId(), AMOUNT);
-        when(tossPaymentClient.confirm(any(), anyString())).thenThrow(new ResourceAccessException("simulated timeout"))
-                .thenReturn(approvedRemote());
-        when(tossPaymentClient.findByPaymentKey(PAYMENT_KEY)).thenThrow(new ResourceAccessException("lookup unavailable"));
+        when(tossPaymentClient.confirm(any(), anyString())).thenThrow(new ResourceAccessException("simulated timeout"));
         assertError(() -> approval.confirm(userId, request), ErrorCode.PAYMENT_RESULT_UNKNOWN);
+        verify(tossPaymentClient, never()).findByPaymentKey(anyString());
+        recovery.recoverPayments();
+        verify(tossPaymentClient, never()).findByPaymentKey(anyString());
         backdateExpiry();
         scheduler.expirePendingReservations();
         expiration.expireReservation(reservationId);
@@ -301,9 +307,16 @@ class PaymentConfirmIntegrationTest {
         assertThat(reservationSeats.findAllByReservation_ReservationId(reservationId)).hasSize(2);
         assertError(() -> reservationService.cancelReservation(userId, reservationId), ErrorCode.PAYMENT_IN_PROGRESS);
 
-        assertThat(approval.confirm(userId, request).status()).isEqualTo(PaymentStatus.DONE);
+        when(tossPaymentClient.findByPaymentKey(PAYMENT_KEY)).thenAnswer(ignored -> {
+            assertThat(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            return approvedRemote();
+        });
+        makeRecoveryDue();
+        recovery.recoverPayments();
+        recovery.recoverPayments();
         assertStoredCompletion();
-        verify(tossPaymentClient, times(2)).confirm(
+        verify(tossPaymentClient, times(1)).findByPaymentKey(PAYMENT_KEY);
+        verify(tossPaymentClient, times(1)).confirm(
                 new TossPaymentConfirmRequest(PAYMENT_KEY, prepared.orderId(), AMOUNT), idempotencyKey);
     }
 
@@ -338,6 +351,243 @@ class PaymentConfirmIntegrationTest {
         Reservation saved = reservations.findById(reservationId).orElseThrow();
         assertThat(saved.getStatus()).isEqualTo(ReservationStatus.Pending);
         assertThat(saved.isPaymentProcessing()).isTrue();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"DIRECT", "USER", "SCHEDULER", "SEATS"})
+    void pendingPaymentExpiresTogetherWithReservation(String path) {
+        backdateExpiry();
+
+        switch (path) {
+            case "DIRECT" -> expiration.expireReservation(reservationId);
+            case "USER" -> expiration.releaseExpiredReservationsForUser(userId);
+            case "SCHEDULER" -> scheduler.expirePendingReservations();
+            case "SEATS" -> expiration.releaseExpiredSeats(
+                    jdbc.queryForObject("select screening_id from reservation where reservation_id = ?",
+                            Long.class, reservationId),
+                    jdbc.queryForList("select seat_id from reservation_seat where reservation_id = ?",
+                            Long.class, reservationId));
+            default -> throw new IllegalArgumentException(path);
+        }
+
+        assertThat(payments.findById(prepared.paymentId()).orElseThrow().getStatus()).isEqualTo(PaymentStatus.EXPIRED);
+        assertThat(reservations.findById(reservationId).orElseThrow().getStatus()).isEqualTo(ReservationStatus.Expired);
+        assertThat(reservationSeats.findAllByReservation_ReservationId(reservationId)).isEmpty();
+        expiration.expireReservation(reservationId);
+        assertThat(payments.findById(prepared.paymentId()).orElseThrow().getStatus()).isEqualTo(PaymentStatus.EXPIRED);
+        verifyNoInteractions(tossPaymentClient);
+    }
+
+    @Test
+    void pendingPaymentIsCanceledTogetherWithReservation() {
+        reservationService.cancelReservation(userId, reservationId);
+
+        assertThat(payments.findById(prepared.paymentId()).orElseThrow().getStatus()).isEqualTo(PaymentStatus.CANCELED);
+        assertThat(reservations.findById(reservationId).orElseThrow().getStatus()).isEqualTo(ReservationStatus.Canceled);
+        assertThat(reservationSeats.findAllByReservation_ReservationId(reservationId)).isEmpty();
+        verifyNoInteractions(tossPaymentClient);
+    }
+
+    @Test
+    void confirmedFailureBeforeDeadlineImmediatelyReleasesSeats() {
+        when(tossPaymentClient.confirm(any(), anyString())).thenReturn(new TossPaymentConfirmResponse(
+                PAYMENT_KEY, prepared.orderId(), AMOUNT, "영화 티켓 예매", "ABORTED", "카드", null, "KRW"));
+        assertError(() -> approval.confirm(userId, new PaymentConfirmRequest(PAYMENT_KEY, prepared.orderId(), AMOUNT)),
+                ErrorCode.PAYMENT_APPROVAL_FAILED);
+
+        assertThat(payments.findById(prepared.paymentId()).orElseThrow().getStatus()).isEqualTo(PaymentStatus.FAILED);
+        assertThat(reservations.findById(reservationId).orElseThrow().getStatus())
+                .isEqualTo(ReservationStatus.Canceled);
+        assertThat(reservationSeats.findAllByReservation_ReservationId(reservationId)).isEmpty();
+        backdateExpiry();
+        expiration.expireReservation(reservationId);
+        assertThat(reservations.findById(reservationId).orElseThrow().getStatus()).isEqualTo(ReservationStatus.Canceled);
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {400, 401, 403, 404, 422})
+    void definiteCommandRejectionAndVerifiedNonApprovalFailAndReleaseSeats(int status) {
+        when(tossPaymentClient.confirm(any(), anyString())).thenThrow(pgError(status));
+        when(tossPaymentClient.findByPaymentKey(PAYMENT_KEY)).thenAnswer(ignored -> {
+            assertThat(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            // 조회 전에 거절 근거와 UNKNOWN이 이미 커밋되어 있어야 한다.
+            var payment = payments.findById(prepared.paymentId()).orElseThrow();
+            assertThat(payment.isRejectedByPg()).isTrue();
+            assertThat(payment.getStatus()).isEqualTo(PaymentStatus.UNKNOWN);
+            return unapprovedRemote("IN_PROGRESS");
+        });
+        assertError(() -> approval.confirm(userId, new PaymentConfirmRequest(PAYMENT_KEY, prepared.orderId(), AMOUNT)),
+                ErrorCode.PAYMENT_APPROVAL_FAILED);
+        assertThat(payments.findById(prepared.paymentId()).orElseThrow().getStatus()).isEqualTo(PaymentStatus.FAILED);
+        assertThat(reservations.findById(reservationId).orElseThrow().getStatus()).isEqualTo(ReservationStatus.Canceled);
+        assertThat(reservationSeats.findAllByReservation_ReservationId(reservationId)).isEmpty();
+        verify(tossPaymentClient, times(1)).findByPaymentKey(PAYMENT_KEY);
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {408, 409, 429, 500, 503})
+    void uncertainCommandErrorDoesNotTriggerImmediateLookupOrTreatInProgressAsFailure(int status) {
+        when(tossPaymentClient.confirm(any(), anyString())).thenThrow(pgError(status));
+        assertError(() -> approval.confirm(userId, new PaymentConfirmRequest(PAYMENT_KEY, prepared.orderId(), AMOUNT)),
+                ErrorCode.PAYMENT_RESULT_UNKNOWN);
+        verify(tossPaymentClient, never()).findByPaymentKey(anyString());
+        assertThat(payments.findById(prepared.paymentId()).orElseThrow().isRejectedByPg()).isFalse();
+        makeRecoveryDue();
+        when(tossPaymentClient.findByPaymentKey(PAYMENT_KEY)).thenReturn(unapprovedRemote("IN_PROGRESS"));
+        recovery.recoverPayments();
+        assertThat(payments.findById(prepared.paymentId()).orElseThrow().getStatus()).isEqualTo(PaymentStatus.UNKNOWN);
+        assertThat(reservationSeats.findAllByReservation_ReservationId(reservationId)).hasSize(2);
+    }
+
+    @Test
+    void approvedLookupWinsOverCommandRejection() {
+        when(tossPaymentClient.confirm(any(), anyString())).thenThrow(pgError(400));
+        when(tossPaymentClient.findByPaymentKey(PAYMENT_KEY)).thenReturn(approvedRemote());
+        assertThat(approval.confirm(userId, new PaymentConfirmRequest(PAYMENT_KEY, prepared.orderId(), AMOUNT)).status())
+                .isEqualTo(PaymentStatus.DONE);
+        assertStoredCompletion();
+    }
+
+    @Test
+    void rejectedApprovalWithFailedLookupIsRecoveredAfterDeadline() {
+        when(tossPaymentClient.confirm(any(), anyString())).thenThrow(pgError(403));
+        when(tossPaymentClient.findByPaymentKey(PAYMENT_KEY)).thenThrow(new ResourceAccessException("lookup timeout"));
+        assertError(() -> approval.confirm(userId, new PaymentConfirmRequest(PAYMENT_KEY, prepared.orderId(), AMOUNT)),
+                ErrorCode.PAYMENT_RESULT_UNKNOWN);
+        assertThat(payments.findById(prepared.paymentId()).orElseThrow().isRejectedByPg()).isTrue();
+        backdateExpiry();
+        expiration.expireReservation(reservationId);
+        assertThat(reservationSeats.findAllByReservation_ReservationId(reservationId)).hasSize(2);
+
+        doReturn(unapprovedRemote("READY")).when(tossPaymentClient).findByPaymentKey(PAYMENT_KEY);
+        makeRecoveryDue();
+        recovery.recoverPayments();
+        recovery.recoverPayments();
+        assertThat(payments.findById(prepared.paymentId()).orElseThrow().getStatus()).isEqualTo(PaymentStatus.FAILED);
+        assertThat(reservations.findById(reservationId).orElseThrow().getStatus()).isEqualTo(ReservationStatus.Expired);
+        assertThat(reservationSeats.findAllByReservation_ReservationId(reservationId)).isEmpty();
+        verify(tossPaymentClient, times(1)).confirm(any(), anyString());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"NOT_FOUND", "MISMATCH", "WAITING_FOR_DEPOSIT"})
+    void rejectionWithoutVerifiedNonApprovalCannotReleaseSeats(String evidence) {
+        when(tossPaymentClient.confirm(any(), anyString())).thenThrow(pgError(400));
+        if (evidence.equals("NOT_FOUND")) {
+            when(tossPaymentClient.findByPaymentKey(PAYMENT_KEY)).thenThrow(pgError(404));
+        } else if (evidence.equals("MISMATCH")) {
+            when(tossPaymentClient.findByPaymentKey(PAYMENT_KEY)).thenReturn(new TossPaymentConfirmResponse(
+                    PAYMENT_KEY, "wrong-order", AMOUNT, "영화 티켓 예매", "READY", null, null, "KRW"));
+        } else {
+            when(tossPaymentClient.findByPaymentKey(PAYMENT_KEY)).thenReturn(unapprovedRemote(evidence));
+        }
+        assertError(() -> approval.confirm(userId, new PaymentConfirmRequest(PAYMENT_KEY, prepared.orderId(), AMOUNT)),
+                ErrorCode.PAYMENT_RESULT_UNKNOWN);
+        assertThat(payments.findById(prepared.paymentId()).orElseThrow().getStatus()).isEqualTo(PaymentStatus.UNKNOWN);
+        assertThat(reservationSeats.findAllByReservation_ReservationId(reservationId)).hasSize(2);
+    }
+
+    @Test
+    void lookup4xxAfterTimeoutDoesNotBecomeCommandRejection() {
+        when(tossPaymentClient.confirm(any(), anyString())).thenThrow(new ResourceAccessException("timeout"));
+        var request = new PaymentConfirmRequest(PAYMENT_KEY, prepared.orderId(), AMOUNT);
+        assertError(() -> approval.confirm(userId, request), ErrorCode.PAYMENT_RESULT_UNKNOWN);
+        when(tossPaymentClient.findByPaymentKey(PAYMENT_KEY)).thenThrow(pgError(403));
+        assertError(() -> approval.confirm(userId, request), ErrorCode.PAYMENT_RESULT_UNKNOWN);
+        assertThat(payments.findById(prepared.paymentId()).orElseThrow().isRejectedByPg()).isFalse();
+        verify(tossPaymentClient, times(1)).findByPaymentKey(PAYMENT_KEY);
+    }
+
+    private RestClientResponseException pgError(int status) {
+        return new RestClientResponseException("PG error", status, "error", null, null, null);
+    }
+
+    private TossPaymentConfirmResponse unapprovedRemote(String status) {
+        return new TossPaymentConfirmResponse(PAYMENT_KEY, prepared.orderId(), AMOUNT,
+                "영화 티켓 예매", status, null, null, "KRW");
+    }
+
+    @Test
+    void crashedProcessingAndAbandonedRecoveryLeaseCanBeRecoveredFromCommittedData() {
+        // begin이 커밋된 직후 프로세스가 종료되어 finish를 호출하지 못한 상황.
+        confirmationTransactions.begin(userId, new PaymentConfirmRequest(PAYMENT_KEY, prepared.orderId(), AMOUNT));
+        recovery.recoverPayments();
+        verifyNoInteractions(tossPaymentClient);
+        makeRecoveryDue();
+        var abandoned = confirmationTransactions.claimRecovery(prepared.paymentId()).orElseThrow();
+        assertThat(confirmationTransactions.claimRecovery(prepared.paymentId())).isEmpty();
+        recovery.recoverPayments();
+        verifyNoInteractions(tossPaymentClient);
+
+        // 처리권 획득 후 서버가 종료돼도 DB의 임대가 만료되면 다른 실행이 이어받는다.
+        makeRecoveryDue();
+        when(tossPaymentClient.findByPaymentKey(PAYMENT_KEY)).thenReturn(approvedRemote());
+        recovery.recoverPayments();
+        // 종료 전 작업의 늦은 결과도 이미 완료된 결제를 되돌리지 않는다.
+        confirmationTransactions.finish(abandoned, null);
+        assertStoredCompletion();
+        assertThat(payments.findById(prepared.paymentId()).orElseThrow().getRecovery().getAttempts()).isEqualTo(2);
+        verify(tossPaymentClient, times(1)).findByPaymentKey(PAYMENT_KEY);
+        verify(tossPaymentClient, never()).confirm(any(), anyString());
+    }
+
+    @Test
+    void recoveryFailureAfterDeadlineReleasesSeatsOnlyAfterPgConfirmsFailure() {
+        when(tossPaymentClient.confirm(any(), anyString())).thenThrow(new ResourceAccessException("timeout"));
+        assertError(() -> approval.confirm(userId, new PaymentConfirmRequest(PAYMENT_KEY, prepared.orderId(), AMOUNT)),
+                ErrorCode.PAYMENT_RESULT_UNKNOWN);
+        backdateExpiry();
+        makeRecoveryDue();
+        when(tossPaymentClient.findByPaymentKey(PAYMENT_KEY)).thenThrow(new ResourceAccessException("still offline"));
+        recovery.recoverPayments();
+        scheduler.expirePendingReservations();
+        assertThat(reservationSeats.findAllByReservation_ReservationId(reservationId)).hasSize(2);
+        assertThat(payments.findById(prepared.paymentId()).orElseThrow().getRecovery().getNextAttemptAt())
+                .isAfter(LocalDateTime.now(clock));
+
+        doReturn(new TossPaymentConfirmResponse(
+                PAYMENT_KEY, prepared.orderId(), AMOUNT, "영화 티켓 예매", "ABORTED", null, null, "KRW"))
+                .when(tossPaymentClient).findByPaymentKey(PAYMENT_KEY);
+        makeRecoveryDue();
+        recovery.recoverPayments();
+        recovery.recoverPayments();
+        assertThat(payments.findById(prepared.paymentId()).orElseThrow().getStatus()).isEqualTo(PaymentStatus.FAILED);
+        assertThat(reservations.findById(reservationId).orElseThrow().getStatus()).isEqualTo(ReservationStatus.Expired);
+        assertThat(reservationSeats.findAllByReservation_ReservationId(reservationId)).isEmpty();
+    }
+
+    @Test
+    void concurrentRecoveryAndExpirationKeepSeatsForLateApproval() throws Exception {
+        confirmationTransactions.begin(userId, new PaymentConfirmRequest(PAYMENT_KEY, prepared.orderId(), AMOUNT));
+        backdateExpiry();
+        makeRecoveryDue();
+        var started = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        when(tossPaymentClient.findByPaymentKey(PAYMENT_KEY)).thenAnswer(ignored -> {
+            assertThat(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            started.countDown();
+            assertThat(release.await(10, TimeUnit.SECONDS)).isTrue();
+            return approvedRemote();
+        });
+        try (var executor = Executors.newSingleThreadExecutor()) {
+            var future = executor.submit(recovery::recoverPayments);
+            try {
+                assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
+                // 다른 서버의 스케줄러도 이미 임대한 작업을 중복 조회하지 않는다.
+                recovery.recoverPayments();
+                expiration.expireReservation(reservationId);
+                scheduler.expirePendingReservations();
+                assertThat(reservationSeats.findAllByReservation_ReservationId(reservationId)).hasSize(2);
+            } finally { release.countDown(); }
+            future.get(5, TimeUnit.SECONDS);
+        }
+        assertStoredCompletion();
+        verify(tossPaymentClient, times(1)).findByPaymentKey(PAYMENT_KEY);
+    }
+
+    private void makeRecoveryDue() {
+        jdbc.update("update payment set next_recovery_at=? where payment_id=?",
+                LocalDateTime.now(clock).minusMinutes(1), prepared.paymentId());
     }
 
     private void backdateExpiry() {

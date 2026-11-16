@@ -5,9 +5,11 @@ import com.ceos24.springboot.global.exception.GlobalException;
 import com.ceos24.springboot.payment.domain.PaymentStatus;
 import com.ceos24.springboot.payment.dto.*;
 import com.ceos24.springboot.payment.toss.TossPaymentClient;
+import com.ceos24.springboot.payment.toss.TossPaymentErrorPolicy;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestClientResponseException;
 
 @Service
 @RequiredArgsConstructor
@@ -46,9 +48,19 @@ public class PaymentConfirmService {
                         context.idempotencyKey()
                 );
             }
+        } catch (RestClientResponseException e) {
+            boolean rejected = !context.lookupOnly() && TossPaymentErrorPolicy.isDefinitiveRejection(e);
+            if (rejected) {
+                // 조회 전 거절 근거를 커밋한다. 조회 중 장애/서버 종료 시에도 복구할 수 있다.
+                transactionService.finish(context, null, true);
+                try { remote = tossPaymentClient.findByPaymentKey(context.paymentKey()); }
+                catch (RestClientException lookupFailure) { remote = null; }
+            } else {
+                remote = null;
+            }
         } catch (RestClientException e) {
-            // 승인 응답을 못 받았어도 토스에서는 성공했을 수 있다.
-            remote = lookupOrNull(context.paymentKey());
+            // 추가 네트워크 대기 없이 UNKNOWN을 커밋하고 지연 복구한다.
+            remote = null;
         }
 
         // 이 호출이 반환되면 DB 트랜잭션은 커밋된 상태다.
@@ -68,11 +80,4 @@ public class PaymentConfirmService {
         throw new GlobalException(ErrorCode.PAYMENT_RESULT_UNKNOWN);
     }
 
-    private TossPaymentConfirmResponse lookupOrNull(String paymentKey) {
-        try {
-            return tossPaymentClient.findByPaymentKey(paymentKey);
-        } catch (RestClientException e) {
-            return null;
-        }
-    }
 }

@@ -41,6 +41,11 @@ public enum ErrorCode {
             "좌석 점유 시간 10분이 만료되었습니다. 좌석을 다시 선택해 주세요."
     ),
 
+    RESERVATION_CANCEL_DEADLINE_PASSED(
+            HttpStatus.CONFLICT,
+            "예매 취소 및 환불은 상영 시작 20분 전까지만 가능합니다."
+    ),
+
     INVALID_RESERVATION_STATUS(
             HttpStatus.CONFLICT,
             "현재 상태에서는 예매를 확정할 수 없습니다."

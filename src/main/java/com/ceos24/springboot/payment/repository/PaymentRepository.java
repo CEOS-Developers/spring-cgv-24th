@@ -10,11 +10,31 @@ import org.springframework.data.repository.query.Param;
 
 import java.util.Optional;
 import java.util.Collection;
+import java.util.List;
+import java.time.LocalDateTime;
 import com.ceos24.springboot.payment.domain.PaymentStatus;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
 public interface PaymentRepository extends JpaRepository<Payment, Long> {
+    @Query("""
+            select p.id from Payment p
+            where p.status in :statuses
+              and (p.recovery.nextAttemptAt <= :now
+                   or (p.recovery.nextAttemptAt is null and p.createdAt <= :legacyCutoff))
+            order by p.recovery.nextAttemptAt, p.id
+            """)
+    List<Long> findRecoveryIds(@Param("statuses") Collection<PaymentStatus> statuses,
+                               @Param("now") LocalDateTime now,
+                               @Param("legacyCutoff") LocalDateTime legacyCutoff, Pageable pageable);
+
+    @Query("select p.user.id as userId, p.orderId as orderId from Payment p where p.id = :id")
+    Optional<RecoveryReference> findRecoveryReference(@Param("id") Long id);
+
+    interface RecoveryReference {
+        Long getUserId();
+        String getOrderId();
+    }
 
     Optional<Payment> findByIdAndUser_IdAndStatusInAndApprovedAtIsNotNull(
             Long id, Long userId, Collection<PaymentStatus> statuses);

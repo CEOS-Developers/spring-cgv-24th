@@ -19,3 +19,6 @@ payment:
     # Test-only configuration; gateway calls in payment tests are mocked.
     secret-key: test_gsk_not_a_real_key
     base-url: https://api.tosspayments.com
+    recovery:
+      # 복구 테스트는 메서드를 직접 호출한다. 자동 실행으로 fixture가 변경되는 것을 방지한다.
+      interval: 1h

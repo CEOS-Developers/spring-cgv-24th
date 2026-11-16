@@ -14,16 +14,20 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Clock;
+import java.time.LocalDateTime;
 import java.util.List;
 
 @Service
 @RequiredArgsConstructor
 public class ReservationService {
+    private final Clock clock;
     private final ReservationExpirationService expirationService;
     private final ReservationCreateService createService;
     private final ReservationQueryService queryService;
     private final ReservationRepository reservationRepository;
     private final ReservationSeatRepository reservationSeatRepository;
+    private final ReservationLifecycleService lifecycle;
 
     // 외부 트랜잭션을 중단해도 커넥션은 반환되지 않으므로, 트랜잭션 내 호출 자체를 차단한다.
     // 만료 트랜잭션이 커밋되고 커넥션을 반환한 뒤 예매 트랜잭션을 시작한다.
@@ -64,6 +68,8 @@ public class ReservationService {
             );
         }
 
+        reservation.validateCancellationDeadline(LocalDateTime.now(clock));
+
         // 취소하기 전 예매 좌석 조회
         List<ReservationSeat> reservationSeats =
                 reservationSeatRepository.findAllByReservation_ReservationId(reservationId);
@@ -74,12 +80,8 @@ public class ReservationService {
                         .map(ReservationSeat::getSeat)
                         .toList();
 
-        // 예매 상태 변경
-        reservation.cancel();
-
-        // 좌석 점유 해제
-        reservationSeatRepository
-                .deleteAllByReservation_ReservationId(reservationId);
+        // 예매 취소, 결제 종료, 좌석 점유 해제를 함께 처리
+        lifecycle.cancelLocked(reservation);
 
         // 취소된 예매 정보 + 기존 좌석 정보 반환
         return ReservationResponse.from(

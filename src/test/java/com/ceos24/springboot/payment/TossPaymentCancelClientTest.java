@@ -2,6 +2,7 @@ package com.ceos24.springboot.payment;
 
 import com.ceos24.springboot.payment.config.TossPaymentProperties;
 import com.ceos24.springboot.payment.dto.TossPaymentCancelRequest;
+import com.ceos24.springboot.payment.dto.TossPaymentConfirmRequest;
 import com.ceos24.springboot.payment.toss.TossPaymentClient;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
@@ -10,11 +11,13 @@ import org.junit.jupiter.api.Test;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.ResourceAccessException;
 
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.concurrent.atomic.AtomicReference;
+import java.time.Duration;
 
 import static org.assertj.core.api.Assertions.*;
 
@@ -24,6 +27,7 @@ class TossPaymentCancelClientTest {
     private TossPaymentClient client;
     private final AtomicReference<Request> received = new AtomicReference<>();
     private int status = 200;
+    private long delayMillis;
     private String response = """
             {"paymentKey":"test-key","orderId":"pay_test","totalAmount":28000,"currency":"KRW",
              "status":"PARTIAL_CANCELED","balanceAmount":20000,"ignored":"extra-field",
@@ -37,6 +41,10 @@ class TossPaymentCancelClientTest {
     void setUp() throws Exception {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/v1/payments", exchange -> {
+            if (delayMillis > 0) {
+                try { Thread.sleep(delayMillis); }
+                catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+            }
             received.set(new Request(exchange.getRequestMethod(), exchange.getRequestURI().getPath(),
                     exchange.getRequestHeaders().getFirst("Authorization"),
                     exchange.getRequestHeaders().getFirst("Idempotency-Key"),
@@ -95,5 +103,25 @@ class TossPaymentCancelClientTest {
         response = "";
         assertThatThrownBy(() -> client.cancel("test-key", new TossPaymentCancelRequest("사유", 8000L), "pg-key"))
                 .isInstanceOf(RestClientException.class);
+    }
+
+    @Test
+    void commandAndQueryUseIndependentReadTimeouts() {
+        var properties = new TossPaymentProperties();
+        properties.setSecretKey("test_gsk_fake");
+        properties.setBaseUrl("http://127.0.0.1:" + server.getAddress().getPort());
+        properties.setCommandReadTimeout(Duration.ofSeconds(3));
+        properties.setQueryReadTimeout(Duration.ofMillis(100));
+        client = new TossPaymentClient(RestClient.builder(), properties);
+        delayMillis = 400;
+
+        assertThatThrownBy(() -> client.findByPaymentKey("test-key"))
+                .isInstanceOf(ResourceAccessException.class);
+        assertThat(client.confirm(new TossPaymentConfirmRequest("test-key", "pay_test", 28000L), "confirm-key"))
+                .isNotNull();
+        assertThatThrownBy(() -> client.findForCancellation("test-key"))
+                .isInstanceOf(ResourceAccessException.class);
+        assertThat(client.cancel("test-key", new TossPaymentCancelRequest("사유", 8000L), "cancel-key"))
+                .isNotNull();
     }
 }

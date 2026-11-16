@@ -321,6 +321,28 @@ class ReservationHoldIntegrationTest {
         assertRebookedByOtherUser(original.reservationId());
     }
 
+    @ParameterizedTest
+    @ValueSource(ints = {1201, 1200, 1199, 0, -86400})
+    void pendingReservationCancellationUsesScreeningDeadline(int secondsUntilStart) {
+        Instant fixedNow = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+        when(clock.instant()).thenReturn(fixedNow);
+        ReservationResponse original = create(userId, screeningId, firstSeatId);
+        LocalDateTime start = LocalDateTime.now(clock).plusSeconds(secondsUntilStart);
+        jdbc.update("update screening set screening_date=?, start_time=? where screening_id=?",
+                start.toLocalDate(), start.toLocalTime(), screeningId);
+
+        if (secondsUntilStart >= 1200) {
+            service.cancelReservation(userId, original.reservationId());
+            assertThat(savedStatus(original.reservationId())).isEqualTo(ReservationStatus.Canceled);
+            assertThat(reservationSeats.findAllByReservation_ReservationId(original.reservationId())).isEmpty();
+        } else {
+            assertConflict(() -> service.cancelReservation(userId, original.reservationId()),
+                    ErrorCode.RESERVATION_CANCEL_DEADLINE_PASSED);
+            assertThat(savedStatus(original.reservationId())).isEqualTo(ReservationStatus.Pending);
+            assertThat(reservationSeats.findAllByReservation_ReservationId(original.reservationId())).hasSize(1);
+        }
+    }
+
     @Test
     void paidReservationCannotBeCanceledWithoutRefundAndKeepsSeats() {
         ReservationResponse original = create(userId, screeningId, firstSeatId, secondSeatId);

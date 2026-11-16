@@ -3,6 +3,7 @@
 *.ipr
 *.iws
 *.jar
+!gradle/wrapper/gradle-wrapper.jar
 *.sw?
 *~
 .#*
@@ -35,6 +36,8 @@ manifest.yml
 out
 overridedb.*
 target
+
+!src/main/java/com/ceos24/springboot/payment/service/target/
 .flattened-pom.xml
 secrets.yml
 .gradletasknamecache
@@ -44,3 +47,4 @@ secrets.yml
 
 # 보안
 .env
+.local-backups/

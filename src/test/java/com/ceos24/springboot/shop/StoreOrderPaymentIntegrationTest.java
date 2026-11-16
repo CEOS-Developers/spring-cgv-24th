@@ -310,22 +310,22 @@ class StoreOrderPaymentIntegrationTest {
     }
 
     @Test
-    void timeoutKeepsStockAndRetryUsesSameIdempotencyKeyEvenAfterDeadline() {
+    void timeoutKeepsStockAndRetryOnlyLooksUpEvenAfterDeadline() {
         var order = create(2);
         var request = prepare(order.orderId(), "DONE");
-        when(toss.confirm(any(), anyString())).thenThrow(new ResourceAccessException("simulated timeout"))
-                .thenReturn(remote(request, "DONE"));
-        when(toss.findByPaymentKey(request.paymentKey())).thenThrow(new ResourceAccessException("simulated lookup timeout"));
+        when(toss.confirm(any(), anyString())).thenThrow(new ResourceAccessException("simulated timeout"));
         assertError(() -> approval.confirm(userId, request), ErrorCode.PAYMENT_RESULT_UNKNOWN);
+        verify(toss, never()).findByPaymentKey(anyString());
         assertThat(paymentStatus(request.orderId())).isEqualTo(PaymentStatus.UNKNOWN);
         backdate(order.orderId());
         scheduler.expirePendingOrders();
         assertThat(stock(popcornId)).isEqualTo(8);
         assertError(() -> shop.cancelOrder(userId, order.orderId()), ErrorCode.PAYMENT_IN_PROGRESS);
 
+        when(toss.findByPaymentKey(request.paymentKey())).thenReturn(remote(request, "DONE"));
         assertThat(approval.confirm(userId, request).storeOrderStatus()).isEqualTo(StoreOrderStatus.PAID);
         String key = payments.findAll().getFirst().getConfirmIdempotencyKey();
-        verify(toss, times(2)).confirm(new TossPaymentConfirmRequest(request.paymentKey(), request.orderId(), request.amount()), key);
+        verify(toss, times(1)).confirm(new TossPaymentConfirmRequest(request.paymentKey(), request.orderId(), request.amount()), key);
         assertThat(stock(popcornId)).isEqualTo(8);
     }
 
@@ -343,6 +343,24 @@ class StoreOrderPaymentIntegrationTest {
         expiration.expireOrder(order.orderId());
         shop.cancelOrder(userId, order.orderId());
         assertThat(stock(popcornId)).isEqualTo(10);
+    }
+
+    @Test
+    void confirmedCommandRejectionBeforeDeadlineRestoresStockOnlyOnce() {
+        var order = create(2);
+        var request = prepare(order.orderId(), "DONE");
+        when(toss.confirm(any(), anyString())).thenThrow(new org.springframework.web.client.RestClientResponseException(
+                "PG rejected", 403, "Forbidden", null, null, null));
+        when(toss.findByPaymentKey(request.paymentKey())).thenReturn(remote(request, "IN_PROGRESS"));
+
+        assertError(() -> approval.confirm(userId, request), ErrorCode.PAYMENT_APPROVAL_FAILED);
+        assertThat(paymentStatus(request.orderId())).isEqualTo(PaymentStatus.FAILED);
+        assertThat(shop.getOrder(userId, order.orderId()).status()).isEqualTo(StoreOrderStatus.CANCELED);
+        assertThat(stock(popcornId)).isEqualTo(10);
+        expiration.expireOrder(order.orderId());
+        shop.cancelOrder(userId, order.orderId());
+        assertThat(stock(popcornId)).isEqualTo(10);
+        verify(toss, times(1)).findByPaymentKey(request.paymentKey());
     }
 
     private StoreOrderCreateRequest request(int quantity) {

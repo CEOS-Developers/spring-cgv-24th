@@ -20,7 +20,8 @@ import java.time.Duration;
 @Component
 public class TossPaymentClient {
 
-    private final RestClient restClient;
+    private final RestClient commandClient;
+    private final RestClient queryClient;
 
     public TossPaymentClient(
             RestClient.Builder builder,
@@ -33,16 +34,21 @@ public class TossPaymentClient {
             );
         }
 
+        this.commandClient = createClient(builder.clone(), properties, properties.getCommandReadTimeout());
+        this.queryClient = createClient(builder.clone(), properties, properties.getQueryReadTimeout());
+    }
+
+    private RestClient createClient(RestClient.Builder builder, TossPaymentProperties properties, Duration readTimeout) {
         HttpClient httpClient = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(5))
+                .connectTimeout(properties.getConnectTimeout())
                 .build();
 
         JdkClientHttpRequestFactory requestFactory =
                 new JdkClientHttpRequestFactory(httpClient);
 
-        requestFactory.setReadTimeout(Duration.ofSeconds(30));
+        requestFactory.setReadTimeout(readTimeout);
 
-        this.restClient = builder
+        return builder
                 .baseUrl(properties.getBaseUrl())
                 .requestFactory(requestFactory)
                 .defaultHeaders(headers -> {
@@ -69,7 +75,7 @@ public class TossPaymentClient {
             );
         }
 
-        TossPaymentConfirmResponse response = restClient.post()
+        TossPaymentConfirmResponse response = commandClient.post()
                 .uri("/v1/payments/confirm")
                 .contentType(MediaType.APPLICATION_JSON)
                 .header("Idempotency-Key", idempotencyKey)
@@ -84,7 +90,7 @@ public class TossPaymentClient {
     public TossPaymentConfirmResponse findByPaymentKey(
             String paymentKey
     ) {
-        TossPaymentConfirmResponse response = restClient.get()
+        TossPaymentConfirmResponse response = queryClient.get()
                 .uri("/v1/payments/{paymentKey}", paymentKey)
                 .retrieve()
                 .body(TossPaymentConfirmResponse.class);
@@ -96,7 +102,7 @@ public class TossPaymentClient {
         if (!StringUtils.hasText(idempotencyKey)) {
             throw new IllegalArgumentException("결제 취소 요청에 사용할 멱등키가 필요합니다.");
         }
-        return requireResponse(restClient.post()
+        return requireResponse(commandClient.post()
                 .uri("/v1/payments/{paymentKey}/cancel", paymentKey)
                 .contentType(MediaType.APPLICATION_JSON)
                 .header("Idempotency-Key", idempotencyKey)
@@ -104,7 +110,7 @@ public class TossPaymentClient {
     }
 
     public TossPaymentCancelResponse findForCancellation(String paymentKey) {
-        return requireResponse(restClient.get().uri("/v1/payments/{paymentKey}", paymentKey)
+        return requireResponse(queryClient.get().uri("/v1/payments/{paymentKey}", paymentKey)
                 .retrieve().body(TossPaymentCancelResponse.class));
     }
 
