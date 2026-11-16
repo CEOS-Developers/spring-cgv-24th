@@ -30,6 +30,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Collections;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.UUID;
 
 @Entity
@@ -82,7 +83,8 @@ public class Reservation extends BaseTimeEntity {
         Reservation reservation = new Reservation(user, screening);
         reservation.status = ReservationStatus.HELD;
         reservation.requestKey = requestKey.toString();
-        reservation.expiresAt = expiresAt;
+        // DB의 마이크로초 정밀도에 맞춰 최초 응답과 재조회 값을 일치시킨다.
+        reservation.expiresAt = expiresAt.truncatedTo(ChronoUnit.MICROS);
         return reservation;
     }
 

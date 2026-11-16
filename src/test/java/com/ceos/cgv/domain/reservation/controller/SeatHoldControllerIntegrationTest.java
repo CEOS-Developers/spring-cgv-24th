@@ -17,6 +17,7 @@ import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.time.Clock;
@@ -24,6 +25,7 @@ import java.time.Duration;
 import java.time.Instant;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.doReturn;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -43,7 +45,7 @@ class SeatHoldControllerIntegrationTest {
     @Autowired SeatHoldCleanupService cleanupService;
     @Autowired ReservationRepository reservationRepository;
     @Autowired SeatHoldExpiryService expiryService;
-    @Autowired Clock seatHoldClock;
+    @MockitoSpyBean(name = "seatHoldClock") Clock seatHoldClock;
 
     @BeforeEach
     void setUp() {
@@ -75,7 +77,8 @@ class SeatHoldControllerIntegrationTest {
                 {"screeningId":8616,"seats":[{"seatRow":"B","seatNumber":2},
                 {"seatRow":"A","seatNumber":1}]}
                 """;
-        Instant started = Instant.now();
+        Instant started = Instant.parse("2030-01-01T00:00:00.123456789Z");
+        doReturn(started).when(seatHoldClock).instant();
         String firstBody = mockMvc.perform(post("/api/v1/seat-holds")
                         .header("Authorization", userToken(8611))
                         .header("Idempotency-Key", KEY)
@@ -87,13 +90,17 @@ class SeatHoldControllerIntegrationTest {
                 .andReturn().getResponse().getContentAsString();
         Number id = JsonPath.read(firstBody, "$.data.reservationId");
         String expiresAt = JsonPath.read(firstBody, "$.data.expiresAt");
-        assertThat(Instant.parse(expiresAt)).isBetween(
-                started.plusSeconds(300), Instant.now().plusSeconds(300));
+        Instant storedExpiresAt = jdbc.queryForObject("SELECT expires_at FROM reservations WHERE reservation_id=?",
+                (result, row) -> result.getTimestamp(1).toInstant(), id.longValue());
+        assertThat(storedExpiresAt).isEqualTo(Instant.parse(expiresAt));
+        assertThat(Instant.parse(expiresAt))
+                .isEqualTo(Instant.parse("2030-01-01T00:05:00.123456Z"));
         assertThat(jdbc.queryForObject("""
                 SELECT COUNT(*) FROM screening_seats
                 WHERE screening_id=8616 AND current_reservation_id=?
                 """, Integer.class, id.longValue())).isEqualTo(2);
 
+        doReturn(started.plusSeconds(10)).when(seatHoldClock).instant();
         String retryBody = mockMvc.perform(post("/api/v1/seat-holds")
                         .header("Authorization", userToken(8611))
                         .header("Idempotency-Key", KEY)

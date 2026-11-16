@@ -37,3 +37,7 @@ out/
 .vscode/
 
 application-local.yml
+
+.env
+.env.*
+!.env.example

@@ -1,0 +1,118 @@
+name: Test and deploy
+
+on:
+  push:
+    branches: [Wannys26]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cgv-ec2-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/Wannys26'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        shell: bash
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      EC2_SECURITY_GROUP_ID: ${{ vars.EC2_SECURITY_GROUP_ID }}
+      IMAGE: spring-cgv-24th:${{ github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+
+      - name: Run Java and JavaScript tests
+        run: |
+          bash ./gradlew --no-daemon --max-workers=2 test mysqlTest
+          node --test src/test/js/payment-demo.test.js
+
+      - name: Build and export the server image
+        run: |
+          docker build --platform linux/amd64 --tag "$IMAGE" .
+          docker save "$IMAGE" | gzip > "$RUNNER_TEMP/cgv-image.tar.gz"
+
+      - name: Assume the SSH access role
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: cgv-deploy-${{ github.run_id }}
+          role-duration-seconds: 1800
+          mask-aws-account-id: true
+
+      - name: Allow this runner to connect over SSH
+        id: ssh_access
+        run: |
+          runner_ip=$(curl --fail --silent --show-error --retry 3 https://checkip.amazonaws.com)
+          python3 -c 'import ipaddress, sys; ipaddress.IPv4Address(sys.argv[1])' "$runner_ip"
+          rule_id=$(aws ec2 authorize-security-group-ingress \
+            --group-id "$EC2_SECURITY_GROUP_ID" \
+            --protocol tcp --port 22 --cidr "$runner_ip/32" \
+            --query 'SecurityGroupRules[0].SecurityGroupRuleId' --output text)
+          printf '%s\n' "$rule_id" > "$RUNNER_TEMP/cgv-ssh-rule-id"
+          printf 'rule_id=%s\n' "$rule_id" >> "$GITHUB_OUTPUT"
+
+      - name: Transfer and deploy the tested image
+        timeout-minutes: 15
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          EC2_KNOWN_HOSTS: ${{ secrets.EC2_KNOWN_HOSTS }}
+        run: |
+          [[ "$EC2_HOST" =~ ^[a-zA-Z0-9.-]+$ ]] || exit 1
+          umask 077
+          ssh_dir=$(mktemp -d "$RUNNER_TEMP/cgv-ssh.XXXXXX")
+          trap 'rm -rf "$ssh_dir"' EXIT
+          printf '%s\n' "$EC2_SSH_KEY" > "$ssh_dir/key"
+          printf '%s\n' "$EC2_KNOWN_HOSTS" > "$ssh_dir/known_hosts"
+          ssh_options=(-i "$ssh_dir/key" -o BatchMode=yes -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$ssh_dir/known_hosts" \
+            -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3)
+          release_dir="/opt/cgv/releases/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          ssh "${ssh_options[@]}" "ubuntu@$EC2_HOST" bash -s -- "$release_dir" <<'PREPARE'
+          set -euo pipefail
+          mkdir -p -- "$1"
+          PREPARE
+          scp "${ssh_options[@]}" compose-rds.yml scripts/deploy.sh \
+            "$RUNNER_TEMP/cgv-image.tar.gz" "ubuntu@$EC2_HOST:$release_dir/"
+          ssh "${ssh_options[@]}" "ubuntu@$EC2_HOST" bash -s -- "$release_dir" "$IMAGE" <<'REMOTE'
+          set -euo pipefail
+          release_dir=$1
+          image=$2
+          trap 'rm -f "$release_dir/cgv-image.tar.gz"' EXIT
+          gzip -dc "$release_dir/cgv-image.tar.gz" | docker load
+          mkdir -p /opt/cgv/scripts
+          install -m 644 "$release_dir/compose-rds.yml" /opt/cgv/compose-rds.yml
+          install -m 755 "$release_dir/deploy.sh" /opt/cgv/scripts/deploy.sh
+          bash /opt/cgv/scripts/deploy.sh "$image"
+          REMOTE
+
+      - name: Remove this runner's SSH rule
+        if: always() && steps.ssh_access.outcome != 'skipped'
+        run: |
+          if [[ -s "$RUNNER_TEMP/cgv-ssh-rule-id" ]]; then
+            rule_id=$(cat "$RUNNER_TEMP/cgv-ssh-rule-id")
+            aws ec2 revoke-security-group-ingress \
+              --group-id "$EC2_SECURITY_GROUP_ID" --security-group-rule-ids "$rule_id"
+          fi

@@ -1,0 +1,22 @@
+# Only the Gradle wrapper and application build inputs enter the build context.
+**
+!Dockerfile
+!.dockerignore
+!gradlew
+!build.gradle
+!settings.gradle
+!gradle/
+!gradle/wrapper/
+!gradle/wrapper/gradle-wrapper.jar
+!gradle/wrapper/gradle-wrapper.properties
+!src/
+!src/main/
+!src/main/**
+
+**/application-local.yml
+**/.env
+**/.env.*
+**/*.pem
+**/*.key
+**/AGENTS.md
+**/.local-context/**
