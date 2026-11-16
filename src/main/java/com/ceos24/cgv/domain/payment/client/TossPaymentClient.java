@@ -22,7 +22,7 @@ public class TossPaymentClient {
     public TossConfirmResponse confirm(PaymentConfirmRequest request){
         TossConfirmResponse response = restClient.post()
                 .uri("/v1/payments/confirm")
-                .header("Idempotency-Key","confirm-"+request.orderId())
+                .header("Idempotency-Key", "confirm-" + request.paymentKey())
                 .body(request)
                 .retrieve()
                 .body(TossConfirmResponse.class);

@@ -98,13 +98,13 @@ public class PaymentController {
 
     /**
      * 승인 처리 중 멈춘 결제의 실제 토스 결과를 조회하고,
-     * 승인 완료가 확인되면 DB의 결제·예매 상태를 복구한다.
+     * 승인 완료 또는 실패가 확인되면 내부 결제 상태를 복구한다.
      */
     @PostMapping("/confirm/recover")
     @Operation(
             summary = "결제 승인 결과 복구",
-            description = "APPROVING 상태의 결제를 토스에서 조회하고, "
-                    + "승인 완료가 확인되면 결제와 예매 상태를 갱신합니다."
+            description = "APPROVING/UNKNOWN 상태의 결제를 토스에서 조회하고, "
+                    + "DONE이면 결제와 예매를 확정하고 ABORTED/EXPIRED이면 결제를 FAILED로 전환합니다."
     )
     public ApiResponse<TossConfirmResponse> recoverApproval(
             @Parameter(hidden = true)

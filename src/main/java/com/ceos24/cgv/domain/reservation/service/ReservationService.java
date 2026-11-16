@@ -23,6 +23,9 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import com.ceos24.cgv.domain.payment.entity.Payment;
+import com.ceos24.cgv.domain.payment.enums.PaymentStatus;
+import com.ceos24.cgv.domain.payment.exception.PaymentErrorCode;
+import com.ceos24.cgv.domain.payment.exception.PaymentException;
 import com.ceos24.cgv.domain.payment.repository.PaymentRepository;
 
 import java.time.LocalDateTime;
@@ -142,6 +145,14 @@ public class ReservationService {
         // 이미 취소된 예매가 재예매된 좌석을 해제하지 않도록
         // 좌석 점유 해제 전에 예매 상태부터 확인한다.
         validateNotAlreadyCanceled(reservation);
+
+        // 승인 흐름과 동일하게 예매 다음 결제 행을 잠근 후 상태를 검사한다.
+        Payment payment = paymentRepository.findByReservationIdForUpdate(reservationId)
+                .orElseThrow(() -> new PaymentException(PaymentErrorCode.PAYMENT_NOT_FOUND));
+        if (payment.getStatus() != PaymentStatus.READY
+                && payment.getStatus() != PaymentStatus.FAILED) {
+            throw new PaymentException(PaymentErrorCode.PAYMENT_NOT_DIRECTLY_CANCELABLE);
+        }
 
         List<Long> seatIds = reservation.getReservationSeats().stream()
                 .map(reservationSeat -> reservationSeat.getSeat().getId())

@@ -1417,3 +1417,78 @@ Webhook은 **이벤트가 발생한 쪽에서 미리 등록된 서버 주소로 
 
 </details>
 
+# 5주차
+
+<details>
+<summary><strong>Docker로 애플리케이션과 DB 실행</strong></summary>
+
+이번 미션에서는 Spring Boot 애플리케이션을 이미지로 만들고, MySQL과 함께 EC2에서 실행할 수 있도록 구성했다. 개발 PC와 서버에서 같은 실행 환경을 사용하고, 배포할 때마다 서버에서 Gradle 빌드를 반복하지 않는 것이 목표였다.
+
+| 파일 | 역할 |
+| --- | --- |
+| `Dockerfile` | Java 21 JDK 이미지에서 `bootJar`를 만들고, Java 21 JRE 이미지에 결과물만 복사한다. |
+| `compose.yaml` | 앱과 MySQL 8.4를 함께 실행한다. 앱은 `db` 호스트로 MySQL에 접속하고, DB가 `healthy`가 된 뒤 시작한다. |
+| `compose.deploy.yaml` | EC2에서는 서버에서 빌드하는 대신 GitHub Container Registry(GHCR)에 게시된 앱 이미지를 사용한다. |
+
+DB 데이터는 `mysql_data` 볼륨에 저장했다. 앱과 DB의 접속 정보, JWT 시크릿, Toss 테스트 키는 EC2의 `.env`에서 읽는다. `.env`는 Git에 올리지 않고 서버에만 보관한다.
+
+로컬에서는 `docker compose up -d --build`로 앱과 DB를 함께 빌드·실행할 수 있다. EC2에서는 GitHub Actions가 빌드한 이미지를 내려받아 `compose.yaml`과 `compose.deploy.yaml`을 함께 적용한다.
+
+</details>
+
+<details>
+<summary><strong>GitHub Actions로 테스트·이미지 게시·자동 배포</strong></summary>
+
+`.github/workflows/ci-cd.yml`에 `test → publish → deploy` 작업을 연결했다.
+
+| 실행 조건 | 수행 작업 |
+| --- | --- |
+| Pull Request | MySQL 8.4 서비스와 Java 21 환경을 준비하고 `./gradlew test --no-daemon`을 실행한다. |
+| `Mymyseoyoung` 브랜치에 push | 테스트가 성공하면 Docker 이미지를 빌드해 GHCR에 커밋 SHA와 `latest` 태그로 게시한다. |
+| 이미지 게시 성공 | `production` 환경의 SSH 정보를 이용해 EC2에 Compose 파일을 복사하고, 해당 SHA의 이미지를 내려받아 앱을 실행한다. |
+
+배포 작업은 EC2 안에서 `http://localhost:8080/api/movies`를 반복 호출해 앱의 응답을 확인한다. 응답하지 않으면 앱 로그를 출력하고 작업을 실패로 처리한다. 이 확인을 통해 **컨테이너 시작 명령의 성공**과 **애플리케이션이 요청을 처리할 준비가 됨**을 구분했다.
+
+EC2 접근에 필요한 `EC2_HOST`, `EC2_USER`, `EC2_SSH_KEY`는 GitHub의 `production` Environment secrets에 저장했다. 실제 DB 비밀번호와 JWT·Toss 키는 EC2의 `.env`에 저장해 워크플로 파일에 넣지 않았다.
+
+</details>
+
+<details>
+<summary><strong>예매 취소 코드 리뷰 반영</strong></summary>
+
+결제 승인 도중 예매를 직접 취소하면 Toss에서는 결제가 성공했는데 내부 예매는 취소되는 상황이 생길 수 있다는 리뷰를 받았다. `ReservationService.cancelReservation()`에서 **예매 행 → 결제 행** 순서로 잠그고, 결제 상태가 `READY`일 때만 직접 취소하도록 수정했다. `APPROVING` 등 다른 상태라면 좌석을 반환하기 전에 요청을 거절한다.
+
+`ReservationCancellationPaymentStateTest`에서는 `APPROVING` 결제의 예매 취소가 거절되고, 좌석 점유 변경 코드까지 진행하지 않는지 확인한다.
+
+</details>
+
+<details>
+<summary><strong>EC2 배포 중 확인한 문제</strong></summary>
+
+| 증상 | 확인한 원인 | 조치 |
+| --- | --- | --- |
+| EC2에서 `docker compose up -d --build`가 `Killed`로 종료 | 약 1GB 메모리에서 Gradle과 Docker 빌드를 동시에 실행하다 OOM 발생 | 이미지 빌드를 GitHub Actions로 옮기고 EC2는 이미지만 내려받도록 변경 |
+| MySQL이 계속 재시작 | `.env`의 `DB_USERNAME=root`는 MySQL 이미지의 일반 사용자 설정과 충돌 | 별도의 일반 DB 사용자로 변경 |
+| DB가 `Restarting (137)`이고 앱이 DB에 연결하지 못함 | 커널 로그에서 `mysqld`가 OOM으로 종료된 것을 확인 | EC2 메모리를 약 2GB로 늘린 뒤 DB가 `healthy`인 것을 확인 |
+| DB가 정상인데 앱이 재시작하며 `curl` 연결이 끊김 | `JWT_SECRET`에 역슬래시가 들어 있어 Base64 디코딩 실패 | `.env`의 JWT 값을 유효한 Base64 값으로 교체하고 앱 컨테이너를 재생성하도록 조치 |
+
+현재 확인한 배포 결과는 **GHCR 이미지 게시, EC2 이미지 내려받기, MySQL `healthy` 상태**까지다. JWT 설정을 수정한 뒤 앱의 API 응답과 GitHub Actions 배포 성공 여부는 다시 확인해야 한다. 상세한 서버 준비와 실행 명령은 [`deploy/README.md`](deploy/README.md)에 정리했다.
+
+</details>
+
+<details>
+<summary><strong>💡 미션 후 새롭게 알게 된 점</strong></summary>
+
+### ① 이미지 빌드와 컨테이너 실행에 필요한 자원이 다르다
+
+EC2에서 빌드가 OOM으로 종료돼 빌드 위치를 GitHub Actions로 옮겼다. 하지만 이후에도 앱과 MySQL을 함께 실행할 메모리가 부족해 `mysqld`가 종료됐다. **CI에서 빌드하면 서버의 빌드 부담은 줄지만, 실행 중인 컨테이너의 메모리까지 줄어드는 것은 아니다.**
+
+### ② `Up`만으로 앱의 정상 동작을 판단할 수 없다
+
+Docker 목록에 앱이 `Up`으로 표시돼도 Spring 초기화 도중 예외가 발생하면 곧 재시작할 수 있었다. `curl` 응답, 재시작 횟수, 앱 로그를 함께 확인해야 어느 단계에서 실패했는지 알 수 있었다.
+
+### ③ 환경변수 형식도 배포의 일부다
+
+DB가 정상화된 뒤에는 `JWT_SECRET`에 들어간 문자 하나 때문에 앱이 시작하지 못했다. JWT 시크릿은 코드에서 Base64로 디코딩하므로 유효한 Base64 문자열이어야 한다. `.env`를 수정한 뒤에는 기존 컨테이너를 재시작하는 것만으로 변경이 반영되지 않아 앱 컨테이너를 재생성해야 한다는 점도 확인했다.
+
+</details>

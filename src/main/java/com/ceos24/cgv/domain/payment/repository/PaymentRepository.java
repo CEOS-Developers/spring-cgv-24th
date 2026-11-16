@@ -19,6 +19,14 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
     @Query("""
             SELECT p
             FROM Payment p
+            WHERE p.reservation.id = :reservationId
+            """)
+    Optional<Payment> findByReservationIdForUpdate(@Param("reservationId") Long reservationId);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("""
+            SELECT p
+            FROM Payment p
             WHERE p.orderId = :orderId
             """)
 
