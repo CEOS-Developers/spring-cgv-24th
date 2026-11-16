@@ -1,0 +1,11 @@
+.git
+.gradle
+build
+.idea
+.env
+.env.*
+*.iml
+docs
+
+src/main/resources/data.sql
+src/main/resources/schema.sql

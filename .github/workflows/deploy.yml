@@ -1,0 +1,131 @@
+
+name: Deploy Development Server
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_NAME: ${{ vars.DOCKER_IMAGE_NAME }}
+  IMAGE_TAG: dev-${{ github.sha }}
+
+jobs:
+  # 1. CI: 테스트
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up JDK
+        uses: actions/setup-java@v6
+        with:
+          java-version: '21'
+          distribution: temurin
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Run tests
+        run: |
+          chmod +x gradlew
+          ./gradlew test --no-daemon
+
+  # 2. Docker 이미지 빌드 및 업로드
+  build-and-push:
+    needs: test
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64
+          tags: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # 3. CD: EC2 자동 배포
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    concurrency:
+      group: development-ec2-deployment
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Copy Compose file to EC2
+        uses: appleboy/scp-action@v1
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_KEY }}
+          source: "compose.prod.yaml"
+          target: "/home/ubuntu/app"
+
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@v1
+        env:
+          ENV_VARS: ${{ secrets.ENV_VARS }}
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+          IMAGE_TAG: ${{ env.IMAGE_TAG }}
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_KEY }}
+          envs: ENV_VARS,IMAGE_NAME,IMAGE_TAG
+          script: |
+            set -eu
+
+            cd /home/ubuntu/app
+            umask 077
+
+            # 환경변수 파일 생성
+            printf '%s\n' "$ENV_VARS" > .env
+            printf '\nIMAGE_NAME=%s\nIMAGE_TAG=%s\n' \
+              "$IMAGE_NAME" "$IMAGE_TAG" >> .env
+
+            # Compose 설정 검증
+            docker compose -f compose.prod.yaml config --quiet
+
+            # 새 이미지 가져오기
+            docker compose -f compose.prod.yaml pull app
+
+            # 컨테이너 업데이트
+            docker compose -f compose.prod.yaml up -d --no-deps app
+
+            # 정상 실행 확인
+            for i in $(seq 1 30); do
+              if curl -fsS http://127.0.0.1/actuator/health \
+                | grep -q '"status":"UP"'; then
+                echo "Deployment successful!"
+                exit 0
+              fi
+              sleep 2
+            done
+
+            docker compose -f compose.prod.yaml logs --tail=80 app
+            exit 1
