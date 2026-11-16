@@ -13,6 +13,7 @@ import com.ceos.cgv.domain.payment.gateway.PaymentGatewayException;
 import com.ceos.cgv.domain.payment.service.result.PaymentWork;
 import com.ceos.cgv.domain.payment.service.target.PaymentTarget;
 import com.ceos.cgv.domain.payment.service.target.PaymentTarget.FinalizationFailure;
+import com.ceos.cgv.domain.payment.service.target.PaymentTargetRegistry;
 import com.ceos.cgv.domain.payment.service.transaction.PaymentTransactionService;
 import com.ceos.cgv.global.exception.BusinessException;
 import com.ceos.cgv.global.exception.ErrorCode;
@@ -36,7 +37,7 @@ public class PaymentWorkflowService {
 
     private final PaymentTransactionService transactionService;
     private final PaymentGateway paymentGateway;
-    private final PaymentTarget paymentTarget;
+    private final PaymentTargetRegistry paymentTargets;
 
     public PaymentOperationResponse confirm(Long userId, UUID key, PaymentConfirmRequest request) {
         verifyGatewayReady();
@@ -77,6 +78,7 @@ public class PaymentWorkflowService {
 
     private PaymentOperationResponse execute(Long userId, PaymentWork work, boolean recovery) {
         if (!work.callGateway()) return work.response();
+        PaymentTarget target = paymentTargets.get(work.targetType());
         GatewayPayment result;
         try {
             if (recovery) result = paymentGateway.getPayment(work.paymentKey());
@@ -103,12 +105,13 @@ public class PaymentWorkflowService {
                     && !work.compensating()
                     && work.type() == PaymentOperationType.CONFIRM
                     && exception.failureType() == GatewayFailureType.NOT_FOUND)
-                return approvalNotFound(userId, work, exception.code());
+                return approvalNotFound(userId, work, target, exception.code());
             if (!recovery
                     && !work.compensating()
                     && exception.failureType() == GatewayFailureType.REJECTED) {
                 try {
                     return finalizeWithRetry(
+                            target,
                             () ->
                                     transactionService.rejected(
                                             userId, work.operationId(), exception.code()));
@@ -122,28 +125,32 @@ public class PaymentWorkflowService {
         }
         try {
             // 복구 조회로 재전송이 안전함이 확인되면 저장된 같은 멱등키로 한 번만 다시 실행한다.
-            if (recovery && canResend(userId, work, result))
+            if (recovery && canResend(userId, work, target, result))
                 return execute(
                         userId, transactionService.recovery(userId, work.operationId()), false);
             if (work.compensating() || work.type() == PaymentOperationType.CANCEL)
                 return finalizeWithRetry(
+                        target,
                         () -> transactionService.canceled(userId, work.operationId(), result));
             return recovery
                     ? finalizeWithRetry(
+                            target,
                             () ->
                                     transactionService.recoverApproval(
                                             userId, work.operationId(), result))
                     : finalizeWithRetry(
+                            target,
                             () -> transactionService.approved(userId, work.operationId(), result));
         } catch (BusinessException exception) {
             if (work.type() == PaymentOperationType.CONFIRM
                     && !work.compensating()
-                    && paymentTarget.classifyFinalizationFailure(exception.getErrorCode())
+                    && target.classifyFinalizationFailure(exception.getErrorCode())
                             == FinalizationFailure.COMPENSATE_APPROVAL) {
                 try {
                     return execute(
                             userId,
                             finalizeWithRetry(
+                                    target,
                                     () ->
                                             transactionService.startCompensation(
                                                     userId,
@@ -160,14 +167,17 @@ public class PaymentWorkflowService {
         }
     }
 
-    private boolean canResend(Long userId, PaymentWork work, GatewayPayment result) {
+    private boolean canResend(
+            Long userId, PaymentWork work, PaymentTarget target, GatewayPayment result) {
         if (work.compensating())
             return finalizeWithRetry(
+                    target,
                     () ->
                             transactionService.compensationCanResume(
                                     userId, work.operationId(), result));
         if (work.type() == PaymentOperationType.CANCEL)
             return finalizeWithRetry(
+                    target,
                     () ->
                             transactionService.cancellationCanResume(
                                     userId, work.operationId(), result));
@@ -175,9 +185,10 @@ public class PaymentWorkflowService {
     }
 
     private PaymentOperationResponse approvalNotFound(
-            Long userId, PaymentWork work, String code) {
+            Long userId, PaymentWork work, PaymentTarget target, String code) {
         try {
             return finalizeWithRetry(
+                    target,
                     () -> transactionService.approvalNotFound(userId, work.operationId(), code));
         } catch (RuntimeException saveFailure) {
             return markUnknown(userId, work, code);
@@ -185,12 +196,12 @@ public class PaymentWorkflowService {
     }
 
     // PG 응답을 다시 보내지 않고 DB 확정만 새 트랜잭션에서 재시도한다.
-    private <T> T finalizeWithRetry(Supplier<T> finalization) {
+    private <T> T finalizeWithRetry(PaymentTarget target, Supplier<T> finalization) {
         for (int attempt = 1; ; attempt++) {
             try {
                 return finalization.get();
             } catch (BusinessException exception) {
-                if (paymentTarget.classifyFinalizationFailure(exception.getErrorCode())
+                if (target.classifyFinalizationFailure(exception.getErrorCode())
                                 != FinalizationFailure.RETRY
                         || attempt >= FINALIZE_MAX_ATTEMPTS) throw exception;
                 try {

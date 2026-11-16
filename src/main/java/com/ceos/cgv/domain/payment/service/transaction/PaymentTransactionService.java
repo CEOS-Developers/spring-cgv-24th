@@ -19,6 +19,7 @@ import com.ceos.cgv.domain.payment.service.PaymentQueryService;
 import com.ceos.cgv.domain.payment.service.PaymentResponses;
 import com.ceos.cgv.domain.payment.service.result.PaymentWork;
 import com.ceos.cgv.domain.payment.service.target.PaymentTarget;
+import com.ceos.cgv.domain.payment.service.target.PaymentTargetRegistry;
 import com.ceos.cgv.global.exception.BusinessException;
 import com.ceos.cgv.global.exception.ErrorCode;
 
@@ -45,7 +46,7 @@ import java.util.UUID;
 public class PaymentTransactionService {
     private final PaymentRepository paymentRepository;
     private final PaymentOperationRepository paymentOperationRepository;
-    private final PaymentTarget paymentTarget;
+    private final PaymentTargetRegistry paymentTargets;
     private final PaymentRecoveryProperties recoveryProperties;
     private final PaymentResponses paymentResponses;
     private final PaymentJson paymentJson;
@@ -100,7 +101,7 @@ public class PaymentTransactionService {
             throw new BusinessException(ErrorCode.PAYMENT_STATE_CONFLICT);
         if (paymentRepository.existsByPaymentKey(request.paymentKey()))
             throw new BusinessException(ErrorCode.PAYMENT_KEY_CONFLICT);
-        paymentTarget.beginApproval(payment.getOrder(), userId);
+        target(payment).beginApproval(payment.getOrder(), userId);
         PaymentOperation operation =
                 newOperation(
                         userId,
@@ -130,8 +131,9 @@ public class PaymentTransactionService {
                 paymentOperationRepository.findByUserIdAndTypeAndRequestKey(
                         userId, PaymentOperationType.CANCEL, key.toString());
         if (existing.isPresent()) return replay(existing.get(), hash);
+        PaymentTarget target = target(payment);
         List<Long> itemIds =
-                paymentTarget.selectCancellationItems(payment.getOrder(), request.reservedSeatIds());
+                target.selectCancellationItems(payment.getOrder(), request.reservedSeatIds());
         if (payment.getActiveOperationId() != null) {
             return work(
                     paymentOperationRepository
@@ -142,8 +144,8 @@ public class PaymentTransactionService {
         if (payment.getStatus() != PaymentStatus.DONE
                 && payment.getStatus() != PaymentStatus.PARTIALLY_CANCELED)
             throw new BusinessException(ErrorCode.PAYMENT_STATE_CONFLICT);
-        long amount = paymentTarget.cancellationAmount(payment.getOrder(), userId, itemIds);
-        if (amount > payment.getBalanceAmount())
+        long amount = target.cancellationAmount(payment.getOrder(), userId, itemIds);
+        if (amount <= 0 || amount > payment.getBalanceAmount())
             throw new BusinessException(ErrorCode.PAYMENT_AMOUNT_MISMATCH);
         PaymentOperation operation =
                 newOperation(
@@ -176,7 +178,7 @@ public class PaymentTransactionService {
                 && (result.status() == GatewayPaymentStatus.ABORTED
                         || result.status() == GatewayPaymentStatus.EXPIRED)
                 && result.cancellations().isEmpty()) {
-            paymentTarget.releaseFailedApproval(payment.getOrder(), userId);
+            target(payment).releaseFailedApproval(payment.getOrder(), userId);
             payment.failedApproval();
             operation.fail(
                     "GATEWAY_" + result.status().name(),
@@ -189,7 +191,7 @@ public class PaymentTransactionService {
                 && validCancellation(operation, result)) {
             operation.startCompensation("EXTERNALLY_CANCELED");
             payment.compensate();
-            paymentTarget.releaseFailedApproval(payment.getOrder(), userId);
+            target(payment).releaseFailedApproval(payment.getOrder(), userId);
             payment.compensated(result, paymentJson.write(result.cancellations()));
             operation.fail(
                     "APPROVAL_EXTERNALLY_CANCELED",
@@ -218,7 +220,7 @@ public class PaymentTransactionService {
             operation.unknown("INVALID_APPROVAL_RESULT");
             return paymentResponses.operation(operation);
         }
-        paymentTarget.completeApproval(payment.getOrder(), operation.getUserId());
+        target(payment).completeApproval(payment.getOrder(), operation.getUserId());
         payment.approve(result, paymentJson.write(result.cancellations()));
         operation.succeed(paymentJson.write(paymentResponses.payment(payment)));
         return paymentResponses.operation(operation);
@@ -233,13 +235,13 @@ public class PaymentTransactionService {
             return paymentResponses.operation(operation);
         }
         if (operation.isCompensating()) {
-            paymentTarget.releaseFailedApproval(payment.getOrder(), userId);
+            target(payment).releaseFailedApproval(payment.getOrder(), userId);
             payment.compensated(result, paymentJson.write(result.cancellations()));
             operation.fail(
                     "APPROVAL_COMPENSATED", paymentJson.write(paymentResponses.payment(payment)));
         } else {
             List<Long> itemIds = paymentJson.cancellationItemIds(operation.getSeatIdsJson());
-            paymentTarget.completeCancellation(payment.getOrder(), userId, itemIds);
+            target(payment).completeCancellation(payment.getOrder(), userId, itemIds);
             payment.canceled(result, paymentJson.write(result.cancellations()));
             operation.succeed(paymentJson.write(paymentResponses.payment(payment)));
         }
@@ -255,7 +257,7 @@ public class PaymentTransactionService {
         }
         Payment payment = operation.getPayment();
         if (operation.getType() == PaymentOperationType.CONFIRM) {
-            paymentTarget.releaseFailedApproval(payment.getOrder(), userId);
+            target(payment).releaseFailedApproval(payment.getOrder(), userId);
             payment.failedApproval();
         } else payment.failedCancellation();
         operation.fail(code, paymentJson.write(paymentResponses.payment(payment)));
@@ -310,7 +312,7 @@ public class PaymentTransactionService {
             operation.unknown(code);
             return paymentResponses.operation(operation);
         }
-        paymentTarget.releaseFailedApproval(payment.getOrder(), userId);
+        target(payment).releaseFailedApproval(payment.getOrder(), userId);
         payment.failedApproval();
         operation.fail("GATEWAY_NOT_FOUND", paymentJson.write(paymentResponses.payment(payment)));
         return paymentResponses.operation(operation);
@@ -419,18 +421,23 @@ public class PaymentTransactionService {
         if (key == null) throw new BusinessException(ErrorCode.INVALID_REQUEST);
     }
 
+    private PaymentTarget target(Payment payment) {
+        return paymentTargets.get(payment.getOrder().getTargetType());
+    }
+
     private PaymentWork work(PaymentOperation operation, boolean invoke) {
         Payment payment = operation.getPayment();
         boolean compensation = operation.isCompensating();
         return new PaymentWork(
                 operation.getId(),
                 operation.getType(),
+                payment.getOrder().getTargetType(),
                 payment.getPaymentKey(),
                 payment.getOrder().getOrderId(),
                 compensation ? payment.getOrder().getTotalAmount() : operation.getRequestAmount(),
                 compensation ? payment.getOrder().getTotalAmount() : operation.getPreviousBalance(),
                 compensation
-                        ? paymentTarget.approvalCompensationReason()
+                        ? target(payment).approvalCompensationReason()
                         : operation.getReason(),
                 compensation ? operation.getCompensationKey() : operation.getGatewayKey(),
                 compensation,

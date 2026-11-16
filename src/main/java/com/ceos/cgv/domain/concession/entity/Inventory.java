@@ -58,4 +58,11 @@ public class Inventory {
         }
         stockQuantity -= quantity;
     }
+
+    public void restore(Integer quantity) {
+        if (quantity == null || quantity <= 0) {
+            throw new BusinessException(ErrorCode.INVALID_REQUEST);
+        }
+        stockQuantity = Math.addExact(stockQuantity, quantity);
+    }
 }

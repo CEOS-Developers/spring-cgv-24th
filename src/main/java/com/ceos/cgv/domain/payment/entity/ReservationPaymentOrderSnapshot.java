@@ -20,11 +20,11 @@ import java.util.List;
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class ReservationPaymentOrderSnapshot {
-    @Column(name = "reservation_id", nullable = false, unique = true)
+    @Column(name = "reservation_id", unique = true)
     private Long reservationId;
 
-    @Column(name = "seat_price", nullable = false)
-    private long seatPrice;
+    @Column(name = "seat_price")
+    private Long seatPrice;
 
     @ElementCollection
     @CollectionTable(

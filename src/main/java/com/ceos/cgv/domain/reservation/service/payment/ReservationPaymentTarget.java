@@ -2,6 +2,7 @@ package com.ceos.cgv.domain.reservation.service.payment;
 
 import com.ceos.cgv.domain.payment.entity.PaymentOrder;
 import com.ceos.cgv.domain.payment.entity.PaymentOrderSeat;
+import com.ceos.cgv.domain.payment.enums.PaymentTargetType;
 import com.ceos.cgv.domain.payment.service.target.PaymentTarget;
 import com.ceos.cgv.domain.reservation.enums.ReservationStatus;
 import com.ceos.cgv.global.exception.BusinessException;
@@ -22,6 +23,11 @@ import java.util.List;
 public class ReservationPaymentTarget implements PaymentTarget {
     private final ReservationPaymentService reservations;
     private final Clock paymentClock;
+
+    @Override
+    public PaymentTargetType targetType() {
+        return PaymentTargetType.RESERVATION;
+    }
 
     @Override
     public void beginApproval(PaymentOrder order, Long userId) {

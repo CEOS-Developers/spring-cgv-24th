@@ -71,6 +71,7 @@ tasks.register('mysqlTest', Test) {
 		includeTestsMatching 'com.ceos.cgv.domain.payment.service.PaymentConcurrencyIntegrationTest'
 		includeTestsMatching 'com.ceos.cgv.domain.payment.service.PaymentConcurrencyComparisonTest'
 		includeTestsMatching 'com.ceos.cgv.domain.payment.schema.PaymentSchemaUpgradeIntegrationTest'
+		includeTestsMatching 'com.ceos.cgv.domain.concession.service.FoodPaymentIntegrationTest'
 	}
 	// Every invocation verifies a fresh database rather than reuse an earlier result.
 	outputs.upToDateWhen { false }

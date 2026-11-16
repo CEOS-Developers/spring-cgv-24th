@@ -2,6 +2,22 @@
 
 CEOS 24기 백엔드 스터디 - CGV 클론 코딩 프로젝트
 
+## 6주차 결제 리팩토링과 매점 결제
+
+공통 결제는 PG 요청, 승인 금액 검증, 멱등성, 결과 복구를 담당합니다. 영화 예매는 좌석 상태를, 매점 주문은 주문 상태와 재고를 담당합니다. PG 호출은 DB 트랜잭션 밖에서 실행하고, 결제 결과와 좌석 또는 재고 변경은 같은 DB 트랜잭션에서 확정합니다.
+
+| 매점 결제 순서 | 요청과 결과 |
+| --- | --- |
+| 재고 확보 및 결제 주문 생성 | `POST /api/v1/food-orders/checkout`에 Bearer 토큰, UUID `Idempotency-Key`, `cinemaId`와 `items`를 보냅니다. 항목은 `productId`와 `quantity`를 받습니다. `201` 응답의 `foodOrderId`로 주문을 조회하고, `orderId`, `orderName`, `totalAmount`로 토스 카드 결제창을 엽니다. |
+| 결제 승인 | 결제창 인증 완료 뒤 `POST /api/v1/payments/confirm`에 `paymentKey`, `orderId`, `amount`와 승인용 UUID를 보냅니다. 서버가 저장한 주문 금액으로 승인 금액을 검증합니다. |
+| 승인 전 해제 | `DELETE /api/v1/food-orders/{foodOrderId}/checkout`으로 확보한 재고를 반환할 수 있습니다. 승인 전 재고 확보는 5분 후 만료되며, 배치가 만료된 주문을 정리합니다. |
+| 전액 취소 | `POST /api/v1/payments/{paymentId}/cancellations`에 취소용 UUID와 `reason`을 보냅니다. 취소가 확인되면 주문을 취소하고 재고를 반환합니다. 상품 수령을 추적하지 않는 학습용 시나리오를 가정합니다. |
+| 결과 복구 | `202` 응답의 `Location`에서 결제 작업을 조회할 수 있습니다. `POST /api/v1/payment-operations/{operationId}/reconcile`로 PG 상태를 확인합니다. 결과를 모르는 동안에는 재고를 보존합니다. |
+
+같은 체크아웃 키와 같은 상품별 총수량으로 다시 요청하면 `200`과 기존 결제 주문을 반환합니다. 같은 키로 다른 주문 내용을 보내면 `409`를 반환합니다. 만료되거나 해제된 주문을 다시 결제하려면 새 키로 체크아웃합니다. 정리 배치는 `cgv.food-checkout.cleanup-delay-ms`로 조절할 수 있으며 기본값은 60초입니다.
+
+새 MySQL DB는 현재 엔티티로 스키마를 생성할 수 있습니다. 기존 4주차 스키마에는 앱을 멈추고 백업한 뒤 [6주차 MySQL 변경 SQL](src/main/resources/db/manual/week-06-food-payment.sql)을 한 번 적용합니다. `SHOW CREATE TABLE`로 `food_orders`, `payment_order`를 확인한 후 실행합니다. 기존 매점 주문은 체크아웃 상태가 없는 주문으로 유지됩니다.
+
 ## 5주차 구현 및 배포
 
 ### 1. AWS 배포 구성
