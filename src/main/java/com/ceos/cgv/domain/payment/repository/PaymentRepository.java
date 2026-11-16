@@ -13,6 +13,7 @@ import java.util.Optional;
 public interface PaymentRepository extends JpaRepository<Payment, Long> {
     Optional<Payment> findByOrder_OrderId(String orderId);
 
+    @Query("select p from Payment p where p.order.reservationSnapshot.reservationId = :reservationId")
     Optional<Payment> findByOrder_ReservationId(Long reservationId);
 
     Optional<Payment> findByOrder_Id(Long orderId);
