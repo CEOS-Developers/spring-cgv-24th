@@ -86,6 +86,15 @@ public class SecurityConfig {
         // 인가
         http
                 .authorizeHttpRequests(auth -> auth
+                        // 메트릭 조회 허용
+                        .requestMatchers(
+                                HttpMethod.GET,
+                                "/actuator/health",
+                                "/actuator/metrics",
+                                "/actuator/metrics/**",
+                                "/actuator/prometheus"
+                        ).permitAll()
+
                         // Swagger와 로그인
                         .requestMatchers(
                                 "/swagger-ui.html",
