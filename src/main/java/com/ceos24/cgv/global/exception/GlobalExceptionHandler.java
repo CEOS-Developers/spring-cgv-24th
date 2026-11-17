@@ -1,6 +1,8 @@
 package com.ceos24.cgv.global.exception;
 
 import com.ceos24.cgv.global.common.ApiResponse;
+import io.micrometer.core.instrument.MeterRegistry;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.hibernate.exception.ConstraintViolationException;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -23,11 +25,18 @@ import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 @Slf4j
 @RestControllerAdvice
+@RequiredArgsConstructor
 public class GlobalExceptionHandler {
+
+    private final MeterRegistry meterRegistry;
 
     @ExceptionHandler(BusinessException.class)
     protected ResponseEntity<ApiResponse<Void>> handleBusinessException(BusinessException e) {
         ErrorCode errorCode = e.getErrorCode();
+        // 에러 코드별 발생 횟수 (예: ALREADY_RESERVED가 부하 시 얼마나 늘어나는지 대시보드에서 확인). 태그 값은 enum이라 종류가 제한적이다
+        meterRegistry
+                .counter("cgv.business.exceptions", "code", errorCode.name())
+                .increment();
         // 5xx 성격의 에러코드(결제 대행사 장애, 보상 취소 실패 등)는 운영자가 봐야 하므로 error + 스택트레이스
         if (errorCode.getStatus() >= 500) {
             log.error(
@@ -108,6 +117,9 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler({ObjectOptimisticLockingFailureException.class, PessimisticLockingFailureException.class})
     protected ResponseEntity<ApiResponse<Void>> handleLockingFailureException(Exception e) {
+        meterRegistry
+                .counter("cgv.lock.conflicts", "type", e.getClass().getSimpleName())
+                .increment();
         log.warn("lock_conflict type={}", e.getClass().getSimpleName());
         ErrorCode code = ErrorCode.CONCURRENT_REQUEST_CONFLICT;
         return ResponseEntity.status(code.getStatus()).body(ApiResponse.error(code.getStatus(), code.getMessage()));

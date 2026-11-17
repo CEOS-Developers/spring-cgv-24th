@@ -7,6 +7,7 @@ import com.ceos24.cgv.global.security.jwt.JwtAuthenticationFilter;
 import com.ceos24.cgv.global.security.jwt.JwtProvider;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
@@ -46,6 +47,23 @@ public class SecurityConfig {
     public AuthenticationManager authenticationManager(AuthenticationConfiguration authenticationConfiguration)
             throws Exception {
         return authenticationConfiguration.getAuthenticationManager();
+    }
+
+    /**
+     * 관리 포트(Actuator 전용, 기본 8081)로 들어온 요청은 인증 없이 허용한다.
+     * 관리 포트에도 앱의 보안 설정이 그대로 적용되어 Prometheus 수집이 401로 막히기 때문이다.
+     * 이 포트는 서비스 포트(8080)와 달리 외부에 연결하지 않으며, 노출된 엔드포인트는 health/info/prometheus뿐이다.
+     */
+    @Bean
+    @Order(0)
+    public SecurityFilterChain managementFilterChain(
+            HttpSecurity http, @Value("${management.server.port:8081}") int managementPort) throws Exception {
+        http.securityMatcher(request -> request.getLocalPort() == managementPort
+                        && request.getRequestURI().startsWith("/actuator"))
+                .csrf(AbstractHttpConfigurer::disable)
+                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .authorizeHttpRequests(auth -> auth.anyRequest().permitAll());
+        return http.build();
     }
 
     @Bean
