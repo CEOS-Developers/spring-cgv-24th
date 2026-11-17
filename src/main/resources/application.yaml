@@ -117,3 +117,25 @@ management:
     web:
       exposure:
         include: health
+---
+# 로컬 k6 부하 테스트(loadtest/docker-compose.loadtest.yml). 시드는 부팅마다 다시 넣는다(ddl-auto: create).
+# SQL·바인딩 로그를 끄지 않으면 로그 쓰기가 병목처럼 보여 측정이 왜곡된다. 운영과 같은 레벨로 둔다.
+spring:
+  config:
+    activate:
+      on-profile: loadtest
+  sql:
+    init:
+      mode: always
+      data-locations: classpath:db/loadtest-data.sql
+
+logging:
+  level:
+    org.hibernate.SQL: info
+    org.hibernate.orm.jdbc.bind: info
+
+# 로그인 CPU 병목에서 톰캣 스레드가 얼마나 바쁜지 봐야 한다. 기본값은 꺼져 있어 지표가 나오지 않는다.
+server:
+  tomcat:
+    mbeanregistry:
+      enabled: true
