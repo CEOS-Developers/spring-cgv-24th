@@ -126,7 +126,7 @@ docker compose -f compose-rds.yml up -d --no-build --wait
 
 ### 3. GitHub Actions 자동 배포
 
-[deploy.yml](.github/workflows/deploy.yml)은 `Wannys26` 브랜치 push에 반응합니다.
+[deploy.yml](.github/workflows/deploy.yml)은 `Wannys26/spring-cgv-24th` 포크의 `Wannys26` 브랜치에서만 테스트와 배포 작업을 실행합니다.
 기존 Java 테스트, 실제 MySQL 통합 테스트, JavaScript 테스트가 통과하면
 커밋 SHA로 태그한 amd64 이미지를 빌드해 EC2로 전송합니다.
 EC2는 Gradle 빌드 없이 이미지만 실행합니다.
