@@ -1,0 +1,10 @@
+# 15초마다 내 컴퓨터의 9091번 /actuator/prometheus에 요청해서 메트릭을 가져와 라는 뜻!
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: cgv
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets:
+          - host.docker.internal:9091
