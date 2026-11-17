@@ -2128,3 +2128,475 @@ SSH 액션의 `fingerprint`에는 출력 중 `SHA256:...` 부분을 사용한다
 | EC2 → GHCR 이미지 다운로드 | EC2에서 `sudo docker login ghcr.io`로 저장한 인증 정보 |
 
 Runner에서 GHCR에 로그인해도 EC2에 로그인 정보가 전달되지는 않는다. 현재 EC2에서는 Docker 명령에 `sudo`를 사용하므로, 비공개 이미지 다운로드를 위한 로그인도 `sudo docker login ghcr.io -u taiho0303-blip`로 준비한다. 이때 입력하는 비밀번호는 GitHub 로그인 비밀번호가 아니라 패키지 읽기 권한이 있는 PAT(classic)이다.
+
+
+# 6주차 미션 정리
+## 1. 용어 정리
+
+모니터링 시스템을 구축하기 전 헷갈렸던 용어를 먼저 정리하였다.
+
+| 용어 | 정의 | CGV에서의 예시 |
+| --- | --- | --- |
+| **메트릭(Metric)** | 시스템의 상태나 동작을 **숫자로 측정한 데이터** | 요청 24건, 평균 처리 시간 27.6ms, 메모리 사용량 200MB |
+| **Actuator** | Spring Boot 앱에 추가하는 **운영·관리 기능**. 앱 상태와 메트릭을 HTTP 주소로 확인할 수 있게 해줌 | `/actuator/health`에서 앱 상태 확인, `/actuator/prometheus`에서 메트릭 제공 |
+| **Prometheus** | 앱에서 메트릭을 **주기적으로 수집하고, 시간에 따라 저장·조회하는 모니터링 시스템** | CGV의 메트릭을 15초마다 가져와서 요청 수와 응답 시간이 어떻게 변했는지 저장 |
+| **Grafana** | 저장된 데이터를 조회해서 **그래프와 대시보드로 보여주는 도구** | Prometheus에 저장된 데이터로 요청 수·오류율·응답 시간 그래프 표시 |
+
+cgv에 대입해보면:
+
+```
+CGV에서 요청 24건이 처리됨
+    ↓
+메트릭: COUNT = 24라는 측정 데이터가 만들어짐
+    ↓
+Actuator: 이 데이터를 HTTP 주소로 제공함
+    ↓
+Prometheus: 주기적으로 읽어서 시간별로 저장함
+    ↓
+Grafana: 저장된 데이터를 조회해서 그래프로 보여줌
+```
+
+### 제공하는 곳
+
+| 대상 | 누가 제공하나? | 우리 프로젝트에서는 어떻게 사용하나? |
+| --- | --- | --- |
+| **Actuator** | Spring Boot 프로젝트 | Gradle 의존성으로 추가해서 **CGV 앱 내부에서 실행** |
+| **Prometheus** | Prometheus 오픈소스 프로젝트 | `prom/prometheus` 이미지를 받아 **별도 컨테이너로 실행** |
+| **Grafana** | Grafana Labs와 오픈소스 기여자들 | `grafana/grafana` 이미지를 받아 **별도 컨테이너로 실행** |
+| **메트릭** | 앱이나 시스템을 측정해서 생성되는 데이터 | 요청 수·응답 시간 등의 숫자. CGV에서는 주로 **Micrometer가 측정** |
+
+```
+CGV 앱 — IDE에서 실행
+├─ 우리가 작성한 Controller, Service 등
+├─ Micrometer: 숫자 측정
+└─ Actuator: 숫자를 조회할 HTTP 주소 제공
+
+Prometheus 컨테이너 — Docker로 실행
+└─ CGV에서 숫자를 수집하고 저장
+
+Grafana 컨테이너 — Docker로 실행
+└─ Prometheus의 숫자를 조회해서 그래프로 표시
+```
+
+## 2. Prometheus와 Grafana를 Docker Desktop으로 실행
+
+Actuator로 숫자를 꺼낸다는 건, CGV 앱이 측정한 요청 수·메모리 사용량 등을 HTTP 주소로 조회할 수 있게 만드는 것이다.
+그 주소를 Prometheus가 주기적으로 읽어 저장하고, Grafana가 그래프로 보여준다.
+
+### 로컬에서 실행하고 Prometheus와 Grafana만 Docker Desktop으로 실행하는 방식
+
+```
+로컬 컴퓨터
+├─ CGV
+│   ├─ 8080번: 영화 조회·예매 등 기존 API
+│   └─ 9091번: Actuator 메트릭 조회
+│
+└─ Docker Desktop
+├─ Prometheus :9090 → CGV의 9091번에서 메트릭 수집
+└─ Grafana    :3000 → Prometheus의 데이터를 그래프로 표시
+```
+
+### 1. CGV에 모니터링 라이브러리 추가
+build.gradle의 `dependencies` 안에 두 줄을 추가한다.
+
+```
+implementation 'org.springframework.boot:spring-boot-starter-actuator'
+runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
+```
+
+역할:
+
+| 라이브러리 | 역할 |
+| --- | --- |
+| Actuator | 앱의 상태와 메트릭을 조회할 HTTP 창구 제공 |
+| Prometheus Registry | 메트릭을 Prometheus가 읽을 형식으로 제공 |
+
+### 2. 어떤 메트릭 조회 주소를 열지 설정
+
+application.yaml의 맨 아래에 추가한다.
+
+```
+management:
+  server:
+    port: 9091
+
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics,prometheus
+
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+```
+
+각 설정의 의미:
+
+| 설정 | 의미 |
+| --- | --- |
+| `server.port: 9091` | Actuator를 기존 API와 다른 포트로 실행 |
+| `health` | 앱 상태 확인 |
+| `metrics` | 사람이 메트릭 목록과 값을 확인 |
+| `prometheus` | Prometheus가 읽을 형식으로 메트릭 제공 |
+| `application` 태그 | 메트릭에 앱 이름 `cgv` 표시 |
+| `percentiles-histogram` | 나중에 p95 응답 시간을 계산할 데이터 제공 |
+
+### 3. Spring Security에서 메트릭 조회 허용
+현재 CGV는 별도로 허용하지 않은 요청에 인증을 요구하므로 Actuator 설정만 추가하면 401이 나올 수 있다.
+
+SecurityConfig.java의 기존 `.authorizeHttpRequests(auth -> auth` 바로 다음에 아래 규칙을 넣어야 한다.
+
+```
+.requestMatchers(
+        HttpMethod.GET,
+        "/actuator/health",
+        "/actuator/metrics",
+        "/actuator/metrics/**",
+        "/actuator/prometheus"
+).permitAll()
+```
+이 설정은 해당 GET 요청을 인증 없이 읽도록 허용하는 것이다.
+
+### 4. CGV에서 숫자를 직접 확인하기
+브라우저에서 아래 순서로 확인
+
+| 주소 | 기대하는 결과 |
+| --- | --- |
+| 앱 상태 | 정상이라면 `{"status":"UP"}` |
+| 메트릭 목록 | `jvm.memory.used` 같은 이름 목록 |
+| 메모리 사용량 | 메모리 측정값 |
+| Prometheus용 메트릭 | 숫자가 포함된 긴 텍스트 |
+
+이제 영화 조회 API를 몇 번 호출한 다음, 아래 주소에 들어가보면 요청 횟수와 처리 시간 정보가 나온다.
+
+```
+http://localhost:9091/actuator/metrics/http.server.requests
+```
+
+/actuator/prometheus 에서는 같은 정보가
+```
+http_server_requests_seconds_count{...,uri="/api/movies",...} 10
+http_server_requests_seconds_sum{...,uri="/api/movies",...} 0.35
+```
+
+같이 보인다.
+- `count`: 해당 조건의 요청이 누적 10번 처리됨
+- `sum`: 그 요청들의 처리 시간을 합하면 0.35초
+
+### 5. Prometheus가 그 숫자를 주기적으로 수집하도록 만들기
+```
+C:\study\CEOS\spring-cgv-24th\
+├─ compose.monitoring.yaml
+└─ monitoring\
+   └─ prometheus.yml
+```
+
+먼저 C:\study\CEOS\spring-cgv-24th\monitoring\prometheus.yml에 작성한다.
+```
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: cgv
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets:
+          - host.docker.internal:9091
+```
+
+> “15초마다 컴퓨터의 9091번 `/actuator/prometheus`에 요청해서 메트릭을 가져와.”
+>
+라는 뜻이다.
+
+다음으로 C:\study\CEOS\spring-cgv-24th\compose.monitoring.yaml을 작성한다.
+
+```
+name: cgv-monitoring
+
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+
+volumes:
+  prometheus-data:
+  grafana-data:
+```
+
+Docker Desktop을 켜고 이미지를 다운받는다.
+```
+docker compose -f compose.monitoring.yaml up -d
+```
+
+### 6. 실제 API를 호출하고 수집된 데이터 확인하기
+http://localhost:8080/api/movies 를 여러번 호출하고 Prometheus에서 실행한 후
+```
+sum(
+  http_server_requests_seconds_count{
+    job="cgv",
+    method="GET",
+    uri="/api/movies"
+  }
+)
+```
+쿼리를 execute하면 영화 조회 API의 누적 요청 수가 보인다.
+
+```
+영화 조회 요청
+    → CGV가 요청 수·처리 시간 측정
+    → Actuator가 메트릭 제공
+    → Prometheus가 읽어서 저장
+```
+
+### 7. Grafana에 연결하고 그래프 만들기
+Connections → Data sources에서 Prometheus를 추가하고 서버 주소를 입력하면
+
+![image.png](img/image.png)
+
+다음처럼 그래프가 나온다.
+
+## 3. Grafana에서 이상 자동 감지와 로그 연결 만들기
+
+지금까지의 과정:
+```
+메트릭: CGV → Prometheus → Grafana가 조건 검사 → 알림 전송
+로그:   CGV → 로그 파일 → Alloy가 수집 → Loki에 저장 → Grafana에서 검색
+```
+
+### 1. 메트릭 수집이 끊겼을 때 알림 만들기
+
+Grafana의 Alerting → Alert rules에서 새 Grafana-managed rule을 만든다.
+
+다음 값으로 설정했다.
+
+| 항목 | 설정 |
+| --- | --- |
+| 이름 | `CGV 메트릭 수집 실패` |
+| 데이터 소스 | 기존 Prometheus |
+| 쿼리 | `up{job="cgv"}` |
+| 쿼리 유형 | Instant |
+| 조건 | 값이 **1보다 작을 때** |
+| 평가 간격 | 15초 |
+| Pending period | 1분 |
+| 라벨 | `application=cgv` |
+
+up은 수집에 성공하면 1, 실패하면 0 이다.
+여기서 감지하는 것은 메트릭 수집 실패이다.
+
+### 2. 알림을 받을 곳 연결하고 실제로 시험
+알림 규칙만 만들면 Grafana 화면에서 상태를 확인할 수 있다.
+메시지를 받으려면 Contact point인 알림 수신처가 필요하다.
+
+- discord를 사용하여 알림 수신처를 만들었다.
+1. 알림을 받을 Discord 채널의 웹훅 URL 준비
+2. Grafana의 `Alerting → Contact points`에서 새 수신처 생성
+3. Integration을 `Discord`로 선택하고 웹훅 URL 입력
+4. `Test`로 수신 확인 후 저장
+5. 앞서 만든 알림 규칙의 Notifications에서 해당 수신처 선택
+
+![contact-point.png](img/contact-point.png)
+![discord.png](img/discord.png)
+
+### 3. CGV 로그를 JSON 파일로 남기기
+알림을 받고 원인을 찾을 수 있도록 로그를 연결했다.
+application.yaml에
+```
+logging:
+  file:
+    name: ./logs/cgv.log
+
+  structured:
+    format:
+      file: logstash
+```
+을 추가한다.
+
+CGV를 실행하면 다음 파일이 생긴다.
+```
+{
+  "@timestamp": "...",
+  "level": "ERROR",
+  "message": "Unexpected exception",
+  "logger_name": "..."
+}
+```
+
+### 4. Alloy가 로그 파일을 읽도록 설정
+
+> Alloy는 로그 파일을 읽어서 Loki에 보내는 수집기
+>
+
+config.alloy 파일을 생성한다.
+```
+C:\study\CEOS\spring-cgv-24th\monitoring\config.alloy
+```
+
+```
+loki.source.file "cgv" {
+  targets = [
+    {
+      __path__    = "/var/log/cgv/cgv.log",
+      application = "cgv",
+      environment = "local",
+    },
+  ]
+
+  forward_to = [loki.process.cgv.receiver]
+}
+
+loki.process "cgv" {
+  stage.json {
+    expressions = {
+      timestamp = "\"@timestamp\"",
+    }
+  }
+
+  stage.timestamp {
+    source = "timestamp"
+    format = "RFC3339Nano"
+  }
+
+  forward_to = [loki.write.local.receiver]
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}
+```
+- `source.file`: 지정한 파일에서 로그 읽기
+- `process`: JSON 안의 실제 발생 시각 사용
+- `write`: Loki로 전송
+
+### 5. Compose에 Loki와 Alloy 추가
+
+compose.monitoring.yaml을 다음처럼 확장
+```
+name: cgv-monitoring
+
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "127.0.0.1:19090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+
+  loki:
+    image: grafana/loki:latest
+    command:
+      - -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - loki-data:/loki
+
+  alloy:
+    image: grafana/alloy:latest
+    command:
+      - run
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    volumes:
+      - ./monitoring/config.alloy:/etc/alloy/config.alloy:ro
+      - ./logs:/var/log/cgv:ro
+      - alloy-data:/var/lib/alloy/data
+    depends_on:
+      - loki
+
+volumes:
+  prometheus-data:
+  grafana-data:
+  loki-data:
+  alloy-data:
+```
+
+여기서 핵심은
+```
+내 컴퓨터의 ./logs
+         ↕ 같은 파일을 공유
+Alloy 컨테이너의 /var/log/cgv
+```
+이 연결이다.
+
+Loki는 이미지에 포함된 로컬 실습용 설정을 사용하고 데이터를 /loki에 보관한다.
+Alloy는 어디까지 읽었는지를 자신의 저장 공간에 보관한다.
+
+### 6. Grafana에서 CGV 로그 검색
+Grafana의 Connections → Data sources에서 Loki를 추가하고 URL을 입력한다.
+```
+http://loki:3100
+```
+
+연결을 저장한 뒤 Explore에서 Loki를 선택하고 아래 쿼리를 실행한다.
+**CGV 로그 전체:**
+
+```
+{application="cgv"}
+```
+
+**ERROR 로그만:**
+
+```
+{application="cgv"} | json | level="ERROR"
+```
+
+**특정 메시지가 포함된 로그:**
+
+```
+{application="cgv"} |= "Unexpected exception"
+```
+
+이 언어는 로그 검색 언어인 LogQL이다.
+
+![loki.png](img/loki.png)
+
+### 7. 알림과 로그를 함께 사용해서 조사
+실제 조사 흐름은 이렇게 된다.
+```
+① 14:05에 API 오류 증가 알림 수신
+② Grafana에서 14:00~14:10으로 시간 범위 지정
+③ Loki에서 application="cgv"의 ERROR 로그 검색
+④ 예외 메시지·스택 트레이스·결제 식별자 등을 확인
+```
+
+
+## 4. 대시보드 만들어보기
+
+### 1. 대시보드를 만든 목적
+> CGV의 영화 조회 API에 들어오는 요청량과 서비스 이상 여부를 확인하기 위해 모니터링 환경을 구성했다.
+> 우선 인증 없이 반복 호출할 수 있는 GET /api/movies를 대상으로 메트릭 수집과 시각화를 확인했다.
+> 메트릭으로 이상을 감지하고 문제가 발생한 시간대와 상세 상황은 Loki에 저장한 로그로 조사하도록 구성했다.
+
+(이후 예매·결제 API로 관측 범위를 확장할 예정)
+
+### 2. 패널의 의미
+| 패널 | 확인하려는 질문 | 구성 이유 |
+| --- | --- | --- |
+| 메트릭 수집 상태 | CGV에서 메트릭을 가져올 수 있는가? | 수집 실패와 요청량 감소를 구분하기 위해 |
+| 영화 조회 요청 수/초 | 지금 요청이 얼마나 들어오는가? | 트래픽 증가·감소 시점을 파악하기 위해 |
+| 영화 조회 5xx 오류율 | 요청 중 서버 오류가 얼마나 발생하는가? | 요청량이 달라도 실패 비중을 비교하기 위해 |
+| 영화 조회 p95 응답 시간 | 일부 사용자가 오래 기다리고 있는가? | 평균에서 가려질 수 있는 느린 요청을 확인하기 위해 |
+| CGV 오류 로그 | 해당 시간에 어떤 오류가 발생했는가? | 메트릭에서 발견한 이상을 상세 로그로 조사하기 위해 |
