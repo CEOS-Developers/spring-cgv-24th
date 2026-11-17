@@ -104,6 +104,11 @@ logging:
   level:
     org.hibernate.SQL: info
     org.hibernate.orm.jdbc.bind: info
+  # 운영 로그는 수집기(Loki 등)로 보낼 대상이라 필드가 나뉜 JSON(ECS)으로 낸다. traceId도 필드로 들어간다.
+  # 사람이 읽는 텍스트는 로컬에만 남긴다. EC2에서 눈으로 볼 때는 docker logs ... | jq 로 본다.
+  structured:
+    format:
+      console: ecs
 
 # 운영 서버는 8080을 그대로 외부에 연다. 메트릭에는 URI별 호출량·에러율·JVM 상태가 들어 있어 공개하지 않는다.
 # 운영 수집을 붙일 때는 관리 포트를 분리하고 보안 그룹으로 수집기만 허용한 뒤 연다.
