@@ -21,7 +21,7 @@ import org.springframework.web.servlet.HandlerMapping;
  */
 @Slf4j
 @Component
-@Order(Ordered.HIGHEST_PRECEDENCE)
+@Order(Ordered.HIGHEST_PRECEDENCE) // 서블릿 필터들 중 가장 먼저 실행됨
 public class MdcLoggingFilter extends OncePerRequestFilter {
 
     public static final String TRACE_ID = "traceId";

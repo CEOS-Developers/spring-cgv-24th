@@ -925,3 +925,212 @@ CI를 켜기 전 로컬에서 `./gradlew test`를 실행해 보니 테스트가 
 - 동작 확인
   - push부터 CI 테스트, 배포까지 자동으로 동작하는 것을 확인함.
   - 배포된 서버에 Postman으로 요청을 보내 정상 응답을 확인함.
+
+# 6주차 README
+
+이번 주는 로그 리팩토링, 모니터링 시스템 구축, 부하테스트와 병목 분석을 진행함. 셋 다 처음 해보는 작업이라 "그동안 구현하지 못한 기능"은 이번 범위에서 빼고 이 세 가지에 집중함.
+
+## 1. 로그 리팩토링
+
+### 1-1. 기존 문제
+
+- 같은 요청에서 나온 로그를 묶을 방법이 없었음. 동시에 여러 요청이 들어오면 로그가 섞여서 요청 단위로 추적하기 힘듦.
+- `BusinessException: 메시지`만 남고 에러 코드와 HTTP 상태가 없어서 로그만 보고는 원인을 알기 어려웠음.
+- 로그 레벨 기준이 없었음. 결제 로직 에러도 일반 404와 똑같이 `warn`으로 찍힘.
+- 클래스마다 로그 형식이 제각각이었음.
+- 결제 로그에 `paymentKey`가 평문으로 남고 있었고, 예외 메시지에 비밀번호·이메일 같은 입력값이 섞일 위험도 있었음.
+- 인증 실패 한 건에 JWT 필터, EntryPoint, 예외 핸들러가 각각 `warn`을 남겨서 같은 실패가 여러 줄로 찍힘.
+- `show-sql: true`와 `org.hibernate.SQL: debug`가 같이 켜져 있어서 SQL이 두 번씩 출력됨.
+
+### 1-2. 요청 추적 필터 (`MdcLoggingFilter`)
+
+- 요청마다 8자리 `traceId`를 만들어 MDC에 넣고, 응답 헤더 `X-Trace-Id`로도 내려줌. 클라이언트가 "이 요청이 이상했다"고 하면 이 값으로 서버 로그를 찾을 수 있음.
+  - 클라이언트가 보낸 값을 그대로 쓰면 조작된 값이 로그에 섞일 수 있어서 서버에서 직접 생성함.
+  - 로그인한 요청은 JWT 필터에서 `memberId`도 MDC에 넣음.
+- `@Order(Ordered.HIGHEST_PRECEDENCE)`로 Spring Security 필터 체인보다 먼저 실행되게 함. 그래야 인증 실패 로그에도 traceId가 붙음.
+- 요청이 끝나면 `HTTP method= uri= status= durationMs= slow=` 한 줄을 남김.
+  - 500ms 이상 걸리면 `warn`으로 올림. 기준값은 `logging.slow-request-threshold-ms`로 빼둠. 부하테스트에서 평소 p95가 40ms 이하로 나와서 500ms를 그대로 둠.
+  - `uri`에는 실제 경로 대신 매칭된 패턴(`/api/payments/{paymentKey}`)을 남김. 경로에 들어 있는 `paymentKey`가 로그에 안 남고, 같은 API끼리 묶어 보기도 편함.
+  - 쿼리스트링과 요청 바디는 토큰·비밀번호가 섞일 수 있어서 남기지 않음.
+- Prometheus가 5초마다 긁어가는 요청이 로그를 도배하지 않도록 `/actuator`, `/swagger-ui`, `/v3/api-docs`는 필터에서 제외함.
+- 톰캣 스레드는 재사용되므로 요청이 끝나면 `MDC.clear()`로 비워서 다음 요청에 값이 넘어가지 않게 함.
+
+### 1-3. 레벨 기준과 형식
+
+- 레벨 기준
+  - `error`: 예상 못한 500, 5xx `BusinessException`(토스 장애, 보상 취소 실패), 토큰 재사용(탈취 의심), 사람이 직접 확인해야 하는 상황
+  - `warn`: 4xx `BusinessException`, 락 충돌, 접근 거부, DB 제약 위반, 웹훅 서명 불일치, 금액 불일치
+  - `info`: 요청 형식 오류(검증 실패, 잘못된 JSON 등), 정상 요청 로그
+- 형식은 `event_name key=value`로 통일함.
+  - 이벤트 이름은 검색하기 쉽게 영어로 쓰고, 키 이름은 `orderId`, `paymentKey`, `amount`, `status`, `code`로 맞춤.
+  - 운영자가 직접 봐야 하는 로그에는 `action=manual_check`를 붙임.
+- 인증 실패는 `GlobalExceptionHandler`의 `business_exception code=AUTH_... status=401` 한 줄만 남도록 정리함. JWT 필터는 `debug`로 내리고 EntryPoint·AccessDeniedHandler의 로그는 지움.
+
+### 1-4. 민감정보
+
+- `LogMasker.mask()`로 `paymentKey`, `transactionKey`는 뒤 4자리만 남김(`****1234`).
+- JSON 파싱 실패, DB 제약 위반, JWT 파싱 오류처럼 예외 메시지에 요청 본문이나 SQL, 입력값이 섞일 수 있는 곳은 메시지 대신 예외 종류만 남김.
+- RestClient 접속 실패 메시지에도 요청 URL(`/v1/payments/{paymentKey}`)이 들어가서 예외 종류만 남김.
+
+### 1-5. 프로필 분리와 파일 로그
+
+- `application.yaml`(공통), `application-dev.yaml`, `application-prod.yaml`로 나눔.
+  - 기본 프로필은 `dev`. Dockerfile에 `SPRING_PROFILES_ACTIVE=prod`를 넣어서 도커 이미지(Railway, 부하테스트)는 자동으로 prod로 뜸.
+  - dev: 우리 패키지 `DEBUG` + SQL 로그 / prod: `INFO`, SQL 로그 끔
+- `show-sql`은 끔. `System.out`으로 바로 찍혀서 레벨 조절도 안 되고 traceId도 안 붙기 때문. SQL이 필요하면 `org.hibernate.SQL` 로거만 씀.
+- prod에서는 `logs/app.log`, `logs/error.log`(ERROR만)에 파일로도 남김. 하루 단위 + 10MB로 자르고 7일, 총 200MB까지 보관.
+- 출력 설정은 `logback-spring.xml`에 둠.
+  - 레벨 정도는 yaml로도 되지만 ERROR만 따로 저장하는 파일, 프로필별 파일 출력 같은 건 XML이 필요했음. 그래서 레벨은 yaml, 출력 방식은 XML로 나눔.
+  - 파일명에 `-spring`이 붙어야 Spring이 읽어서 `<springProfile>`을 쓸 수 있음.
+
+### 1-6. 전/후 비교
+
+| | 전 | 후 |
+|---|---|---|
+| 없는 결제 조회 | `WARN BusinessException: 존재하지 않는 결제 정보입니다.` | `WARN [98aedea2] [4] ... business_exception code=PAYMENT_NOT_FOUND status=404 message=존재하지 않는 결제 정보입니다.` |
+| 요청 로그 | 없음 | `INFO [98aedea2] [4] ... HTTP method=GET uri=/api/payments/{paymentKey} status=404 durationMs=66 slow=false` |
+| 결제 키 | `paymentKey=tgen_20261114abcd1234` | `paymentKey=****1234` |
+| 인증 실패 | 필터·EntryPoint·핸들러에서 3줄 | `business_exception code=AUTH_TOKEN_NOT_EXIST status=401` 1줄 |
+
+- `[98aedea2]`가 traceId, `[4]`가 memberId. 두 줄이 같은 요청에서 나왔다는 걸 바로 알 수 있음.
+
+### 1-7. 아쉬운 점
+
+- 스케줄러나 `@Async`는 HTTP 요청이 아니라서 MDC가 비어 있음(`[] []`).
+- 인증 실패(401)는 컨트롤러까지 가기 전에 끝나서 `uri=UNMATCHED`로 찍힘. 어느 API였는지는 같은 traceId의 다른 로그로 추정해야 함.
+- 토스 에러 한 건이 `toss_api_error`, `toss_confirm_failed`, `business_exception`으로 여러 줄 남음. 이번엔 호출 흐름은 건드리지 않고 형식만 맞춤.
+- `cancelRequestId`는 검증 없는 문자열이라 줄바꿈을 넣으면 로그 줄을 위조할 수 있음. DTO에 `@Size`, `@Pattern` 검증을 추가해야 함.
+
+## 2. 모니터링 시스템
+
+### 2-1. 구성: Actuator + Micrometer → Prometheus → Grafana
+
+- Actuator가 서버 상태를 꺼내 볼 수 있는 엔드포인트를 열고, Micrometer가 JVM·HTTP·DB 커넥션 풀·톰캣 지표를 Prometheus 형식으로 바꿔 `/actuator/prometheus`에 내놓음.
+- Prometheus가 이걸 5초마다 가져가서 시간별로 저장하고, Grafana가 Prometheus에 쿼리(PromQL)를 날려 그래프로 그림.
+- 이 조합을 고른 이유
+  - Spring Boot에서는 의존성 2개와 설정 몇 줄이면 기본 지표가 거의 다 나옴. 처음 해보는 입장에서 제일 부담이 적었음.
+  - p95/p99 같은 응답시간 분포를 PromQL로 바로 그릴 수 있음.
+  - 로그 수집 스택(Loki, ELK)까지 하면 범위가 너무 커져서 이번엔 지표만 다룸.
+- `docker compose up` 한 번에 backend, MySQL, Prometheus, Grafana가 다 뜨고, Grafana 데이터소스와 대시보드도 provisioning으로 자동 등록되게 함.
+
+### 2-2. 관리 포트 분리 (8081)
+
+- `/actuator/prometheus`에는 API별 호출 수와 응답시간, 커넥션 풀 크기, 메모리, 에러 코드별 횟수까지 나옴. 외부에 공개되면 서버 내부 구조를 그대로 보여주는 셈이라 Actuator는 8081에서만 열리게 분리함.
+  - Railway는 8080만 외부에 연결하므로 8081은 밖에서 접근할 수 없음.
+  - 로컬에서도 `127.0.0.1:8081`로 바인딩해서 내 컴퓨터에서만 접근 가능하게 함.
+  - Prometheus는 같은 도커 네트워크 안에서 `backend:8081`로 가져감.
+- 노출하는 엔드포인트는 `health`, `info`, `prometheus` 세 개만 둠.
+- 겪었던 문제: 띄워보니 Prometheus 수집이 401로 실패하고 5초마다 `AUTH_TOKEN_NOT_EXIST` 경고가 쌓였음.
+  - 관리 포트에도 앱의 Spring Security 설정이 그대로 적용되고 있었음.
+  - `SecurityConfig`에 "8081로 들어온 `/actuator` 요청만 허용"하는 필터 체인을 `@Order(0)`으로 추가해서 해결함.
+  - 확인: `8081/actuator/prometheus`는 200, `8080/actuator/prometheus`는 401.
+- 한계: 배포 서버를 모니터링하려면 Railway 내부 네트워크에 Prometheus를 따로 띄워야 함. 이번에는 로컬 도커에서만 확인함.
+
+### 2-3. 그 외 설정
+
+- 수집 주기 5초: 기본값 15초는 1~2분짜리 부하 구간의 변화를 놓칠 수 있어서 줄임. 대신 보관 기간은 2일로 짧게 둠.
+- `percentiles-histogram`: 응답시간을 구간별로 세어 내보내야 Grafana에서 `histogram_quantile`로 p95/p99를 계산할 수 있음.
+- `server.tomcat.mbeanregistry.enabled: true`: 이게 꺼져 있으면 톰캣 스레드 지표가 안 나옴.
+
+### 2-4. 커스텀 지표
+
+- 기본 지표만으로는 4xx가 늘었을 때 "왜" 늘었는지 알 수 없어서 `GlobalExceptionHandler`에 카운터 두 개를 추가함. 서비스 로직은 건드리지 않음.
+  - `cgv.business.exceptions{code}`: 에러 코드별 `BusinessException` 횟수. 태그 값이 `ErrorCode` enum이라 종류가 무한히 늘어날 걱정이 없음.
+  - `cgv.lock.conflicts{type}`: 락 충돌 횟수.
+- k6가 센 예매 충돌 10건과 `cgv_business_exceptions_total{code="ALREADY_RESERVED"}` 10건이 일치하는 것을 확인함.
+
+### 2-5. 대시보드 구성
+
+- 위에서 아래로 "지금 괜찮은가 → 뭐가 문제인가 → 어디서 막히는가" 순서로 내려가며 보도록 배치함. 요청 수(Rate), 에러(Errors), 응답시간(Duration)을 보는 RED 방식에 자원 포화도를 더함.
+  1. 상단 요약: 서버 UP/DOWN, 초당 요청 수, 5xx 비율, p95, DB 커넥션 사용률, 힙 사용률. 대시보드를 열자마자 이상 여부를 판단할 수 있게 숫자 6개만 둠.
+  2. 트래픽과 에러: 상태 코드별, API별 요청 수
+  3. 응답시간: 전체 p50/p95/p99, API별 p95
+  4. JVM·자원: 힙, CPU(프로세스/시스템), GC 정지 시간과 스레드 수
+  5. DB 커넥션 풀·톰캣: Hikari active/pending/max, 톰캣 busy/max. 요청이 어디서 줄 서고 있는지 보는 곳이라 병목 분석 때 제일 많이 봄.
+  6. 비즈니스: 에러 코드별 예외, 락 충돌
+- 응답시간은 평균 대신 p95/p99를 씀. 요청 90개가 10ms, 10개가 2초면 평균은 209ms인데, 실제로 209ms를 겪은 사람은 아무도 없음.
+- 5xx 비율, p95, DB 커넥션 사용률에는 색 기준을 둠. p95는 0.3초부터 노랑, 0.5초부터 빨강으로 해서 로그의 slow 기준(500ms)과 맞춤.
+- API 구분은 `uri` 라벨로 하는데, 경로 변수가 패턴으로 묶여 나와서(`/api/screenings/{screeningId}`) ID마다 그래프가 따로 생기지 않음.
+
+## 3. 부하테스트
+
+### 3-1. 환경
+
+- 도구는 k6를 씀. 스크립트가 JavaScript라 읽기 쉽고, 단계별 VU 증가와 통과 기준(threshold)을 코드로 쓸 수 있음.
+- 로컬 도커(colima VM, 4 vCPU / 6GB)에 backend, MySQL, Prometheus, Grafana를 띄우고 k6로 부하를 줌.
+  - 앱은 운영과 같은 `prod` 프로필(INFO, SQL 로그 끔). HikariCP 풀은 기본값 10, 톰캣 최대 스레드 200.
+- 테스트 데이터는 `loadtest/seed.js`로 넣음. 영화관 3, 상영관 6(좌석 100), 영화 10, 상영 30, 사용자 100. 여러 번 돌려도 중복 생성되지 않게 함.
+- 부하를 주는 쪽과 서버가 같은 컴퓨터에 있어서 절대적인 TPS는 의미가 없음. 어디서 먼저 막히는지, 설정을 바꾸면 얼마나 달라지는지를 보는 데 목적을 둠.
+- 토스 결제는 외부 API라 정상 승인 흐름을 재현할 수 없어서 제외함.
+
+### 3-2. 시나리오
+
+| 시나리오 | 내용 | 부하 |
+|---|---|---|
+| `browse.js` | 영화 → 영화관 → 시간표 → 상영 정보 → 좌석 조회 (읽기 위주) | 20 → 50 → 100 → 200 VU, 4분 |
+| `reserve.js` | 좌석 조회 → 예매 → 바로 취소 (상영 30개에 분산) | 10 → 30 → 50 VU, 3분 |
+| `contention.js` | 좌석 3개에 50명이 동시에 몰림 | 20 → 50 VU, 100초 |
+
+- 예매하고 바로 취소하는 이유: 사용자당 결제 대기(HOLD) 예매가 3건까지라 예매만 계속하면 한도 에러만 쌓임.
+- 경합 상황에서 409(이미 예매됨)는 정상 응답이라 `expectedStatuses(201, 409)`로 실패에서 뺌.
+- 로그인은 시작할 때 한 번만 하고 토큰을 재사용함. 매번 로그인하면 비밀번호 해시 비용을 재게 됨.
+- `VU_SCALE`, `THINK_SCALE` 환경변수로 사용자 수와 대기 시간을 조절할 수 있게 해서, 같은 스크립트로 한계 탐색까지 함.
+
+### 3-3. 결과
+
+| 시나리오 | 결과 | 서버 상태 |
+|---|---|---|
+| browse (최대 200VU) | 요청 80,419건, 실패 0%, k6 p95 383ms | 워밍업 후 서버 p95 21~40ms |
+| reserve (최대 50VU) | 예매 4,942건, 충돌 10건, 예매 p95 34.7ms | Hikari 최대 6/10 |
+| contention (50VU) | 예매 782건, 충돌 17,023건, 중복 예매 0건, 예매 p95 85ms | Hikari 10/10, 대기 10건 |
+
+- 경합 테스트 후 DB에서 `(screening_id, seat_id)`로 묶어 조회해 중복 예매가 0건인 것을 확인함. 충돌은 전부 사전 검증(`ALREADY_RESERVED`)에서 걸렸고 유니크 제약 위반까지 간 건은 없었음.
+- browse는 처음 1분 동안 p95 600ms, CPU 100%였다가 이후 21~40ms로 내려감. JVM 워밍업(콜드 스타트) 구간으로 봄.
+
+## 4. 병목 분석
+
+### 4-1. 어디서 먼저 막히는가
+
+- 대기 시간(think time)을 없애고 VU를 늘려서 한계를 찾음. 포트 포워딩 영향을 줄이려고 k6를 VM 안의 컨테이너에서 실행함.
+
+| 실행 | 처리량 | p95 | 포화 신호 |
+|---|---|---|---|
+| browse 600VU | 617 RPS | 클라이언트 1.06s / 서버 약 20ms | 톰캣 busy 200/200 |
+| reserve 200VU | 약 310~326 RPS | 0.2s → 1.4s (서버·클라이언트 비슷) | Hikari 10/10, 대기 162건, 시스템 CPU 95% |
+
+- browse는 서버가 잰 시간(20ms)과 k6가 잰 시간(1.06s)의 차이가 너무 컸음. 서버 타이머는 요청이 핸들러에 들어온 뒤부터만 재기 때문에, 그 앞에서 기다린 시간에는 같은 기계에서 부하를 준 환경 탓이 섞여 있다고 보고 병목으로 결론 내리지 않음.
+- reserve는 서버와 k6의 p95가 거의 같았음. 서버 안에서 시간을 쓰고 있다는 뜻이고, 대시보드에서 Hikari `pending`이 계속 올라가는 걸 보고 DB 커넥션을 기다리는 중이라는 걸 확인함.
+- 같은 시간에 평소 p95 12ms이던 좌석 조회도 912ms까지 느려짐. 예매와 좌석 조회가 같은 커넥션 10개를 나눠 쓰기 때문.
+
+### 4-2. 원인 확인
+
+- 재기동 직후 같은 예매 부하(200VU)를 주고 환경변수로 설정만 바꿔 비교함(코드 변경 없음).
+
+| 설정 | p95 (120~150초 구간) | Hikari 대기 최대 |
+|---|---|---|
+| 기본 (풀 10) | 1.23 ~ 1.36s | 160 |
+| 풀 30 | 0.54 ~ 0.57s | 120 |
+| OSIV 끔 | 0.98 ~ 1.34s | 166 |
+
+- 풀을 30으로 늘리니 p95가 절반 이하로 줄었음. 처리량은 크게 안 늘었는데, 시스템 CPU가 이미 95%라 그쪽이 다음 한계였음.
+- 처음엔 시작 로그의 `open-in-view is enabled by default` 경고를 보고 OSIV 때문에 커넥션을 오래 잡고 있는 거라고 생각했음. 근데 꺼보니 차이가 오차 수준이라 원인이 아니었음.
+- MySQL 카운터로 요청당 쿼리 수를 세어 봄. 예매 8개, 취소 5개, 좌석 조회 3개, 영화 목록 1개.
+- 한계 탐색 중 CPU는 backend 약 1.7코어, MySQL 약 1.2코어, k6 약 0.45코어로 VM 4코어를 거의 다 씀.
+
+### 4-3. 정리 (다음 주 최적화·캐싱에서 볼 것)
+
+1. 예매 경로의 DB 커넥션 풀 포화: 가장 확실한 병목. 커넥션을 잡고 있는 시간을 줄이는 게 먼저(쿼리 수, 트랜잭션 범위)이고, 풀 크기는 그다음에 다시 볼 것.
+2. 요청당 쿼리 수: 예매 8개는 줄일 여지가 있어 보임. 예매 흐름에서 조회를 합칠 수 있는지 확인해야 함.
+3. CPU 여유 부족: 캐싱으로 DB까지 가는 요청 자체를 줄이면 같이 나아질 것으로 예상함.
+4. 로그인: 평균 160~177ms로 다른 API(5~20ms)보다 훨씬 느림. 비밀번호 해시(bcrypt) 비용이라 정상이고, 토큰을 재사용하는 구조라 일반 트래픽에는 영향이 적음.
+5. 콜드 스타트: 배포 직후 1분 정도 느림.
+6. 읽기 API: 지금 데이터 양에서는 병목이 아님(p95 42ms 이하). 데이터가 많아지면 페이징·캐싱 없는 영화 목록(`findAll`)과 좌석 조회가 먼저 느려질 것 같은데 검증은 못 함.
+
+- 캐싱은 영화·영화관 목록과 상영 시간표처럼 거의 안 바뀌는 데이터에 효과가 클 것 같음. 좌석 조회는 예매로 자주 바뀌니까 좌석 배치와 예약 상태를 나눠서 배치만 캐시하는 방법을 생각해볼 수 있음.
+
+### 4-4. 확인하지 못한 것
+
+- MySQL 실행 계획(`EXPLAIN`), 인덱스, 락 대기
+- 요청 로그 파일 쓰기가 응답시간에 준 영향 (부하테스트 중 로그가 106MB 쌓임)
+- 서버를 다른 기계에 두고 부하를 준 결과
+- 비교 실험은 각각 1번씩만 돌려서 오차 범위를 모름
