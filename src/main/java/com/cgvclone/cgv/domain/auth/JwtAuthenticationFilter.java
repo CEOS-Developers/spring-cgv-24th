@@ -1,6 +1,7 @@
 package com.cgvclone.cgv.domain.auth;
 
 import com.cgvclone.cgv.common.exception.ErrorCode;
+import com.cgvclone.cgv.common.logging.RequestLoggingFilter;
 import com.cgvclone.cgv.common.exception.GlobalException;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -50,6 +51,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             SecurityContextHolder.setContext(context);
         } catch (GlobalException exception) {
             SecurityContextHolder.clearContext();
+            request.setAttribute(RequestLoggingFilter.ERROR_CODE, exception.getErrorCode().name());
             authenticationEntryPoint.writeError(response, exception.getErrorCode());
             return;
         }

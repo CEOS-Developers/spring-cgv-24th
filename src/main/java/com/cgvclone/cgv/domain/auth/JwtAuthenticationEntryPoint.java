@@ -1,6 +1,7 @@
 package com.cgvclone.cgv.domain.auth;
 
 import com.cgvclone.cgv.common.exception.ErrorCode;
+import com.cgvclone.cgv.common.logging.RequestLoggingFilter;
 import com.cgvclone.cgv.common.exception.ErrorResponse;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -23,6 +24,7 @@ public class JwtAuthenticationEntryPoint implements AuthenticationEntryPoint {
     @Override
     public void commence(HttpServletRequest request, HttpServletResponse response, AuthenticationException exception)
             throws IOException {
+        request.setAttribute(RequestLoggingFilter.ERROR_CODE, ErrorCode.TOKEN_NOT_EXIST.name());
         writeError(response, ErrorCode.TOKEN_NOT_EXIST);
     }
 
