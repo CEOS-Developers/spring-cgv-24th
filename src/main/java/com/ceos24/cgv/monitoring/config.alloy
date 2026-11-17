@@ -1,0 +1,32 @@
+loki.source.file "cgv" {
+  targets = [
+    {
+      __path__    = "/var/log/cgv/cgv.log",
+      application = "cgv",
+      environment = "local",
+    },
+  ]
+
+  forward_to = [loki.process.cgv.receiver]
+}
+
+loki.process "cgv" {
+  stage.json {
+    expressions = {
+      timestamp = "\"@timestamp\"",
+    }
+  }
+
+  stage.timestamp {
+    source = "timestamp"
+    format = "RFC3339Nano"
+  }
+
+  forward_to = [loki.write.local.receiver]
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

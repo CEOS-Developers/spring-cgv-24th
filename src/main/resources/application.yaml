@@ -59,3 +59,11 @@ management:
     distribution:
       percentiles-histogram:
         http.server.requests: true
+
+logging:
+  file:
+    name: ./logs/cgv.log
+
+  structured:
+    format:
+      file: logstash
