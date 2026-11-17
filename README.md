@@ -2157,6 +2157,7 @@ GitHub Actions와 Docker를 이용해 테스트·빌드·이미지 업로드를 
 
 
 -----
+[5주차 정리] : (https://app.notion.com/p/CEOS-6-41bde222d8e48008a6ccd533709853c9?source=copy_link)
 # 15. 로컬 모니터링 시스템 구축 및 관리
 ec2를 배포하기 전이므로, 로컬에서 모니터링 시스템을 구축하는 방식을 사용하였습니다.
 
