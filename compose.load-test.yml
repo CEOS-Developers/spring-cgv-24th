@@ -1,0 +1,15 @@
+services:
+  app:
+    cpus: ${CGV_LOAD_APP_CPUS:-1}
+
+  db:
+    cpus: ${CGV_LOAD_DB_CPUS:-1}
+
+  k6:
+    image: grafana/k6:1.5.0@sha256:2072ea9eafa596532d9aee0cc0e0a50cfb0e7fb703981a46179af5f4f22c5ea4
+    profiles: [load-test]
+    command: ["run", "--quiet", "/work/read-load.js"]
+    environment:
+      K6_NO_USAGE_REPORT: "true"
+    volumes:
+      - ./load-test:/work:ro
