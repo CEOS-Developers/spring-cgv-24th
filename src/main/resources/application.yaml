@@ -12,7 +12,7 @@ spring:
     hibernate:
       ddl-auto: create
     defer-datasource-initialization: true
-    show-sql: true
+    show-sql: false
     properties:
       hibernate:
         format_sql: true
@@ -20,8 +20,16 @@ spring:
     init:
       mode: always
 logging:
+  structured:
+    format:
+      console: logstash
+    json:
+      add:
+        service: ${spring.application.name}
+        environment: ${APP_ENV:local}
+        version: ${APP_VERSION:unknown}
   level:
-    org.hibernate.SQL: debug
+    org.hibernate.SQL: info
 
 jwt:
   secret: ${JWT_SECRET}
