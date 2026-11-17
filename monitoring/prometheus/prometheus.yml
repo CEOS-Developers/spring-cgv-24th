@@ -1,0 +1,12 @@
+# Prometheus 설정: 백엔드의 관리 포트(8081)에서 지표를 주기적으로 수집(scrape)한다.
+global:
+  # 부하테스트 구간의 변화를 놓치지 않도록 기본값(15s)보다 촘촘하게 수집
+  scrape_interval: 5s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: cgv-backend
+    metrics_path: /actuator/prometheus
+    static_configs:
+      # docker compose 네트워크 안에서 서비스 이름(backend)으로 접근
+      - targets: ["backend:8081"]

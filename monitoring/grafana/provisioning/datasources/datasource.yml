@@ -1,0 +1,12 @@
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    jsonData:
+      # Prometheus의 scrape_interval(5s)과 맞춰 그래프 해상도를 결정
+      timeInterval: 5s
