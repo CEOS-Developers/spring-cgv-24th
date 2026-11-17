@@ -6,5 +6,8 @@ spring:
         format_sql: false
 
 logging:
+  structured:
+    format:
+      console: ecs
   level:
     org.hibernate.SQL: info

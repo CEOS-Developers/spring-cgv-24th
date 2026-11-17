@@ -39,12 +39,14 @@ public class PaymentFacade {
 		} catch (TossPaymentException e) {
 			if (e.isResultUnknown()) {
 				paymentService.markUnknown(payment.getId());
+				log.warn("결제 승인 결과 불명 - 자동 복구 대기 paymentId={}", payment.getId());
 				throw e;
 			}
 			if (retry) {
 				return settleRejectedConfirm(payment, e);
 			}
 			paymentService.fail(payment.getId());
+			log.info("결제 승인 거절 paymentId={} tossCode={}", payment.getId(), e.getTossCode());
 			throw e;
 		}
 
@@ -59,9 +61,10 @@ public class PaymentFacade {
 	public void recoverStalePayments() {
 		for (Long paymentId : paymentService.findStaleProcessingIds()) {
 			try {
-				reconcileWithToss(paymentService.startRecovery(paymentId));
+				PaymentResponse recovered = reconcileWithToss(paymentService.startRecovery(paymentId));
+				log.info("결제 자동 복구 완료 paymentId={} status={}", paymentId, recovered.status());
 			} catch (RuntimeException e) {
-				log.warn("결제 자동 복구 보류 - paymentId: {}, reason: {}", paymentId, e.getMessage());
+				log.warn("결제 자동 복구 보류 paymentId={} reason={}", paymentId, e.toString());
 			}
 		}
 	}
@@ -81,8 +84,8 @@ public class PaymentFacade {
 			try {
 				requestCancel(paymentId, paymentService.startCancelRecovery(paymentId, cancel.getId()));
 			} catch (RuntimeException e) {
-				log.warn("결제 취소 자동 복구 보류 - paymentId: {}, cancelId: {}, reason: {}", paymentId, cancel.getId(),
-						e.getMessage());
+				log.warn("결제 취소 자동 복구 보류 paymentId={} cancelId={} reason={}", paymentId, cancel.getId(),
+						e.toString());
 			}
 		}
 	}
@@ -94,21 +97,27 @@ public class PaymentFacade {
 		} catch (TossPaymentException e) {
 			if (e.isResultUnknown()) {
 				paymentService.markCancelUnknown(start.cancelId());
+				log.warn("결제 취소 결과 불명 - 자동 복구 대기 paymentId={} cancelId={}", paymentId, start.cancelId());
 				throw e;
 			}
 			if (start.retry()) {
 				return settleRejectedRetry(paymentId, start, e);
 			}
 			paymentService.failCancel(paymentId, start.cancelId());
+			log.info("결제 취소 거절 paymentId={} cancelId={} tossCode={}", paymentId, start.cancelId(), e.getTossCode());
 			throw e;
 		}
 
+		PaymentResponse canceled;
 		try {
-			return paymentService.completeCancel(paymentId, start.cancelId(), toss);
+			canceled = paymentService.completeCancel(paymentId, start.cancelId(), toss);
 		} catch (RuntimeException e) { // 토스에서는 취소됐는데 DB 반영에 실패 → 같은 멱등키로 재시도할 수 있게 둔다
 			paymentService.markCancelUnknown(start.cancelId());
+			log.warn("결제 취소 반영 실패 - 자동 복구 대기 paymentId={} cancelId={}", paymentId, start.cancelId());
 			throw e;
 		}
+		log.info("결제 취소 완료 paymentId={} cancelId={} amount={}", paymentId, start.cancelId(), start.amount());
+		return canceled;
 	}
 
 	// 토스 조회 결과로 확정하고, 승인 완료·취소 완료·승인 불가가 아니면 결과 불명으로 남겨 다시 확인하게 한다
@@ -175,11 +184,14 @@ public class PaymentFacade {
 	}
 
 	private PaymentResponse completeOrCompensate(Payment payment, TossPaymentResponse toss) {
+		PaymentResponse approved;
 		try {
-			return paymentService.completeApproval(payment.getId(), toss);
+			approved = paymentService.completeApproval(payment.getId(), toss);
 		} catch (RuntimeException e) {
 			throw compensate(payment, toss, e);
 		}
+		log.info("결제 승인 완료 paymentId={} amount={}", payment.getId(), payment.getAmount());
+		return approved;
 	}
 
 	// 토스 승인은 끝났지만 주문 확정에 실패한 경우 전액 취소한다. 던질 예외를 반환한다
@@ -188,9 +200,11 @@ public class PaymentFacade {
 			TossPaymentResponse canceled = tossPaymentClient.cancel(toss.paymentKey(), PaymentService.COMPENSATION_REASON, null,
 					payment.getCompensationIdempotencyKey());
 			paymentService.recordCompensation(payment.getId(), canceled);
+			log.warn("주문 확정 실패로 보상 취소 완료 paymentId={} tossOrderId={}", payment.getId(), payment.getTossOrderId(),
+					cause);
 			return new GeneralException(PaymentErrorStatus.PAYMENT_COMPENSATED);
 		} catch (RuntimeException e) { // 보상 취소 성공 후 기록 실패도 여기로 온다 → UNKNOWN으로 두면 대사가 토스 CANCELED를 보고 복구한다
-			log.error("보상 취소 실패 - 수동 확인 필요. paymentId: {}, tossOrderId: {}", payment.getId(), payment.getTossOrderId(), e);
+			log.error("보상 취소 실패 - 수동 확인 필요 paymentId={} tossOrderId={}", payment.getId(), payment.getTossOrderId(), e);
 			paymentService.markUnknown(payment.getId());
 			return cause;
 		}

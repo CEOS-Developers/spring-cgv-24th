@@ -100,7 +100,7 @@ public class ReservationService {
         Instant now = Instant.now(clock);
         int expired = releaseExpiredHolds(reservationRepository.findExpiredHoldIds(now), now);
         if (expired > 0) {
-            log.info("만료된 좌석 선점 {}건을 해제했습니다.", expired);
+            log.info("만료된 좌석 선점 해제 count={}", expired);
         }
     }
 
