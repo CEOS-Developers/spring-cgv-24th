@@ -7,6 +7,7 @@ import com.ceos24.cgv.global.client.TossLookupResult.Found;
 import com.ceos24.cgv.global.client.TossLookupResult.NotFound;
 import com.ceos24.cgv.global.client.TossLookupResult.Unavailable;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -58,11 +59,27 @@ public class TossPaymentsClient {
     // 토스가 결제를 판단하기 전에 막은 응답이다. 우리 키 설정이 틀렸거나 호출 한도를 넘었다.
     private static final Set<String> SERVICE_ERROR_CODES = Set.of("UNAUTHORIZED_KEY", "INVALID_API_KEY");
     private static final String CONNECTION_FAILED = "CONNECTION_FAILED";
+    // HTTP 상태만으로는 결과 불명(5xx·타임아웃·ALREADY_PROCESSED_PAYMENT 같은 4xx)과 거절을 가를 수 없다.
+    // 이 클라이언트가 내린 분류를 그대로 세야 결과 불명이 늘어나는 것을 대시보드에서 볼 수 있다.
+    private static final String CONFIRM_METRIC = "cgv.toss.confirm";
+    private static final String CANCEL_METRIC = "cgv.toss.cancel";
 
     private final RestClient tossPaymentsRestClient;
+    private final MeterRegistry meterRegistry;
 
     // 멱등키를 주문번호로 둔다. 같은 주문의 승인을 다시 보내도 토스가 첫 결과를 돌려줘 두 번 결제되지 않는다.
     public TossConfirmResult confirm(String paymentKey, String orderId, int amount) {
+        TossConfirmResult result = requestConfirm(paymentKey, orderId, amount);
+        String outcome = switch (result) {
+            case Approved ignored -> "approved";
+            case Rejected rejected -> rejected.serviceError() ? "service_error" : "rejected";
+            case Unknown ignored -> "unknown";
+        };
+        meterRegistry.counter(CONFIRM_METRIC, "result", outcome).increment();
+        return result;
+    }
+
+    private TossConfirmResult requestConfirm(String paymentKey, String orderId, int amount) {
         try {
             TossPayment payment = withConnectRetry(orderId, () -> tossPaymentsRestClient.post()
                     .uri(CONFIRM_URI)
@@ -102,6 +119,18 @@ public class TossPaymentsClient {
     // 금액을 늘 명시한다. 빼면 토스가 남은 잔액 전부를 취소하므로, 우리 잔액과 토스 잔액이 어긋났을 때
     // 엉뚱한 금액이 조용히 환불된다. 명시하면 그때는 토스가 NOT_CANCELABLE_AMOUNT로 거절한다.
     public TossCancelResult cancel(String paymentKey, String idempotencyKey, int cancelAmount, String cancelReason) {
+        TossCancelResult result = requestCancel(paymentKey, idempotencyKey, cancelAmount, cancelReason);
+        String outcome = switch (result) {
+            case TossCancelResult.Canceled ignored -> "canceled";
+            case TossCancelResult.Rejected ignored -> "rejected";
+            case TossCancelResult.Unknown ignored -> "unknown";
+        };
+        meterRegistry.counter(CANCEL_METRIC, "result", outcome).increment();
+        return result;
+    }
+
+    private TossCancelResult requestCancel(String paymentKey, String idempotencyKey, int cancelAmount,
+                                           String cancelReason) {
         try {
             TossPayment payment = withConnectRetry(idempotencyKey, () -> tossPaymentsRestClient.post()
                     .uri(CANCEL_URI, paymentKey)

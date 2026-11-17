@@ -58,6 +58,19 @@ logging:
     org.hibernate.SQL: debug
     org.hibernate.orm.jdbc.bind: trace
 
+# 로컬 Prometheus(docker-compose)가 /actuator/prometheus를 긁어 간다. 운영(prod)은 아래에서 health만 연다.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, prometheus
+  metrics:
+    distribution:
+      # 평균은 느린 소수 요청을 가린다. 버킷을 내보내야 Prometheus가 p95·p99를 계산할 수 있다.
+      percentiles-histogram:
+        http.server.requests: true
+        http.client.requests: true
+
 springdoc:
   swagger-ui:
     path: /swagger-ui.html
@@ -91,3 +104,11 @@ logging:
   level:
     org.hibernate.SQL: info
     org.hibernate.orm.jdbc.bind: info
+
+# 운영 서버는 8080을 그대로 외부에 연다. 메트릭에는 URI별 호출량·에러율·JVM 상태가 들어 있어 공개하지 않는다.
+# 운영 수집을 붙일 때는 관리 포트를 분리하고 보안 그룹으로 수집기만 허용한 뒤 연다.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health

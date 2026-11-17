@@ -1,0 +1,10 @@
+# 대시보드의 원본은 저장소의 JSON이다. 화면에서 고친 내용은 컨테이너를 지우면 사라지므로 JSON으로 옮겨 커밋한다.
+apiVersion: 1
+
+providers:
+  - name: cgv
+    folder: CGV
+    type: file
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards

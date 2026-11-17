@@ -4016,3 +4016,102 @@ jobs:
 - 입력값을 받을 수 없어 롤백처럼 "이 태그로 배포"를 표현할 수 없습니다.
 
 알림처럼 결과에 영향을 주지 않는 후속 작업에는 `workflow_run`이 적당합니다. **결과를 기다려야 하고 값을 넘겨야 하면 `workflow_call`, 결과와 무관하게 이어 붙이기만 하면 `workflow_run`**으로 정리했습니다.
+
+## 모니터링 — Prometheus + Grafana
+
+### 무엇을 보고 싶었나
+
+로그는 "무슨 일이 있었나"를 한 건씩 알려 주지만, "지금 괜찮은가", "언제부터 나빠졌나"는 답하지 못합니다. 이 프로젝트에서 특히 추이로 봐야 하는 것은 셋입니다.
+
+1. **커넥션 풀이 마르는가.** 좌석 경합으로 막힌 요청은 커넥션을 쥔 채 잠금을 기다립니다. 그래서 `innodb_lock_wait_timeout=3`, `connection-timeout: 3000`으로 짧게 잡아 두었는데, 이 설정이 실제로 버티는지는 숫자로 봐야 압니다.
+2. **느린 쪽이 우리인가 토스인가.** 토스 읽기 타임아웃이 60초라 토스가 느려지면 요청 스레드가 그만큼 묶입니다.
+3. **결과 불명 결제가 쌓이는가.** 승인 요청은 정상 응답으로 끝나도 결과를 모르는 결제는 DB의 `IN_PROGRESS` 행으로만 남습니다. HTTP 지표에는 드러나지 않습니다.
+
+### 방안 비교
+
+| 방안 | 장점 | 단점 |
+|---|---|---|
+| **Prometheus + Grafana** (Actuator + Micrometer) | 무료. 의존성 두 개로 HTTP·JVM·Hikari 지표가 자동으로 나온다. PromQL로 p95 등을 자유롭게 계산. 대시보드를 JSON으로 저장소에 둘 수 있다 | 수집기·대시보드를 직접 띄우고 관리한다. 장기 보관·이중화는 직접 해결. 로그는 별도 |
+| AWS CloudWatch | EC2·RDS 기본 지표가 이미 수집된다. 알람·로그까지 일체형 | 커스텀 지표가 개당 월 과금이라 Micrometer 지표 수십~수백 개를 보내면 크레딧이 든다. 쿼리·시각화가 Grafana보다 약하다 |
+| Grafana Cloud | 무료 티어로 서버 없이 운영 지표까지 본다 | 외부 계정과 EC2 에이전트가 필요하다. 한도를 넘으면 과금 |
+| Datadog / New Relic | 설치만 하면 APM·추적·알림까지 완성형 | 비싸다. 무엇을 왜 재는지 감춰져 학습 목적과 맞지 않는다 |
+| Pinpoint / Scouter | 코드 수정 없이 호출 트리 추적 | Pinpoint는 HBase 등 인프라가 무겁다. 서버 한 대에는 과하다 |
+| Spring Boot Admin | 설치가 가장 간단하다 | 시계열을 저장하지 않아 "지난 1시간 추이"를 못 본다 |
+
+**Prometheus + Grafana를 골랐습니다.** Spring Boot가 공식 지원해 위 1번(Hikari)이 코드 없이 나오고, 돈이 들지 않으며, 이미 있는 `docker-compose.yml`에 서비스 두 개만 붙이면 됩니다. 나중에 운영 서버까지 보려면 같은 `/actuator/prometheus`를 Grafana Cloud로 보내면 되므로 지금 작업이 버려지지 않습니다.
+
+### 적용 범위 — 로컬만
+
+```bash
+docker compose up -d --build
+# Grafana  http://localhost:3001  (admin / admin, .env의 GRAFANA_ADMIN_PASSWORD로 변경)
+# Prometheus http://localhost:9090
+```
+
+| 파일 | 역할 |
+|---|---|
+| `monitoring/prometheus.yml` | `app:8080/actuator/prometheus`를 15초마다 수집 |
+| `monitoring/grafana/provisioning/datasources/prometheus.yml` | 데이터소스를 고정 uid로 자동 등록 |
+| `monitoring/grafana/provisioning/dashboards/cgv.yml` | 아래 JSON을 `CGV` 폴더에 자동 등록 |
+| `monitoring/grafana/dashboards/cgv.json` | 대시보드 원본 |
+
+![Prometheus가 app:8080/actuator/prometheus를 수집 중 (UP)](docs/images/monitoring/01-prometheus-target.png)
+
+운영 EC2에는 띄우지 않았습니다. 메모리가 작은 인스턴스에 Prometheus·Grafana까지 올리면 앱이 쓸 메모리를 뺏고, 크레딧을 아끼는 방침과도 맞지 않습니다. 운영 프로필은 `/actuator/health`만 노출합니다. 운영 서버는 8080을 그대로 외부에 열어 두고 있어, 메트릭(URI별 호출량·에러율·JVM 상태)을 열면 누구나 볼 수 있기 때문입니다.
+
+대시보드는 화면에서 만들지 않고 JSON으로 저장소에 둡니다. 화면에서 만든 대시보드는 컨테이너를 지우면 사라지고, 누가 띄우느냐에 따라 화면이 달라집니다. 데이터소스 uid를 `prometheus`로 고정한 것도 같은 이유입니다. 화면에서 추가하면 uid가 매번 달라져 JSON이 데이터소스를 찾지 못합니다.
+
+### 대시보드 구성 — 증상에서 원인으로
+
+위에서 아래로 내려가며 "장애가 났나 → 왜 났나"를 좁히도록 배치했습니다. 각 패널의 ⓘ 툴팁에 "이 패널을 왜 보는지"를 적어 두었습니다.
+
+![대시보드 전체 — 1행 사용자 체감부터 5행 JVM까지](docs/images/monitoring/05-dashboard-overview.png)
+
+![패널 툴팁 — 커넥션 획득·점유 시간을 왜 보는지](docs/images/monitoring/06-panel-tooltip.png)
+
+| 행 | 패널 | 왜 |
+|---|---|---|
+| **1. 사용자 체감** | 초당 요청, 5xx 비율, 전체 p95, 처리 중인 요청 / URI별 요청·상태 코드·p95 | 가장 먼저 "지금 장애인가"에 답합니다. 평균 대신 p95를 씁니다. 평균은 느린 소수 요청을 가립니다. 4xx는 좌석 경합(409)·토큰 만료(401)처럼 업무상 정상인 응답이 많아 5xx와 나눠 봅니다 |
+| **2. DB 커넥션 풀** | active·idle·**pending**·max, 획득·점유 최대 시간, 획득 실패 횟수 | 이 프로젝트의 가장 큰 위험입니다. pending이 0 위로 오르면 풀이 바닥난 것이고, 5xx보다 먼저 오는 신호입니다. 점유 시간이 3초 가까이 늘면 잠금 대기가 길어지고 있다는 뜻입니다 |
+| **3. 외부 API(토스)** | 토스 API별 p95, API별 응답 상태 | 1행의 결제 API가 느릴 때 이 값도 같이 오르면 원인은 토스입니다. 401·429는 회원 문제가 아니라 키 설정·호출 한도 문제입니다 |
+| **4. 결제 정합성** | IN_PROGRESS 결제 수, 정리 기한 지난 결제 수, 승인·취소 결과, 정리 스케줄러 실행 | HTTP 지표로는 보이지 않는 돈 문제입니다. 결과 불명이 쌓이는지, 스케줄러가 실제로 돌고 있는지를 봅니다 |
+| **5. JVM** | 힙, GC 정지, 스레드 상태, CPU | 1~4의 원인이 메모리·GC·CPU인지 마지막으로 확인합니다 |
+
+로컬에서 조회 API(200), 없는 영화 조회(404), 토큰 없는 예매 조회(401)를 섞어 흘려 확인했습니다.
+
+![1행 — 상태 코드별로 200·401·404가 나뉘고, 401은 uri=UNKNOWN으로 따로 잡힌다](docs/images/monitoring/02-row1-traffic.png)
+
+![2행 — 정상일 때 pending 0, 획득 실패 0. 점선이 풀 최대치(20)](docs/images/monitoring/03-row2-connection-pool.png)
+
+![4행 — 결제가 없어 결과 불명 0, 정리 스케줄러는 1분마다 SUCCESS](docs/images/monitoring/04-row4-payment.png)
+
+토스 호출(3행)과 승인·취소 결과는 실제 결제를 하지 않아 비어 있습니다.
+
+### 자동으로 나오지 않아 직접 붙인 지표
+
+| 지표 | 어디서 | 왜 |
+|---|---|---|
+| `http.client.requests` (토스) | `TossPaymentsConfig`에서 `RestClient`에 `ObservationRegistry` 연결 | `RestClient.builder()`로 직접 만든 클라이언트는 관측 대상이 아닙니다. Boot 4는 `RestClient.Builder` 자동 구성이 별도 모듈이라, 의존성을 늘리는 대신 레지스트리만 연결했습니다. URI는 템플릿(`/v1/payments/{paymentKey}`)으로 묶여 결제마다 시계열이 생기지 않습니다 |
+| `cgv.toss.confirm` / `cgv.toss.cancel` (`result` 태그) | `TossPaymentsClient` | HTTP 상태로는 결과 불명과 거절을 가를 수 없습니다. 500과 `ALREADY_PROCESSED_PAYMENT`(400)는 상태가 달라도 둘 다 결과 불명입니다. 클라이언트가 이미 내린 분류를 그대로 셉니다 |
+| `cgv.payments.in.progress` / `.overdue` | `PaymentMetricsConfig` (게이지) | 수집할 때마다 DB에서 다시 셉니다. 이벤트마다 올리고 내리는 방식은 재시작하면 0부터 시작해 실제 남은 건수와 어긋납니다. 승인 직후의 IN_PROGRESS는 정상이므로, 정리 시작 시각(2분)이 지난 건만 따로 셉니다 |
+
+정리 스케줄러 실행(`tasks.scheduled.execution`)은 Boot가 `@Scheduled`를 자동으로 관측해 코드 없이 나옵니다.
+
+### 그 밖의 선택
+
+| 항목 | 이유 |
+|---|---|
+| `percentiles-histogram` (서버·클라이언트 요청) | 버킷을 내보내야 Prometheus가 p95·p99를 계산할 수 있습니다. 앱이 계산한 백분위(`percentiles`)는 인스턴스 여러 대를 합칠 수 없습니다 |
+| 수집 주기 15초 | 기본값 1분이면 3초짜리 커넥션 타임아웃 몰림이 한 점에 묻힙니다 |
+| Grafana 포트 3001 | 3000은 프런트 개발 서버 기본 포트이자 CORS 기본 허용 출처입니다 |
+| `/actuator/health`, `/actuator/prometheus` permitAll | Prometheus는 토큰 없이 수집합니다. 노출 여부는 프로필별 `management.endpoints` 설정이 정합니다 |
+| "처리 중인 요청"에서 1을 뺌 | 수집 요청 자신이 처리 중으로 잡혀 트래픽이 없어도 1로 보였습니다. 처리 중에는 URI가 정해지지 않아(`UNKNOWN`) URI로 걸러낼 수 없습니다 |
+| 커넥션 상태의 max를 점선으로 | Hikari는 `minimumIdle` 기본값이 풀 크기라 idle과 max가 둘 다 20으로 겹칩니다. max를 채운 면으로 그리면 idle이 가려집니다 |
+| 빈 구간은 선을 잇지 않음 | 트래픽이 없던 구간을 이으면 그 사이에도 요청이 있었던 것처럼 대각선이 그어집니다 |
+
+### 한계
+
+- 운영 서버 지표는 수집하지 않습니다. 붙이려면 관리 포트를 분리(`management.server.port`)하고 보안 그룹으로 수집기만 허용한 뒤, Grafana Cloud 같은 외부 수집기로 보내는 것이 다음 단계입니다.
+- 알림(Alertmanager)은 두지 않았습니다. 로컬에서는 받을 사람이 없습니다. 운영에 붙인다면 "정리 기한 지난 결제가 5분 넘게 0이 아님", "커넥션 획득 실패 1건 이상"이 첫 알림 후보입니다.
+- 인증 필터에서 401로 끝난 요청은 `uri=UNKNOWN`으로 묶입니다. 컨트롤러까지 가지 않아 URI 템플릿이 정해지지 않기 때문입니다.
+- 지표는 "얼마나"를 알려 주지만 "어떤 요청이"는 알려 주지 않습니다. 그 연결은 로그가 맡습니다(로그 리팩토링에서 다룸).
