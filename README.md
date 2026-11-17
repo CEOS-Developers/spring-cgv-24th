@@ -1917,13 +1917,14 @@ Webhook은 이런 변화를 토스 쪽에서 알려주는 **두 번째 통로**�
 5. Docker Buildx로 이미지 빌드
 6. DockerHub에 push (커밋 SHA 태그)
 7. EC2 SSH 접속 (탄력적 IP)
-8. `compose.yml`, `deploy.sh` 전송
+8. `compose.yml`, `deploy.sh`, `monitoring/alloy/config.alloy` 전송
 9. `deploy.sh` 실행
     - `docker compose pull app`
     - `db` 헬스체크 대기
-    - `app` 컨테이너 교체 후 `/actuator/health` 헬스체크 (최대 180초)
-    - 성공 → `.env`의 `APP_IMAGE`, 배포 이력 갱신 + 이전 이미지 정리
+   - `app` 컨테이너 교체 후 관리 포트 (8081)의 `/actuator/health` 헬스체크 (최대 180초)
+   - 성공 → `.env`의 `APP_IMAGE`, 배포 이력 갱신 + 이전 이미지 정리 + 수집 에이전트 (Alloy) 갱신
     - 실패 → 로그 출력 + 직전 성공 이미지로 자동 롤백
+   - Alloy 갱신이 실패해도 서비스 배포는 성공으로 처리 (모니터링 때문에 배포가 막히지 않도록)
 
 #### 안전장치
 
@@ -1937,10 +1938,11 @@ Webhook은 이런 변화를 토스 쪽에서 알려주는 **두 번째 통로**�
 
 ### Docker Compose
 
-| 서비스 | 이미지                           | 포트                            | 헬스체크                |
-|--------|----------------------------------|---------------------------------|-------------------------|
-| app    | DockerHub `<DOCKER_IMAGE>:<SHA>` | `127.0.0.1:8080` (Nginx만 접근) | `curl /actuator/health` |
-| db     | `mysql:8.4`                      | 외부 공개 X (`db:3306`)         | `mysqladmin ping`       |
+| 서비스 | 이미지                           | 포트                                                           | 헬스체크                     |
+|--------|----------------------------------|----------------------------------------------------------------|------------------------------|
+| app    | DockerHub `<DOCKER_IMAGE>:<SHA>` | `127.0.0.1:8080` (Nginx만 접근), `8081` (컨테이너 네트워크 안) | `curl :8081/actuator/health` |
+| db     | `mysql:8.4`                      | 외부 공개 X (`db:3306`)                                        | `mysqladmin ping`            |
+| alloy  | `grafana/alloy:v1.21.3`          | 외부 공개 X (`127.0.0.1:12345`)                                | -                            |
 
 - Dockerfile은 CI에서 테스트가 끝난 `app.jar`를 JRE 21 이미지에 복사만 함 (이미지 안에서 다시 빌드 X)
 - MySQL 데이터는 named volume (`mysql-data`)에 저장, 배포 때는 app만 교체해서 데이터 유지
@@ -1949,7 +1951,8 @@ Webhook은 이런 변화를 토스 쪽에서 알려주는 **두 번째 통로**�
 
 ### 헬스체크 (Actuator)
 
-- `/actuator/health`만 노출, 나머지 엔드포인트 (`env`, `beans` 등)는 비노출
+- `health`, `prometheus`만 노출, 나머지 엔드포인트 (`env`, `beans` 등)는 비노출
+- 운영에서는 Actuator를 관리 포트 8081로 분리 → Nginx가 프록시하는 8080에서는 `/actuator/**`가 404라 메트릭이 인터넷에 노출되지 않음
 - `show-details: never` → 응답은 `{"status":"UP"}`만
 - DB 상태 포함 → MySQL이 내려가면 `503 DOWN` (MySQL을 직접 꺼서 확인)
 - `/actuator/health`를 JWT 필터 제외 경로에 추가해서 토큰이 없거나 이상한 토큰이 붙어 있어도 통과
@@ -1961,5 +1964,122 @@ Webhook은 이런 변화를 토스 쪽에서 알려주는 **두 번째 통로**�
 | 프로필    | 기본              | `test`                            | `prod`                            |
 | DB        | 로컬 MySQL        | `cgv_test` (CI는 서비스 컨테이너) | MySQL 컨테이너                    |
 | 접속 주소 | `.env`의 `DB_URL` | `application-test.yml`            | EC2 `.env`의 `DB_URL` (`db:3306`) |
+
+</details>
+
+<details>
+<summary><h2>📈 모니터링과 로그</h2></summary>
+
+### 구성
+
+```
+[app 서버]  Spring Boot 메트릭 / 컨테이너 로그 / 호스트 지표 → Alloy
+                                                              ↓ push
+[모니터링 서버]                                 Prometheus, Loki → Grafana
+```
+
+- Prometheus (메트릭) + Loki (로그) + Grafana (대시보드), 수집은 Grafana Alloy
+- 설정은 모두 `monitoring/`에 있고 Grafana 데이터소스와 대시보드도 파일로 등록
+
+### 이 스택을 고른 이유
+
+- Spring Boot Actuator가 Prometheus 형식을 기본으로 지원해서 의존성 하나로 HTTP, JVM, 커넥션 풀 메트릭이 나옴
+- ELK는 Elasticsearch만으로도 1GB 넘는 메모리가 필요해서 t3.micro에 올릴 수 없음. Loki는 라벨만 인덱싱해서 가벼움
+- CloudWatch는 메트릭, 로그 양만큼 비용이 나오고 쿼리가 불편함
+- Grafana 한 곳에서 메트릭과 로그를 같이 보고, 로그의 traceId를 누르면 그 요청의 로그로 바로 이동할 수 있음
+- 수집기는 node-exporter와 Promtail을 따로 띄우는 대신 Alloy 하나로 처리 (Promtail은 지원 종료)
+
+### 모니터링 서버를 따로 둔 이유
+
+- app 서버 (t3.micro, 1GB)에 앱과 MySQL이 이미 돌고 있어서 메모리 여유가 없음
+- 같은 서버에 두면 서버가 죽을 때 모니터링도 같이 죽어서 원인을 볼 수 없음
+- 모니터링 서버도 t3.micro로 충분한지 로컬에서 띄워서 확인함
+    - Prometheus 약 60MB, Loki 약 75MB, Grafana 약 185MB
+    - Grafana가 처음에는 300MB 가까이 썼는데, 쓰지 않는 데이터소스 플러그인들이 각각 프로세스로 떠 있어서 꺼둠
+    - 순간적으로 메모리가 튀는 경우를 대비해 swap 1GB 설정
+- 보관 기간은 메트릭 15일, 로그 7일
+
+### 수집 방식
+
+- Prometheus가 app 서버에서 메트릭을 가져가는 방식 (pull)은 app 서버에 포트를 열어야 함
+- 그래서 app 서버의 Alloy가 모니터링 서버로 보내는 방식 (push)으로 구성
+    - app 서버는 새로 여는 포트 없음
+    - 모니터링 서버는 9090, 3100을 app 서버에서 오는 요청만 허용
+- Nginx가 8080 전체를 프록시해서 `/actuator/prometheus`가 외부에 노출되는 문제가 있었음 → 운영에서만 Actuator를 8081로 분리
+- Grafana는 외부에 열지 않고 SSH 터널로 접속
+
+### 로그 리팩토링
+
+**기존 문제**
+
+- 동시에 들어온 요청의 로그가 섞이면 어떤 로그가 같은 요청인지 알 수 없음
+- 결제 승인 완료, 거절, 결과 불명 같은 상태 변화가 로그에 거의 남지 않음
+- 스캐너가 `/wp-admin/setup.php` 같은 요청을 보내면 500과 ERROR 스택이 찍혀서 실제 장애와 구분이 안 됨
+- 메시지 형식이 제각각이고 (`- URI: {}`, `{}건을 해제했습니다.`) `show-sql: true`로 SQL이 그대로 출력됨
+
+**변경**
+
+- 요청마다 `traceId`를 만들어 MDC에 넣고 응답 헤더 `X-Trace-Id`로 내려줌. 인증 후에는 `userId`도 추가
+- 요청이 끝나면 `HTTP 요청 처리 method= uri= status= durationMs=` 한 줄을 남김 (actuator 요청은 제외)
+- 스케줄러 작업도 실행마다 traceId를 붙여서 한 번의 복구 작업 로그를 묶어서 볼 수 있음
+- 운영은 JSON 한 줄 로그, 로컬은 기존 텍스트 로그에 `[traceId,userId]`만 추가
+- 메시지 형식을 `이벤트 key=value`로 통일 (예: `결제 자동 복구 보류 paymentId=12 reason=...`)
+- 결제 상태 변화 (승인, 거절, 결과 불명, 보상 취소, 취소)를 모두 기록
+- 없는 경로는 404, 지원하지 않는 메서드는 405로 응답하고 ERROR 로그를 남기지 않음
+- `show-sql` 제거
+
+**레벨 기준**
+
+- ERROR: 사람이 바로 확인해야 하는 것 (보상 취소 실패, 처리되지 않은 예외, 토스 결과 불명)
+- WARN: 자동 복구가 처리하지만 반복되면 문제인 것 (결제 결과 불명, 5xx 비즈니스 예외)
+- INFO: 정상 흐름, 사용자 입력 오류 (4xx)
+
+Loki에는 `service`, `level`만 라벨로 두고 `traceId`, `userId`는 structured metadata로 저장함. 값 종류가 무한한 필드를 라벨로 만들면 Loki가 느려지기 때문.
+
+```logql
+{service="app", level="ERROR"}
+{service="app"} | traceId="05438af6bb0c4fb68f0bf777c6124218"
+```
+
+### 메트릭
+
+기본 메트릭 (HTTP, JVM, HikariCP)에 결제, 예매 메트릭을 추가함
+
+| 메트릭                                         | 내용                                                                           |
+|------------------------------------------------|--------------------------------------------------------------------------------|
+| `payment_approvals_total{result}`              | 결제 승인 결과 (approved, rejected, unknown, compensated, compensation_failed) |
+| `payment_cancels_total{result}`                | 결제 취소 결과                                                                 |
+| `payment_recovery_backlog{type}`               | 자동 복구에서 정리하지 못한 건수                                               |
+| `toss_api_requests_seconds{operation,outcome}` | 토스 API 응답 시간과 결과                                                      |
+| `reservation_holds_expired_total`              | 결제 없이 만료된 좌석 선점                                                     |
+
+- 결과별 카운터를 미리 0으로 등록해서 "0건"과 "수집 안 됨"을 구분
+- 응답 시간은 평균 대신 p95, p99로 보도록 히스토그램 활성화
+
+### 대시보드
+
+`monitoring/grafana/dashboards/cgv-overview.json`
+
+위에서 아래로 내려가면서 원인을 좁혀가도록 배치함
+
+1. 서비스 상태: 앱 상태, 처리량, 5xx 비율, 응답 시간 (p50/p95/p99), 느린 API, 5xx가 난 API
+2. 결제·예매: 승인률, 보상 취소 실패, 자동 복구 보류, 토스 API 응답 시간
+3. JVM·커넥션 풀: 힙, GC, CPU, 커넥션 풀 (active, pending), 스레드
+4. app 서버: CPU, 메모리와 swap, PSI, 디스크
+5. 로그: 레벨별 로그 수, ERROR/WARN 로그, traceId 검색
+
+- HTTP 응답이 200이어도 결제는 거절될 수 있어서 결제 결과를 따로 봄
+- 보상 취소 실패는 돈은 빠졌는데 주문이 없는 상황이라 1건만 있어도 빨간색으로 표시
+- 결제 API가 느릴 때 토스 문제인지 우리 서버 문제인지 구분하려고 토스 API 응답 시간을 따로 둠
+- t3는 CPU 크레딧을 다 쓰면 steal이 올라가서 호스트 CPU에 steal을 포함
+- 배포 (재시작) 시점을 그래프에 표시해서 배포 전후 변화를 바로 볼 수 있게 함
+
+### 부하 테스트
+
+`monitoring/k6/load-test.js`: 최대 20명이 5분 동안 조회, 로그인, 찜 요청을 보내고 401, 404 요청도 일부 섞음
+
+```bash
+docker run --rm -i grafana/k6:1.3.0 run -e BASE_URL=<서버 주소> - < monitoring/k6/load-test.js
+```
 
 </details>
