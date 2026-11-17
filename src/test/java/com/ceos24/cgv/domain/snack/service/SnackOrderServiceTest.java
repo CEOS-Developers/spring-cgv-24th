@@ -5,7 +5,9 @@ import com.ceos24.cgv.domain.snack.dto.request.SnackOrderItemRequest;
 import com.ceos24.cgv.domain.snack.dto.response.SnackOrderResponse;
 import com.ceos24.cgv.domain.snack.entity.SnackItem;
 import com.ceos24.cgv.domain.snack.entity.SnackOrder;
+import com.ceos24.cgv.domain.snack.entity.SnackOrderItem;
 import com.ceos24.cgv.domain.snack.entity.SnackStock;
+import com.ceos24.cgv.domain.snack.enums.SnackOrderStatus;
 import com.ceos24.cgv.domain.snack.exception.SnackOrderException;
 import com.ceos24.cgv.domain.snack.repository.SnackOrderRepository;
 import com.ceos24.cgv.domain.snack.repository.SnackStockRepository;
@@ -157,5 +159,48 @@ class SnackOrderServiceTest {
         then(snackOrderRepository)
                 .should(never())
                 .save(any(SnackOrder.class));
+    }
+
+    @Test
+    @DisplayName("본인 주문 취소 시 재고를 복구하고 재취소를 거부한다")
+    void cancelOrder_restoresStockOnce() {
+        User user = mock(User.class);
+        Theater theater = mock(Theater.class);
+        SnackItem item = mock(SnackItem.class);
+        given(user.getId()).willReturn(1L);
+        given(theater.getId()).willReturn(10L);
+        given(item.getId()).willReturn(100L);
+        given(item.getPrice()).willReturn(6000);
+        SnackOrder order = SnackOrder.create(user, theater);
+        order.addOrderItem(SnackOrderItem.create(item, 2));
+        order.complete();
+        SnackStock stock = SnackStock.builder()
+                .stockQuantity(8).snackItem(item).theater(theater).build();
+        given(snackOrderRepository.findByIdForUpdate(5L)).willReturn(Optional.of(order));
+        given(snackStockRepository.findAllByTheaterIdAndSnackItemIdsForUpdate(10L, List.of(100L)))
+                .willReturn(List.of(stock));
+
+        SnackOrderResponse response = snackOrderService.cancelOrder(1L, 10L, 5L);
+        assertThat(response.orderStatus()).isEqualTo(SnackOrderStatus.CANCELED);
+        assertThat(stock.getStockQuantity()).isEqualTo(10);
+        assertThatThrownBy(() -> snackOrderService.cancelOrder(1L, 10L, 5L))
+                .isInstanceOf(SnackOrderException.class);
+        assertThat(stock.getStockQuantity()).isEqualTo(10);
+    }
+
+    @Test
+    @DisplayName("타인의 매점 주문은 취소할 수 없다")
+    void cancelOrder_rejectsOtherUser() {
+        User user = mock(User.class);
+        Theater theater = mock(Theater.class);
+        given(user.getId()).willReturn(1L);
+        given(theater.getId()).willReturn(10L);
+        SnackOrder order = SnackOrder.create(user, theater);
+        order.complete();
+        given(snackOrderRepository.findByIdForUpdate(5L)).willReturn(Optional.of(order));
+
+        assertThatThrownBy(() -> snackOrderService.cancelOrder(2L, 10L, 5L))
+                .isInstanceOf(SnackOrderException.class);
+        then(snackStockRepository).shouldHaveNoInteractions();
     }
 }

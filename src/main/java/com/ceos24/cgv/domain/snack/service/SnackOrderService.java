@@ -6,6 +6,7 @@ import com.ceos24.cgv.domain.snack.dto.response.SnackOrderResponse;
 import com.ceos24.cgv.domain.snack.entity.SnackOrder;
 import com.ceos24.cgv.domain.snack.entity.SnackOrderItem;
 import com.ceos24.cgv.domain.snack.entity.SnackStock;
+import com.ceos24.cgv.domain.snack.enums.SnackOrderStatus;
 import com.ceos24.cgv.domain.snack.exception.SnackOrderErrorCode;
 import com.ceos24.cgv.domain.snack.exception.SnackOrderException;
 import com.ceos24.cgv.domain.snack.repository.SnackOrderRepository;
@@ -38,6 +39,36 @@ public class SnackOrderService {
     private final SnackStockRepository snackStockRepository;
     private final UserRepository userRepository;
     private final TheaterRepository theaterRepository;
+
+    @Transactional
+    public SnackOrderResponse cancelOrder(Long userId, Long theaterId, Long orderId) {
+        SnackOrder order = snackOrderRepository.findByIdForUpdate(orderId)
+                .orElseThrow(() -> new SnackOrderException(SnackOrderErrorCode.ORDER_NOT_FOUND));
+        if (!order.getTheater().getId().equals(theaterId)) {
+            throw new SnackOrderException(SnackOrderErrorCode.ORDER_NOT_FOUND);
+        }
+        if (!order.getUser().getId().equals(userId)) {
+            throw new SnackOrderException(SnackOrderErrorCode.ORDER_FORBIDDEN);
+        }
+        if (order.getOrderStatus() == SnackOrderStatus.CANCELED) {
+            throw new SnackOrderException(SnackOrderErrorCode.ORDER_ALREADY_CANCELED);
+        }
+        if (order.getOrderStatus() != SnackOrderStatus.COMPLETED) {
+            throw new SnackOrderException(SnackOrderErrorCode.ORDER_NOT_CANCELABLE);
+        }
+
+        List<Long> itemIds = order.getOrderItems().stream()
+                .map(item -> item.getSnackItem().getId()).toList();
+        List<SnackStock> stocks = snackStockRepository
+                .findAllByTheaterIdAndSnackItemIdsForUpdate(theaterId, itemIds);
+        validateAllStocksExist(itemIds, stocks);
+        Map<Long, SnackStock> stockMap = stocks.stream().collect(Collectors.toMap(
+                stock -> stock.getSnackItem().getId(), Function.identity()));
+        order.getOrderItems().forEach(item -> stockMap.get(item.getSnackItem().getId())
+                .increaseStock(item.getQuantity()));
+        order.cancel();
+        return SnackOrderResponse.from(order);
+    }
 
     /**
      * 매점 상품 구매
