@@ -53,6 +53,12 @@ dependencies {
 
     // 외부 API 호출용 RestClient
     implementation 'org.springframework.boot:spring-boot-starter-restclient'
+
+    // 상태 확인 및 애플리케이션 지표
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+    //  프로메테우스 형식으로 지표 제공
+    runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
+
 }
 
 tasks.named('test') {
