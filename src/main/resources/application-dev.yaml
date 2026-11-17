@@ -1,0 +1,4 @@
+logging:
+  level:
+    com.ceos24.cgv: DEBUG
+    org.hibernate.SQL: DEBUG

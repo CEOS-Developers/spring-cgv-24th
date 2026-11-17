@@ -30,7 +30,7 @@ public class PaymentReconciliationScheduler {
             try {
                 paymentService.reconcileStuckPayment(payment.getOrderId());
             } catch (Exception e) {
-                log.error("승인 중 결제 보정 실패: orderId={}, error={}", payment.getOrderId(), e.getMessage(), e);
+                log.error("payment_reconcile_failed orderId={}", payment.getOrderId(), e);
             }
         }
     }

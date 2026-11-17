@@ -1,6 +1,8 @@
 package com.ceos24.cgv.global.exception;
 
 import com.ceos24.cgv.global.common.ApiResponse;
+import io.micrometer.core.instrument.MeterRegistry;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.hibernate.exception.ConstraintViolationException;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -23,12 +25,33 @@ import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 @Slf4j
 @RestControllerAdvice
+@RequiredArgsConstructor
 public class GlobalExceptionHandler {
+
+    private final MeterRegistry meterRegistry;
 
     @ExceptionHandler(BusinessException.class)
     protected ResponseEntity<ApiResponse<Void>> handleBusinessException(BusinessException e) {
-        log.warn("BusinessException: {}", e.getMessage());
         ErrorCode errorCode = e.getErrorCode();
+        // 에러 코드별 발생 횟수 (예: ALREADY_RESERVED가 부하 시 얼마나 늘어나는지 대시보드에서 확인). 태그 값은 enum이라 종류가 제한적이다
+        meterRegistry
+                .counter("cgv.business.exceptions", "code", errorCode.name())
+                .increment();
+        // 5xx 성격의 에러코드(결제 대행사 장애, 보상 취소 실패 등)는 운영자가 봐야 하므로 error + 스택트레이스
+        if (errorCode.getStatus() >= 500) {
+            log.error(
+                    "business_exception code={} status={} message={}",
+                    errorCode.name(),
+                    errorCode.getStatus(),
+                    e.getMessage(),
+                    e);
+        } else {
+            log.warn(
+                    "business_exception code={} status={} message={}",
+                    errorCode.name(),
+                    errorCode.getStatus(),
+                    e.getMessage());
+        }
         return ResponseEntity.status(errorCode.getStatus())
                 .body(ApiResponse.error(
                         errorCode.getStatus(), e.getMessage() != null ? e.getMessage() : errorCode.getMessage()));
@@ -41,13 +64,13 @@ public class GlobalExceptionHandler {
                 .map(fieldError -> fieldError.getDefaultMessage())
                 .findFirst()
                 .orElse(ErrorCode.INVALID_INPUT_VALUE.getMessage());
-        log.warn("MethodArgumentNotValidException: {}", errorMessage);
+        log.info("request_invalid type=MethodArgumentNotValid message={}", errorMessage);
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(ApiResponse.error(400, errorMessage));
     }
 
     @ExceptionHandler(AccessDeniedException.class)
     protected ResponseEntity<ApiResponse<Void>> handleAccessDeniedException(AccessDeniedException e) {
-        log.warn("AccessDeniedException: {}", e.getMessage());
+        log.warn("access_denied");
         return ResponseEntity.status(HttpStatus.FORBIDDEN)
                 .body(ApiResponse.error(
                         ErrorCode.AUTH_FORBIDDEN_USER.getStatus(), ErrorCode.AUTH_FORBIDDEN_USER.getMessage()));
@@ -56,14 +79,15 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(MissingRequestHeaderException.class)
     protected ResponseEntity<ApiResponse<Void>> handleMissingRequestHeaderException(MissingRequestHeaderException e) {
         String message = "필수 요청 헤더가 누락되었습니다: " + e.getHeaderName();
-        log.warn("MissingRequestHeaderException: {}", message);
+        log.info("request_invalid type=MissingRequestHeader header={}", e.getHeaderName());
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(ApiResponse.error(400, message));
     }
 
     @ExceptionHandler(HttpMessageNotReadableException.class)
     protected ResponseEntity<ApiResponse<Void>> handleHttpMessageNotReadableException(
             HttpMessageNotReadableException e) {
-        log.warn("HttpMessageNotReadableException: {}", e.getMessage());
+        // 예외 메시지에 요청 본문 조각(비밀번호 등)이 섞일 수 있어 남기지 않는다
+        log.info("request_invalid type=HttpMessageNotReadable");
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(ApiResponse.error(400, "요청 본문(JSON) 형식이 올바르지 않습니다."));
     }
 
@@ -71,14 +95,17 @@ public class GlobalExceptionHandler {
     protected ResponseEntity<ApiResponse<Void>> handleHttpRequestMethodNotSupportedException(
             HttpRequestMethodNotSupportedException e) {
         String message = "지원하지 않는 HTTP 메서드입니다: " + e.getMethod();
-        log.warn("HttpRequestMethodNotSupportedException: {}", message);
+        log.info("request_invalid type=HttpRequestMethodNotSupported method={}", e.getMethod());
         return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED).body(ApiResponse.error(405, message));
     }
 
     @ExceptionHandler(DataIntegrityViolationException.class)
     protected ResponseEntity<ApiResponse<Void>> handleDataIntegrityViolationException(
             DataIntegrityViolationException e) {
-        log.warn("DataIntegrityViolationException: {}", e.getMessage());
+        // 예외 메시지에 SQL과 입력값(이메일 등)이 들어갈 수 있어 원인 예외 종류만 남긴다
+        log.warn(
+                "data_integrity_violation cause={}",
+                e.getMostSpecificCause().getClass().getSimpleName());
         // 유니크 위반만 409(중복), 그 외(NOT NULL, FK, 길이 초과 등)는 요청 데이터 오류로 400
         if (e.getCause() instanceof ConstraintViolationException cve
                 && cve.getKind() == ConstraintViolationException.ConstraintKind.UNIQUE) {
@@ -90,7 +117,10 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler({ObjectOptimisticLockingFailureException.class, PessimisticLockingFailureException.class})
     protected ResponseEntity<ApiResponse<Void>> handleLockingFailureException(Exception e) {
-        log.warn("LockingFailureException: {}", e.getMessage());
+        meterRegistry
+                .counter("cgv.lock.conflicts", "type", e.getClass().getSimpleName())
+                .increment();
+        log.warn("lock_conflict type={}", e.getClass().getSimpleName());
         ErrorCode code = ErrorCode.CONCURRENT_REQUEST_CONFLICT;
         return ResponseEntity.status(code.getStatus()).body(ApiResponse.error(code.getStatus(), code.getMessage()));
     }
@@ -99,7 +129,7 @@ public class GlobalExceptionHandler {
     protected ResponseEntity<ApiResponse<Void>> handleMissingServletRequestParameterException(
             MissingServletRequestParameterException e) {
         String message = "필수 요청 파라미터가 누락되었습니다: " + e.getParameterName();
-        log.warn("MissingServletRequestParameterException: {}", message);
+        log.info("request_invalid type=MissingServletRequestParameter parameter={}", e.getParameterName());
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(ApiResponse.error(400, message));
     }
 
@@ -107,14 +137,14 @@ public class GlobalExceptionHandler {
     protected ResponseEntity<ApiResponse<Void>> handleMethodArgumentTypeMismatchException(
             MethodArgumentTypeMismatchException e) {
         String message = "요청 파라미터 형식이 올바르지 않습니다: " + e.getName();
-        log.warn("MethodArgumentTypeMismatchException: {}", message);
+        log.info("request_invalid type=MethodArgumentTypeMismatch parameter={}", e.getName());
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(ApiResponse.error(400, message));
     }
 
     @ExceptionHandler(HandlerMethodValidationException.class)
     protected ResponseEntity<ApiResponse<Void>> handleHandlerMethodValidationException(
             HandlerMethodValidationException e) {
-        log.warn("HandlerMethodValidationException: {}", e.getMessage());
+        log.info("request_invalid type=HandlerMethodValidation");
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(ApiResponse.error(400, ErrorCode.INVALID_INPUT_VALUE.getMessage()));
     }
@@ -122,20 +152,20 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(HttpMediaTypeNotSupportedException.class)
     protected ResponseEntity<ApiResponse<Void>> handleHttpMediaTypeNotSupportedException(
             HttpMediaTypeNotSupportedException e) {
-        log.warn("HttpMediaTypeNotSupportedException: {}", e.getMessage());
+        log.info("request_invalid type=HttpMediaTypeNotSupported contentType={}", e.getContentType());
         return ResponseEntity.status(HttpStatus.UNSUPPORTED_MEDIA_TYPE)
                 .body(ApiResponse.error(415, "지원하지 않는 Content-Type 입니다."));
     }
 
     @ExceptionHandler(NoResourceFoundException.class)
     protected ResponseEntity<ApiResponse<Void>> handleNoResourceFoundException(NoResourceFoundException e) {
-        log.warn("NoResourceFoundException: {}", e.getMessage());
+        log.info("request_invalid type=NoResourceFound");
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ApiResponse.error(404, "요청한 리소스를 찾을 수 없습니다."));
     }
 
     @ExceptionHandler(Exception.class)
     protected ResponseEntity<ApiResponse<Void>> handleException(Exception e) {
-        log.error("Exception: ", e);
+        log.error("unhandled_exception type={}", e.getClass().getSimpleName(), e);
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(ApiResponse.error(500, "서버 내부에서 예상치 못한 에러가 발생했습니다."));
     }

@@ -43,3 +43,11 @@ secrets.yml
 .idea
 schema.sql
 /docs/
+
+# 애플리케이션 로그 파일 (docker compose 볼륨)
+/logs/
+
+# 부하테스트 결과 원본 (수치는 README에 정리)
+/loadtest/results/
+# 부하테스트 공통 모듈은 위의 lib/ 규칙에서 제외
+!/loadtest/lib/

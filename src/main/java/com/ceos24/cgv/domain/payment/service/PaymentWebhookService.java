@@ -5,6 +5,7 @@ import com.ceos24.cgv.domain.payment.dto.TossWebhookRequest;
 import com.ceos24.cgv.global.config.TossProperties;
 import com.ceos24.cgv.global.exception.BusinessException;
 import com.ceos24.cgv.global.exception.ErrorCode;
+import com.ceos24.cgv.global.logging.LogMasker;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -28,13 +29,14 @@ public class PaymentWebhookService {
 
     public void handleWebhook(
             String rawBody, String signatureHeader, String transmissionTimeHeader, String secretHeader) {
-        log.info("토스 웹훅 수신: transmissionTime={}", transmissionTimeHeader);
+        log.info("webhook_received transmissionTime={}", transmissionTimeHeader);
 
         TossWebhookRequest request;
         try {
             request = objectMapper.readValue(rawBody, TossWebhookRequest.class);
         } catch (Exception e) {
-            log.error("토스 웹훅 본문 역직렬화 실패: error={}", e.getMessage());
+            // 예외 메시지에 본문 조각이 섞일 수 있어 예외 종류만 남긴다
+            log.warn("webhook_payload_invalid type={}", e.getClass().getSimpleName());
             throw new BusinessException(ErrorCode.INVALID_INPUT_VALUE, "웹훅 페이로드 형식이 올바르지 않습니다.");
         }
 
@@ -48,7 +50,8 @@ public class PaymentWebhookService {
         }
 
         if (paymentKey == null || paymentKey.isBlank()) {
-            log.warn("토스 웹훅 수신: paymentKey를 식별할 수 없는 이벤트입니다. orderId={}, eventType={}", orderId, request.eventType());
+            log.warn(
+                    "webhook_ignored reason=payment_key_missing orderId={} eventType={}", orderId, request.eventType());
             return;
         }
 
@@ -57,7 +60,10 @@ public class PaymentWebhookService {
         try {
             latest = tossPaymentsClient.getPayment(paymentKey);
         } catch (Exception e) {
-            log.error("웹훅 수신 후 토스 결제 단건 조회 실패: paymentKey={}, error={}", paymentKey, e.getMessage());
+            log.error(
+                    "webhook_inquiry_failed paymentKey={} type={}",
+                    LogMasker.mask(paymentKey),
+                    e.getClass().getSimpleName());
             throw e;
         }
 
@@ -70,7 +76,11 @@ public class PaymentWebhookService {
 
     private void dispatchWebhookEvent(TossPaymentResponse latest) {
         String status = latest.status();
-        log.info("토스 웹훅 상태 반영 시작: orderId={}, paymentKey={}, status={}", latest.orderId(), latest.paymentKey(), status);
+        log.info(
+                "webhook_apply orderId={} paymentKey={} status={}",
+                latest.orderId(),
+                LogMasker.mask(latest.paymentKey()),
+                status);
 
         if ("DONE".equals(status)) {
             paymentService.completeApprovedPaymentFromWebhook(latest);
@@ -79,7 +89,7 @@ public class PaymentWebhookService {
         } else if ("ABORTED".equals(status) || "EXPIRED".equals(status)) {
             paymentTransactionService.abortPendingPaymentFromWebhook(latest.orderId(), latest.paymentKey());
         } else {
-            log.info("처리 대상 외의 웹훅 상태는 무시합니다: orderId={}, status={}", latest.orderId(), status);
+            log.info("webhook_ignored reason=unsupported_status orderId={} status={}", latest.orderId(), status);
         }
     }
 
@@ -92,7 +102,7 @@ public class PaymentWebhookService {
         String configuredSecret = tossProperties.webhookSecret();
         if (configuredSecret == null || configuredSecret.isBlank()) {
             // fail-closed: 시크릿 미설정 상태에서는 어떤 웹훅도 수락하지 않는다.
-            log.error("toss.webhook-secret이 설정되지 않아 웹훅을 거부합니다. TOSS_WEBHOOK_SECRET 환경변수를 설정하세요.");
+            log.error("webhook_secret_not_configured action=set_env name=TOSS_WEBHOOK_SECRET");
             throw new BusinessException(ErrorCode.WEBHOOK_INVALID_SIGNATURE, "웹훅 시크릿이 서버에 설정되지 않았습니다.");
         }
 
@@ -120,7 +130,7 @@ public class PaymentWebhookService {
             }
 
             if (!signatureMatched) {
-                log.error("토스 웹훅 HMAC 서명 불일치");
+                log.warn("webhook_auth_failed reason=hmac_mismatch");
                 throw new BusinessException(ErrorCode.WEBHOOK_INVALID_SIGNATURE);
             }
             return;
@@ -129,7 +139,7 @@ public class PaymentWebhookService {
         // 2. 가상계좌 콜백 또는 커스텀 시크릿 헤더 검증 (X-Webhook-Secret / body.secret)
         if (secretHeader != null && !secretHeader.isBlank()) {
             if (!constantTimeEquals(configuredSecret, secretHeader)) {
-                log.error("토스 웹훅 X-Webhook-Secret 불일치");
+                log.warn("webhook_auth_failed reason=secret_header_mismatch");
                 throw new BusinessException(ErrorCode.WEBHOOK_INVALID_SIGNATURE);
             }
             return;
@@ -137,13 +147,13 @@ public class PaymentWebhookService {
 
         if (request.resolvedSecret() != null && !request.resolvedSecret().isBlank()) {
             if (!constantTimeEquals(configuredSecret, request.resolvedSecret())) {
-                log.error("토스 웹훅 바디 secret 불일치");
+                log.warn("webhook_auth_failed reason=body_secret_mismatch");
                 throw new BusinessException(ErrorCode.WEBHOOK_INVALID_SIGNATURE);
             }
             return;
         }
 
-        log.error("토스 웹훅 인증 정보 누락 (서명 또는 시크릿이 제공되지 않음)");
+        log.warn("webhook_auth_failed reason=credentials_missing");
         throw new BusinessException(ErrorCode.WEBHOOK_INVALID_SIGNATURE, "웹훅 인증 헤더 또는 시크릿이 누락되었습니다.");
     }
 
@@ -155,7 +165,7 @@ public class PaymentWebhookService {
             byte[] hmacBytes = mac.doFinal(data.getBytes(StandardCharsets.UTF_8));
             return Base64.getEncoder().encodeToString(hmacBytes);
         } catch (Exception e) {
-            log.error("HMAC-SHA256 계산 실패: error={}", e.getMessage());
+            log.error("webhook_hmac_calculation_failed type={}", e.getClass().getSimpleName());
             throw new BusinessException(ErrorCode.WEBHOOK_INVALID_SIGNATURE);
         }
     }

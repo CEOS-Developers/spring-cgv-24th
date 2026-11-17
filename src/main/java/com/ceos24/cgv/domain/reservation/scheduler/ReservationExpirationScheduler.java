@@ -18,7 +18,7 @@ public class ReservationExpirationScheduler {
         try {
             reservationService.expireHoldReservations();
         } catch (Exception e) {
-            log.error("만료된 좌석 점유 정리 중 오류 발생: {}", e.getMessage(), e);
+            log.error("reservation_expire_scheduler_failed", e);
         }
     }
 }
