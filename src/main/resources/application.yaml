@@ -105,7 +105,7 @@ logging:
     org.hibernate.SQL: info
     org.hibernate.orm.jdbc.bind: info
   # 운영 로그는 수집기(Loki 등)로 보낼 대상이라 필드가 나뉜 JSON(ECS)으로 낸다. traceId도 필드로 들어간다.
-  # 사람이 읽는 텍스트는 로컬에만 남긴다. EC2에서 눈으로 볼 때는 docker logs ... | jq 로 본다.
+  # 사람이 읽는 텍스트는 로컬에만 남긴다. EC2에서 눈으로 볼 때는 journalctl -u cgv -o cat | jq 로 본다.
   structured:
     format:
       console: ecs

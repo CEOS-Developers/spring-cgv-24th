@@ -4114,4 +4114,100 @@ docker compose up -d --build
 - 운영 서버 지표는 수집하지 않습니다. 붙이려면 관리 포트를 분리(`management.server.port`)하고 보안 그룹으로 수집기만 허용한 뒤, Grafana Cloud 같은 외부 수집기로 보내는 것이 다음 단계입니다.
 - 알림(Alertmanager)은 두지 않았습니다. 로컬에서는 받을 사람이 없습니다. 운영에 붙인다면 "정리 기한 지난 결제가 5분 넘게 0이 아님", "커넥션 획득 실패 1건 이상"이 첫 알림 후보입니다.
 - 인증 필터에서 401로 끝난 요청은 `uri=UNKNOWN`으로 묶입니다. 컨트롤러까지 가지 않아 URI 템플릿이 정해지지 않기 때문입니다.
-- 지표는 "얼마나"를 알려 주지만 "어떤 요청이"는 알려 주지 않습니다. 그 연결은 로그가 맡습니다(로그 리팩토링에서 다룸).
+- 지표는 "얼마나"를 알려 주지만 "어떤 요청이"는 알려 주지 않습니다. 그 연결은 로그가 맡습니다(아래 「로그 — traceId와 구조화」).
+
+## 로그 — traceId와 구조화
+
+### 무엇이 문제였나
+
+| 문제 | 결과 |
+|---|---|
+| 요청을 묶을 ID가 없다 | `[Toss] 승인 결과 불명` 다음 줄에 `[Payment] 토스 승인 후 반영 실패`가 찍혀도, 동시 요청이 섞이면 두 줄이 같은 결제인지 알 수 없습니다 |
+| 모든 `CustomException`을 WARN으로 남긴다 | 좌석 경합(409)·없는 영화(404)·토큰 만료(401)처럼 업무상 정상인 응답이 경고로 쌓여, 정말 봐야 할 경고가 묻힙니다 |
+| `[NotReadable]`이 예외 메시지를 그대로 남긴다 | JSON 파서의 메시지에는 읽던 본문 조각이 섞여 나옵니다. 회원가입·로그인 요청이면 비밀번호가 로그에 남을 수 있습니다 |
+| 운영 로그가 사람용 한 줄 텍스트다 | 수집기(Loki 등)로 보내면 레벨·로거·traceId를 정규식으로 다시 뽑아야 합니다 |
+
+### traceId — Micrometer Tracing
+
+| 방안 | 장점 | 단점 |
+|---|---|---|
+| 직접 만든 필터로 MDC에 요청 ID | 의존성이 없고 동작이 코드에 다 보입니다 | HTTP 요청에만 붙습니다. 정리 스케줄러 실행에는 ID가 없고, 스레드를 넘기면 직접 옮겨야 합니다 |
+| **Micrometer Tracing (Brave)** | 이미 쓰고 있는 `ObservationRegistry`에 얹혀, HTTP 요청·`@Scheduled` 실행·토스 `RestClient` 호출이 모두 같은 방식으로 traceId를 받습니다 | 의존성 두 개가 늘고, 토스로 가는 요청에 `traceparent` 헤더가 붙습니다 |
+
+**Micrometer Tracing을 골랐습니다.** 결과 불명 결제는 요청 → 토스 호출 → (2분 뒤) 정리 스케줄러로 이어지는데, 직접 만든 필터로는 이 중 앞부분만 덮을 수 있습니다. 모니터링 때 토스 `RestClient`에 `ObservationRegistry`를 연결해 둔 덕에 토스 호출 로그도 코드 변경 없이 같은 traceId를 받습니다.
+
+```gradle
+implementation 'org.springframework.boot:spring-boot-micrometer-tracing-brave'
+implementation 'io.micrometer:micrometer-tracing-bridge-brave'
+```
+
+Boot 4의 `spring-boot-micrometer-tracing-brave`는 자동 구성만 담고 있어서 Brave 브리지를 따로 넣어야 traceId가 생깁니다. span을 받아 줄 곳(Zipkin 등)은 두지 않았습니다. 서버 한 대라 분산 추적을 볼 일이 없고, 로그를 묶는 ID만 필요하기 때문입니다.
+
+의존성만 넣으면 Boot가 로그 패턴에 `[traceId-spanId]` 칸을 붙입니다.
+
+```
+WARN ... [6afc4fe549d09d2bafb73de4bb03b46a-9514c9d4e8c577bb] c.c.c.g.e.GlobalExceptionHandler : [NotReadable] ...
+WARN ... [6afc4fe604063eb4b49957453fff9b1c-59f908d7405d8bd5] c.c.c.g.e.GlobalExceptionHandler : [NotReadable] ...
+```
+
+### 로그 레벨 — WARN은 사람이 봐야 하는 일만
+
+| 대상 | 전 | 후 | 이유 |
+|---|---|---|---|
+| 4xx `CustomException` (409·404·401 등) | WARN | DEBUG | 업무상 정상 응답입니다. 건수는 대시보드 1행(`http.server.requests`의 `status` 태그)이 셉니다 |
+| 5xx 계열 `CustomException` (토스 장애 503, 결과 불명 504) | WARN | WARN | 사람이 확인해야 하는 일입니다. 판단은 `ErrorCode`의 `HttpStatus.is5xxServerError()`로 합니다 |
+| `TypeMismatch` / `MissingParam` / `NotReadable` | WARN | DEBUG | 셋 다 잘못된 요청(400)입니다 |
+| 처리하지 못한 예외 | ERROR | ERROR | 그대로 |
+
+`CustomException` 로그에서 메시지는 뺐습니다. `ErrorCode` 이름과 같은 내용이라 중복이었습니다.
+
+### 요청 본문 노출 제거
+
+```java
+// 전: 파서가 읽던 본문 조각까지 남는다
+log.warn("[NotReadable] {}", e.getMessage());
+// 후: 원인 예외의 종류만 남긴다
+log.debug("[NotReadable] {}", e.getMostSpecificCause().getClass().getSimpleName());
+```
+
+이제 로그에는 `[NotReadable] UnexpectedEndOfInputException`처럼 무엇이 잘못됐는지만 남습니다. 요청을 다시 재현해야 하면 traceId로 앞뒤 로그를 찾습니다.
+
+### 운영 로그는 JSON(ECS)
+
+prod 프로필에만 Boot 내장 구조화 로그를 켰습니다. 의존성은 추가하지 않았습니다. 로컬은 사람이 읽기 좋은 텍스트를 그대로 씁니다.
+
+```yaml
+logging:
+  structured:
+    format:
+      console: ecs
+```
+
+```json
+{"@timestamp":"2026-11-17T13:15:57.010482600Z","log":{"level":"DEBUG","logger":"com.ceos24.cgv.global.exception.GlobalExceptionHandler"},"process":{"pid":40236,"thread":{"name":"Test worker"}},"message":"[NotReadable] UnexpectedEndOfInputException","traceId":"6afc538c3af28851c41f162f045985fe","spanId":"b06fefcbf69a7cd1","ecs":{"version":"8.11"}}
+```
+
+ECS(Elastic Common Schema)를 고른 이유는 필드 이름이 공개 표준이라 Loki·Elasticsearch·CloudWatch 어느 쪽으로 보내도 그대로 쓸 수 있어서입니다. 시각은 UTC(`Z`)로 찍힙니다.
+
+운영 서버는 systemd로 앱을 띄우므로 로그는 journald에 쌓입니다. 사람이 볼 때는 `jq`를 거칩니다.
+
+```bash
+journalctl -u cgv -o cat | jq                                   # 보기 좋게
+journalctl -u cgv -o cat | jq -c 'select(.log.level=="WARN" or .log.level=="ERROR")'
+journalctl -u cgv -o cat | jq -c 'select(.traceId=="<traceId>")'   # 한 요청의 로그만
+```
+
+### 확인
+
+| 테스트 | 확인하는 것 |
+|---|---|
+| `TraceIdLoggingTest` | 실제 필터 체인을 거친 요청 두 번의 로그 줄에 traceId가 붙고, 두 traceId가 서로 다르다 |
+| `GlobalExceptionHandlerLogTest` | 4xx는 DEBUG, 5xx 계열은 WARN으로 남고, `[NotReadable]` 로그에 본문 조각이 남지 않는다 |
+
+ECS 출력은 테스트에서 같은 설정을 켜고 한 번 확인한 뒤 지웠습니다. 테스트용 `application.yaml`이 main 설정을 통째로 가리기 때문에, prod 프로필 설정 자체를 테스트로 검증할 수는 없습니다.
+
+### 한계
+
+- 로그 수집기가 없습니다. 로그는 EC2의 journald에만 있어 인스턴스가 사라지면 같이 사라집니다. JSON으로 바꾼 것은 수집기를 붙일 때를 위한 준비입니다.
+- traceId를 응답에 싣지 않습니다. 사용자가 "결제가 이상하다"고 문의해도 해당 요청을 바로 찾을 수 없고, 시각·orderId로 찾아야 합니다. 응답 헤더로 traceId를 돌려주는 것이 다음 후보입니다.
+- 앱 기동·종료 로그처럼 요청이나 스케줄 실행 밖에서 찍히는 로그에는 traceId가 없습니다.
