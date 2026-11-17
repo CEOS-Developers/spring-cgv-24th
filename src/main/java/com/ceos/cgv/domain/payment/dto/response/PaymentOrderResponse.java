@@ -1,5 +1,7 @@
 package com.ceos.cgv.domain.payment.dto.response;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
+
 import lombok.Builder;
 
 import java.time.Instant;
@@ -9,10 +11,11 @@ import java.util.List;
 public record PaymentOrderResponse(
         String orderId,
         Long paymentId,
-        Long reservationId,
+        @JsonInclude(JsonInclude.Include.NON_NULL) Long reservationId,
+        @JsonInclude(JsonInclude.Include.NON_NULL) Long foodOrderId,
         String orderName,
         long totalAmount,
-        long seatPrice,
+        @JsonInclude(JsonInclude.Include.NON_NULL) Long seatPrice,
         Instant expiresAt,
         List<PaymentSeatResponse> seats) {
     public PaymentOrderResponse {

@@ -8,9 +8,12 @@ import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.boot.web.servlet.ServletRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
@@ -22,14 +25,18 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.time.Duration;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
+        properties = "logging.structured.format.console=logstash")
 @ActiveProfiles("test")
 @Import(ErrorDispatchIntegrationTest.ErrorServletConfig.class)
+@ExtendWith(OutputCaptureExtension.class)
 class ErrorDispatchIntegrationTest {
     @Autowired Environment environment;
     @Autowired JwtService jwt;
@@ -43,12 +50,19 @@ class ErrorDispatchIntegrationTest {
     }
 
     @Test
-    void 정상_인증_후_서버_오류는_500을_반환한다() throws Exception {
+    void 정상_인증_후_서버_오류는_500을_반환한다(CapturedOutput output) throws Exception {
         when(orders.create(any())).thenThrow(new IllegalStateException("내부 상세는 응답에서 숨긴다"));
         var response = send("/api/v1/food-orders", "application/json",
                 "{\"cinemaId\":1,\"items\":[{\"productId\":1,\"quantity\":1}]}", jwt.issue(1L, UserRole.USER));
         assertThat(response.statusCode()).isEqualTo(500);
         assertThat(response.body()).contains("INTERNAL_SERVER_ERROR").doesNotContain("내부 상세");
+        String requestId = response.headers().firstValue("X-Request-Id").orElseThrow();
+        await().atMost(Duration.ofSeconds(2)).untilAsserted(() ->
+                assertThat(output.getAll().lines().filter(line -> line.contains(requestId)).toList())
+                .singleElement().satisfies(line -> assertThat(line)
+                        .contains("\"event\":\"http_request\"", "\"level\":\"ERROR\"", "\"status\":500",
+                                "\"errorCode\":\"INTERNAL_SERVER_ERROR\"", "\"exceptionType\":\"IllegalStateException\"")));
+        assertThat(output.getAll()).doesNotContain("내부 상세는 응답에서 숨긴다");
     }
 
     @Test

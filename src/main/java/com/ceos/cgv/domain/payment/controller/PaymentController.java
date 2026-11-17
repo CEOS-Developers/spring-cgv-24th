@@ -2,14 +2,12 @@ package com.ceos.cgv.domain.payment.controller;
 
 import com.ceos.cgv.domain.payment.dto.request.PaymentCancelRequest;
 import com.ceos.cgv.domain.payment.dto.request.PaymentConfirmRequest;
-import com.ceos.cgv.domain.payment.dto.request.PaymentOrderCreateRequest;
 import com.ceos.cgv.domain.payment.dto.response.PaymentOperationResponse;
 import com.ceos.cgv.domain.payment.dto.response.PaymentOrderResponse;
 import com.ceos.cgv.domain.payment.dto.response.PaymentResponse;
 import com.ceos.cgv.domain.payment.enums.PaymentOperationStatus;
 import com.ceos.cgv.domain.payment.service.PaymentQueryService;
 import com.ceos.cgv.domain.payment.service.PaymentWorkflowService;
-import com.ceos.cgv.domain.payment.service.result.PaymentOrderCreationResult;
 import com.ceos.cgv.global.common.dto.ApiResponse;
 import com.ceos.cgv.global.exception.BusinessException;
 import com.ceos.cgv.global.exception.ErrorCode;
@@ -42,18 +40,6 @@ import java.util.UUID;
 public class PaymentController {
     private final PaymentWorkflowService paymentWorkflowService;
     private final PaymentQueryService queryService;
-
-    @PostMapping("/payment-orders")
-    public ResponseEntity<ApiResponse<PaymentOrderResponse>> createOrder(
-            @AuthenticationPrincipal CgvUserDetails user,
-            @Valid @RequestBody PaymentOrderCreateRequest request) {
-        PaymentOrderCreationResult creation =
-                paymentWorkflowService.createOrderResult(user.userId(), request);
-        PaymentOrderResponse result = creation.response();
-        if (!creation.created()) return ResponseEntity.ok(ApiResponse.success(result));
-        return ResponseEntity.created(URI.create("/api/v1/payment-orders/" + result.orderId()))
-                .body(ApiResponse.created(result));
-    }
 
     @GetMapping("/payment-orders/{orderId}")
     public ApiResponse<PaymentOrderResponse> order(

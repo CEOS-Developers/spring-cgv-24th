@@ -1,7 +1,9 @@
 package com.ceos.cgv.global.security.handler;
 
 import com.ceos.cgv.global.exception.ErrorResponse;
+import com.ceos.cgv.global.observability.RequestFailure;
 import com.ceos.cgv.global.security.exception.SecurityErrorCode;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.http.MediaType;
 import tools.jackson.databind.ObjectMapper;
@@ -13,8 +15,9 @@ final class SecurityErrorWriter {
     private SecurityErrorWriter() {
     }
 
-    static void write(HttpServletResponse response, ObjectMapper objectMapper,
+    static void write(HttpServletRequest request, HttpServletResponse response, ObjectMapper objectMapper,
                       SecurityErrorCode errorCode) throws IOException {
+        RequestFailure.set(request, errorCode);
         response.setStatus(errorCode.httpStatus().value());
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
         response.setCharacterEncoding(StandardCharsets.UTF_8.name());

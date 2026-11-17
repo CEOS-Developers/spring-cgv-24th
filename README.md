@@ -2,6 +2,68 @@
 
 CEOS 24기 백엔드 스터디 - CGV 클론 코딩 프로젝트
 
+## 6주차 모니터링과 로깅
+
+Spring Boot Actuator에서 노출한 메트릭을 Prometheus가 주기적으로 수집합니다. 앱의 JSON 로그 파일은 Alloy가 읽어서 Loki에 보냅니다. Grafana는 Prometheus와 Loki를 조회해 같은 시간 범위의 지표와 로그를 보여줍니다.
+
+### 로컬 실행
+
+새 로컬 DB를 쓰도록 Compose 프로젝트를 분리합니다. `.env.example`을 바탕으로 `.env`에 DB와 JWT 설정을 채우고 `APP_PORT=8080`, `GRAFANA_PORT=3000`, `GRAFANA_ADMIN_PASSWORD`를 설정합니다. Grafana의 기본 사용자 이름은 `admin`입니다.
+
+```bash
+docker compose -p cgv-monitoring -f compose.yml -f compose.monitoring.yml up -d --build
+curl -i http://127.0.0.1:8080/api/v1/movies
+```
+
+[CGV 대시보드](http://127.0.0.1:3000/d/cgv-overview/cgv-overview)는 컨테이너를 올릴 때 생성됩니다. 앱과 Grafana는 루프백에서 열립니다. Actuator 관리 포트 `8081`, Prometheus, Loki는 Compose 네트워크에서 접근합니다. 로그 파일은 앱이 쓰고 Alloy가 읽기 전용으로 읽습니다. 애플리케이션 로그는 크기와 보관 기간을 제한하고, Prometheus와 Loki에도 보관 기간을 설정했습니다.
+
+### 대시보드 구성
+
+| 확인할 질문 | 지표 |
+| --- | --- |
+| 앱에서 메트릭을 가져올 수 있는가 | Prometheus `up` |
+| 어느 API가 느려졌거나 실패했는가 | 초당 요청 수, 경로별 p95 응답 시간, 5xx 비율 |
+| 서버 자원이 밀리고 있는가 | JVM 힙 메모리, Hikari 사용 중인 연결 수와 대기 수 |
+| 예매나 결제에서 어떤 문제가 났는가 | 좌석 선점 충돌 사유별 건수, 승인·취소 결과 미확정 응답 수 |
+
+좌석 선점 충돌은 일반적인 경쟁에서도 발생하고, 결제 미확정 응답은 HTTP `202`로 반환될 수 있습니다. 두 사례를 별도 지표로 두면 5xx 비율에 잡히지 않는 상황도 찾을 수 있습니다. 결제 지표는 작업 응답 기준이라 같은 작업을 재조회하거나 재시도할 때 다시 집계될 수 있습니다.
+
+### 로그 확인
+
+API 응답의 `X-Request-Id`를 복사해 Grafana Explore의 Loki 데이터 소스에서 요청을 찾을 수 있습니다. 요청 로그에는 메서드, 경로 템플릿, HTTP 상태, 소요 시간과 오류 코드를 남깁니다. 인증 헤더, 요청 본문, URL 쿼리와 결제 키는 수집 필드에서 제외했습니다.
+
+Alloy는 요청 종료, 결제 미확정, 서버 오류, 매점 주문 정리 실패 이벤트를 Loki로 보냅니다. JDBC 원본 오류 메시지와 Tomcat의 잘못된 요청 파싱 메시지는 입력값이 포함될 수 있어 해당 로깅을 끕니다.
+
+```logql
+{app="cgv"} | json | requestId="응답의-X-Request-Id"
+{app="cgv"} | json | errorCode="SEAT_HELD"
+{app="cgv"} | json | event="payment_operation" | status="UNKNOWN"
+```
+
+### 검증
+
+로컬 Compose에서 영화 목록 요청과 같은 좌석을 두 사용자가 선점하는 상황을 실행했습니다. Prometheus의 좌석 충돌 카운터가 증가하고, Grafana에서 `X-Request-Id`와 `SEAT_HELD`로 `409` 로그를 찾을 수 있었습니다. 결제 결과 미확정 로그와 카운터는 PG 테스트 대역으로 확인했습니다.
+
+### 선택 과제 · 조회 부하 테스트
+
+k6로 영화 목록과 상영 좌석 조회를 각각 25, 150, 400, 800 req/s에서 측정했습니다. 1 vCPU 앱의 800 req/s 단계에서는 영화 목록 p95가 698.6ms, 좌석 조회 p95가 492.6ms였고, Grafana에서 Hikari 연결 획득 대기가 늘었습니다. 앱 CPU 한도를 2 vCPU로 올리자 각각 2.6ms와 38.6ms로 줄고, 1 vCPU로 복원하자 다시 늘었습니다. [실행법과 상세 분석](load-test/README.md)
+
+## 6주차 결제 리팩토링과 매점 결제
+
+공통 결제는 PG 요청, 승인 금액 검증, 멱등성, 결과 복구를 담당합니다. 영화 예매는 좌석 상태를, 매점 주문은 주문 상태와 재고를 담당합니다. PG 호출은 DB 트랜잭션 밖에서 실행하고, 결제 결과와 좌석 또는 재고 변경은 같은 DB 트랜잭션에서 확정합니다.
+
+| 매점 결제 순서 | 요청과 결과 |
+| --- | --- |
+| 재고 확보 및 결제 주문 생성 | `POST /api/v1/food-orders/checkout`에 Bearer 토큰, UUID `Idempotency-Key`, `cinemaId`와 `items`를 보냅니다. 항목은 `productId`와 `quantity`를 받습니다. `201` 응답의 `foodOrderId`로 주문을 조회하고, `orderId`, `orderName`, `totalAmount`로 토스 카드 결제창을 엽니다. |
+| 결제 승인 | 결제창 인증 완료 뒤 `POST /api/v1/payments/confirm`에 `paymentKey`, `orderId`, `amount`와 승인용 UUID를 보냅니다. 서버가 저장한 주문 금액으로 승인 금액을 검증합니다. |
+| 승인 전 해제 | `DELETE /api/v1/food-orders/{foodOrderId}/checkout`으로 확보한 재고를 반환할 수 있습니다. 승인 전 재고 확보는 5분 후 만료되며, 배치가 만료된 주문을 정리합니다. |
+| 전액 취소 | `POST /api/v1/payments/{paymentId}/cancellations`에 취소용 UUID와 `reason`을 보냅니다. 취소가 확인되면 주문을 취소하고 재고를 반환합니다. 상품 수령을 추적하지 않는 학습용 시나리오를 가정합니다. |
+| 결과 복구 | `202` 응답의 `Location`에서 결제 작업을 조회할 수 있습니다. `POST /api/v1/payment-operations/{operationId}/reconcile`로 PG 상태를 확인합니다. 결과를 모르는 동안에는 재고를 보존합니다. |
+
+같은 체크아웃 키와 같은 상품별 총수량으로 다시 요청하면 `200`과 기존 결제 주문을 반환합니다. 같은 키로 다른 주문 내용을 보내면 `409`를 반환합니다. 만료되거나 해제된 주문을 다시 결제하려면 새 키로 체크아웃합니다. 정리 배치는 `cgv.food-checkout.cleanup-delay-ms`로 조절할 수 있으며 기본값은 60초입니다.
+
+새 MySQL DB는 현재 엔티티로 스키마를 생성할 수 있습니다. 기존 4주차 스키마에는 앱을 멈추고 백업한 뒤 [6주차 MySQL 변경 SQL](src/main/resources/db/manual/week-06-food-payment.sql)을 한 번 적용합니다. `SHOW CREATE TABLE`로 `food_orders`, `payment_order`를 확인한 후 실행합니다. 기존 매점 주문은 체크아웃 상태가 없는 주문으로 유지됩니다.
+
 ## 5주차 구현 및 배포
 
 ### 1. AWS 배포 구성
@@ -64,7 +126,7 @@ docker compose -f compose-rds.yml up -d --no-build --wait
 
 ### 3. GitHub Actions 자동 배포
 
-[deploy.yml](.github/workflows/deploy.yml)은 `Wannys26` 브랜치 push에 반응합니다.
+[deploy.yml](.github/workflows/deploy.yml)은 `Wannys26/spring-cgv-24th` 포크의 `Wannys26` 브랜치에서만 테스트와 배포 작업을 실행합니다.
 기존 Java 테스트, 실제 MySQL 통합 테스트, JavaScript 테스트가 통과하면
 커밋 SHA로 태그한 amd64 이미지를 빌드해 EC2로 전송합니다.
 EC2는 Gradle 빌드 없이 이미지만 실행합니다.
