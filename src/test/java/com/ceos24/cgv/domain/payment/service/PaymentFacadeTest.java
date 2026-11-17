@@ -10,11 +10,14 @@ import com.ceos24.cgv.domain.payment.entity.PaymentCancel;
 import com.ceos24.cgv.domain.payment.enums.PaymentCancelStatus;
 import com.ceos24.cgv.domain.payment.exception.PaymentErrorStatus;
 import com.ceos24.cgv.domain.payment.exception.TossPaymentException;
+import com.ceos24.cgv.domain.payment.metrics.PaymentMetrics;
 import com.ceos24.cgv.global.exception.GeneralException;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataAccessResourceFailureException;
 
@@ -35,6 +38,9 @@ class PaymentFacadeTest {
 	private PaymentService paymentService;
 	@Mock
 	private TossPaymentClient tossPaymentClient;
+	private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+	@Spy
+	private PaymentMetrics paymentMetrics = new PaymentMetrics(meterRegistry);
 
 	@InjectMocks
 	private PaymentFacade paymentFacade;
@@ -65,6 +71,8 @@ class PaymentFacadeTest {
 		verify(tossPaymentClient).cancel(eq("pk-1"), anyString(), isNull(), eq("compensate-" + payment.getTossOrderId()));
 		verify(paymentService).recordCompensation(100L, canceled);
 		verify(paymentService, never()).markUnknown(anyLong());
+		assertThat(approvals("compensated")).isEqualTo(1);
+		assertThat(approvals("approved")).isZero();
 	}
 
 	@Test
@@ -82,6 +90,7 @@ class PaymentFacadeTest {
 		assertThatThrownBy(() -> paymentFacade.confirm(10L, request)).isSameAs(original);
 		verify(paymentService).markUnknown(100L);
 		verify(paymentService, never()).recordCompensation(anyLong(), any());
+		assertThat(approvals("compensation_failed")).isEqualTo(1);
 	}
 
 	@Test
@@ -146,6 +155,7 @@ class PaymentFacadeTest {
 		assertThat(result).isSameAs(response);
 		verify(paymentService, never()).failCancel(anyLong(), anyLong());
 		verify(paymentService, never()).markCancelUnknown(anyLong());
+		assertThat(cancels("done")).isEqualTo(1);
 	}
 
 	@Test
@@ -171,6 +181,7 @@ class PaymentFacadeTest {
 		verify(paymentService).failCancel(100L, 200L);
 		verify(paymentService, never()).markCancelUnknown(anyLong());
 		verify(paymentService, never()).completeCancel(anyLong(), anyLong(), any());
+		assertThat(cancels("rejected")).isEqualTo(1);
 	}
 
 	@Test
@@ -184,6 +195,7 @@ class PaymentFacadeTest {
 		assertThatThrownBy(() -> paymentFacade.cancel(10L, 100L, "key-1", request)).isInstanceOf(TossPaymentException.class);
 		verify(paymentService).markCancelUnknown(200L);
 		verify(paymentService, never()).failCancel(anyLong(), anyLong());
+		assertThat(cancels("unknown")).isEqualTo(1);
 	}
 
 	@Test
@@ -277,11 +289,13 @@ class PaymentFacadeTest {
 		when(tossPaymentClient.getByOrderId(stuck.getTossOrderId())).thenThrow(TossPaymentException.unknown("timeout"));
 		when(paymentService.startRecovery(101L)).thenReturn(other);
 		when(tossPaymentClient.getByOrderId(other.getTossOrderId())).thenReturn(approved);
+		when(paymentService.completeApproval(101L, approved)).thenReturn(PaymentResponse.from(other, List.of()));
 
 		paymentFacade.recoverStalePayments();
 
 		verify(paymentService).markUnknown(100L);
 		verify(paymentService).completeApproval(101L, approved);
+		assertThat(backlog("approval")).isEqualTo(1);
 	}
 
 	private PaymentService.CancelStart unknownCancelStart(Payment payment) {
@@ -400,6 +414,7 @@ class PaymentFacadeTest {
 		assertThatThrownBy(() -> paymentFacade.confirm(10L, request)).isInstanceOf(TossPaymentException.class);
 		verify(paymentService).fail(100L);
 		verify(tossPaymentClient, never()).getByOrderId(anyString());
+		assertThat(approvals("rejected")).isEqualTo(1);
 	}
 
 	@Test
@@ -419,5 +434,18 @@ class PaymentFacadeTest {
 
 		verify(paymentService).completeCancel(100L, 200L, canceled);
 		verify(tossPaymentClient, times(1)).cancel(anyString(), anyString(), any(), anyString());
+		assertThat(backlog("cancel")).isEqualTo(1);
+	}
+
+	private double approvals(String result) {
+		return meterRegistry.get("payment.approvals").tag("result", result).counter().count();
+	}
+
+	private double cancels(String result) {
+		return meterRegistry.get("payment.cancels").tag("result", result).counter().count();
+	}
+
+	private double backlog(String type) {
+		return meterRegistry.get("payment.recovery.backlog").tag("type", type).gauge().value();
 	}
 }

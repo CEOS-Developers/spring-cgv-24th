@@ -11,6 +11,9 @@ import com.ceos24.cgv.domain.payment.enums.PaymentCancelStatus;
 import com.ceos24.cgv.domain.payment.enums.PaymentStatus;
 import com.ceos24.cgv.domain.payment.exception.PaymentErrorStatus;
 import com.ceos24.cgv.domain.payment.exception.TossPaymentException;
+import com.ceos24.cgv.domain.payment.metrics.PaymentMetrics;
+import com.ceos24.cgv.domain.payment.metrics.PaymentMetrics.ApprovalResult;
+import com.ceos24.cgv.domain.payment.metrics.PaymentMetrics.CancelResult;
 import com.ceos24.cgv.domain.payment.service.PaymentService.CancelStart;
 import com.ceos24.cgv.global.exception.GeneralException;
 import lombok.RequiredArgsConstructor;
@@ -24,6 +27,7 @@ public class PaymentFacade {
 
 	private final PaymentService paymentService;
 	private final TossPaymentClient tossPaymentClient;
+	private final PaymentMetrics paymentMetrics;
 
 	public PaymentResponse confirm(Long userId, PaymentConfirmRequest request) {
 		Payment payment = paymentService.startApproval(userId, request);
@@ -40,6 +44,7 @@ public class PaymentFacade {
 			if (e.isResultUnknown()) {
 				paymentService.markUnknown(payment.getId());
 				log.warn("결제 승인 결과 불명 - 자동 복구 대기 paymentId={}", payment.getId());
+				paymentMetrics.recordApproval(ApprovalResult.UNKNOWN);
 				throw e;
 			}
 			if (retry) {
@@ -47,6 +52,7 @@ public class PaymentFacade {
 			}
 			paymentService.fail(payment.getId());
 			log.info("결제 승인 거절 paymentId={} tossCode={}", payment.getId(), e.getTossCode());
+			paymentMetrics.recordApproval(ApprovalResult.REJECTED);
 			throw e;
 		}
 
@@ -59,14 +65,17 @@ public class PaymentFacade {
 
 	// 처리 제한 시간이 지난 IN_PROGRESS(승인 도중 서버 중단 등)와 UNKNOWN을 토스 상태로 정리한다
 	public void recoverStalePayments() {
+		int deferred = 0;
 		for (Long paymentId : paymentService.findStaleProcessingIds()) {
 			try {
 				PaymentResponse recovered = reconcileWithToss(paymentService.startRecovery(paymentId));
 				log.info("결제 자동 복구 완료 paymentId={} status={}", paymentId, recovered.status());
 			} catch (RuntimeException e) {
+				deferred++;
 				log.warn("결제 자동 복구 보류 paymentId={} reason={}", paymentId, e.toString());
 			}
 		}
+		paymentMetrics.updateApprovalRecoveryBacklog(deferred);
 	}
 
 	public PaymentResponse cancel(Long userId, Long paymentId, String idempotencyKey, PaymentCancelRequest request) {
@@ -79,15 +88,18 @@ public class PaymentFacade {
 
 	// 서버 중단이나 결과 불명으로 처리 제한 시간이 지나도록 남은 취소를 같은 멱등키로 다시 요청해 토스의 결과로 정리한다
 	public void recoverStaleCancels() {
+		int deferred = 0;
 		for (PaymentCancel cancel : paymentService.findStaleCancels()) {
 			Long paymentId = cancel.getPayment().getId();
 			try {
 				requestCancel(paymentId, paymentService.startCancelRecovery(paymentId, cancel.getId()));
 			} catch (RuntimeException e) {
+				deferred++;
 				log.warn("결제 취소 자동 복구 보류 paymentId={} cancelId={} reason={}", paymentId, cancel.getId(),
 						e.toString());
 			}
 		}
+		paymentMetrics.updateCancelRecoveryBacklog(deferred);
 	}
 
 	private PaymentResponse requestCancel(Long paymentId, CancelStart start) {
@@ -98,6 +110,7 @@ public class PaymentFacade {
 			if (e.isResultUnknown()) {
 				paymentService.markCancelUnknown(start.cancelId());
 				log.warn("결제 취소 결과 불명 - 자동 복구 대기 paymentId={} cancelId={}", paymentId, start.cancelId());
+				paymentMetrics.recordCancel(CancelResult.UNKNOWN);
 				throw e;
 			}
 			if (start.retry()) {
@@ -105,6 +118,7 @@ public class PaymentFacade {
 			}
 			paymentService.failCancel(paymentId, start.cancelId());
 			log.info("결제 취소 거절 paymentId={} cancelId={} tossCode={}", paymentId, start.cancelId(), e.getTossCode());
+			paymentMetrics.recordCancel(CancelResult.REJECTED);
 			throw e;
 		}
 
@@ -114,9 +128,11 @@ public class PaymentFacade {
 		} catch (RuntimeException e) { // 토스에서는 취소됐는데 DB 반영에 실패 → 같은 멱등키로 재시도할 수 있게 둔다
 			paymentService.markCancelUnknown(start.cancelId());
 			log.warn("결제 취소 반영 실패 - 자동 복구 대기 paymentId={} cancelId={}", paymentId, start.cancelId());
+			paymentMetrics.recordCancel(CancelResult.UNKNOWN);
 			throw e;
 		}
 		log.info("결제 취소 완료 paymentId={} cancelId={} amount={}", paymentId, start.cancelId(), start.amount());
+		paymentMetrics.recordCancel(CancelResult.DONE);
 		return canceled;
 	}
 
@@ -191,6 +207,7 @@ public class PaymentFacade {
 			throw compensate(payment, toss, e);
 		}
 		log.info("결제 승인 완료 paymentId={} amount={}", payment.getId(), payment.getAmount());
+		paymentMetrics.recordApproval(ApprovalResult.APPROVED);
 		return approved;
 	}
 
@@ -202,9 +219,11 @@ public class PaymentFacade {
 			paymentService.recordCompensation(payment.getId(), canceled);
 			log.warn("주문 확정 실패로 보상 취소 완료 paymentId={} tossOrderId={}", payment.getId(), payment.getTossOrderId(),
 					cause);
+			paymentMetrics.recordApproval(ApprovalResult.COMPENSATED);
 			return new GeneralException(PaymentErrorStatus.PAYMENT_COMPENSATED);
 		} catch (RuntimeException e) { // 보상 취소 성공 후 기록 실패도 여기로 온다 → UNKNOWN으로 두면 대사가 토스 CANCELED를 보고 복구한다
 			log.error("보상 취소 실패 - 수동 확인 필요 paymentId={} tossOrderId={}", payment.getId(), payment.getTossOrderId(), e);
+			paymentMetrics.recordApproval(ApprovalResult.COMPENSATION_FAILED);
 			paymentService.markUnknown(payment.getId());
 			return cause;
 		}

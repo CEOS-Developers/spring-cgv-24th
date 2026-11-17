@@ -5,6 +5,8 @@ import com.ceos24.cgv.domain.payment.client.dto.TossConfirmRequest;
 import com.ceos24.cgv.domain.payment.client.dto.TossErrorResponse;
 import com.ceos24.cgv.domain.payment.client.dto.TossPaymentResponse;
 import com.ceos24.cgv.domain.payment.exception.TossPaymentException;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
@@ -22,8 +24,13 @@ public class TossPaymentClient {
 
 	private static final String IDEMPOTENCY_HEADER = "Idempotency-Key";
 	private static final String IDEMPOTENT_REQUEST_PROCESSING = "IDEMPOTENT_REQUEST_PROCESSING";
+	private static final String REQUEST_METRIC = "toss.api.requests";
+	private static final String OUTCOME_SUCCESS = "success";
+	private static final String OUTCOME_REJECTED = "rejected";
+	private static final String OUTCOME_UNKNOWN = "unknown";
 
 	private final RestClient tossRestClient;
+	private final MeterRegistry meterRegistry;
 
 	public TossPaymentResponse confirm(String paymentKey, String orderId, int amount, String idempotencyKey) {
 		return execute("confirm", () -> tossRestClient.post().uri("/v1/payments/confirm")
@@ -46,11 +53,14 @@ public class TossPaymentClient {
 	}
 
 	private TossPaymentResponse execute(String operation, Supplier<TossPaymentResponse> request) {
+		Timer.Sample sample = Timer.start(meterRegistry);
+		String outcome = OUTCOME_UNKNOWN;
 		try {
 			TossPaymentResponse response = request.get();
 			if (response == null) {
 				throw TossPaymentException.unknown("토스 응답 본문이 비어 있습니다.");
 			}
+			outcome = OUTCOME_SUCCESS;
 			return response;
 		} catch (HttpClientErrorException e) { // 4xx: 토스가 명확히 거절
 			TossErrorResponse error = parseError(e);
@@ -59,10 +69,13 @@ public class TossPaymentClient {
 			if (IDEMPOTENT_REQUEST_PROCESSING.equals(error.code())) {
 				throw TossPaymentException.unknown(error.message()); // 같은 요청이 아직 처리 중 → 결과 불명
 			}
+			outcome = OUTCOME_REJECTED;
 			throw TossPaymentException.rejected(error.code(), error.message());
 		} catch (RestClientException e) { // 5xx, 타임아웃, 연결 실패, 응답 변환 실패
 			log.error("토스 요청 결과 불명 operation={}", operation, e);
 			throw TossPaymentException.unknown(e.getMessage());
+		} finally {
+			sample.stop(meterRegistry.timer(REQUEST_METRIC, "operation", operation, "outcome", outcome));
 		}
 	}
 

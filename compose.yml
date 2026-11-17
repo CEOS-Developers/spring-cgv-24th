@@ -23,7 +23,7 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
     mem_limit: ${APP_MEM_LIMIT:-768m}
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:8080/actuator/health"]
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:8081/actuator/health"]
       interval: 10s
       timeout: 5s
       retries: 5
