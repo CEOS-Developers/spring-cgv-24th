@@ -3,6 +3,9 @@ spring:
     name: spring-cgv-24th
   jpa:
     open-in-view: false
+    properties:
+      hibernate.jdbc.log.errors: false
+      hibernate.jdbc.log.warnings: false
 
 springdoc:
   paths-to-match: /api/**

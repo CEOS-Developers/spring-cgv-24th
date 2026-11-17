@@ -3,9 +3,9 @@ package com.ceos.cgv.domain.reservation.controller;
 import com.ceos.cgv.domain.payment.controller.PaymentController;
 import com.ceos.cgv.domain.payment.dto.response.PaymentOperationResponse;
 import com.ceos.cgv.domain.payment.enums.PaymentOperationStatus;
-import com.ceos.cgv.domain.payment.service.PaymentWorkflowService;
 import com.ceos.cgv.domain.reservation.dto.ReservationResponse;
 import com.ceos.cgv.domain.reservation.service.ReservationService;
+import com.ceos.cgv.domain.reservation.service.payment.ReservationPaymentApplicationService;
 import com.ceos.cgv.global.common.dto.ApiResponse;
 import com.ceos.cgv.global.security.principal.CgvUserDetails;
 
@@ -31,7 +31,7 @@ import org.springframework.web.bind.annotation.RestController;
 @SecurityRequirement(name = "bearerAuth")
 public class ReservationController {
     private final ReservationService reservationService;
-    private final PaymentWorkflowService payments;
+    private final ReservationPaymentApplicationService reservationPayments;
 
     @GetMapping("/{reservationId}")
     @Operation(summary = "예매 상세 조회")
@@ -60,7 +60,7 @@ public class ReservationController {
             @AuthenticationPrincipal CgvUserDetails user,
             @RequestHeader(value = "Idempotency-Key", required = false) String key) {
         PaymentOperationResponse result =
-                payments.cancelReservation(
+                reservationPayments.cancelReservation(
                         user.userId(),
                         reservationId,
                         key == null ? null : PaymentController.requestKey(key));

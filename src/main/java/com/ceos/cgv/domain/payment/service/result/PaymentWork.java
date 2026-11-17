@@ -2,6 +2,7 @@ package com.ceos.cgv.domain.payment.service.result;
 
 import com.ceos.cgv.domain.payment.dto.response.PaymentOperationResponse;
 import com.ceos.cgv.domain.payment.enums.PaymentOperationType;
+import com.ceos.cgv.domain.payment.enums.PaymentTargetType;
 
 import lombok.Builder;
 
@@ -9,6 +10,7 @@ import lombok.Builder;
 public record PaymentWork(
         Long operationId,
         PaymentOperationType type,
+        PaymentTargetType targetType,
         String paymentKey,
         String orderId,
         long amount,

@@ -30,6 +30,7 @@ dependencies {
     runtimeOnly 'io.jsonwebtoken:jjwt-impl:0.13.0'
     runtimeOnly 'io.jsonwebtoken:jjwt-jackson:0.13.0'
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
+	runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
     compileOnly 'org.projectlombok:lombok'
 	runtimeOnly 'com.h2database:h2'
 	runtimeOnly 'com.mysql:mysql-connector-j'
@@ -71,6 +72,7 @@ tasks.register('mysqlTest', Test) {
 		includeTestsMatching 'com.ceos.cgv.domain.payment.service.PaymentConcurrencyIntegrationTest'
 		includeTestsMatching 'com.ceos.cgv.domain.payment.service.PaymentConcurrencyComparisonTest'
 		includeTestsMatching 'com.ceos.cgv.domain.payment.schema.PaymentSchemaUpgradeIntegrationTest'
+		includeTestsMatching 'com.ceos.cgv.domain.concession.service.FoodPaymentIntegrationTest'
 	}
 	// Every invocation verifies a fresh database rather than reuse an earlier result.
 	outputs.upToDateWhen { false }

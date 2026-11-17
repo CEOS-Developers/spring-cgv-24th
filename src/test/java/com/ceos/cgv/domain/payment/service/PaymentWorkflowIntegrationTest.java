@@ -12,12 +12,17 @@ import com.ceos.cgv.domain.payment.infrastructure.toss.TossPaymentGateway;
 import com.ceos.cgv.domain.payment.infrastructure.toss.config.TossPaymentProperties;
 import com.ceos.cgv.domain.reservation.dto.*;
 import com.ceos.cgv.domain.reservation.service.hold.SeatHoldService;
+import com.ceos.cgv.domain.reservation.service.payment.ReservationPaymentApplicationService;
 import com.ceos.cgv.domain.reservation.service.payment.ReservationPaymentService;
 import com.ceos.cgv.global.exception.*;
+import io.micrometer.core.instrument.MeterRegistry;
 
 import org.junit.jupiter.api.*;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.http.HttpMethod;
@@ -38,16 +43,19 @@ import java.util.concurrent.*;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.*;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.*;
 
-@SpringBootTest
+@SpringBootTest(properties = "logging.structured.format.console=logstash")
 @org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
+@ExtendWith(OutputCaptureExtension.class)
 class PaymentWorkflowIntegrationTest extends com.ceos.cgv.support.DatabaseIntegrationTest {
     @Autowired PaymentWorkflowService service;
+    @Autowired ReservationPaymentApplicationService reservationPaymentApplication;
     @Autowired org.springframework.test.web.servlet.MockMvc mvc;
     @Autowired com.ceos.cgv.global.security.jwt.JwtService jwt;
     @Autowired PaymentQueryService queries;
     @Autowired SeatHoldService holds;
     @Autowired JdbcTemplate jdbc;
+    @Autowired MeterRegistry meterRegistry;
     @Autowired org.springframework.transaction.PlatformTransactionManager transactionManager;
     @MockitoBean PaymentGateway gateway;
     @MockitoSpyBean ReservationPaymentService reservationPayments;
@@ -74,6 +82,11 @@ class PaymentWorkflowIntegrationTest extends com.ceos.cgv.support.DatabaseIntegr
     }
 
     @Autowired jakarta.persistence.EntityManager entityManager;
+
+    double operationResponses(String type, String status) {
+        return meterRegistry.get("cgv.payment.operation.responses")
+                .tags("type", type, "status", status, "target", "RESERVATION").counter().count();
+    }
 
     void expireFixture(Long reservationId) {
         new org.springframework.transaction.support.TransactionTemplate(transactionManager)
@@ -116,7 +129,9 @@ class PaymentWorkflowIntegrationTest extends com.ceos.cgv.support.DatabaseIntegr
                 holds.create(8711L, UUID.randomUUID(), new SeatHoldCreateRequest(8715L, seats))
                         .response()
                         .reservationId();
-        return service.createOrder(8711L, new PaymentOrderCreateRequest(id));
+        return reservationPaymentApplication
+                .createOrder(8711L, new PaymentOrderCreateRequest(id))
+                .response();
     }
 
     GatewayPayment done(PaymentOrderResponse order) {
@@ -170,8 +185,9 @@ class PaymentWorkflowIntegrationTest extends com.ceos.cgv.support.DatabaseIntegr
     void 주문은_선점당_하나이며_승인은_좌석을_확정한다() {
         PaymentOrderResponse order = order(2);
         assertThat(
-                        service.createOrder(
+                        reservationPaymentApplication.createOrder(
                                         8711L, new PaymentOrderCreateRequest(order.reservationId()))
+                                .response()
                                 .paymentId())
                 .isEqualTo(order.paymentId());
         PaymentOperationResponse result = confirm(order);
@@ -225,7 +241,9 @@ class PaymentWorkflowIntegrationTest extends com.ceos.cgv.support.DatabaseIntegr
     }
 
     @Test
-    void 승인_타임아웃은_선점을_보존하고_조회로_복구한다() {
+    void 승인_타임아웃은_선점을_보존하고_조회로_복구한다(CapturedOutput output) {
+        assertThat(meterRegistry.find("cgv.payment.operation.responses").tag("status", "UNKNOWN").counters())
+                .hasSize(4).allSatisfy(counter -> assertThat(counter.count()).isZero());
         PaymentOrderResponse order = order(1);
         UUID key = UUID.randomUUID();
         GatewayPayment payment = done(order);
@@ -261,6 +279,13 @@ class PaymentWorkflowIntegrationTest extends com.ceos.cgv.support.DatabaseIntegr
                 .isEqualTo(PaymentOperationStatus.SUCCEEDED);
         assertThat(queries.payment(8711L, order.paymentId()).activeOperationId()).isNull();
         verify(gateway, times(1)).confirm(any());
+        assertThat(operationResponses("CONFIRM", "UNKNOWN")).isEqualTo(1);
+        assertThat(operationResponses("CONFIRM", "SUCCEEDED")).isEqualTo(1);
+        assertThat(output.getAll().lines().filter(line -> line.contains("\"event\":\"payment_operation\"")).toList())
+                .singleElement().satisfies(line -> assertThat(line)
+                        .contains("\"status\":\"UNKNOWN\"", "\"target\":\"RESERVATION\"", "\"failureCode\":\"TIMEOUT\"",
+                                "\"operationId\":" + pending.operationId())
+                        .doesNotContain(payment.paymentKey(), order.orderId(), key.toString()));
     }
 
     @org.junit.jupiter.params.ParameterizedTest
@@ -320,6 +345,7 @@ class PaymentWorkflowIntegrationTest extends com.ceos.cgv.support.DatabaseIntegr
                 .containsAll(partial.result().cancellations());
         assertThat(full.result().cancellations().stream().mapToLong(GatewayCancellation::amount).sum())
                 .isEqualTo(20000);
+        assertThat(operationResponses("CANCEL", "SUCCEEDED")).isEqualTo(2);
         assertThat(full.result().seats()).allMatch(seat -> seat.canceledAt() != null);
         assertThat(queries.payment(8711L, order.paymentId()).status())
                 .isEqualTo(PaymentStatus.CANCELED);
@@ -934,7 +960,9 @@ class PaymentWorkflowIntegrationTest extends com.ceos.cgv.support.DatabaseIntegr
                         .response()
                         .reservationId();
         PaymentOrderResponse second =
-                service.createOrder(8718L, new PaymentOrderCreateRequest(secondHold));
+                reservationPaymentApplication
+                        .createOrder(8718L, new PaymentOrderCreateRequest(secondHold))
+                        .response();
         assertThatThrownBy(
                         () ->
                                 service.confirm(
@@ -1675,7 +1703,7 @@ class PaymentWorkflowIntegrationTest extends com.ceos.cgv.support.DatabaseIntegr
                 .isEqualTo(ErrorCode.INTERNAL_SERVER_ERROR);
         assertThatThrownBy(
                         () ->
-                                service.cancelReservation(
+                                reservationPaymentApplication.cancelReservation(
                                         8711L, order.reservationId(), UUID.randomUUID()))
                 .isInstanceOf(BusinessException.class)
                 .extracting(error -> ((BusinessException) error).getErrorCode())
@@ -1724,17 +1752,20 @@ class PaymentWorkflowIntegrationTest extends com.ceos.cgv.support.DatabaseIntegr
     // ---- 승인 UNKNOWN + 조회 NOT_FOUND ----
 
     @Test
-    void 승인_UNKNOWN_조회가_NOT_FOUND여도_유예전에는_유지하고_유예후에는_선점을_풀어준다() {
+    void 승인_UNKNOWN_조회가_NOT_FOUND여도_유예전에는_유지하고_유예후에는_선점을_풀어준다(CapturedOutput output) {
         PaymentOrderResponse order = order(1);
         GatewayPayment payment = done(order);
         when(gateway.confirm(any()))
-                .thenThrow(new PaymentGatewayException(GatewayFailureType.UNKNOWN, "TIMEOUT"));
+                .thenThrow(new PaymentGatewayException(GatewayFailureType.UNKNOWN, "PRIVATE_GATEWAY_CODE"));
         UUID key = UUID.randomUUID();
         PaymentConfirmRequest request =
                 new PaymentConfirmRequest(
                         payment.paymentKey(), order.orderId(), order.totalAmount());
         PaymentOperationResponse pending = service.confirm(8711L, key, request);
         assertThat(pending.status()).isEqualTo(PaymentOperationStatus.UNKNOWN);
+        assertThat(output.getAll().lines().filter(line -> line.contains("\"event\":\"payment_operation\"")).toList())
+                .singleElement().satisfies(line -> assertThat(line)
+                        .contains("\"failureCode\":\"UNKNOWN\"").doesNotContain("PRIVATE_GATEWAY_CODE"));
         when(gateway.getPayment(payment.paymentKey()))
                 .thenThrow(
                         new PaymentGatewayException(
@@ -2056,7 +2087,7 @@ class PaymentWorkflowIntegrationTest extends com.ceos.cgv.support.DatabaseIntegr
                 .isEqualTo(ErrorCode.RESERVATION_ALREADY_CANCELED);
         assertThatThrownBy(
                         () ->
-                                service.cancelReservation(
+                                reservationPaymentApplication.cancelReservation(
                                         8711L, order.reservationId(), UUID.randomUUID()))
                 .isInstanceOf(BusinessException.class)
                 .extracting(error -> ((BusinessException) error).getErrorCode())
