@@ -132,8 +132,8 @@ jobs:
           INCOMING_DIR: .incoming-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           ssh ec2 "mkdir -p '$DEPLOY_PATH/$INCOMING_DIR'"
-          scp compose.yml deploy/deploy.sh "ec2:$DEPLOY_PATH/$INCOMING_DIR/"
-          ssh ec2 "cd '$DEPLOY_PATH' && flock --verbose -w 600 .deploy.lock sh -c 'mv $INCOMING_DIR/compose.yml $INCOMING_DIR/deploy.sh . && rmdir $INCOMING_DIR && bash deploy.sh \"$IMAGE\"'"
+          scp compose.yml deploy/deploy.sh monitoring/alloy/config.alloy "ec2:$DEPLOY_PATH/$INCOMING_DIR/"
+          ssh ec2 "cd '$DEPLOY_PATH' && flock --verbose -w 600 .deploy.lock sh -c 'mkdir -p monitoring/alloy && mv $INCOMING_DIR/config.alloy monitoring/alloy/ && mv $INCOMING_DIR/compose.yml $INCOMING_DIR/deploy.sh . && rmdir $INCOMING_DIR && bash deploy.sh \"$IMAGE\"'"
       - name: 배포 결과
         if: always()
         run: |

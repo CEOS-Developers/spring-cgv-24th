@@ -1,0 +1,9 @@
+# app 서버 메트릭은 Alloy가 remote write로 보내오므로 여기서 직접 수집(scrape)하는 대상은 Prometheus 자신뿐이다
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

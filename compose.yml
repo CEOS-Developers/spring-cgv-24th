@@ -59,5 +59,32 @@ services:
         max-size: 10m
         max-file: "3"
 
+  # 메트릭(app:8081)과 컨테이너 로그를 수집해 모니터링 서버로 보낸다. 실패해도 서비스에는 영향이 없도록 app과 의존 관계를 두지 않는다
+  alloy:
+    image: grafana/alloy:v1.21.3
+    restart: unless-stopped
+    command:
+      - run
+      - --server.http.listen-addr=127.0.0.1:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    environment:
+      MONITORING_HOST: ${MONITORING_HOST:?MONITORING_HOST(모니터링 서버 사설 IP)를 .env에 설정하세요}
+      GOMEMLIMIT: ${ALLOY_GOMEMLIMIT:-100MiB}
+    volumes:
+      - ./monitoring/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/host/root:ro,rslave
+      - alloy-data:/var/lib/alloy/data
+    mem_limit: ${ALLOY_MEM_LIMIT:-128m}
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
 volumes:
   mysql-data:
+  alloy-data:
