@@ -90,6 +90,8 @@ public class SecurityConfig {
                                 "/v3/api-docs/**"
                         ).permitAll()
 
+                        .requestMatchers("/actuator/health", "/actuator/prometheus").permitAll()
+
                         // 관리자 전용
                         .requestMatchers("/api/admin/**")
                         .hasRole("ADMIN")
