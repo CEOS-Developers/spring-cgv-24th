@@ -58,6 +58,19 @@ logging:
     org.hibernate.SQL: debug
     org.hibernate.orm.jdbc.bind: trace
 
+# 로컬 Prometheus(docker-compose)가 /actuator/prometheus를 긁어 간다. 운영(prod)은 아래에서 health만 연다.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, prometheus
+  metrics:
+    distribution:
+      # 평균은 느린 소수 요청을 가린다. 버킷을 내보내야 Prometheus가 p95·p99를 계산할 수 있다.
+      percentiles-histogram:
+        http.server.requests: true
+        http.client.requests: true
+
 springdoc:
   swagger-ui:
     path: /swagger-ui.html
@@ -91,3 +104,38 @@ logging:
   level:
     org.hibernate.SQL: info
     org.hibernate.orm.jdbc.bind: info
+  # 운영 로그는 수집기(Loki 등)로 보낼 대상이라 필드가 나뉜 JSON(ECS)으로 낸다. traceId도 필드로 들어간다.
+  # 사람이 읽는 텍스트는 로컬에만 남긴다. EC2에서 눈으로 볼 때는 journalctl -u cgv -o cat | jq 로 본다.
+  structured:
+    format:
+      console: ecs
+
+# 운영 서버는 8080을 그대로 외부에 연다. 메트릭에는 URI별 호출량·에러율·JVM 상태가 들어 있어 공개하지 않는다.
+# 운영 수집을 붙일 때는 관리 포트를 분리하고 보안 그룹으로 수집기만 허용한 뒤 연다.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+---
+# 로컬 k6 부하 테스트(loadtest/docker-compose.loadtest.yml). 시드는 부팅마다 다시 넣는다(ddl-auto: create).
+# SQL·바인딩 로그를 끄지 않으면 로그 쓰기가 병목처럼 보여 측정이 왜곡된다. 운영과 같은 레벨로 둔다.
+spring:
+  config:
+    activate:
+      on-profile: loadtest
+  sql:
+    init:
+      mode: always
+      data-locations: classpath:db/loadtest-data.sql
+
+logging:
+  level:
+    org.hibernate.SQL: info
+    org.hibernate.orm.jdbc.bind: info
+
+# 로그인 CPU 병목에서 톰캣 스레드가 얼마나 바쁜지 봐야 한다. 기본값은 꺼져 있어 지표가 나오지 않는다.
+server:
+  tomcat:
+    mbeanregistry:
+      enabled: true

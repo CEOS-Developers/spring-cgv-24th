@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800" viewBox="0 0 1200 800" font-family="Pretendard, 'Noto Sans KR', 'Segoe UI', sans-serif">
+<defs>
+  <linearGradient id="bg" x1="0" y1="0" x2="0.4" y2="1"><stop offset="0" stop-color="#17121c"/><stop offset="1" stop-color="#2b1a2d"/></linearGradient>
+  <linearGradient id="card" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4a3650"/><stop offset="1" stop-color="#3a2a40"/></linearGradient>
+  <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#e7dbe9"/></marker>
+  <marker id="as" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10,0 L0,5 L10,10 z" fill="#e7dbe9"/></marker>
+  <style>
+    .t{fill:#f5eef6;font-size:13px;font-weight:700;text-anchor:middle}
+    .s{fill:#bfaec4;font-size:10px;text-anchor:middle}
+    .g{fill:#f5eef6;font-size:16px;font-weight:700}
+    .gs{fill:#e2d4e5;font-size:13px;font-weight:700}
+    .l{fill:#cdbdd1;font-size:11px}
+    .n{fill:url(#card);stroke:#7a5e82;stroke-width:1}
+    .w{stroke:#e7dbe9;stroke-width:1.4;fill:none}
+    .d{stroke:#e7dbe9;stroke-width:1.2;fill:none;stroke-dasharray:5 4}
+  </style>
+</defs>
+<rect width="1200" height="800" rx="18" fill="url(#bg)"/>
+
+<!-- Grafana Cloud -->
+<rect x="420" y="28" width="380" height="120" rx="14" fill="#3d2c44" stroke="#7a5e82"/>
+<text x="440" y="54" class="gs">Grafana Cloud (관측)</text>
+<circle cx="500" cy="92" r="18" fill="none" stroke="#f59e0b" stroke-width="5"/><circle cx="500" cy="92" r="7" fill="#f59e0b"/>
+<text x="500" y="132" class="s" style="fill:#f5eef6;font-size:11px">Grafana</text>
+<g fill="#facc15"><rect x="598" y="74" width="5" height="36"/><rect x="607" y="74" width="5" height="36"/><rect x="616" y="98" width="16" height="5"/></g>
+<text x="610" y="132" class="s" style="fill:#f5eef6;font-size:11px">Loki</text>
+<circle cx="720" cy="92" r="20" fill="#e6522c"/><path d="M712,100 q8,-24 8,-6 q8,-16 8,6 z" fill="#fff"/><rect x="709" y="102" width="22" height="3" fill="#fff"/>
+<text x="720" y="132" class="s" style="fill:#f5eef6;font-size:11px">Prometheus</text>
+
+<!-- GitHub Actions / Docker Hub -->
+<rect x="1010" y="160" width="140" height="80" rx="10" class="n"/>
+<circle cx="1080" cy="188" r="15" fill="#f5eef6"/><circle cx="1080" cy="188" r="7" fill="#24292f"/>
+<text x="1080" y="220" class="t">GitHub Actions</text><text x="1080" y="233" class="s">CI / CD</text>
+<rect x="1010" y="300" width="140" height="80" rx="10" class="n"/>
+<rect x="1064" y="318" width="32" height="20" rx="5" fill="#1d63ed"/><g fill="#fff"><rect x="1069" y="323" width="5" height="5"/><rect x="1077" y="323" width="5" height="5"/><rect x="1085" y="323" width="5" height="5"/></g>
+<text x="1080" y="360" class="t">Docker Hub</text><text x="1080" y="373" class="s">Image registry</text>
+
+<!-- AWS / VPC / EC2 -->
+<rect x="190" y="180" width="790" height="460" rx="16" fill="#3a2840" fill-opacity="0.55" stroke="#6b5072"/>
+<text x="210" y="208" class="g">AWS Cloud</text>
+<rect x="210" y="225" width="750" height="395" rx="14" fill="#4a3450" fill-opacity="0.45" stroke="#6b5072"/>
+<text x="230" y="250" class="gs">VPC</text>
+<rect x="230" y="265" width="500" height="225" rx="12" fill="#5a4060" fill-opacity="0.45" stroke="#7a5e82"/>
+<text x="250" y="290" class="gs">Amazon EC2</text>
+
+<!-- EC2 nodes -->
+<rect x="400" y="282" width="120" height="70" rx="10" class="n"/>
+<rect x="444" y="292" width="32" height="20" rx="5" fill="#1d63ed"/><g fill="#fff"><rect x="449" y="297" width="5" height="5"/><rect x="457" y="297" width="5" height="5"/><rect x="465" y="297" width="5" height="5"/></g>
+<text x="460" y="330" class="t">Docker Compose</text><text x="460" y="343" class="s">app + redis</text>
+
+<rect x="590" y="282" width="120" height="70" rx="10" class="n"/>
+<circle cx="650" cy="302" r="12" fill="none" stroke="#f46800" stroke-width="4"/><circle cx="650" cy="302" r="4" fill="#f46800"/>
+<text x="650" y="332" class="t">Grafana Alloy</text><text x="650" y="345" class="s">수집 에이전트</text>
+
+<rect x="250" y="390" width="120" height="80" rx="10" class="n"/>
+<path d="M296,402 l14,-8 l14,8 v16 l-14,8 l-14,-8 z" fill="#009639"/><text x="310" y="415" class="t" style="font-size:12px">N</text>
+<text x="310" y="448" class="t">NGINX</text><text x="310" y="461" class="s">HTTPS · Reverse proxy</text>
+
+<rect x="420" y="390" width="120" height="80" rx="10" class="n"/>
+<circle cx="480" cy="410" r="13" fill="#6db33f"/><path d="M474,416 q2,-12 12,-12 q-1,10 -12,12 z" fill="#fff"/>
+<text x="480" y="448" class="t">Spring Boot</text><text x="480" y="461" class="s">SUDAM API · 127.0.0.1:8080</text>
+
+<rect x="590" y="390" width="120" height="80" rx="10" class="n"/>
+<g fill="#dc382d"><path d="M636,404 l14,-6 l14,6 l-14,6 z"/><path d="M636,411 l14,6 l14,-6 v3 l-14,6 l-14,-6 z"/><path d="M636,418 l14,6 l14,-6 v3 l-14,6 l-14,-6 z"/></g>
+<text x="650" y="448" class="t">Redis</text><text x="650" y="461" class="s">리프레시 토큰</text>
+
+<!-- RDS -->
+<rect x="790" y="390" width="140" height="80" rx="10" class="n"/>
+<g fill="#4479a1"><ellipse cx="860" cy="401" rx="14" ry="5"/><rect x="846" y="401" width="28" height="18"/><ellipse cx="860" cy="419" rx="14" ry="5"/></g>
+<ellipse cx="860" cy="401" rx="14" ry="5" fill="none" stroke="#9cc3e0"/>
+<text x="860" y="448" class="t">MySQL 8</text><text x="860" y="461" class="s">Amazon RDS</text>
+
+<!-- Users -->
+<rect x="40" y="390" width="110" height="80" rx="10" class="n"/>
+<g fill="#f0abfc"><circle cx="86" cy="408" r="6"/><circle cx="104" cy="408" r="6"/><path d="M76,428 q10,-14 20,0 z"/><path d="M94,428 q10,-14 20,0 z"/></g>
+<text x="95" y="448" class="t">Users</text><text x="95" y="461" class="s">선생님 · 학부모 · 학생</text>
+
+<!-- External -->
+<rect x="700" y="672" width="460" height="104" rx="14" fill="#3d2c44" stroke="#7a5e82"/>
+<text x="720" y="698" class="gs">External Services</text>
+<circle cx="830" cy="728" r="17" fill="#fee500"/><path d="M821,722 h18 q3,0 3,3 v6 q0,3 -3,3 h-10 l-5,4 v-4 h-3 q-3,0 -3,-3 v-6 q0,-3 3,-3 z" fill="#3c1e1e"/>
+<text x="830" y="764" class="s" style="fill:#f5eef6;font-size:11px">Kakao 로그인 (OAuth2)</text>
+<circle cx="1010" cy="728" r="17" fill="#fee500"/><path d="M1001,722 h18 q3,0 3,3 v6 q0,3 -3,3 h-10 l-5,4 v-4 h-3 q-3,0 -3,-3 v-6 q0,-3 3,-3 z" fill="#3c1e1e"/>
+<text x="1010" y="764" class="s" style="fill:#f5eef6;font-size:11px">Kakao 메시지 (카드 발송)</text>
+
+<!-- Arrows -->
+<path d="M150,430 L250,430" class="w" marker-end="url(#ar)"/><text x="182" y="422" class="l">80 / 443</text>
+<path d="M370,430 L420,430" class="w" marker-end="url(#ar)"/>
+<path d="M540,430 L590,430" class="w" marker-start="url(#as)" marker-end="url(#ar)"/>
+<path d="M540,455 C620,500 720,500 790,445" class="w" marker-start="url(#as)" marker-end="url(#ar)"/><text x="690" y="508" class="l">Read / write</text>
+<path d="M460,352 L460,390" class="d" marker-end="url(#ar)"/>
+<path d="M500,352 L630,390" class="d" marker-end="url(#ar)"/>
+<path d="M590,325 L530,395" class="d" marker-end="url(#ar)"/><text x="548" y="372" class="l">scrape · tail</text>
+<path d="M650,282 L650,148" class="w" marker-end="url(#ar)"/><text x="658" y="220" class="l">Remote write</text>
+<path d="M1080,240 L1080,300" class="w" marker-end="url(#ar)"/><text x="1088" y="275" class="l">Push</text>
+<path d="M1010,340 L960,340 L960,262 L460,262 L460,282" class="d" marker-end="url(#ar)"/><text x="760" y="256" class="l">Image pull · SSH deploy</text>
+<path d="M480,470 L480,560 L760,560 L760,672" class="w" marker-end="url(#ar)"/><text x="600" y="552" class="l">API calls</text>
+<path d="M480,560 L600,560" class="w"/>
+</svg>

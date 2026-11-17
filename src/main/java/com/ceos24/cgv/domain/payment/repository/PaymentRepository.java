@@ -31,6 +31,10 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
 
     Optional<Payment> findFirstByReservationIdAndStatusIn(Long reservationId, Collection<PaymentStatus> statuses);
 
+    long countByStatus(PaymentStatus status);
+
+    long countByStatusAndApprovalStartedAtLessThanEqual(PaymentStatus status, LocalDateTime startedBefore);
+
     // 스케줄러가 결과 불명 결제를 토스에 묻는 기간(승인 시작 기준). 토스 조회가 이만큼 계속 실패하거나 토스에서 직접
     // 취소된 결제는 매분 다시 물어도 풀리지 않는다. 그 뒤는 관리자가 정리 API로 맞춘다.
     // 엔티티 상수로 두지 않은 이유는 PaymentCancelRepository.AUTO_RETRY_PERIOD와 같다.

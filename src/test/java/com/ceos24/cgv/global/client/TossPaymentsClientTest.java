@@ -6,6 +6,7 @@ import com.ceos24.cgv.global.client.TossConfirmResult.Unknown;
 import com.ceos24.cgv.global.client.TossLookupResult.Found;
 import com.ceos24.cgv.global.client.TossLookupResult.NotFound;
 import com.ceos24.cgv.global.client.TossLookupResult.Unavailable;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpMethod;
@@ -41,12 +42,55 @@ class TossPaymentsClientTest {
 
     private MockRestServiceServer server;
     private TossPaymentsClient client;
+    private SimpleMeterRegistry meterRegistry;
 
     @BeforeEach
     void setUp() {
         RestClient.Builder builder = RestClient.builder().baseUrl(BASE_URL);
         server = MockRestServiceServer.bindTo(builder).build();
-        client = new TossPaymentsClient(builder.build());
+        meterRegistry = new SimpleMeterRegistry();
+        client = new TossPaymentsClient(builder.build(), meterRegistry);
+    }
+
+    @Test
+    void 승인_결과를_분류별로_센다() {
+        // HTTP 상태로는 결과 불명과 거절을 가를 수 없어 이 분류가 대시보드에서 보는 유일한 근거다
+        server.expect(requestTo(CONFIRM_URL))
+                .andRespond(withSuccess(paymentJson("DONE"), MediaType.APPLICATION_JSON));
+        server.expect(requestTo(CONFIRM_URL))
+                .andRespond(withStatus(HttpStatus.FORBIDDEN).contentType(MediaType.APPLICATION_JSON)
+                        .body(errorJson("REJECT_CARD_COMPANY", "결제 승인이 거절되었습니다")));
+        server.expect(requestTo(CONFIRM_URL))
+                .andRespond(withStatus(HttpStatus.UNAUTHORIZED).contentType(MediaType.APPLICATION_JSON)
+                        .body(errorJson("UNAUTHORIZED_KEY", "인증되지 않은 시크릿 키 혹은 클라이언트 키 입니다.")));
+        server.expect(requestTo(CONFIRM_URL)).andRespond(withServerError());
+
+        for (int i = 0; i < 4; i++) {
+            client.confirm("tgen_test_key", ORDER_ID, 14000);
+        }
+
+        assertThat(confirmCount("approved")).isEqualTo(1);
+        assertThat(confirmCount("rejected")).isEqualTo(1);
+        assertThat(confirmCount("service_error")).isEqualTo(1);
+        assertThat(confirmCount("unknown")).isEqualTo(1);
+    }
+
+    @Test
+    void 취소_결과를_분류별로_센다() {
+        server.expect(requestTo(CANCEL_URL))
+                .andRespond(withStatus(HttpStatus.FORBIDDEN).contentType(MediaType.APPLICATION_JSON)
+                        .body(errorJson("NOT_CANCELABLE_AMOUNT", "취소 할 수 없는 금액 입니다.")));
+        server.expect(requestTo(CANCEL_URL)).andRespond(withServerError());
+
+        client.cancel("tgen_test_key", CANCEL_KEY, 14000, "사유");
+        client.cancel("tgen_test_key", CANCEL_KEY, 14000, "사유");
+
+        assertThat(meterRegistry.counter("cgv.toss.cancel", "result", "rejected").count()).isEqualTo(1);
+        assertThat(meterRegistry.counter("cgv.toss.cancel", "result", "unknown").count()).isEqualTo(1);
+    }
+
+    private double confirmCount(String result) {
+        return meterRegistry.counter("cgv.toss.confirm", "result", result).count();
     }
 
     @Test

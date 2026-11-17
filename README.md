@@ -4016,3 +4016,393 @@ jobs:
 - 입력값을 받을 수 없어 롤백처럼 "이 태그로 배포"를 표현할 수 없습니다.
 
 알림처럼 결과에 영향을 주지 않는 후속 작업에는 `workflow_run`이 적당합니다. **결과를 기다려야 하고 값을 넘겨야 하면 `workflow_call`, 결과와 무관하게 이어 붙이기만 하면 `workflow_run`**으로 정리했습니다.
+
+## 모니터링 — Prometheus + Grafana
+
+### 무엇을 보고 싶었나
+
+로그는 "무슨 일이 있었나"를 한 건씩 알려 주지만, "지금 괜찮은가", "언제부터 나빠졌나"는 답하지 못합니다. 이 프로젝트에서 특히 추이로 봐야 하는 것은 셋입니다.
+
+1. **커넥션 풀이 마르는가.** 좌석 경합으로 막힌 요청은 커넥션을 쥔 채 잠금을 기다립니다. 그래서 `innodb_lock_wait_timeout=3`, `connection-timeout: 3000`으로 짧게 잡아 두었는데, 이 설정이 실제로 버티는지는 숫자로 봐야 압니다.
+2. **느린 쪽이 우리인가 토스인가.** 토스 읽기 타임아웃이 60초라 토스가 느려지면 요청 스레드가 그만큼 묶입니다.
+3. **결과 불명 결제가 쌓이는가.** 승인 요청은 정상 응답으로 끝나도 결과를 모르는 결제는 DB의 `IN_PROGRESS` 행으로만 남습니다. HTTP 지표에는 드러나지 않습니다.
+
+### 방안 비교
+
+| 방안 | 장점 | 단점 |
+|---|---|---|
+| **Prometheus + Grafana** (Actuator + Micrometer) | 무료. 의존성 두 개로 HTTP·JVM·Hikari 지표가 자동으로 나온다. PromQL로 p95 등을 자유롭게 계산. 대시보드를 JSON으로 저장소에 둘 수 있다 | 수집기·대시보드를 직접 띄우고 관리한다. 장기 보관·이중화는 직접 해결. 로그는 별도 |
+| AWS CloudWatch | EC2·RDS 기본 지표가 이미 수집된다. 알람·로그까지 일체형 | 커스텀 지표가 개당 월 과금이라 Micrometer 지표 수십~수백 개를 보내면 크레딧이 든다. 쿼리·시각화가 Grafana보다 약하다 |
+| Grafana Cloud | 무료 티어로 서버 없이 운영 지표까지 본다 | 외부 계정과 EC2 에이전트가 필요하다. 한도를 넘으면 과금 |
+| Datadog / New Relic | 설치만 하면 APM·추적·알림까지 완성형 | 비싸다. 무엇을 왜 재는지 감춰져 학습 목적과 맞지 않는다 |
+| Pinpoint / Scouter | 코드 수정 없이 호출 트리 추적 | Pinpoint는 HBase 등 인프라가 무겁다. 서버 한 대에는 과하다 |
+| Spring Boot Admin | 설치가 가장 간단하다 | 시계열을 저장하지 않아 "지난 1시간 추이"를 못 본다 |
+
+**Prometheus + Grafana를 골랐습니다.** Spring Boot가 공식 지원해 위 1번(Hikari)이 코드 없이 나오고, 돈이 들지 않으며, 이미 있는 `docker-compose.yml`에 서비스 두 개만 붙이면 됩니다. 나중에 운영 서버까지 보려면 같은 `/actuator/prometheus`를 Grafana Cloud로 보내면 되므로 지금 작업이 버려지지 않습니다.
+
+### 적용 범위 — 로컬만
+
+```bash
+docker compose up -d --build
+# Grafana  http://localhost:3001  (admin / admin, .env의 GRAFANA_ADMIN_PASSWORD로 변경)
+# Prometheus http://localhost:9090
+```
+
+| 파일 | 역할 |
+|---|---|
+| `monitoring/prometheus.yml` | `app:8080/actuator/prometheus`를 15초마다 수집 |
+| `monitoring/grafana/provisioning/datasources/prometheus.yml` | 데이터소스를 고정 uid로 자동 등록 |
+| `monitoring/grafana/provisioning/dashboards/cgv.yml` | 아래 JSON을 `CGV` 폴더에 자동 등록 |
+| `monitoring/grafana/dashboards/cgv.json` | 대시보드 원본 |
+
+![Prometheus가 app:8080/actuator/prometheus를 수집 중 (UP)](docs/images/monitoring/01-prometheus-target.png)
+
+운영 EC2에는 띄우지 않았습니다. 메모리가 작은 인스턴스에 Prometheus·Grafana까지 올리면 앱이 쓸 메모리를 뺏고, 크레딧을 아끼는 방침과도 맞지 않습니다. 운영 프로필은 `/actuator/health`만 노출합니다. 운영 서버는 8080을 그대로 외부에 열어 두고 있어, 메트릭(URI별 호출량·에러율·JVM 상태)을 열면 누구나 볼 수 있기 때문입니다.
+
+대시보드는 화면에서 만들지 않고 JSON으로 저장소에 둡니다. 화면에서 만든 대시보드는 컨테이너를 지우면 사라지고, 누가 띄우느냐에 따라 화면이 달라집니다. 데이터소스 uid를 `prometheus`로 고정한 것도 같은 이유입니다. 화면에서 추가하면 uid가 매번 달라져 JSON이 데이터소스를 찾지 못합니다.
+
+### 대시보드 구성 — 증상에서 원인으로
+
+위에서 아래로 내려가며 "장애가 났나 → 왜 났나"를 좁히도록 배치했습니다. 각 패널의 ⓘ 툴팁에 "이 패널을 왜 보는지"를 적어 두었습니다.
+
+![대시보드 전체 — 1행 사용자 체감부터 5행 JVM까지](docs/images/monitoring/05-dashboard-overview.png)
+
+![패널 툴팁 — 커넥션 획득·점유 시간을 왜 보는지](docs/images/monitoring/06-panel-tooltip.png)
+
+| 행 | 패널 | 왜 |
+|---|---|---|
+| **1. 사용자 체감** | 초당 요청, 5xx 비율, 전체 p95, 처리 중인 요청 / URI별 요청·상태 코드·p95 | 가장 먼저 "지금 장애인가"에 답합니다. 평균 대신 p95를 씁니다. 평균은 느린 소수 요청을 가립니다. 4xx는 좌석 경합(409)·토큰 만료(401)처럼 업무상 정상인 응답이 많아 5xx와 나눠 봅니다 |
+| **2. DB 커넥션 풀** | active·idle·**pending**·max, 획득·점유 최대 시간, 획득 실패 횟수 | 이 프로젝트의 가장 큰 위험입니다. pending이 0 위로 오르면 풀이 바닥난 것이고, 5xx보다 먼저 오는 신호입니다. 점유 시간이 3초 가까이 늘면 잠금 대기가 길어지고 있다는 뜻입니다 |
+| **3. 외부 API(토스)** | 토스 API별 p95, API별 응답 상태 | 1행의 결제 API가 느릴 때 이 값도 같이 오르면 원인은 토스입니다. 401·429는 회원 문제가 아니라 키 설정·호출 한도 문제입니다 |
+| **4. 결제 정합성** | IN_PROGRESS 결제 수, 정리 기한 지난 결제 수, 승인·취소 결과, 정리 스케줄러 실행 | HTTP 지표로는 보이지 않는 돈 문제입니다. 결과 불명이 쌓이는지, 스케줄러가 실제로 돌고 있는지를 봅니다 |
+| **5. JVM** | 힙, GC 정지, 스레드 상태, CPU | 1~4의 원인이 메모리·GC·CPU인지 마지막으로 확인합니다 |
+
+로컬에서 조회 API(200), 없는 영화 조회(404), 토큰 없는 예매 조회(401)를 섞어 흘려 확인했습니다.
+
+![1행 — 상태 코드별로 200·401·404가 나뉘고, 401은 uri=UNKNOWN으로 따로 잡힌다](docs/images/monitoring/02-row1-traffic.png)
+
+![2행 — 정상일 때 pending 0, 획득 실패 0. 점선이 풀 최대치(20)](docs/images/monitoring/03-row2-connection-pool.png)
+
+![4행 — 결제가 없어 결과 불명 0, 정리 스케줄러는 1분마다 SUCCESS](docs/images/monitoring/04-row4-payment.png)
+
+토스 호출(3행)과 승인·취소 결과는 실제 결제를 하지 않아 비어 있습니다.
+
+### 자동으로 나오지 않아 직접 붙인 지표
+
+| 지표 | 어디서 | 왜 |
+|---|---|---|
+| `http.client.requests` (토스) | `TossPaymentsConfig`에서 `RestClient`에 `ObservationRegistry` 연결 | `RestClient.builder()`로 직접 만든 클라이언트는 관측 대상이 아닙니다. Boot 4는 `RestClient.Builder` 자동 구성이 별도 모듈이라, 의존성을 늘리는 대신 레지스트리만 연결했습니다. URI는 템플릿(`/v1/payments/{paymentKey}`)으로 묶여 결제마다 시계열이 생기지 않습니다 |
+| `cgv.toss.confirm` / `cgv.toss.cancel` (`result` 태그) | `TossPaymentsClient` | HTTP 상태로는 결과 불명과 거절을 가를 수 없습니다. 500과 `ALREADY_PROCESSED_PAYMENT`(400)는 상태가 달라도 둘 다 결과 불명입니다. 클라이언트가 이미 내린 분류를 그대로 셉니다 |
+| `cgv.payments.in.progress` / `.overdue` | `PaymentMetricsConfig` (게이지) | 수집할 때마다 DB에서 다시 셉니다. 이벤트마다 올리고 내리는 방식은 재시작하면 0부터 시작해 실제 남은 건수와 어긋납니다. 승인 직후의 IN_PROGRESS는 정상이므로, 정리 시작 시각(2분)이 지난 건만 따로 셉니다 |
+
+정리 스케줄러 실행(`tasks.scheduled.execution`)은 Boot가 `@Scheduled`를 자동으로 관측해 코드 없이 나옵니다.
+
+### 그 밖의 선택
+
+| 항목 | 이유 |
+|---|---|
+| `percentiles-histogram` (서버·클라이언트 요청) | 버킷을 내보내야 Prometheus가 p95·p99를 계산할 수 있습니다. 앱이 계산한 백분위(`percentiles`)는 인스턴스 여러 대를 합칠 수 없습니다 |
+| 수집 주기 15초 | 기본값 1분이면 3초짜리 커넥션 타임아웃 몰림이 한 점에 묻힙니다 |
+| Grafana 포트 3001 | 3000은 프런트 개발 서버 기본 포트이자 CORS 기본 허용 출처입니다 |
+| `/actuator/health`, `/actuator/prometheus` permitAll | Prometheus는 토큰 없이 수집합니다. 노출 여부는 프로필별 `management.endpoints` 설정이 정합니다 |
+| "처리 중인 요청"에서 1을 뺌 | 수집 요청 자신이 처리 중으로 잡혀 트래픽이 없어도 1로 보였습니다. 처리 중에는 URI가 정해지지 않아(`UNKNOWN`) URI로 걸러낼 수 없습니다 |
+| 커넥션 상태의 max를 점선으로 | Hikari는 `minimumIdle` 기본값이 풀 크기라 idle과 max가 둘 다 20으로 겹칩니다. max를 채운 면으로 그리면 idle이 가려집니다 |
+| 빈 구간은 선을 잇지 않음 | 트래픽이 없던 구간을 이으면 그 사이에도 요청이 있었던 것처럼 대각선이 그어집니다 |
+
+### 한계
+
+- 운영 서버 지표는 수집하지 않습니다. 붙이려면 관리 포트를 분리(`management.server.port`)하고 보안 그룹으로 수집기만 허용한 뒤, Grafana Cloud 같은 외부 수집기로 보내는 것이 다음 단계입니다.
+- 알림(Alertmanager)은 두지 않았습니다. 로컬에서는 받을 사람이 없습니다. 운영에 붙인다면 "정리 기한 지난 결제가 5분 넘게 0이 아님", "커넥션 획득 실패 1건 이상"이 첫 알림 후보입니다.
+- 인증 필터에서 401로 끝난 요청은 `uri=UNKNOWN`으로 묶입니다. 컨트롤러까지 가지 않아 URI 템플릿이 정해지지 않기 때문입니다.
+- 지표는 "얼마나"를 알려 주지만 "어떤 요청이"는 알려 주지 않습니다. 그 연결은 로그가 맡습니다(아래 「로그 — traceId와 구조화」).
+
+## 로그 — traceId와 구조화
+
+### 무엇이 문제였나
+
+| 문제 | 결과 |
+|---|---|
+| 요청을 묶을 ID가 없다 | `[Toss] 승인 결과 불명` 다음 줄에 `[Payment] 토스 승인 후 반영 실패`가 찍혀도, 동시 요청이 섞이면 두 줄이 같은 결제인지 알 수 없습니다 |
+| 모든 `CustomException`을 WARN으로 남긴다 | 좌석 경합(409)·없는 영화(404)·토큰 만료(401)처럼 업무상 정상인 응답이 경고로 쌓여, 정말 봐야 할 경고가 묻힙니다 |
+| `[NotReadable]`이 예외 메시지를 그대로 남긴다 | JSON 파서의 메시지에는 읽던 본문 조각이 섞여 나옵니다. 회원가입·로그인 요청이면 비밀번호가 로그에 남을 수 있습니다 |
+| 운영 로그가 사람용 한 줄 텍스트다 | 수집기(Loki 등)로 보내면 레벨·로거·traceId를 정규식으로 다시 뽑아야 합니다 |
+
+### traceId — Micrometer Tracing
+
+| 방안 | 장점 | 단점 |
+|---|---|---|
+| 직접 만든 필터로 MDC에 요청 ID | 의존성이 없고 동작이 코드에 다 보입니다 | HTTP 요청에만 붙습니다. 정리 스케줄러 실행에는 ID가 없고, 스레드를 넘기면 직접 옮겨야 합니다 |
+| **Micrometer Tracing (Brave)** | 이미 쓰고 있는 `ObservationRegistry`에 얹혀, HTTP 요청·`@Scheduled` 실행·토스 `RestClient` 호출이 모두 같은 방식으로 traceId를 받습니다 | 의존성 두 개가 늘고, 토스로 가는 요청에 `traceparent` 헤더가 붙습니다 |
+
+**Micrometer Tracing을 골랐습니다.** 결과 불명 결제는 요청 → 토스 호출 → (2분 뒤) 정리 스케줄러로 이어지는데, 직접 만든 필터로는 이 중 앞부분만 덮을 수 있습니다. 모니터링 때 토스 `RestClient`에 `ObservationRegistry`를 연결해 둔 덕에 토스 호출 로그도 코드 변경 없이 같은 traceId를 받습니다.
+
+```gradle
+implementation 'org.springframework.boot:spring-boot-micrometer-tracing-brave'
+implementation 'io.micrometer:micrometer-tracing-bridge-brave'
+```
+
+Boot 4의 `spring-boot-micrometer-tracing-brave`는 자동 구성만 담고 있어서 Brave 브리지를 따로 넣어야 traceId가 생깁니다. span을 받아 줄 곳(Zipkin 등)은 두지 않았습니다. 서버 한 대라 분산 추적을 볼 일이 없고, 로그를 묶는 ID만 필요하기 때문입니다.
+
+의존성만 넣으면 Boot가 로그 패턴에 `[traceId-spanId]` 칸을 붙입니다.
+
+```
+WARN ... [6afc4fe549d09d2bafb73de4bb03b46a-9514c9d4e8c577bb] c.c.c.g.e.GlobalExceptionHandler : [NotReadable] ...
+WARN ... [6afc4fe604063eb4b49957453fff9b1c-59f908d7405d8bd5] c.c.c.g.e.GlobalExceptionHandler : [NotReadable] ...
+```
+
+### 로그 레벨 — WARN은 사람이 봐야 하는 일만
+
+| 대상 | 전 | 후 | 이유 |
+|---|---|---|---|
+| 4xx `CustomException` (409·404·401 등) | WARN | DEBUG | 업무상 정상 응답입니다. 건수는 대시보드 1행(`http.server.requests`의 `status` 태그)이 셉니다 |
+| 5xx 계열 `CustomException` (토스 장애 503, 결과 불명 504) | WARN | WARN | 사람이 확인해야 하는 일입니다. 판단은 `ErrorCode`의 `HttpStatus.is5xxServerError()`로 합니다 |
+| `TypeMismatch` / `MissingParam` / `NotReadable` | WARN | DEBUG | 셋 다 잘못된 요청(400)입니다 |
+| 처리하지 못한 예외 | ERROR | ERROR | 그대로 |
+
+`CustomException` 로그에서 메시지는 뺐습니다. `ErrorCode` 이름과 같은 내용이라 중복이었습니다.
+
+### 요청 본문 노출 제거
+
+```java
+// 전: 파서가 읽던 본문 조각까지 남는다
+log.warn("[NotReadable] {}", e.getMessage());
+// 후: 원인 예외의 종류만 남긴다
+log.debug("[NotReadable] {}", e.getMostSpecificCause().getClass().getSimpleName());
+```
+
+이제 로그에는 `[NotReadable] UnexpectedEndOfInputException`처럼 무엇이 잘못됐는지만 남습니다. 요청을 다시 재현해야 하면 traceId로 앞뒤 로그를 찾습니다.
+
+### 운영 로그는 JSON(ECS)
+
+prod 프로필에만 Boot 내장 구조화 로그를 켰습니다. 의존성은 추가하지 않았습니다. 로컬은 사람이 읽기 좋은 텍스트를 그대로 씁니다.
+
+```yaml
+logging:
+  structured:
+    format:
+      console: ecs
+```
+
+```json
+{"@timestamp":"2026-11-17T13:15:57.010482600Z","log":{"level":"DEBUG","logger":"com.ceos24.cgv.global.exception.GlobalExceptionHandler"},"process":{"pid":40236,"thread":{"name":"Test worker"}},"message":"[NotReadable] UnexpectedEndOfInputException","traceId":"6afc538c3af28851c41f162f045985fe","spanId":"b06fefcbf69a7cd1","ecs":{"version":"8.11"}}
+```
+
+ECS(Elastic Common Schema)를 고른 이유는 필드 이름이 공개 표준이라 Loki·Elasticsearch·CloudWatch 어느 쪽으로 보내도 그대로 쓸 수 있어서입니다. 시각은 UTC(`Z`)로 찍힙니다.
+
+운영 서버는 systemd로 앱을 띄우므로 로그는 journald에 쌓입니다. 사람이 볼 때는 `jq`를 거칩니다.
+
+```bash
+journalctl -u cgv -o cat | jq                                   # 보기 좋게
+journalctl -u cgv -o cat | jq -c 'select(.log.level=="WARN" or .log.level=="ERROR")'
+journalctl -u cgv -o cat | jq -c 'select(.traceId=="<traceId>")'   # 한 요청의 로그만
+```
+
+### 확인
+
+| 테스트 | 확인하는 것 |
+|---|---|
+| `TraceIdLoggingTest` | 실제 필터 체인을 거친 요청 두 번의 로그 줄에 traceId가 붙고, 두 traceId가 서로 다르다 |
+| `GlobalExceptionHandlerLogTest` | 4xx는 DEBUG, 5xx 계열은 WARN으로 남고, `[NotReadable]` 로그에 본문 조각이 남지 않는다 |
+
+ECS 출력은 테스트에서 같은 설정을 켜고 한 번 확인한 뒤 지웠습니다. 테스트용 `application.yaml`이 main 설정을 통째로 가리기 때문에, prod 프로필 설정 자체를 테스트로 검증할 수는 없습니다.
+
+### 한계
+
+- 로그 수집기가 없습니다. 로그는 EC2의 journald에만 있어 인스턴스가 사라지면 같이 사라집니다. JSON으로 바꾼 것은 수집기를 붙일 때를 위한 준비입니다.
+- traceId를 응답에 싣지 않습니다. 사용자가 "결제가 이상하다"고 문의해도 해당 요청을 바로 찾을 수 없고, 시각·orderId로 찾아야 합니다. 응답 헤더로 traceId를 돌려주는 것이 다음 후보입니다.
+- 앱 기동·종료 로그처럼 요청이나 스케줄 실행 밖에서 찍히는 로그에는 traceId가 없습니다.
+
+## 부하 테스트 — K6
+
+### 어디가 병목이 될까 — 예매 오픈 순간
+
+실제로 요청이 한꺼번에 몰리는 때는 인기 영화의 예매가 열리는 순간입니다. 이때 요청이 몰리는 지점을 코드에서 골랐습니다.
+
+| 후보 | 코드상 근거 |
+|---|---|
+| **좌석 선점** `POST /api/reservations` | 요청 하나가 만료 선점 정리 → 점유 확인 → 좌석 INSERT를 한 트랜잭션에서 합니다. 같은 좌석을 노린 요청은 유니크 인덱스에서 락을 기다리며 커넥션을 쥔 채 최대 3초 머뭅니다. 풀은 20개입니다 |
+| **좌석 배치도 조회** `GET /api/screenings/{id}/seats` | 예매가 열리면 같은 회차를 계속 새로 고칩니다. 캐시가 없어 요청마다 점유 좌석 조인 쿼리가 나갑니다 |
+
+### 로컬에서 재는 의미와 한계
+
+운영 EC2에는 부하를 걸지 않았습니다. 운영 DB에 부하용 사용자·예매가 쌓이고(`ddl-auto: update`라 재시작해도 남음), 운영은 메트릭을 열지 않아 원인을 볼 수 없기 때문입니다.
+
+로컬 결과로 답할 수 있는 것은 **무엇이 먼저 바닥나는가, 무너질 때 어떻게 무너지는가**입니다. 풀 크기(20), 락 대기 한도(3초)는 운영과 같아서 이 순서는 운영에서도 같습니다. 같은 기계에서 개선 전후를 비교하는 기준선으로도 씁니다.
+
+답할 수 없는 것은 **운영의 절대 용량**입니다. 특히 로컬 MySQL은 왕복이 RDS보다 짧아 커넥션을 쥐는 시간이 짧게 나옵니다. 운영에서는 풀이 아래 수치보다 **더 일찍** 마른다고 봐야 합니다.
+
+왜곡을 줄이려고 컨테이너마다 코어를 나눠 고정했습니다. 앱·MySQL·k6가 같은 코어를 두고 다투면 k6 자신의 부하가 앱 지연으로 섞입니다.
+
+| 컨테이너 | 코어 (i7-1260P, Docker 16 CPU) | 비고 |
+|---|---|---|
+| 앱 | 0-1, 2 CPU / 2GB | t3.small 수준 가정. `APP_CPUSET`·`APP_CPUS`·`APP_MEMORY`로 변경 |
+| MySQL | 2-3 | |
+| k6 | 4-11 | |
+| Prometheus·Grafana | 12-15 | |
+
+### 환경 구성
+
+| 파일 | 역할 |
+|---|---|
+| `loadtest/docker-compose.loadtest.yml` | 기본 compose 위에 얹는다. 앱을 `loadtest` 프로필·더미 토스 키·코어 고정으로 띄우고, k6 컨테이너(`profiles: [k6]`)를 더한다 |
+| `application.yaml`의 `loadtest` 프로필 | SQL·바인딩 로그를 운영과 같게 끈다(켜 두면 로그 쓰기가 병목처럼 보인다). 톰캣 스레드 지표를 켠다. 부팅마다 시드를 넣는다 |
+| `db/loadtest-data.sql` | 사용자 1,000명(`loadtest0001`~, 같은 BCrypt 해시), IMAX 회차 100개(1001~1100), 132석이 팔린 회차 2001. `LoadtestDataTest`가 실제 MySQL 스키마에 넣어 확인한다 |
+| `loadtest/prometheus.loadtest.yml` | 수집 주기 5초. 15초면 1분짜리 단계가 점 4개로 뭉개진다 |
+| `docker-compose.yml`의 Prometheus | `--web.enable-remote-write-receiver`. k6가 결과를 밀어 넣는 통로 |
+| `monitoring/grafana/dashboards/cgv-loadtest.json` | 대시보드 「CGV 부하 테스트」. 위는 k6가 본 결과, 아래는 같은 시간의 앱 내부 자원 |
+| `loadtest/scripts/` | `smoke.js`(환경 점검), `seat-hold.js`, `seat-map.js`, `lib/common.js` |
+
+```bash
+docker compose -f docker-compose.yml -f loadtest/docker-compose.loadtest.yml up -d --build
+docker compose -f docker-compose.yml -f loadtest/docker-compose.loadtest.yml run --rm k6 run /scripts/smoke.js
+docker compose -f docker-compose.yml -f loadtest/docker-compose.loadtest.yml run --rm k6 run /scripts/seat-hold.js
+# 시나리오 사이에는 앱을 재시작해 데이터를 처음 상태로 돌린다(ddl-auto: create + 시드)
+docker compose -f docker-compose.yml -f loadtest/docker-compose.loadtest.yml restart app
+# Grafana http://localhost:3001 → CGV → CGV 부하 테스트
+```
+
+판정 기준은 `http_req_failed`가 아니라 **5xx 0건**(`server_errors`)입니다. 좌석 경쟁에서 진 409는 정상 응답이라 실패로 세면 안 됩니다.
+
+### 시나리오 설계
+
+**좌석 선점** — 초당 20 → 50 → 100 → 200회 시도(각 1분)로 올립니다.
+- 80%는 지금 열린 인기 회차, 20%는 나머지 회차로 갑니다. 좌석은 가운데·약간 뒤쪽을 선호하도록 고르고(균등하게 고르면 경합이 실제보다 약하게 나옵니다), 2석씩 요청합니다.
+- 409(이미 선택됨)를 받으면 실제 사용자처럼 다른 좌석으로 최대 2번 더 누릅니다. 그래서 실제 요청 수는 시도 수보다 많습니다.
+- **인기 회차는 10초마다 바뀝니다.** 고정된 회차 몇 개만 쓰면 1분 안에 매진돼, 나머지 구간은 이미 팔린 좌석을 거절하는 가벼운 경로만 재게 됩니다. 10초마다 새 회차가 "오픈"되는 셈입니다.
+- 같은 시간에 무관한 `GET /api/movies`를 초당 5건 찔러, 경합이 다른 API까지 번지는지 봅니다(probe).
+- 선점 결과는 `created` / `already_reserved`(경쟁에서 짐) / `conflict`(락 대기 3초 초과) / `other`로 나눠 셉니다.
+
+**좌석 배치도 조회** — 132석이 팔린 회차 하나에 초당 50 → 200 → 500 → 1000건(각 1분)을 보냅니다.
+
+### 결과
+
+![부하 테스트 대시보드 — 23:21~23:25 좌석 선점, 23:27~23:31 배치도 조회](docs/images/loadtest/01-dashboard-overview.png)
+
+23:33 이후 구간은 해석에서 뺍니다. 범례의 `http://app:8080/...` 항목은 요청 이름 태그 없이 보낸 점검(smoke) 요청입니다.
+
+**좌석 선점**
+
+| 단계 (시도/초) | 실제 선점 요청/초 | 서버 p95 | 커넥션 점유 평균 | 앱 CPU | 풀 대기(pending) |
+|---|---|---|---|---|---|
+| 20 | 약 40 | 20~40ms | 8~9ms | 23~35% | 0 |
+| 50 | 약 86 | 20ms | 6ms | 36% | 0 |
+| 100 | 약 120 | 20~150ms | 6~42ms | 39~92% | 0 |
+| **200** | **약 250** | **2.3~2.9s** | **47~75ms** | **97~99%** | **약 180** |
+
+| 합계 | 값 |
+|---|---|
+| 선점 결과 | created 5,016 / already_reserved 40,659 / **conflict 0** / other 757 |
+| 5xx | **770건 (1.61%)** — 전부 커넥션 획득 3초 초과 |
+| `/api/movies` probe p95 | **3.27s** (평소 10ms대) |
+| 처리 못 하고 버린 시도 | 6,536건 |
+
+**좌석 배치도 조회**
+
+| 단계 (요청/초) | k6 p95 | 앱 CPU | 풀 active / pending |
+|---|---|---|---|
+| 50 | 24~44ms | 20% | 0~1 / 0 |
+| 200 | 12~15ms | 30~40% | 1~2 / 0 |
+| 500 | 약 70ms | 80~90% | 5~15 / 0 |
+| 1000으로 올리는 순간 | 3.4s | 100% | 20 / **180** (5xx 1건) |
+| 1000 유지 | — | 80~90% | 5~12 / 0 |
+
+전체 116,306건 중 5xx 1건이었습니다.
+
+### 해석
+
+**1. 좌석 선점의 병목은 좌석 락이 아니라 CPU입니다.** 락 대기 초과(`conflict`)는 0건이었습니다. 무너지는 순서는 이렇습니다.
+
+1. 초당 약 250건에서 앱 CPU(2코어)가 98%에 닿는다
+2. 요청 하나하나가 느려져, 커넥션을 쥐는 시간이 6ms → 75ms로 길어진다
+3. 풀 20개가 모두 쓰이고 대기가 180까지 쌓인다. 톰캣 스레드 200개가 모두 바빠진다
+4. 3초 안에 커넥션을 못 받은 요청이 실패한다
+
+커넥션 풀 고갈은 원인이 아니라 **CPU 포화의 결과**입니다. 풀만 늘리면 CPU를 더 다투는 스레드가 늘 뿐입니다.
+
+**2. 실패가 500으로 나갑니다.** 커넥션 획득 실패는 `CannotCreateTransactionException`으로 올라오는데, `GlobalExceptionHandler`가 따로 처리하지 않아 `[Unhandled]` 500이 됩니다. 이 상황은 "서버가 잠깐 바쁘니 다시 시도하라"(503)가 맞습니다. 500 770건마다 스택 트레이스가 ERROR로 찍혀, 가장 바쁜 순간에 로그 비용까지 더해집니다.
+
+**3. 좌석 경합이 무관한 API까지 끌어내립니다.** 풀이 마르자 커넥션이 필요한 `/api/movies`가 p95 10ms대에서 3.27s가 됐습니다. 예매 오픈 순간 영화 목록·지점 조회까지 같이 느려진다는 뜻입니다. 세션 2에서 동시 30건으로 확인했던 "풀이 인질로 잡히지 않는다"는 그 규모에서만 맞았습니다.
+
+**4. 배치도 조회는 정상 상태보다 급증하는 순간이 약합니다.** 초당 1000건을 계속 받는 것은 버텼지만, 500 → 1000으로 올라가는 순간 요청이 한꺼번에 밀려 풀이 잠깐 바닥났습니다. 같은 2코어로 선점의 약 4배를 처리하므로, 읽기 경로보다 쓰기 경로가 먼저 한계에 닿습니다.
+
+### 개선 후보 (이번에는 구현하지 않음)
+
+| 후보 | 기대 효과 |
+|---|---|
+| 커넥션 획득 실패(`CannotCreateTransactionException`)를 503으로 응답 | 실패 의미를 바로잡고, 500 스택 트레이스 로그 폭주를 없앤다 |
+| 선점 요청 한 건의 CPU 비용 분석 (프로파일링) | 같은 코어로 더 많은 선점을 처리한다. 무너지는 지점이 CPU이므로 가장 직접적인 개선 |
+| 매진된 회차는 DB에 가기 전에 거절 | 실패 요청 대부분(already_reserved 40,659건)이 매진 회차에 대한 재시도였다 |
+| 배치도 조회 짧은 캐시(1~2초) | 급증 순간의 DB·CPU 부담을 줄인다. 좌석이 1~2초 늦게 보이는 것은 선점 시 유니크 제약이 막는다 |
+| 대기열(입장 순번) | 예매 오픈 순간 동시에 들어오는 수 자체를 제한한다 |
+
+## 수담(SUDAM) 운영 설계 — 관측·알림 합의
+
+수담은 "선생님은 수업만, 나머지는 수담이"를 내건 과외 운영 앱입니다. 흐름은 **가입 → 관리자 입금 승인 → 수업 뒤 30초 기록 → 회차·정산 계산 → 학부모 카톡 공유**입니다. 사용자는 선생님(앱), 학부모·학생(카카오톡 카드와 링크), 수담 관리자입니다.
+
+### 1. 아키텍처 구조도
+
+![수담 서버 아키텍처](docs/images/sudam/architecture.svg)
+
+| 구성 | 역할 |
+|---|---|
+| Nginx | HTTPS 종료, API 리버스 프록시. 앱은 루프백(127.0.0.1:8080)에만 열려 외부에서 직접 접근할 수 없다 |
+| Spring Boot 4.1.1 API (EC2, Docker Compose로 Redis와 함께 실행) | 카카오 OAuth2 로그인 + JWT, 수업 기록, 정산·리포트, 학부모 공유 링크, 정산일 다음 날 09:00 스케줄러 |
+| MySQL 8 (RDS) | 회원·과외·회차·수업 기록·정산 리포트 |
+| Redis | 리프레시 토큰 저장소 |
+| 카카오 API | OAuth2 로그인, 학부모 정산 카드·학생 숙제 카드 발송 |
+| 관측 | EC2의 Grafana Alloy가 메트릭을 긁고 로그를 읽어 Grafana Cloud(Prometheus·Loki·Grafana)로 보낸다. 알림은 Grafana Alerting → Slack |
+| GitHub Actions + Docker Hub | 빌드한 이미지를 Docker Hub에 올리고, EC2에 compose 파일을 복사한 뒤 SSH로 pull·재기동 |
+
+### 2. SLI / SLO
+
+사용자가 실제로 겪는 일을 기준으로 골랐습니다. 측정 기간은 28일 롤링입니다.
+
+| 사용자 여정 | SLI | SLO |
+|---|---|---|
+| 수업 기록 저장 ("30초 기록") | 5xx가 아닌 응답 비율 / p95 응답 시간 | 99.9% / 300ms 이하 |
+| 정산·리포트 조회 | 5xx가 아닌 응답 비율 / p95 응답 시간 | 99.5% / 1s 이하 |
+| 학부모 공유 링크 열람 | 5xx가 아닌 응답 비율 | 99.5% |
+| 정산 리포트 자동 발송 | 정산일 다음 날 09:30까지 발송 완료된 비율 | 99% |
+| 카카오 카드 발송 | 발송 요청 중 성공 비율 (재시도 포함) | 99% |
+| 로그인 (카카오 OAuth2) | 5xx가 아닌 응답 비율 | 99.9% |
+
+4xx(잘못된 입력, 권한 없음)는 사용자 실수라 SLI 실패로 세지 않습니다. 수업 기록 SLO가 가장 높은 이유는, 수업 직후에 기록을 못 하면 회차와 정산이 모두 틀어지기 때문입니다.
+
+### 3. Alert 기준
+
+증상(SLO 위반 속도) 기준으로 겁니다. 원인 지표(CPU 등)만으로는 사람을 깨우지 않습니다.
+
+| 알림 | 조건 | 등급 |
+|---|---|---|
+| 에러 버짓 빠른 소진 | 1시간 소진 속도 14.4배 **그리고** 5분 소진 속도 14.4배 | 긴급 (즉시 대응) |
+| 에러 버짓 느린 소진 | 6시간 소진 속도 6배 **그리고** 30분 소진 속도 6배 | 경고 (근무 시간 대응) |
+| 정산 발송 지연 | 정산일 다음 날 09:30에 미발송 건 1건 이상 | 긴급 |
+| 카카오 발송 실패 | 10분간 실패율 5% 초과 | 경고 |
+| 입금 승인 대기 적체 | 승인 대기 24시간 초과 건 1건 이상 | 경고 (관리자 채널) |
+| DB 커넥션 풀 | 대기(pending) 1분 이상 0 초과 | 경고 |
+| Redis 연결 실패 | 1분간 연결 오류 1건 이상 (토큰 재발급 불가) | 긴급 |
+| 인스턴스 다운 | 헬스 체크 2분 연속 실패 | 긴급 |
+
+알림은 Slack 채널로 보내고, 알림 메시지에 대시보드 링크와 대응 문서(runbook) 링크를 함께 넣습니다.
+
+### 4. 수집할 Telemetry
+
+| 종류 | 항목 | 수단 |
+|---|---|---|
+| 메트릭 | HTTP 요청 수·상태 코드·지연 히스토그램(URI별), JVM·GC, Hikari 커넥션 풀, 톰캣 스레드, Redis 명령 지연 | Actuator + Micrometer → Prometheus |
+| 업무 메트릭 | `sudam.lesson.recorded`, `sudam.settlement.created`/`sent`, `sudam.kakao.send{result}`, `sudam.deposit.pending`(게이지) | Micrometer 커스텀 지표 |
+| 로그 | 애플리케이션 로그(JSON), 외부 API 호출 결과, 스케줄러 실행 결과 | ECS JSON(컨테이너 stdout) → Grafana Alloy → Loki |
+| 추적 | 요청마다 traceId (HTTP·스케줄러·외부 호출 공통) | Micrometer Tracing |
+
+메트릭 태그에는 회원 id·전화번호처럼 값이 무한히 늘어나는 것은 넣지 않습니다. 시계열이 폭증하고 개인정보가 메트릭에 남습니다.
+
+### 5. 로깅 컨벤션
+
+| 항목 | 규칙 |
+|---|---|
+| 형식 | 운영은 JSON(ECS), 로컬은 텍스트. 모든 로그에 `traceId` |
+| 메시지 | `[도메인] 사건 key=value ...` 예: `[Settlement] 정산 발송 실패 settlementId=12 reason=KAKAO_5XX` |
+| 레벨 | ERROR: 사람이 지금 봐야 함(돈·데이터 불일치, 처리 못 한 예외) / WARN: 곧 봐야 함(외부 API 5xx, 재시도 소진) / INFO: 업무 사건(정산 생성·발송, 입금 승인) / DEBUG: 4xx 등 정상 실패 |
+| 금지 | 비밀번호, 토큰, 전화번호·이름 원문, 계좌번호, 요청 본문 전체. 필요하면 id나 마스킹 값(`010-****-1234`)만 |
+| 식별자 | 사람 대신 id로 남긴다(`userId`, `lessonId`, `settlementId`) |
+| 예외 | 스택 트레이스는 ERROR에서만. 같은 예외를 계층마다 중복 로그하지 않는다 |
