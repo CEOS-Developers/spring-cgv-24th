@@ -1,0 +1,70 @@
+name: cgv-monitoring
+
+# 모니터링 전용 EC2에서 실행한다. app 서버의 Alloy가 메트릭(remote write)과 로그(push)를 보내오고, 여기서는 받기만 한다
+services:
+  prometheus:
+    image: prom/prometheus:v3.15.1
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION_TIME:-15d}
+      - --storage.tsdb.retention.size=${PROMETHEUS_RETENTION_SIZE:-2GB}
+      - --web.enable-remote-write-receiver
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    mem_limit: ${PROMETHEUS_MEM_LIMIT:-256m}
+    logging: &default-logging
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  loki:
+    image: grafana/loki:3.7.10
+    restart: unless-stopped
+    command: ["-config.file=/etc/loki/loki-config.yml"]
+    ports:
+      - "3100:3100"
+    environment:
+      GOMEMLIMIT: ${LOKI_GOMEMLIMIT:-200MiB}
+    volumes:
+      - ./loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - loki-data:/loki
+    mem_limit: ${LOKI_MEM_LIMIT:-256m}
+    logging: *default-logging
+
+  grafana:
+    image: grafana/grafana:13.2.6
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+      - loki
+    # 로그인 화면을 인터넷에 노출하지 않고 SSH 터널(ssh -L 3000:localhost:3000)로만 접속한다
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD를 .env에 설정하세요}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      # 기본 데이터소스 플러그인이 각각 별도 프로세스(약 25MB씩)로 뜨므로 쓰지 않는 것은 끈다
+      GF_PLUGINS_DISABLE_PLUGINS: grafana-pyroscope-datasource,stackdriver,zipkin,elasticsearch,grafana-postgresql-datasource,jaeger,influxdb,mssql,tempo,mysql,opentsdb
+      GOMEMLIMIT: ${GRAFANA_GOMEMLIMIT:-256MiB}
+    volumes:
+      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    mem_limit: ${GRAFANA_MEM_LIMIT:-320m}
+    logging: *default-logging
+
+volumes:
+  prometheus-data:
+  loki-data:
+  grafana-data:
