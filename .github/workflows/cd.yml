@@ -17,6 +17,7 @@ env:
 
 jobs:
   publish:
+    if: github.repository == 'alissa159/spring-cgv-24th'
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     services:
