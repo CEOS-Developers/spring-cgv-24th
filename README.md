@@ -3517,6 +3517,7 @@ RDS에 스키마 (`CGV`)를 생성하지 않았어서 2시간 동안 해맸다�
 
 <details>
 <summary>Micrometer, Actuator, Prometheus, Grafana</summary>
+
 ```json
 [Spring Boot 애플리케이션]                                        [외부]
  Micrometer: 지표를 측정             Actuator: 지표를 노출         Prometheus: 지표를 수집, 저장
@@ -3897,7 +3898,7 @@ public boolean hold(Long screeningId, List<SeatPosition> seats, String orderId) 
 
 **모니터링 구조도**
 
-!image.png
+![img_2.png](img_2.png)
 
 | 서비스 | 역할 | 매트릭/로그 흐름 |
 | --- | --- | --- |
