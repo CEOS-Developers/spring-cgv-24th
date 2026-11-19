@@ -46,13 +46,15 @@ public class TossPaymentConfig {
         this.failureUrl = failureUrl;
     }
 
+    // Boot가 주입하는 RestClient.Builder에는 메트릭 계측(Observation)이 설정되어 있어
+    // 토스 API 호출의 응답 시간과 결과가 http.client.requests 메트릭으로 수집된다.
     @Bean
-    public RestClient tossRestClient(){
+    public RestClient tossRestClient(RestClient.Builder builder){
 
         String auth = Base64.getEncoder()
                 .encodeToString((testSecretKey + ":").getBytes(StandardCharsets.UTF_8));
 
-        return RestClient.builder()
+        return builder
                 .baseUrl(URL)
                 .requestFactory(createRequestFactory())
                 .defaultHeader(HttpHeaders.AUTHORIZATION, "Basic " + auth)

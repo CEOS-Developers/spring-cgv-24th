@@ -23,6 +23,25 @@ spring:
       host: localhost
       port: 6379
 
+management:
+  server:
+    # Actuator를 서비스 포트와 분리하고, compose에서 외부에 공개하지 않는다.
+    port: 8081
+  endpoints:
+    web:
+      exposure:
+        # env, heapdump 등은 비밀값이 노출될 수 있으므로 필요한 것만 연다.
+        include: health, prometheus
+  metrics:
+    tags:
+      application: ${spring.application.name}
+    distribution:
+      percentiles-histogram:
+        # p95, p99 계산을 위한 응답 시간 히스토그램
+        http.server.requests: true
+        # 토스 API 호출 응답 시간 p95 계산용
+        http.client.requests: true
+
 jwt:
   secret: ${JWT_SECRET}
   at-validity: 1800000 # 30분
