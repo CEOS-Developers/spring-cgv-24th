@@ -14,6 +14,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.dao.DataAccessException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
@@ -45,6 +46,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 SecurityContext context = SecurityContextHolder.createEmptyContext();
                 context.setAuthentication(authentication);
                 SecurityContextHolder.setContext(context);
+
+                // 인증된 요청이면 이후 모든 로그에 memberId가 붙는다. (MDC 정리는 MdcLoggingFilter가 담당)
+                CustomUserDetails principal = (CustomUserDetails) authentication.getPrincipal();
+                MDC.put("memberId", String.valueOf(principal.getMemberId()));
             } catch (ProjectException e){
                 request.setAttribute("exception", e.getErrorCode());
             } catch (DataAccessException e) {
