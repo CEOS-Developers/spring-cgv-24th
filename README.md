@@ -3512,3 +3512,397 @@ jobs:
 
 RDS에 스키마 (`CGV`)를 생성하지 않았어서 2시간 동안 해맸다…
 </details>
+
+## 6주차 모니터링 & 로그
+
+<details>
+<summary>Micrometer, Actuator, Prometheus, Grafana</summary>
+```json
+[Spring Boot 애플리케이션]                                        [외부]
+ Micrometer: 지표를 측정             Actuator: 지표를 노출         Prometheus: 지표를 수집, 저장
+ (요청 수, 응답 시간, JVM 메모리)  → GET /actuator/prometheus  ←── 15초마다 긁어감(scrape)
+                                                                         ↓
+                                                                  Grafana: 그래프, 대시보드
+```
+
+### **Micrometer**: 지표를 측정하는 라이브러리
+
+애플리케이션 안에서 숫자를 측정하고 기록하는 `Metric Facade.`
+
+로깅에서 `SLF4J`와 같은 역할이라고 보면된다.
+
+| 로깅 | 메트릭 |
+| --- | --- |
+| SLF4J | Micrometer |
+| Logback | Prometheus, Datadog, CloudWatch 레지스트리 |
+
+코드는 Micrometer API로만 작성하고, 어떤 모니터링 시스템으로 보낼지는 `레지스트리 의존성만 바꿔서 결정`한다. Prometheus에서 Datadog으로 옮겨도 측정 코드는 그대로이다.
+
+**측정 도구 4가지**
+
+- Counter: 계속 증가만 하는 값. (결제 성공 횟수, 에러 발생 수)
+- Timer: 걸린 시간과 횟수 (API 응답 시간)
+- Gauge: 현재 순간의 값 (현재 커넥션 풀 사용량, 큐 길이)
+- DistributionSummary: 시간이 아닌 값의 분포 (결제 금액 분포)
+
+```java
+@Service
+@RequiredArgsConstructor
+public class PaymentService {
+    private final MeterRegistry meterRegistry;
+
+    public void confirm(...) {
+        Timer.Sample sample = Timer.start(meterRegistry);
+        try {
+            tossPaymentsClient.confirm(...);
+            meterRegistry.counter("payment.confirm", "result", "success").increment();
+        } catch (TossApiException e) {
+            meterRegistry.counter("payment.confirm", "result", "fail").increment();
+            throw e;
+        } finally {
+            sample.stop(meterRegistry.timer("toss.api.confirm"));
+        }
+    }
+}
+```
+
+### Actuator: 애플리케이션 상태를 밖으로 열어 주는 창구
+
+애플리케이션 내부 상태를 HTTP 엔드포인트로 노출한다.
+
+- `/actuator/health`: 앱이 살아 있는지, DB, Redis 연결이 정상인지
+- `/actuator/info`: 앱 버전, 빌드 정보
+- `/actuator/metrics`: Micrometer가 수집한 지표 목록과 값
+- `/actuator/prometheus`: 같은 지표를 Prometheus가 읽을 수 있는 텍스트 형식으로 출력
+
+### Prometheus: 지표를 모아서 저장하는 시계열 DB
+
+애플리케이션 바깥에서 돌아가는 별도 서버. 지표를 시간순으로 저장하는 시계열 DB이다.
+
+Prometheus는 정해진 주기마다 앱의 `/actuator/prometheus`를 직접 호출해서 `Pull`한다.
+
+Prometheus는 저장과 조회, 알림 규칙까지 담당하고, 보기 좋은 대시보드는 보통 `Grafana`가 Prometheus를 **데이터 소스로 연결해서 그린다.**
+
+**설정**
+
+```groovy
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'   // Actuator + Micrometer 코어
+    runtimeOnly 'io.micrometer:micrometer-registry-prometheus'               // Prometheus 형식 출력
+}
+```
+
+```yaml
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info, prometheus   # 기본은 health만 열려 있음
+```
+
+Actuator 엔드포인트는 외부에 공개하면 안된다.
+
+내부 구조와 지표가 노출되므로, `management.server.port`로 별도 포트를 쓰고 그 포트는 Prometheus만 접근할 수 있게 막거나, Spring Security로 보호해야 한다.
+</details>
+
+<details>
+<summary>Spring Boot 모니터링 구축기: 로그와 메트릭 수집부터 Grafana 대시보드까지</summary>
+
+
+## 0. 모니터링 스택 선정 이유
+
+### 메트릭: Prometheus
+
+- 스프링부트와 가장 잘 맞다. Micrometer의 Prometheus registry를 추가하면 코드 없이 `/actuator/promethues`가 생긴다.
+- Pull 방식이다.
+- PromQL이 강력하다.
+
+대안
+
+- CloudWatch Metrics: 라벨 조합 하나하나가 별도 과금 메트릭이다.
+- InfluxDB: 앱이 데이터를 보내는 Push 방식
+- Datadog: 유료
+
+### 로그 수집: Alloy + Loki
+
+- Alloy는 Grafana 생태계와 가장 잘 맞고, Loki는 라벨만 인덱싱하고 본문은 압축해서 저장하기에 메모리를 훨씬 적게 쓴다. + Prometheus와 같은 라벨 모델을 써서 `PLG`(Prometheus + Loki + Grafana)의 형태로 주로 쓴다.
+- Loki의 대안으로는 Elasticsearch가 있는데, 강력하지만 메모리가 크다.
+
+→ 현재의 문제: Alloy + Loki를 같은 서버에 올리면, 서버가 죽었을 때 원인을 봐야 할 모니터링도 같이 죽는다.
+
+**CloudWatch Logs로 Alloy(수집)와 Loki(저장)의 역할을 모두 대체할 수 있지 않나?**
+
+→ 대체할 수 있다. awslogs 로그 드라이버가 수집, 로그 그룹이 저장, Logs Insights가 검색을 맡는다.
+
+→ 로그는 CloudWatch, 메트릭은 Prometheus로 하게 된다면,
+
+로그는 EC2 외부에 있기때문에 장애 독립성을 확보하고, 메트릭은 PromQL의 장점을 유지할 수 있다. + Alloy와 Loki가 빠져 메모리가 줄어든다.
+
+### 대시보드: Grafana
+
+- Prometheus와 CloudWatch 데이터 소스를 한 화면에서 볼 수 있다.
+- 알림 기능이 내장되어 있고 무료이다.
+
+## 1. MDC 필터 생성하기 (로그 수집 목적)
+
+`MdcLoggingFilter`를 생성하여 요청마다 `requestId`, `method`, `uri`를 수집한다.
+
+## 2. JWT 필터에 `memberId` 추가 + 로그 포맷 설정하기 (평문/JSON)
+
+`JwtAuthenticationFilter`에도 `memberId`를 수집한다.
+
+**application.yaml**
+
+```yaml
+logging:
+	pattern:
+		level: "%5p [%X{requestId:-}] [%X{memberId:-}]"
+	level:
+		org.hibernate.sql: debug
+		
+# 변경 후 로그. {%X{key:-}는 MDC 값을 꺼내고, 값이 없으면 빈 문자열 출력
+# INFO [a1b2c3d4] [12] 1234 --- [nio-8080-exec-3] c.c.s.d.p.s.PaymentService : [결제 승인 완료] orderId=...
+```
+
+- 운영 로그 포맷 → JSON 구조화 로깅을 도입한다.
+
+  사람은 평문이 읽기 쉽고, 매트릭이 수집할 때는 JSON이 더 용이하기에.
+
+
+**docker-compose.yml**
+
+```yaml
+spring-app:
+	environment:
+		SPRING_DATA_REDIS_HOST: redis
+		SPRING_DATA_REDIS_PORT: 6379
+		TZ: Asia/Seoul
+		# 운영 로그를 JSON(logstash 형식)으로 출력해 MDC 값을 필드로 남긴다.
+		LOGGING_STRUCTURED_FORMAT_CONSOLE: logstash
+		# show-sql은 System.out으로 직접 출력되어 JSON 로그를 깨뜨리므로 운영에서는 끈다.
+		SPRING_JPA_SHOW_SQL: "false"
+```
+
+- 스프링 부트가 지원하는 `logstash`, `ecs`, `gelf` 중 `logstash` 인 이유
+    1. Alloy 설정이 단순해져서
+
+       `level`을 Loki 레벨로 올릴 때, `logstash`는 최상위 `level` 필드를 그래도 쓰면 된다. 하지면 ECS는 중첩된 `log.level` 경로를 지정해야 한다.
+
+    2. 쿼리가 짧아진다.
+
+       Grafana에서 `| json | level="ERROR"`처럼 MDC 키와 기본 필드를 원래 이름 그대로 쓴다.
+
+    3. ECS의 장점은 `Elastic` 생태계에서 유리하다. (`Kibana`, `Elastic APM` 등)
+    - **ECS (Elastic Common Schema)**
+
+      특징: `log.level`, `process.pid`, `service.name`처럼 의미별로 묶인 계층형 필드명
+
+      장점: 필드 이름이 업계 표준 스키마라서, Elasticsearch와 Kibana에서 별도 매핑 없이 대시보드, 검색, APM 연동이 된다.
+
+      단점: 필드가 많고 중첩되어 로그 한 줄이 가장 길다. Elastic 생태계 밖에서는 스키마 이점이 줄어든다.
+
+
+    ```json
+    {
+    	"@timestamp":"2026-11-18T07:58:00.123Z",
+    	"log":{
+    		"level":"INFO",
+    		"logger":"com.sudam.PaymentService"
+    	},
+    	"process":{
+    		"pid":1234,
+    		"thread":{
+    			"name":"http-nio-8080-exec-1"
+    			}
+    		},
+    	"service":{
+    		"name":"cgv-api"
+    	},
+    	"message":"[결제 요청 등록] orderId=CGV-1",
+    	"ecs":{
+    		"version":"8.11"
+    		}
+    	}
+    ```
+    
+    - **Logstash**
+        
+        특징: `@timestamp`, `@version`, `@message`처럼 평평한 단일 레벨 필드
+        
+        장정: 구조가 가장 단순하고 읽기 쉽다. 오래 쓰여 온 형식이라 Logstatch, Loki, Datadog 등 대부분의 수집 도구가 무리 없이 받는다.
+        
+        단점: 표준 스키마가 아니다. Elasticsearch에서 ECS 기반 기능을 쓰려면 변환 필요
+        
+    
+    ```json
+    {
+    	"@timestamp":"2026-11-18T16:58:00.123+09:00",
+    	"@version":"1",
+    	"message":"[결제 요청 등록] orderId=CGV-1",
+      "logger_name":"com.sudam.PaymentService",
+      "thread_name":"http-nio-8080-exec-1",
+      "level":"INFO",
+      "level_value":20000
+    }
+    ```
+    
+    - **GELF (Graylog Extended Log Format)**
+        
+        특징: `version`, `level`, `timestamp`이 기본 필드
+        
+        장점: Graylog의 GELF 입력이 그대로 이해하는 형식이라, 파싱 규칙없이 수집
+        
+        단점: Graylog 전용
+
+
+## 3. Actuator + Prometheus 메트릭 노출하기 + Security 허용하기
+
+**build.gradle**
+
+```groovy
+// 모니터링 (메트릭 노출)
+implementation 'org.springframework.boot:spring-boot-starter-actuator'
+runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
+```
+
+- Actuator → 앱 상태를 HTTP 엔드포인트(`/actuator/**`)로 노출한다.
+- Mircrometer 메트릭을 Prometheus 텍스트 형식으로 바꿔 `/actuator/prometheus`에 노출한다.
+
+**application.yaml**
+
+```yaml
+management:
+  server:
+    # Actuator를 서비스 포트와 분리하고, compose에서 외부에 공개하지 않는다.
+    port: 8081
+  endpoints:
+    web:
+      exposure:
+        # env, heapdump 등은 비밀값이 노출될 수 있으므로 필요한 것만 연다.
+        include: health, prometheus
+  metrics:
+    tags:
+	    # 모든 메트릭에 공통 태그(application="spring-cgv") 추가
+      application: ${spring.application.name}
+    distribution:
+      percentiles-histogram:
+        # p95, p99 계산을 위한 응답 시간 히스토그램
+        http.server.requests: true
+```
+
+- Actuator를 서비스 포트와 분리하는 이유
+    1. 보안: 포트를 나눠 로드밸런서에서 8081을 아예 열지 않으므로써 외부 접근을 차단한다. 오직 내부망에서 Prometheus가 8081 포트로만 접근한다.
+    2. 서비스용 설정과 섞이지 않고, 서비스 부하와 분리된다.
+- 포트를 분리함으로서 생기는 일
+
+  스프링부트는 Actuator 전용 자식 컨텍스트를 하나 더 만들고, 거기에 `두 번째 내장 Tomcat`을 붙여 8081에서 리스닝하게 된다. 그래서 8081의 `/acutator/prometheus`가 메인 쪽 `MeterRegistry`에 쌓인 값을 출력할 수 있고 `/actuator/health`를 통해 DB, 애플리케이션 상태를 확인할 수 있다.
+
+  → 즉, 같은 프로세스라서 빈을 공유하게 된다.
+
+
+SecurityConfig에 `/actuator/health`, `/actuator/prometheus` 경로 열기
+
+## 4. 비즈니스 메트릭 구축하기
+
+**메트릭을 한 곳으로 모으기 (PaymentMetrics)**
+
+```java
+@Component
+public class PaymentMetrics {
+
+    private static final String SEAT_HOLD = "seat.hold";
+
+    private final Map<SeatHoldResult, Counter> seatHoldCounters = new EnumMap<>(SeatHoldResult.class);
+
+    public PaymentMetrics(MeterRegistry registry) {
+
+        // 미리 등록해 두면 아직 한 번도 발생하지 않은 결과도 0으로 노출되어 비율 계산이 끊기지 않는다.
+        for (SeatHoldResult result : SeatHoldResult.values()) {
+            seatHoldCounters.put(result, Counter.builder(SEAT_HOLD)
+                    .description("좌석 선점 시도 결과")
+                    .tag("result", result.getTag())
+                    .register(registry));
+        }
+    }
+
+    /***
+     * 함수 기능: 좌석 선점 시도 결과를 기록한다.
+     * @param result 선점 결과
+     */
+    public void seatHold(SeatHoldResult result) {
+        seatHoldCounters.get(result).increment();
+    }
+}
+```
+
+**SeatRepository**
+
+```java
+/**
+ * 선택한 좌석을 결제가 끝날 때까지 선점한다.
+ * @return 모두 선점하면 true, 하나라도 이미 선점되어 있거나 락을 못 잡으면 false
+ */
+public boolean hold(Long screeningId, List<SeatPosition> seats, String orderId) {
+
+    ...
+
+    // 예외로 빠져나가면 이 값 그대로 기록된다
+    SeatHoldResult result = SeatHoldResult.STORE_UNAVAILABLE;
+
+    try {
+        locked = multiLock.tryLock(LOCK_WAIT_SECONDS, TimeUnit.SECONDS);
+        if (!locked) {
+            result = SeatHoldResult.LOCK_TIMEOUT;
+            return false;
+        }
+
+        List<String> keys = seats.stream().map(seat -> key(screeningId, seat)).toList();
+
+        // MGET: 하나라도 값이 있으면 이미 선점된 좌석
+        List<String> holders = redisTemplate.opsForValue().multiGet(keys);
+        if (holders != null && holders.stream().anyMatch(Objects::nonNull)) {
+            result = SeatHoldResult.ALREADY_HELD;
+            return false;
+        }
+
+        keys.forEach(k -> redisTemplate.opsForValue().set(k, orderId, HOLD_TTL));
+        result = SeatHoldResult.SUCCESS;
+        return true;
+    } catch ...
+      finally {
+        paymentMetrics.seatHold(result);   // 모든 경로에서 정확히 한 번 기록
+	      // ...
+    }
+}
+```
+
+1. `PaymentMetrics` 생성자가 `MeterRegistry`에 카운터 4개를 등록하여 메모리에 저장한다.
+
+   각 카운터는 앱이 시작된 뒤 누적된 횟수만 들고있다.
+
+    ```java
+    seat.hold [result=success] -> 10
+    seat.hold [result=already_held] -> 3
+    seat.hold [result=lock_timeout] -> 0
+    ```
+
+2. Prometheus가 `GET spring-app:8081/actuator/prometheus`를 호출하면, 그 순간의 값이 Prometheus 텍스트 형식으로 나간다.
+3. Prometheus가 라벨 조합 하나를 시계열로 저장한다.
+
+   결과가 4종이니 시계열 4개가 생긴다.
+
+4. PromQL로 최근 N분간 결과별 발생 횟수처럼 “구간 동안 얼마나 늘었나”로 결과를 보여준다.
+
+## 5. 모니터링 인프라: Prometheus, Loki, Alloy, Grafana
+
+**모니터링 구조도**
+
+!image.png
+
+| 서비스 | 역할 | 매트릭/로그 흐름 |
+| --- | --- | --- |
+| prometheus | 메트릭 수집 및 저장 | pull해서 가져옴 |
+| alloy | 로그 수집 에이전트 | Docker에서 앱 로그를 읽어 Loki로 보냄 (push) |
+| loki | 로그 저장 | 받은 로그 저장 |
+| grafana | 대시보드 | Prometheus와 Loki를 통해 화면 그림 |
+</details>
