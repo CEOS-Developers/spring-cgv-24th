@@ -1,0 +1,11 @@
+# Prometheus 설정: spring-app의 관리 포트(8081, 외부 미공개)에서 메트릭을 가져온다.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: spring-cgv
+    metrics_path: /actuator/prometheus
+    static_configs:
+      # compose 서비스 이름으로 내부 DNS가 해석된다.
+      - targets: ['spring-app:8081']

@@ -1,0 +1,11 @@
+# /etc/grafana/dashboards 폴더의 JSON 대시보드를 자동으로 불러온다.
+apiVersion: 1
+
+providers:
+  - name: spring-cgv
+    folder: spring-cgv
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    options:
+      path: /etc/grafana/dashboards

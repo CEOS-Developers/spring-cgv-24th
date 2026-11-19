@@ -1,0 +1,52 @@
+// Alloy 설정: spring-app 컨테이너의 로그(JSON)를 읽어 Loki로 보낸다.
+// 앱은 지금처럼 stdout(json-file)에 쓰고, Alloy는 옆에서 읽기만 하므로 Loki 장애가 앱에 영향을 주지 않는다.
+
+// 1) Docker에서 컨테이너 목록을 가져온다.
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+}
+
+// 2) spring-app 컨테이너만 남기고 container 라벨을 붙인다.
+discovery.relabel "spring" {
+  targets = discovery.docker.containers.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/spring-app"
+    action        = "keep"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+}
+
+// 3) 대상 컨테이너의 로그를 읽는다.
+loki.source.docker "spring" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.spring.output
+  forward_to = [loki.process.spring.receiver]
+}
+
+// 4) JSON 로그에서 level만 꺼내 라벨로 올린다.
+//    requestId, memberId는 값 종류가 무한하므로 라벨로 만들지 않고, 조회 시 `| json`으로 꺼낸다.
+loki.process "spring" {
+  stage.json {
+    expressions = { level = "level" }
+  }
+
+  stage.labels {
+    values = { level = "" }
+  }
+
+  forward_to = [loki.write.default.receiver]
+}
+
+// 5) Loki로 전송한다.
+loki.write "default" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}
