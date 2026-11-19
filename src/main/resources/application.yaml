@@ -29,6 +29,9 @@ jwt:
   rt-validity: 1209600000 # 14일
 
 logging:
+  pattern:
+    # 로그 레벨 옆에 MDC 값(requestId, memberId)을 표시한다.
+    level: "%5p [%X{requestId:-}] [%X{memberId:-}]"
   level:
     org.hibernate.sql: debug
 

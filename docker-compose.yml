@@ -14,6 +14,10 @@ services:
       SPRING_DATA_REDIS_HOST: redis
       SPRING_DATA_REDIS_PORT: 6379
       TZ: Asia/Seoul
+      # 운영 로그를 JSON(logstash 형식)으로 출력해 MDC 값을 필드로 남긴다.
+      LOGGING_STRUCTURED_FORMAT_CONSOLE: logstash
+      # show-sql은 System.out으로 직접 출력되어 JSON 로그를 깨뜨리므로 운영에서는 끈다.
+      SPRING_JPA_SHOW_SQL: "false"
     ports:
       - "8080:8080"
     depends_on:
