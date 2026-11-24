@@ -341,14 +341,12 @@ public class PaymentService {
      */
     private void validateSeatsNotReserved(List<SeatPosition> seats, Long screeningId) {
 
-        // 해당 상영 회차에서 점유 중인 좌석만 Set에 담는다.
-        Set<SeatPosition> reserved = reservationSeatRepository.findAllByScreeningId(screeningId).stream()
-                .filter(ReservationSeat::isReserved)
-                .map(seat -> new SeatPosition(seat.getSeatRow(), seat.getSeatNumber()))
-                .collect(Collectors.toSet());
+        // 회차의 모든 좌석을 가져오지 않고, 요청한 좌석의 점유 키만 유니크 인덱스로 확인한다.
+        List<String> seatKeys = seats.stream()
+                .map(seat -> ReservationSeat.activeSeatKey(screeningId, seat.seatRow(), seat.seatNumber()))
+                .toList();
 
-        // 만약, 요청한 좌석 좌표 목록이 reserved 목록에 있다면 -> 예외를 반환한다.
-        if (seats.stream().anyMatch(reserved::contains)) {
+        if (reservationSeatRepository.existsByActiveSeatKeyIn(seatKeys)) {
             throw new PaymentException(PaymentErrorCode.PAYMENT_SEAT_ALREADY_TAKEN);
         }
     }
