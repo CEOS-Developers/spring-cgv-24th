@@ -102,7 +102,7 @@ public class PaymentService {
         validateSeatsNotReserved(seatPositions, screening.getId());
 
         // orderId (토스페이먼츠에 전달한 주문번호 생성)
-        String orderId = ORDER_ID_PREFIX + UUID.randomUUID().toString().substring(0, 8);
+        String orderId = ORDER_ID_PREFIX + UUID.randomUUID();
 
         // 결제가 끝날 때까지 좌석을 잡아둔다. 실패하면 다른 고객이 결제 중인 좌석이다.
         if (!seatHoldRepository.hold(screening.getId(), seatPositions, orderId)) {
