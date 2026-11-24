@@ -5,6 +5,17 @@ spring:
   config:
     import: "optional:file:./.env[.properties]"
 
+  cache:
+    type: ${CACHE_TYPE:none}
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      repositories:
+        enabled: false
+
   datasource:
     url: jdbc:mysql://localhost:3306/cgv
     username: ${DB_USERNAME}
@@ -44,6 +55,9 @@ toss:
     read-timeout: 60s
 
 management:
+  health:
+    redis:
+      enabled: false
   server:
     port: 9091
 

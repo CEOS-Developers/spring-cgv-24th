@@ -1,4 +1,7 @@
-param([switch]$SkipBuild)
+param(
+    [switch]$SkipBuild,
+    [ValidateSet('Default', 'None', 'Redis')][string]$CacheType = 'Default'
+)
 . (Join-Path $PSScriptRoot 'Common.ps1')
 
 Push-Location $PerfProjectRoot
@@ -44,7 +47,9 @@ try {
     if ($jars.Count -ne 1) { throw 'Expected one bootJar in build/libs.' }
     $javaPath = Join-Path $env:JAVA_HOME 'bin\java.exe'
     $jarPath = $jars[0].FullName
-    $process = Start-Process -FilePath $javaPath -ArgumentList @('-jar', "`"$jarPath`"", '--spring.profiles.active=perf') `
+    $applicationArguments = @('-jar', "`"$jarPath`"", '--spring.profiles.active=perf')
+    if ($CacheType -ne 'Default') { $applicationArguments += "--spring.cache.type=$($CacheType.ToLowerInvariant())" }
+    $process = Start-Process -FilePath $javaPath -ArgumentList $applicationArguments `
         -WorkingDirectory $PerfProjectRoot -WindowStyle Hidden -PassThru `
         -RedirectStandardOutput (Join-Path $PerfOutputDirectory 'app.stdout.log') `
         -RedirectStandardError (Join-Path $PerfOutputDirectory 'app.stderr.log')
@@ -53,6 +58,7 @@ try {
         ProcessId = $process.Id
         JavaPath = $javaPath
         JarPath = $jarPath
+        CacheType = $CacheType
         CreatedAtTicks = $nativeProcess.CreationDate.ToUniversalTime().Ticks.ToString()
     } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $PerfOutputDirectory 'app.json') -Encoding UTF8
 

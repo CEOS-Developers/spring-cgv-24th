@@ -5,13 +5,15 @@ import com.ceos24.cgv.domain.movie.dto.response.MovieResponse;
 import com.ceos24.cgv.domain.movie.entity.Movie;
 import com.ceos24.cgv.domain.movie.repository.MovieRepository;
 import com.ceos24.cgv.global.apiPayload.code.ErrorCode;
+import com.ceos24.cgv.global.cache.CacheNames;
 import com.ceos24.cgv.global.exception.BusinessException;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.ArrayList;
 import java.util.List;
 
 @Service
@@ -23,6 +25,7 @@ public class MovieService {
 
     // 영화 생성
     @Transactional
+    @CacheEvict(cacheNames = CacheNames.MOVIE_LIST, key = "'all'")
     public Long createMovie(MovieCreateRequest request) {
         Movie movie = Movie.create(request.name(), request.releaseDate());
         movieRepository.save(movie);
@@ -30,6 +33,7 @@ public class MovieService {
     }
 
     // 영화 목록 조회
+    @Cacheable(cacheNames = CacheNames.MOVIE_LIST, key = "'all'")
     public List<MovieResponse> getMovies() {
         List<Movie> movies = movieRepository.findAll(Sort.by(Sort.Direction.ASC, "id"));
 
@@ -48,6 +52,7 @@ public class MovieService {
 
     // 영화 삭제
     @Transactional
+    @CacheEvict(cacheNames = CacheNames.MOVIE_LIST, key = "'all'")
     public void deleteMovie(Long movieId) {
         Movie movie = movieRepository.findById(movieId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.MOVIE_NOT_FOUND));

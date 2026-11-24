@@ -2,6 +2,15 @@
 spring:
   config:
     import: "optional:file:./.env.perf[.properties]"
+  cache:
+    type: redis
+  data:
+    redis:
+      host: 127.0.0.1
+      port: 16379
+      password: ""
+      timeout: 1s
+      connect-timeout: 1s
   datasource:
     url: jdbc:mysql://127.0.0.1:13306/cgv_perf?serverTimezone=Asia/Seoul&characterEncoding=UTF-8
     username: cgv_perf
@@ -19,6 +28,9 @@ server:
   port: 18080
 
 management:
+  health:
+    redis:
+      enabled: true
   server:
     address: 127.0.0.1
     port: 19091
