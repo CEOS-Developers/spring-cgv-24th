@@ -104,6 +104,9 @@ public class SecurityConfig {
                         // 로컬 주문서형 결제 테스트 화면
                         .requestMatchers(HttpMethod.GET, "/payment-test.html", "/payment-test.js").permitAll()
 
+                        // 모니터링 시스템을 위한 수집 요청
+                        .requestMatchers(HttpMethod.GET, "/actuator/health","/actuator/prometheus").permitAll()
+
                         // 그 외 요청은 인증 필요
                         .anyRequest().authenticated()
 
