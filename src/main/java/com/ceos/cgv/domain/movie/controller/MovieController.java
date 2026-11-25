@@ -43,7 +43,7 @@ public class MovieController {
     @Operation(summary = "영화 전체 조회")
     @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "영화 목록 조회 성공")
     public ResponseEntity<ApiResponse<List<MovieResponse>>> findAll() {
-        return ResponseEntity.ok(ApiResponse.success(movieService.findAll(), MovieResponse::from));
+        return ResponseEntity.ok(ApiResponse.success(movieService.findAllPublic()));
     }
 
     @GetMapping("/{movieId}")
