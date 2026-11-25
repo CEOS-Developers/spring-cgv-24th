@@ -25,6 +25,7 @@ import com.ceos24.cgv.domain.user.repository.UserRepository;
 import com.ceos24.cgv.global.exception.GeneralException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import com.ceos24.cgv.domain.concession.entity.Stock;
 
@@ -144,7 +145,7 @@ public class OrderService {
 	}
 
 	// 결제 승인 후 호출. 락 순서를 고정(itemId 오름차순)해 데드락을 막고, 하나라도 부족하면 전체 차감을 롤백한다
-	@Transactional
+	@Transactional(propagation = Propagation.MANDATORY)
 	public void completePaidOrder(Order order) {
 		List<OrderItem> orderItems = orderItemRepository.findByOrderIdWithItem(order.getId()).stream()
 				.sorted(Comparator.comparing(orderItem -> orderItem.getItem().getId()))
@@ -161,7 +162,7 @@ public class OrderService {
 	}
 
 	// 결제 전액 취소 후 호출. PAID가 아니면 이미 복구됐거나 차감된 적이 없으므로 재고를 건드리지 않는다
-	@Transactional
+	@Transactional(propagation = Propagation.MANDATORY)
 	public void restoreCanceledOrder(Order order) {
 		if (order.getStatus() != OrderStatus.PAID) {
 			return;

@@ -28,6 +28,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
@@ -194,7 +195,7 @@ public class ReservationService {
         }
     }
 
-    @Transactional
+    @Transactional(propagation = Propagation.MANDATORY)
     public void startPaying(Long reservationId) {
         if (reservationRepository.startPaying(reservationId, Instant.now(clock)) == 0) {
             boolean alreadyPaying = reservationRepository.findById(reservationId)
@@ -205,17 +206,17 @@ public class ReservationService {
         }
     }
 
-    @Transactional
+    @Transactional(propagation = Propagation.MANDATORY)
     public void confirmPaid(Reservation reservation) {
         reservation.confirmPayment();
     }
 
-    @Transactional
+    @Transactional(propagation = Propagation.MANDATORY)
     public void releaseUnpaid(Reservation reservation) {
         release(reservation, ReservationStatus.PAYING);
     }
 
-    @Transactional
+    @Transactional(propagation = Propagation.MANDATORY)
     public void releaseCanceled(Reservation reservation) {
         release(reservation, ReservationStatus.RESERVED);
     }
