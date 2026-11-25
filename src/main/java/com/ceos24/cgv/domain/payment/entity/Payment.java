@@ -17,7 +17,7 @@ import lombok.NoArgsConstructor;
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @Entity
-@Table(name = "payment")
+@Table(name = "payment", indexes = @Index(name = "idx_payment_status_created_at", columnList = "status, createdAt"))
 public class Payment {
 
     @Id
