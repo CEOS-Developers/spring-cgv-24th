@@ -43,7 +43,6 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -428,11 +427,9 @@ public class ReservationService {
 
     // 경쟁이 없는 경우에 친절한 응답을 주기 위한 사전 검사다. 검사와 INSERT 사이의 틈은 saveHold의 유니크 제약이 막는다.
     private void ensureNotOccupied(Long screeningId, List<SeatRequest> seats, LocalDateTime now) {
-        Set<Integer> taken = reservationSeatRepository
-                .findOccupiedPositionsByScreeningId(screeningId, ReservationStatus.PENDING, now).stream()
-                .map(p -> ReservationSeat.key(p.getRowNum(), p.getColNum()))
-                .collect(Collectors.toSet());
-        if (seats.stream().map(SeatRequest::key).anyMatch(taken::contains)) {
+        List<Integer> seatKeys = seats.stream().map(SeatRequest::key).toList();
+        if (!reservationSeatRepository
+                .findOccupiedPositionsAmong(screeningId, seatKeys, ReservationStatus.PENDING, now).isEmpty()) {
             throw new CustomException(ErrorCode.SEAT_ALREADY_RESERVED);
         }
     }

@@ -111,7 +111,7 @@ class ReservationConcurrencyTest {
     // 이 틈은 애플리케이션 코드로 닫을 수 없고, 유니크 제약이 없으면 두 요청이 모두 성공한다.
     @Test
     void 두_요청이_모두_빈_좌석을_확인한_뒤_INSERT해도_한_건만_성공한다() throws Exception {
-        RaceGate gate = RaceGate.arm(ReservationSeatRepository.class, "findOccupiedPositionsByScreeningId", 2);
+        RaceGate gate = RaceGate.arm(ReservationSeatRepository.class, "findOccupiedPositionsAmong", 2);
 
         List<Outcome> outcomes = runConcurrently(2, i -> request(userIds.get(i), seat(4, 4)));
 

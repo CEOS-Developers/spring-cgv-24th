@@ -119,7 +119,7 @@ class ReservationServiceTest {
         assertThatThrownBy(() -> service.create(1L, reqOf(1L, new int[]{9, 1})))
                 .isInstanceOf(CustomException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.SEAT_OUT_OF_RANGE);
-        verify(reservationSeatRepository, never()).findOccupiedPositionsByScreeningId(any(), any(), any());
+        verify(reservationSeatRepository, never()).findOccupiedPositionsAmong(any(), any(), any(), any());
     }
 
     @Test
@@ -129,15 +129,15 @@ class ReservationServiceTest {
         assertThatThrownBy(() -> service.create(1L, reqOf(1L, new int[]{1, 1}, new int[]{1, 1})))
                 .isInstanceOf(CustomException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.DUPLICATE_SEAT_IN_REQUEST);
-        verify(reservationSeatRepository, never()).findOccupiedPositionsByScreeningId(any(), any(), any());
+        verify(reservationSeatRepository, never()).findOccupiedPositionsAmong(any(), any(), any(), any());
     }
 
     @Test
     void 이미_점유된_좌석이면_SEAT_ALREADY_RESERVED_pre_check() {
         givenScreeningAndUser(1L, 1L);
         // 스텁 체인 안에서 다른 목을 스텁하면 Mockito가 미완성 스텁으로 본다
-        List<SeatPositionProjection> occupied = List.of(positionOf(1, 1));
-        given(reservationSeatRepository.findOccupiedPositionsByScreeningId(1L, ReservationStatus.PENDING, NOW))
+        List<SeatPositionProjection> occupied = List.of(mock(SeatPositionProjection.class));
+        given(reservationSeatRepository.findOccupiedPositionsAmong(1L, List.of(101), ReservationStatus.PENDING, NOW))
                 .willReturn(occupied);
 
         assertThatThrownBy(() -> service.create(1L, reqOf(1L, new int[]{1, 1})))
