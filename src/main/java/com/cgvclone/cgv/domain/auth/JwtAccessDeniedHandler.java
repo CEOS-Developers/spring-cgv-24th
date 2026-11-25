@@ -1,6 +1,7 @@
 package com.cgvclone.cgv.domain.auth;
 
 import com.cgvclone.cgv.common.exception.ErrorCode;
+import com.cgvclone.cgv.common.logging.RequestLoggingFilter;
 import com.cgvclone.cgv.common.exception.ErrorResponse;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -23,6 +24,7 @@ public class JwtAccessDeniedHandler implements AccessDeniedHandler {
     public void handle(HttpServletRequest request, HttpServletResponse response, AccessDeniedException exception)
             throws IOException {
         ErrorCode errorCode = ErrorCode.ACCESS_DENIED;
+        request.setAttribute(RequestLoggingFilter.ERROR_CODE, errorCode.name());
         response.setStatus(errorCode.getStatus().value());
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
         response.setCharacterEncoding(StandardCharsets.UTF_8.name());

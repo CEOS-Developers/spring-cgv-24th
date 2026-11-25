@@ -1,0 +1,252 @@
+Project cgv {
+  database_type: 'MySQL'
+  Note: 'JPA 엔티티 및 schema.sql 기준'
+}
+
+Enum user_role {
+  USER
+  ADMIN
+}
+
+Enum content_rating {
+  ALL
+  RATE_12
+  RATE_15
+  RATE_18
+  RESTRICTED
+}
+
+Enum booking_status {
+  BOOKED
+  CANCELLED
+}
+
+Enum purchase_status {
+  PENDING
+  CONFIRMING
+  WAITING_FOR_DEPOSIT
+  PAID
+  CANCELED
+}
+
+Table users {
+  user_id bigint [pk, increment]
+  email varchar(255) [not null]
+  password varchar(255) [not null]
+  name varchar(50) [not null]
+  role user_role [not null]
+  created_at datetime(6) [not null]
+
+  indexes {
+    email [unique, name: 'uk_user_email']
+  }
+}
+
+Table movies {
+  movie_id bigint [pk, increment]
+  title varchar(255) [not null]
+  content_rating_code content_rating [not null]
+  running_time int [not null]
+  release_date date
+  description text
+  poster_url varchar(500)
+}
+
+Table genres {
+  genre_id bigint [pk, increment]
+  name varchar(50) [not null]
+
+  indexes {
+    name [unique, name: 'uk_genre_name']
+  }
+}
+
+Table movie_genres {
+  movie_genre_id bigint [pk, increment]
+  movie_id bigint [not null]
+  genre_id bigint [not null]
+
+  indexes {
+    (movie_id, genre_id) [unique, name: 'uk_movie_genre_movie_genre']
+  }
+}
+
+Table regions {
+  region_id bigint [pk, increment]
+  name varchar(50) [not null, unique]
+}
+
+Table cinemas {
+  cinema_id bigint [pk, increment]
+  name varchar(100) [not null]
+  address varchar(255) [not null]
+  region_id bigint [not null]
+
+  indexes {
+    (region_id, name) [unique, name: 'uk_cinema_region_name']
+  }
+}
+
+Table screen_types {
+  screen_type_id bigint [pk, increment]
+  name varchar(50) [not null]
+  row_count int [not null]
+  column_count int [not null]
+
+  indexes {
+    name [unique, name: 'uk_screen_type_name']
+  }
+}
+
+Table screens {
+  screen_id bigint [pk, increment]
+  name varchar(50) [not null]
+  cinema_id bigint [not null]
+  screen_type_id bigint [not null]
+
+  indexes {
+    (cinema_id, name) [unique, name: 'uk_screen_cinema_name']
+  }
+}
+
+Table showtimes {
+  showtime_id bigint [pk, increment]
+  start_time datetime(6)
+  movie_id bigint [not null]
+  screen_id bigint [not null]
+}
+
+Table bookings {
+  booking_id bigint [pk, increment]
+  status booking_status [not null]
+  canceled_at datetime(6)
+  user_id bigint [not null]
+  showtime_id bigint [not null]
+  created_at datetime(6) [not null]
+
+  indexes {
+    (booking_id, showtime_id) [unique, name: 'uk_booking_showtime']
+  }
+}
+
+Table booking_seats {
+  booking_seat_id bigint [pk, increment]
+  row_no int [not null]
+  column_no int [not null]
+  status booking_status [not null]
+  canceled_at datetime(6)
+  booking_id bigint [not null]
+  showtime_id bigint [not null]
+  created_at datetime(6) [not null]
+
+  // schema.sql에서 추가하는 STORED 생성 컬럼
+  active_seat tinyint [note: "GENERATED ALWAYS AS (CASE WHEN status IN ('BOOKED') THEN 1 ELSE NULL END) STORED"]
+
+  indexes {
+    (showtime_id, row_no, column_no, active_seat) [unique, name: 'uk_booking_seat_active_position']
+  }
+
+  Note: '같은 상영 회차의 동일 좌석은 BOOKED 상태로 하나만 존재 가능. 취소 이력은 유지.'
+}
+
+Table movie_keepings {
+  movie_keeping_id bigint [pk, increment]
+  user_id bigint [not null]
+  movie_id bigint [not null]
+  created_at datetime(6) [not null]
+
+  indexes {
+    (user_id, movie_id) [unique, name: 'uk_movie_keeping_user_movie']
+  }
+}
+
+Table cinema_keepings {
+  cinema_keeping_id bigint [pk, increment]
+  user_id bigint [not null]
+  cinema_id bigint [not null]
+  created_at datetime(6) [not null]
+
+  indexes {
+    (user_id, cinema_id) [unique, name: 'uk_cinema_keeping_user_cinema']
+  }
+}
+
+Table goods {
+  goods_id bigint [pk, increment]
+  name varchar(100) [not null]
+  price int [not null]
+  description text [not null]
+  goods_image_url varchar(500)
+}
+
+Table stocks {
+  stock_id bigint [pk, increment]
+  goods_id bigint [not null]
+  cinema_id bigint [not null]
+  quantity int [not null]
+
+  indexes {
+    (cinema_id, goods_id) [unique, name: 'uk_stock_cinema_goods']
+  }
+}
+
+Table purchases {
+  purchase_id bigint [pk, increment]
+  user_id bigint [not null]
+  cinema_id bigint [not null]
+  purchased_at datetime(6) [not null]
+  total_price int [not null]
+  order_id varchar(64) [not null, unique]
+  status purchase_status [not null]
+  payment_key varchar(200) [unique]
+  approved_at datetime(6)
+}
+
+Table purchase_goods {
+  purchase_goods_id bigint [pk, increment]
+  goods_id bigint [not null]
+  purchase_id bigint [not null]
+  goods_name varchar(100) [not null, note: '구매 당시 상품명']
+  unit_price int [not null, note: '구매 당시 단가']
+  quantity int [not null]
+
+  indexes {
+    (purchase_id, goods_id) [unique, name: 'uk_purchase_goods']
+  }
+}
+
+// 영화와 장르
+Ref: movie_genres.movie_id > movies.movie_id
+Ref: movie_genres.genre_id > genres.genre_id
+
+// 지역, 극장, 상영관, 상영 회차
+Ref: cinemas.region_id > regions.region_id
+Ref: screens.cinema_id > cinemas.cinema_id
+Ref: screens.screen_type_id > screen_types.screen_type_id
+Ref: showtimes.movie_id > movies.movie_id
+Ref: showtimes.screen_id > screens.screen_id
+
+// 예매와 좌석
+Ref: bookings.user_id > users.user_id
+Ref: bookings.showtime_id > showtimes.showtime_id
+Ref: booking_seats.booking_id > bookings.booking_id
+Ref: booking_seats.showtime_id > showtimes.showtime_id
+
+// schema.sql: 예매와 예매 좌석의 상영 회차 일치 보장
+Ref fk_booking_seat_booking_showtime: booking_seats.(booking_id, showtime_id) > bookings.(booking_id, showtime_id)
+
+// 찜
+Ref: movie_keepings.user_id > users.user_id
+Ref: movie_keepings.movie_id > movies.movie_id
+Ref: cinema_keepings.user_id > users.user_id
+Ref: cinema_keepings.cinema_id > cinemas.cinema_id
+
+// 상품과 극장별 재고
+Ref: stocks.goods_id > goods.goods_id
+Ref: stocks.cinema_id > cinemas.cinema_id
+
+// 구매와 구매 상품
+Ref: purchases.user_id > users.user_id
+Ref: purchases.cinema_id > cinemas.cinema_id
+Ref: purchase_goods.goods_id > goods.goods_id
+Ref: purchase_goods.purchase_id > purchases.purchase_id
