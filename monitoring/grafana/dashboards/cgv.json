@@ -88,7 +88,7 @@
     {
       "type": "stat",
       "title": "5xx 비율",
-      "description": "서버 잘못으로 실패한 요청 비율. 4xx는 회원 입력 문제라 따로 본다. 1%를 넘으면 빨간색.",
+      "description": "서버 잘못으로 실패한 요청 비율. 4xx는 회원 입력 문제라 따로 본다. 1%를 넘으면 빨간색. 요청이 없으면 0%가 아니라 '요청 없음'으로 표시한다.",
       "id": 3,
       "datasource": {
         "type": "prometheus",
@@ -106,7 +106,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(rate(http_server_requests_seconds_count{job=\"cgv\", uri!~\"/actuator.*\", status=~\"5..\"}[$__rate_interval])) / sum(rate(http_server_requests_seconds_count{job=\"cgv\", uri!~\"/actuator.*\"}[$__rate_interval]))",
+          "expr": "(sum(rate(http_server_requests_seconds_count{job=\"cgv\", uri!~\"/actuator.*\", status=~\"5..\"}[$__rate_interval])) or vector(0)) / (sum(rate(http_server_requests_seconds_count{job=\"cgv\", uri!~\"/actuator.*\"}[$__rate_interval])) > 0)",
           "legendFormat": "",
           "refId": "A",
           "range": true
@@ -128,7 +128,7 @@
               }
             ]
           },
-          "noValue": "0",
+          "noValue": "요청 없음",
           "decimals": 2
         },
         "overrides": []
