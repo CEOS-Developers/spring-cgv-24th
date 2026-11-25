@@ -62,6 +62,7 @@ public class PaymentService {
     private final TossPaymentClient tossPaymentClient;
     private final ReservationService reservationService;
     private final PaymentCancelRecorder paymentCancelRecorder;
+    private final PaymentConfirmRecorder paymentConfirmRecorder;
 
     // 주문 번호 접두어.
     private static final String ORDER_ID_PREFIX = "cgv_";
@@ -169,11 +170,16 @@ public class PaymentService {
                 payment.getTotalAmount(),
                 toSeatCommands(paymentSeats));
 
+        // 토스에 보내기 전에 시도를 남긴다. payment를 변경하기 전에 호출해야 FK 락에 막히지 않는다.
+        Long confirmId = paymentConfirmRecorder.record(payment.getId(), paymentKey, payment.getTotalAmount());
+
         payment.linkReservation(reservation);
 
         // 좌석을 확보한 뒤 토스에 결제 승인 요청을 보낸다.
-        TossPaymentConfirmResponse result =
-                tossPaymentClient.confirm(paymentKey, orderId, payment.getTotalAmount());
+        TossPaymentConfirmResponse result = requestConfirm(payment, paymentKey, confirmId);
+
+        // 아래 로컬 처리가 실패해 롤백되어도 승인된 사실은 남아야 한다.
+        markConfirmApproved(confirmId, result);
 
         payment.confirm(
                 result.paymentKey(),
@@ -393,6 +399,52 @@ public class PaymentService {
         return paymentRepository.findByIdAndMemberIdAndStatusIn(paymentId, memberId,
                         List.of(PaymentStatus.DONE, PaymentStatus.PARTIAL_CANCELED, PaymentStatus.CANCELED))
                 .orElseThrow(() -> new PaymentException(PaymentErrorCode.PAYMENT_NOT_FOUND));
+    }
+
+    /***
+     * 함수 기능: 토스에 승인을 요청하고 실패 유형에 따라 승인 시도 기록을 정리한다.
+     *          명시적 거절은 실패로 확정하고, 결과를 모르면 REQUESTED로 남겨 대조 대상이 되게 한다.
+     * @param payment 승인할 결제
+     * @param paymentKey 토스가 발급한 결제 키
+     * @param confirmId 토스 호출 전에 기록한 승인 시도 식별자
+     * @return 토스 승인 응답
+     */
+    private TossPaymentConfirmResponse requestConfirm(Payment payment, String paymentKey, Long confirmId) {
+        try {
+            return tossPaymentClient.confirm(paymentKey, payment.getOrderId(), payment.getTotalAmount());
+        } catch (PaymentException e) {
+            if (e.getErrorCode() != PaymentErrorCode.PAYMENT_CONFIRM_RESULT_UNKNOWN) {
+                markConfirmFailed(confirmId);
+            }
+
+            throw e;
+        }
+    }
+
+    /***
+     * 함수 기능: 승인 사실을 기록한다. 기록에 실패해도 이미 승인된 결제를 롤백하지 않도록 예외를 전파하지 않는다.
+     *          이때 시도는 REQUESTED로 남아 여전히 대조 대상이다.
+     * @param confirmId 승인 시도 식별자
+     * @param result 토스 승인 응답
+     */
+    private void markConfirmApproved(Long confirmId, TossPaymentConfirmResponse result) {
+        try {
+            paymentConfirmRecorder.markApproved(confirmId, result);
+        } catch (RuntimeException e) {
+            log.error("[결제 승인 기록 실패] confirmId={}, 토스는 승인 응답을 보냈습니다.", confirmId, e);
+        }
+    }
+
+    /***
+     * 함수 기능: 승인 거절을 기록한다. 기록 실패가 토스의 거절 예외를 가리지 않도록 예외를 전파하지 않는다.
+     * @param confirmId 승인 시도 식별자
+     */
+    private void markConfirmFailed(Long confirmId) {
+        try {
+            paymentConfirmRecorder.markFailed(confirmId);
+        } catch (RuntimeException e) {
+            log.error("[결제 승인 거절 기록 실패] confirmId={}", confirmId, e);
+        }
     }
 
     /***

@@ -28,6 +28,7 @@ public enum PaymentErrorCode implements BaseErrorCode {
     PAYMENT_CONFIRM_FAILED(HttpStatus.BAD_GATEWAY, "PAYMENT502_1", "결제 승인에 실패했습니다."),
     PAYMENT_CANCEL_FAILED(HttpStatus.BAD_GATEWAY, "PAYMENT502_2", "결제 취소에 실패했습니다."),
     PAYMENT_CANCEL_RESULT_UNKNOWN(HttpStatus.BAD_GATEWAY, "PAYMENT502_3", "결제 취소 결과를 확인할 수 없습니다. 고객센터로 문의해 주세요."),
+    PAYMENT_CONFIRM_RESULT_UNKNOWN(HttpStatus.BAD_GATEWAY, "PAYMENT502_4", "결제 승인 결과를 확인할 수 없습니다. 고객센터로 문의해 주세요."),
     PAYMENT_STORE_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "PAYMENT503_1", "일시적으로 결제를 이용할 수 없습니다. 잠시 후 다시 시도해 주세요."),
     ;
 

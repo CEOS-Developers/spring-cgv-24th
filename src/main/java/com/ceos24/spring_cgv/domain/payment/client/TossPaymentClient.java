@@ -42,10 +42,16 @@ public class TossPaymentClient {
 
         } catch (RestClientResponseException e) {
             logFailure(orderId, e);
+
+            // 5xx는 토스가 승인을 처리했는지 알 수 없으므로 거절로 확정하지 않는다.
+            if (e.getStatusCode().is5xxServerError()) {
+                throw new PaymentException(PaymentErrorCode.PAYMENT_CONFIRM_RESULT_UNKNOWN);
+            }
+
             throw new PaymentException(PaymentErrorCode.PAYMENT_CONFIRM_FAILED);
         } catch (ResourceAccessException e) {
             log.error("[결제 승인 응답 없음] orderId={}, 승인 여부를 확인할 수 없어 결제 내역 대조가 필요합니다.", orderId, e);
-            throw new PaymentException(PaymentErrorCode.PAYMENT_CONFIRM_FAILED);
+            throw new PaymentException(PaymentErrorCode.PAYMENT_CONFIRM_RESULT_UNKNOWN);
         }
     }
 
