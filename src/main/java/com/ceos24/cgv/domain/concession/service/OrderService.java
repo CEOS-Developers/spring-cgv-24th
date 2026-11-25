@@ -63,6 +63,9 @@ public class OrderService {
 
 		Map<Long, Item> itemById = itemRepository.findAllById(quantityByItemId.keySet()).stream()
 				.collect(Collectors.toMap(Item::getId, Function.identity()));
+		Map<Long, Stock> stockByItemId = stockRepository
+				.findByTheaterIdAndItemIdIn(request.theaterId(), quantityByItemId.keySet()).stream()
+				.collect(Collectors.toMap(stock -> stock.getItem().getId(), Function.identity()));
 
 		int totalPrice = 0;
 		for (Map.Entry<Long, Integer> entry : quantityByItemId.entrySet()) {
@@ -71,8 +74,10 @@ public class OrderService {
 				throw new GeneralException(ConcessionErrorStatus.ITEM_NOT_FOUND);
 			}
 
-			Stock stock = stockRepository.findByTheaterIdAndItemId(request.theaterId(), item.getId())
-					.orElseThrow(() -> new GeneralException(ConcessionErrorStatus.STOCK_NOT_FOUND));
+			Stock stock = stockByItemId.get(item.getId());
+			if (stock == null) {
+				throw new GeneralException(ConcessionErrorStatus.STOCK_NOT_FOUND);
+			}
 			if (!stock.hasEnough(entry.getValue())) {
 				throw new GeneralException(ConcessionErrorStatus.INSUFFICIENT_STOCK);
 			}

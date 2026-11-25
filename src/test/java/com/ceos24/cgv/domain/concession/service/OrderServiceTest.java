@@ -64,7 +64,7 @@ class OrderServiceTest {
 		when(userRepository.findById(1L)).thenReturn(Optional.of(user));
 		when(theaterRepository.findById(2L)).thenReturn(Optional.of(theater));
 		when(itemRepository.findAllById(Set.of(3L))).thenReturn(List.of(item));
-		when(stockRepository.findByTheaterIdAndItemId(2L, 3L)).thenReturn(Optional.of(stock(1L, theater, item, 10)));
+		when(stockRepository.findByTheaterIdAndItemIdIn(2L, Set.of(3L))).thenReturn(List.of(stock(1L, theater, item, 10)));
 		when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> withId(invocation.getArgument(0), 10L));
 		when(orderItemRepository.save(any(OrderItem.class))).thenAnswer(invocation -> withId(invocation.getArgument(0), 20L));
 
@@ -96,7 +96,7 @@ class OrderServiceTest {
 		when(userRepository.findById(1L)).thenReturn(Optional.of(user));
 		when(theaterRepository.findById(2L)).thenReturn(Optional.of(theater));
 		when(itemRepository.findAllById(Set.of(3L))).thenReturn(List.of(item));
-		when(stockRepository.findByTheaterIdAndItemId(2L, 3L)).thenReturn(Optional.of(stock(1L, theater, item, 1)));
+		when(stockRepository.findByTheaterIdAndItemIdIn(2L, Set.of(3L))).thenReturn(List.of(stock(1L, theater, item, 1)));
 
 		assertThatThrownBy(() -> orderService.create(1L, new OrderCreateRequest(2L, List.of(new OrderItemRequest(3L, 2)))))
 				.isInstanceOf(GeneralException.class)

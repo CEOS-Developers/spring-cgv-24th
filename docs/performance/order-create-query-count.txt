@@ -1,0 +1,31 @@
+# OrderCreateQueryCountIntegrationTest 출력 (로컬 MySQL 8.0.44, 각 3회 실행)
+## Before (상품별 findByTheaterIdAndItemId 반복)
+[ORDER-CREATE] items=1 stockSelect=1 totalSql=7 medianMs=16.858 minMs=7.840 maxMs=20.463
+[ORDER-CREATE] items=5 stockSelect=5 totalSql=15 medianMs=25.103 minMs=19.959 maxMs=34.157
+[ORDER-CREATE] items=10 stockSelect=10 totalSql=25 medianMs=23.478 minMs=18.580 maxMs=32.890
+[ORDER-CREATE] items=1 stockSelect=1 totalSql=7 medianMs=22.041 minMs=16.834 maxMs=33.688
+[ORDER-CREATE] items=5 stockSelect=5 totalSql=15 medianMs=28.601 minMs=23.798 maxMs=35.270
+[ORDER-CREATE] items=10 stockSelect=10 totalSql=25 medianMs=29.380 minMs=19.641 maxMs=37.989
+[ORDER-CREATE] items=1 stockSelect=1 totalSql=7 medianMs=19.135 minMs=12.442 maxMs=24.869
+[ORDER-CREATE] items=5 stockSelect=5 totalSql=15 medianMs=29.220 minMs=23.713 maxMs=33.895
+[ORDER-CREATE] items=10 stockSelect=10 totalSql=25 medianMs=29.648 minMs=24.686 maxMs=47.486
+## After (findByTheaterIdAndItemIdIn 일괄 조회)
+[ORDER-CREATE] items=1 stockSelect=1 totalSql=7 medianMs=13.322 minMs=9.370 maxMs=34.499
+[ORDER-CREATE] items=5 stockSelect=1 totalSql=11 medianMs=16.199 minMs=9.664 maxMs=23.865
+[ORDER-CREATE] items=10 stockSelect=1 totalSql=16 medianMs=16.673 minMs=11.935 maxMs=21.337
+[ORDER-CREATE] items=1 stockSelect=1 totalSql=7 medianMs=11.709 minMs=8.949 maxMs=17.857
+[ORDER-CREATE] items=5 stockSelect=1 totalSql=11 medianMs=15.727 minMs=11.152 maxMs=21.749
+[ORDER-CREATE] items=10 stockSelect=1 totalSql=16 medianMs=14.792 minMs=10.708 maxMs=32.610
+[ORDER-CREATE] items=1 stockSelect=1 totalSql=7 medianMs=12.782 minMs=9.365 maxMs=17.354
+[ORDER-CREATE] items=5 stockSelect=1 totalSql=11 medianMs=15.894 minMs=12.080 maxMs=20.032
+[ORDER-CREATE] items=10 stockSelect=1 totalSql=16 medianMs=17.202 minMs=11.534 maxMs=26.742
+## 재고 조회 구간 교차 측정 (After 코드에서 두 방식을 번갈아 200회씩)
+[STOCK-LOOKUP] items=1 singleMedianMs=1.499 batchMedianMs=2.185 (n=200)
+[STOCK-LOOKUP] items=5 singleMedianMs=3.495 batchMedianMs=2.222 (n=200)
+[STOCK-LOOKUP] items=10 singleMedianMs=4.936 batchMedianMs=1.825 (n=200)
+[STOCK-LOOKUP] items=1 singleMedianMs=1.731 batchMedianMs=2.468 (n=200)
+[STOCK-LOOKUP] items=5 singleMedianMs=4.188 batchMedianMs=2.661 (n=200)
+[STOCK-LOOKUP] items=10 singleMedianMs=5.349 batchMedianMs=1.900 (n=200)
+[STOCK-LOOKUP] items=1 singleMedianMs=1.544 batchMedianMs=2.302 (n=200)
+[STOCK-LOOKUP] items=5 singleMedianMs=3.960 batchMedianMs=2.466 (n=200)
+[STOCK-LOOKUP] items=10 singleMedianMs=4.790 batchMedianMs=1.749 (n=200)

@@ -6,12 +6,15 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
 public interface StockRepository extends JpaRepository<Stock, Long> {
 
     Optional<Stock> findByTheaterIdAndItemId(Long theaterId, Long itemId);
+
+    List<Stock> findByTheaterIdAndItemIdIn(Long theaterId, Collection<Long> itemIds);
 
     @Query("SELECT s FROM Stock s JOIN FETCH s.item WHERE s.theater.id = :theaterId ORDER BY s.item.name ASC")
     List<Stock> findByTheaterIdWithItemOrderByItemNameAsc(@Param("theaterId") Long theaterId);
