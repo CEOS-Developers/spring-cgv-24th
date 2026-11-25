@@ -4,13 +4,13 @@ import com.ceos.cgv.domain.auth.dto.SignupRequest;
 import com.ceos.cgv.domain.user.entity.User;
 import com.ceos.cgv.global.exception.BusinessException;
 import com.ceos.cgv.global.exception.ErrorCode;
+import com.ceos.cgv.support.DatabaseIntegrationTest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.ActiveProfiles;
 
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -23,8 +23,7 @@ import java.util.concurrent.TimeUnit;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest
-@ActiveProfiles("test")
-class RegistrationConcurrencyIntegrationTest {
+class RegistrationConcurrencyIntegrationTest extends DatabaseIntegrationTest {
     private static final String LOGIN_ID = "race_member";
 
     @Autowired

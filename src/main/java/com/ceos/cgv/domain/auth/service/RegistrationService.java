@@ -9,7 +9,6 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
@@ -21,7 +20,10 @@ public class RegistrationService {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
 
-    @Transactional
+    // 메서드 전체를 트랜잭션으로 묶지 않는다. bcrypt 해시는 수십~수백 ms의 CPU 작업인데,
+    // 트랜잭션 안에서 실행하면 그동안 DB 커넥션을 점유해 작은 풀(배포 프로필 5개)이 쉽게 고갈된다.
+    // 중복 확인은 읽기 하나씩, 저장은 saveAndFlush 하나의 쓰기 트랜잭션으로 처리하고,
+    // 동시 가입의 최종 방어선은 유니크 제약과 아래의 중복 키 변환이다.
     public User register(SignupRequest request) {
         String loginId = request.loginId().toLowerCase(Locale.ROOT);
         String email = request.email().trim().toLowerCase(Locale.ROOT);
