@@ -3907,3 +3907,925 @@ public boolean hold(Long screeningId, List<SeatPosition> seats, String orderId) 
 | loki | 로그 저장 | 받은 로그 저장 |
 | grafana | 대시보드 | Prometheus와 Loki를 통해 화면 그림 |
 </details>
+
+## 7주차 캐싱 & 최적화
+
+<details>
+<summary>최적화 & 캐싱</summary>
+
+# 1. Transaction
+
+## a. Transaction이란?
+
+데이터베이스의 상태를 변경하기 위해 수행하는 `논리적인 작업의 단위`
+
+→ 즉, 여러 쿼리를 논리적으로 `하나의 작업`으로 묶어주는 것이다.
+
+또한, 하나의 트랜잭션은 All or Nothing이다.
+
+- 커밋: 트랜잭션으로 묶인 모든 쿼리가 성공 → 쿼리 결과를 실제 DB에 반영
+- 롤백: 쿼리 결과를 취소. DB를 트랜잭션 시작 이전 상태로 되돌림.
+
+## b. Transaction Propagation (트랜잭션 전파)
+
+**트랜잭션이 걸린 메서드가 또 다른 트랜잭션 메서드를 호출할 때, 안쪽 메서드가 바깥 트랜잭션에 어떻게 참여할지를 정하는 규칙**
+
+```java
+@Transactional
+public void confirm(...){ // 바깥 트랜잭션
+	paymentRepository.save(...);
+	reservationService.confirm(...); // 여기도 @Transactional. 같이 묶을까? 따로 갈까?
+}
+```
+
+**핵심 개념**
+
+- 물리 트랜잭션: 실제 DB 커넥션에서 일어나는 `BEGIN ... COMMIT/ROLLBACK`
+- 논리 트랜잭션: `@Transactional` 메서드 하나하나가 만드는 범위
+
+```java
+Paymentservice.confirm() ← 논리 트랜잭션 1
+    ├── ReservationService.confirm()  ← 논리 트랜잭션 2
+
+둘 다 Connection 하나 공유 = 물리 트랜잭션 1개, COMMIT은 한 번
+근데 Spring은 둘을 각각 논리 트랜잭션으로 관리
+```
+
+기본 전파(`REQUIRED`)에서는 다음 두 가지 규칙이 모든 것을 결정한다.
+
+1. 모든 논리 트랜잭션이 커밋되어야 물리 트랜잭션이 커밋된다.
+2. 논리 트랜잭션 하나라도 롤백되면 물리 트랜잭션 전체가 롤백된다.
+
+그리고 실제 `COMMIT/ROLLBACK`은 트랜잭션을 처음 시작한 쪽(신규 트랜잭션)만 수행한다. 안쪽에서 참여한 메서드가 끝날 때는 아무것도 커밋하지 않는다.
+
+## c. 7가지 전파 속성
+
+| 속성 | 바깥 트랜잭션이 있을 때 | 없을 때 |
+| --- | --- | --- |
+| `REQUIRED` (기본값) | 참여한다 | 새로 시작한다 |
+| `REQUIRES_NEW` | 바깥을 보류하고 새로 시작한다 | 새로 시작하낟 |
+| `NESTED` | 세이브포인트를 만들고 중첩한다 | 새로 시작한다 |
+| `SUPPORTS` | 참여한다 | 트랜잭션 없이 실행한다 |
+| `MANDATORY` | 참여한다 | 예외를 던진다 |
+| `NOT_SUPPORTED`  | 바깥을 보류하고 트랜잭션 없이 실행한다 | 트랜잭션 없이 실행한다 |
+| `NEVER` | 예외를 던진다 | 트랜잭션 없이 실행한다 |
+
+실무에서 자주 쓰는 건 `REQUIRED`, `REQUIRES_NEW`, 가끔 `MANDATORY`, `SUPPORTS` 정도이다.
+
+### **c-1. REQUIRED: 있으면 참여, 없으면 시작**
+
+가장 흔한 경우. `@Transactional`만 붙이면 default로 속성이 정해진다.
+
+```java
+@Service
+public class PaymentService {
+    @Transactional
+    public void confirm(String orderId) {
+        Payment payment = paymentRepository.findByOrderId(orderId).orElseThrow();
+        payment.approve();
+        reservationService.confirm(payment);     // 같은 트랜잭션에 참여
+    }
+}
+
+@Service
+public class ReservationService {
+    @Transactional   // REQUIRED
+    public void confirm(Payment payment) {
+        reservationRepository.save(Reservation.confirmed(payment));
+    }
+}
+```
+
+결제 승인과 예매 확정이 하나의 물리 트랜잭션으로 묶인다.
+
+예매 저장 중 예외가 발생하면 결제 승인도 함께 롤백된다.
+
+**함정: 안쪽 예외를 바깥에서 잡으면**
+
+```java
+@Transactional
+public void confirm(String orderId) {
+    payment.approve();
+    try {
+        reservationService.confirm(payment);   // 안에서 RuntimeException 발생
+    } catch (RuntimeException e) {
+        log.warn("예매 확정 실패, 결제는 유지");   // 잡았으니 커밋되겠지?
+    }
+}
+```
+
+결과는 커밋이 아니라 다음과 같은 예외가 발생한다.
+
+```java
+UnexpectedRollbackException: Transaction silently rolled back because 
+it has been marked as rollback-only
+```
+
+`reservatioService.confirm()`에서 런타임 예외가 프록시를 통과하는 순간, 스프링은 **물리 트랜잭션에 “rollback-only” 표시**를 남긴다.
+
+안쪽은 참여자라 직접 롤백할 권한이 없어서 표시만 해 두는 것이다. 바깥이 예외를 잡고 정상 종료해서 커밋을 시도해도, `rollback-only` 표시를 보고 롤백한 뒤 예외를 던진다. 전파 규칙 2번(`하나라도 롤백되면 전체 롤백`)이 지켜지는 것.
+
+안쪽 실패와 무관하게 바깥을 커밋하고 싶다면 다음의 `REQUIRES_NEW`가 필요하다.
+
+### c-2. REQUIRES_NEW: 항상 별도의 트랜잭션
+
+바깥 트랜잭션을 **잠시 보류**하고, **새 커넥션으로 완전히 독립된 물리 트랜잭션**을 시작한다.
+
+**예시: 결제 실패 이력은 무조건 남기기**
+
+결제 승인이 실패해서 본 트랜잭션이 롤백되더라도, “언제 누가 왜 실패했는지”는 남아야 한다.
+
+```java
+@Service
+public class PaymentService {
+    @Transactional
+    public void confirm(String orderId, String paymentKey, int amount) {
+        Payment payment = paymentRepository.findByOrderId(orderId).orElseThrow();
+        try {
+            tossPaymentsClient.confirm(paymentKey, orderId, amount);
+            payment.approve();
+        } catch (TossApiException e) {
+            paymentFailureLogger.record(orderId, e.getCode());   // 별도 트랜잭션으로 커밋
+            throw new PaymentException(PaymentErrorCode.PAYMENT_CONFIRM_FAILED);   // 본 트랜잭션은 롤백
+        }
+    }
+}
+
+@Service
+public class PaymentFailureLogger {
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void record(String orderId, String code) {
+        failureHistoryRepository.save(new PaymentFailureHistory(orderId, code));
+    }
+}
+```
+
+```java
+커넥션 1: BEGIN ─ 결제 조회 ─ (보류) ············ (재개) ─ ROLLBACK
+커넥션 2:                   BEGIN ─ 실패 이력 저장 ─ COMMIT ✅
+```
+
+바깥이 롤백돼도 실패 이력은 이미 커밋되어 남는다. 반대로 실패 이력 저장이 실패해도, 그 예외를 바깥에서 잡으면 바깥 트랜잭션은 영향을 받지 않는다.
+
+감사 로그, 실패 기록, 알림 발송 내역처럼 **본 작업의 성패와 상관없이 남아야 하는 데이터**에 쓴다.
+
+**주의 1: 예외는 여전히 전파된다**
+
+트랜잭션이 분리된 것이지 예외가 사라진 건 아니다. 안쪽에서 던진 예외를 바깥에서 잡지 않으면 바깥도 그 예외 때문에 롤백된다.
+
+**주의 2: 한 요청이 커넥션 2개를 쓴다**
+
+바깥 커넥션은 보류 중에도 반납되지 않는다.
+
+HikariCP 풀이 10개인데 동시에 10개 요청이 바깥 트랜잭션으로 커넥션을 하나씩 잡고, 모두 안쪽 `REQUIRES_NEW`에서 두 번째 커넥션을 기다리면 **아무도 진행하지 못하는 교착 상태**가 된다.
+
+→ 해결 방법: 커넥션 두 개를 동시에 쥐지 않게 구조를 바꾼다.
+
+실패 이력은 바깥 트랜잭션이 끝난 뒤에 남겨도 충분하다. 트랜잭션이 없는 상위 클래스에서 조율하면, 실패 이력을 저장하는 시점에는 이미 첫 커넥션이 반납된 상태이다.
+
+**주의 3: 바깥이 잡은 락을 안쪽이 기다린다**
+
+```java
+@Transactional
+public void outer() {
+    seatRepository.findByIdForUpdate(1L);   // 행 락 획득 (커넥션 1)
+    inner.updateSeat(1L);                   // REQUIRES_NEW (커넥션 2)가 같은 행 수정 시도
+}
+```
+
+커넥션 2는 커넥션 1의 락이 풀리길 기다리는데, 커넥션 1은 커넥션 2가 끝나야 진행된다.
+
+**같은 행을 다루는 작업에는 `REQUIRES_NEW`를 쓰지 않아야 한다.**
+
+### c-3. MANDATORY: 반드시 바깥 트랜잭션 안에서만
+
+```java
+@Service
+public class ReservationService {
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void confirm(Payment payment) {
+        reservationRepository.save(Reservation.confirmed(payment));
+    }
+}
+```
+
+트랜잭션 없이 호출되면 바로 예외가 난다.
+
+```java
+IllegalTransactionStateException: 
+No existing transaction found for transaction marked with propagation 'mandatory
+```
+
+“예매 확정은 반드시 결제 승인과 같은 트랜잭션에서만 일어나야 한다”는 **설계 의도를 코드로 강제할 때 사용한다.**
+
+누군가 컨트롤러에서 `reservationService.confirm()`을 단독으로 호출하면, 결제 없이 예매가 확정되는 대신 즉시 실패한다.
+
+`REQUIRED`와 같이, 안쪽과 바깥은 운명을 같이한다. 하지만, `REQUIRED`는 단독 실행 가능하지만,  `MANDATORY는`, 바깥 없이 단독 실행되는 경우를 막는다.
+
+### c-4. SUPPROTS: 있으면 타고, 없으면 그냥 실행
+
+```java
+@Transactional(propagation = Propagation.SUPPORTS, readOnly = true)
+public List<Screening> findScreenings(Long movieId) {
+    return screeningRepository.findByMovieId(movieId);
+}
+```
+
+트랜잭션 안에서 호출되면 같은 영속성 컨텍스트를 공유해 방금 변경한 데이터를 볼 수 있고,
+
+단독으로 호출되면 트랜잭션 없이 조회한다.
+
+조회 전용 메서드에 쓰이지만, 실무에서는 단순하게 `@Transactional(readOnly=true)`를 쓰는 경우가 더 많다.
+
+# 2. DB 인덱스
+
+**인덱스란?**
+
+DB 테이블에 대한 검색 성능의 속도를 높여주는 자료 구조
+
+→ `특정 컬럼을 기준으로 미리 정렬해둔 표`
+
+인덱스는 **어떤 자료구조로 값을 정리해 두었는가**에 따라 잘하는 일이 완전히 달라진다.
+
+같은 컬럼에 인덱스를 걸어도 **B-Tree는 범위 검색**이 빠르고, **Hash는 정확히 일치하는 값**만 빠르고, **비트맵은 여러 조건**을 조합할 때 빠르다.
+
+그래서 “어떤 쿼리를 빠르게 하고 싶은가”를 기준으로 이해하는 게 핵심이다.
+
+## a. DB에서 사용하는 인덱스의 종류와 특징, 상황별 인덱스 활용 방안
+
+| 종류 | 자료구조 | 잘하는 것 | 대표 사용처 |
+| --- | --- | --- | --- |
+| B-Tree (B+ Tree) | 정렬된 균형 트리 | 일치, 범위, 정렬 | 모든 RDB의 기본 인덱스 |
+| Hash | 해시 테이블 | 정확히 일치 | MySQL 메모리 엔진, PostgresQL |
+| Bitmap | 값별 비트 배열 | 낮은 카디널리티 + 조건 조합 | Oracle, 데이터 웨어하우스 |
+| Full-text | 역색인 (단어 → 행 목록) | 본문 단어 검색 | 게시글, 상품명 검색 |
+| R-Tree | 영역(사각형) 트리 | 공간 검색 | 위치 기반 검색 |
+
+### a-1. B+ Tree 인덱스
+
+**구조**
+
+```java
+                    [ 100 | 200 ]                ← 루트: 길 안내만
+                   /      |      \
+        [ 30 | 60 ]   [ 130 | 170 ]   [ 230 | 260 ]   ← 브랜치: 길 안내만
+         /  |  \        ...              ...
+   [10,20]↔[30,45]↔[60,80]↔ ... ↔[260,290]     ← 리프: 실제 키가 정렬된 채로, 옆 노드와 연결
+```
+
+**특징**
+
+- **항상 균형**: 루트에서 어느 리프까지 가든 깊이가 같다. 그래서 어떤 값을 찾든 성능이 일정하다.
+- **정렬 상태 유지:** 리프의 키가 항상 정렬되어 있다.
+- **리프끼리 연결 리스트**: 시작 지점만 찾으면 옆으로 쭉 읽어 나가면 된다.
+
+**잘하는 것**
+
+```java
+WHERE screening_id = 15                         -- 일치
+WHERE start_time BETWEEN '2026-11-23' AND '2026-11-24'   -- 범위
+ORDER BY start_time                             -- 이미 정렬되어 있으니 정렬 생략
+WHERE title LIKE '오디%'                         -- 앞부분이 고정된 LIKE
+```
+
+**못하는 것**
+
+```java
+WHERE title LIKE '%세우스'          -- 앞이 비어 있으면 어디서 시작할지 모름 → 전체 탐색
+WHERE DATE(start_time) = '2026-11-23'   -- 컬럼을 함수로 감싸면 정렬 순서를 못 씀
+WHERE gender = 'M'                  -- 값 종류가 너무 적으면 인덱스를 타도 절반을 읽어야 해서 효과 없음
+```
+
+**복합 인덱스와 왼쪽 우선 규칙**
+
+여러 컬럼으로 만들면 **첫 번째 컬럼으로 정렬하고, 같으면 두 번째로 정렬한 상태가 된다.**
+
+전화번호 부가 “성 → 이름” 순으로 정렬된 것과 같다.
+
+**클러스터드 인덱스**
+
+InnoDB는 **PK 인덱스의 리프에 행 데이터 전체가 들어있다.** 테이블 자체가 PK 순서로 정렬된 B+Tree.
+
+반면 다른 인덱스(세컨더리 인덱스)의 리프에는 **PK 값**만 들어있다.
+
+그래서 세컨더리 인덱스로 찾으면 PK를 얻은 뒤 → 클러스터드 인덱스를 한 번 더 탐색한다.
+
+```java
+SELECT * FROM payment WHERE order_id = 'CGV-1';
+
+1) order_id 인덱스 탐색 → PK = 42 획득
+2) PK 인덱스 탐색 → 42번 행 전체 읽기
+```
+
+필요한 컬럼이 전부 인덱스 안에 있으면 2번을 건너뀌는데, 이걸 **커버링 인덱스**라고 하고 `EXPLAIN`에 `Using index`로 표시된다.
+
+**단점**
+
+- 쓰기마다 정렬을 유지해야 해서 INSERT, UPDATE, DELETE가 느려진다. 인덱스가 많을수록 더 느려진다.
+- 노드가 꽉 차면 분할이 일어난다.
+
+### a-2. Hash 인덱스
+
+키를 해시 함수에 넣어 나온 값으로 **바로 위치를 찾아가는 구조**이다.
+
+```java
+hash("CGV-3f9c") → 버킷 7 → [CGV-3f9c → 행 위치]
+hash("CGV-a1b2") → 버킷 2 → [CGV-a1b2 → 행 위치]
+```
+
+**장점**
+
+- 정확히 일치하는 검색이 **O(1)**로, 이론상 B-Tree보다 빠르다.
+- 키가 길어도 해시값만 저장하므로 인덱스가 작을 수 있다.
+
+**단점**
+
+해시는 값을 흩뿌리기 때문에 **순서 정보가 완전히 사라진다.**
+
+### a-3. 비트맵 인덱스
+
+**값마다 비트 배열을 하나씩 만들어서,** 각 행이 그 값을 가지는지 0과 1로 표시한다.
+
+```java
+행 번호:          1  2  3  4  5  6  7  8
+status=DONE      1  0  1  1  0  0  1  0
+status=CANCELED  0  1  0  0  0  1  0  0
+status=READY     0  0  0  0  1  0  0  1
+
+age_group=ADULT  1  1  0  1  1  0  1  0
+age_group=TEEN   0  0  1  0  0  1  0  1
+```
+
+**장점**
+
+여러 조건을 비트 연산으로 한 번에 조합할 수 있다.
+
+```java
+WHERE status = 'DONE' AND age_group = 'ADULT'
+```
+
+```java
+DONE   1 0 1 1 0 0 1 0
+ADULT  1 1 0 1 1 0 1 0
+AND  → 1 0 0 1 0 0 1 0   → 1, 4, 7번 행
+```
+
+CPU가 비트 연산을 매우 빠르게 처리하고, 0과 1이 반복되는 패턴은 압축이 잘 되어 저장 공간도 작다.
+
+그래서 **값의 종류가 적은 (카디널리티가 낮은) 컬럼**에 강하다. 성별, 상태, 등급, 지역
+
+**단점**
+
+쓰기에 매우 약한다. 행 하나를 바꾸면 관련 비트맵 조각을 수정해야 하는데, DB가 이 조각 단위로 락을 걸기 때문에 여러 행이 동시에 잠긴다.
+
+그래서 데이터를 한 번에 적재하고 주로 읽기만 하는 데이터 웨어하우스에서 쓴다.
+
+## b. 커버링 인덱스
+
+쿼리에 필요한 모든 컬럼이 인덱스 안에 들어 있어서, 테이블(InnoDB에서는 클러스터드 인덱스)을 다시 읽지 않고 인덱스만으로 결과를 만드는 것.
+
+인덱스의 종류가 따로 있는 게 아니라, 인덱스와 쿼리의 관계를 부르는 이름이다.
+
+여기서 “필요한 컬럼”은 SELECT 절만이 아니라, `WHERE, ORDER BY, GROUP BY, JOIN`에 쓰인 컬럼 전부를 말한다.
+
+**왜 빠른가: 테이블 재방문 제거**
+
+앞서 본 세컨더리 인덱스 조회는 두 단계였다.
+
+```sql
+CREATE INDEX idx_reservation_member ON reservation (member_id);
+
+SELECT member_id, status, total_amount FROM reservation WHERE member_id = 12;
+```
+
+1. 세컨더리 인덱스: `member_id=12`인 리프를 찾아 PK 목록 획득
+2. 클러스터드 인덱스: PK마다 트리를 다시 타고 내려가 `status`, `total_amount` 읽기
+
+결과가 1,000건이면 2단계를 1,000번 한다.
+
+인덱스를 다음과 같이 바꾸면 2단계가 사라진다.
+
+```sql
+CREATE INDEX idx_reservation_member_status_amount
+    ON reservation (member_id, status, total_amount);
+```
+
+1. 세컨더리 인덱스: `member_id=12`구간을 읽으면 `status, total_amount`도 리프에 이미 있음 → 끝
+
+쿼리가 쓰는 컬럼 3개가 인덱스에 다 있으니 커버링이다.
+
+그래서 “커버링 인덱스를 만든다”는 말은 실무에서 보통 **”쿼리가 쓰는 컬럼을 전부 담은 복합 인덱스를 만든다”**는 뜻으로 쓰인다.
+
+# 3. 쿼리 실행과 성능 분석
+
+## 쿼리 실행 과정
+
+!image.png
+
+```sql
+Client -> Parsor -> Preprocessor -> Optimizer -> Executor -> Storage Engine
+```
+
+### 1. Parsing 단계
+
+- SQL Parser가 SQL문을 잘게 쪼개 MySQL 서버가 이해할 수 있는 수준으로 분리한다. (`parse tree 생성`)
+
+### 2. Optimization 단계
+
+- SQL 옵티마이저가 파스트리를 확인하며 쿼리 최적화 및 `실행 계획 수립`
+
+### 3. Execution 단계
+
+- Optimizer가 만든 실행 계획에 따라 Storage Engine에서 실제 데이터 읽기
+
+## 실행 계획 분석
+
+실행 계획이란 옵티마이저가 결정한 최적의 쿼리 실행 방법이다.
+
+```sql
+# 실행 계획 조회하기
+EXPLAIN [SQL문]
+
+# 실행 계획에 대한 자세한 정보 조회하기
+EXPLAIN ANALYZE [SQL문]
+```
+
+!image.png
+
+- **id**: SELECT 식별자
+- **select_type**: SQL문을 구성하는 SELECT 문의 유형을 출력하는 항목
+- **key**: 어떤 인덱스를 사용하는지
+- **ref**: 인덱스에서 찾을 값의 출처
+- **rows**: MySQL이 스캔하는 예상 행 수
+
+  → EXPLAIN은 MySQL 통계 정보를 가지고 예측한 값 (실제 SQL 문을 실행한 뒤의 실행 계획 X)
+
+- **filtered**: SQL문을 통해 MySQL 엔진이 스토리지 엔진으로부터 가져온 데이터가 필터 조건에 따라 통과한 비율 (필터 조건: WHERE 구의 검색 조건)
+- **type**
+    - `ALL(Full Table Scan)`: 인덱스 활용 X, 테이블을 처음부터 끝까지 전부 탐색
+    - `INDEX(Index Full Scan)`: 인덱스 테이블을 처음부터 끝까지 전부 탐색
+    - `RANGE(Index Range Scan)`: 인덱스의 일부 구간만 탐색
+    - `REF`: 인덱스를 통해 일부 데이터만 탐색
+    - `CONST`: 유니크 인덱스나 PK를 사용해서 1건의 데이터만 찾음
+
+</details>
+
+<details>
+<summary>트랜잭션 분리하기 & 캐시·인덱스·쿼리 개선하기</summary>
+## 트랜잭션 개선하기
+
+트랜잭션을 분리하는 이유는 크게 두 가지이다.
+
+| 이유 | 예시 | 흔히 쓰는 방법 |
+| --- | --- | --- |
+|   1. 본 작업이 실패해도 기록을 남기려고 | 결제 시도, 감사 로그, 실패 이력 | `REQUIRES_NEW` |
+| 2. 부가 작업의 실패가 본 작업을 망치지 않게 | 주문 후 알림, 포인트 적립 | `REQUIRES_NEW` + catch |
+
+현재 나의 문제 상황은, 본 작업(`결제 승인`)이 실패해도 기록(`결제 시도 기록`)을 남기려는 것이다. catch 필요가 없는 이유는 **결제 시도를 기록하지 못하면 결제 승인도 진행하면 안되기 때문이다.** → 그렇다면 트랜잭션 분리라고는 어려울듯…
+
+2번째 경우는, 부가 작업(`알림`)이 실패해도 본 작업(`주문`)은 커밋시키기 위해서 `REQUIRES_NEW`와 주문 서비스에서 catch를 통해 주문은 무조건 커밋시키기 위해서이다.
+
+### 문제 상황
+
+`confirm()` 전체가 한 트랜잭션이라,
+
+1. 예매, 좌석 INSERT
+2. 토스 승인 성공 → 돈이 빠짐
+3. 로컬 처리 예외 또는 응답 타임아웃
+4. 전체 롤백 → 예매와 paymentKey가 사라지고 Payment는 READY
+
+가 되는 상황이 발생했다. DB에는 `READY`만 남게 되어 결제창 이탈,  승인 거절, 실제 승인 건을 구분할 수 없게되었다.
+
+```java
+/***
+ * 함수 기능: 좌석을 확정하여 예매를 생성하고 토스에 결제 승인을 요청한다.
+ * @param paymentKey 토스가 발급한 결제 키
+ * @param orderId 서버가 생성한 주문 번호
+ * @param amount 토스가 리다이렉트 파라미터로 보낸 금액 (대조용으로만 쓴다)
+ * @return PaymentConfirmResponse 예매 ID, 주문 정보, 확정된 좌석
+ */
+@Transactional
+public PaymentConfirmResponse confirm(String paymentKey, String orderId, Integer amount) {
+
+    Payment payment = paymentRepository.findByOrderId(orderId)
+            .orElseThrow(() -> new PaymentException(PaymentErrorCode.PAYMENT_ORDER_NOT_FOUND));
+
+    // 결제 요청 응답으로 전달받은 amount와 DB에 저장한 금액과 대조한다.
+    if (!payment.getTotalAmount().equals(amount)) {
+        log.warn("[결제 금액 불일치] orderId={}, 저장된 금액={}, 전달된 금액={}",
+                orderId, payment.getTotalAmount(), amount);
+        throw new PaymentException(PaymentErrorCode.PAYMENT_AMOUNT_MISMATCH);
+    }
+
+    List<PaymentSeat> paymentSeats = paymentSeatRepository.findAllByPaymentId(payment.getId());
+
+    // 좌석 예매를 확정하여 DB에 저장한다.
+    Reservation reservation = reservationService.reserve(
+            payment.getMember(),
+            payment.getScreening(),
+            payment.getTotalAmount(),
+            toSeatCommands(paymentSeats));
+
+    payment.linkReservation(reservation);
+
+    // 좌석을 확보한 뒤 토스에 결제 승인 요청을 보낸다.
+    TossPaymentConfirmResponse result =
+            tossPaymentClient.confirm(paymentKey, orderId, payment.getTotalAmount());
+            
+		...
+```
+
+### 해결
+
+`REQUIRES_NEW`를 통해, 승인 기록이 별도 트랜잭션에서 먼저 커밋되게 하고, 바깥이 롤백되어도 남게한다.
+
+이제 `Payment`가 `READY`인데 시도가 `APPROVED`면 복구 및 환불 대상이고, 오래된 `REQUESTED`면 토스 조회 대상으로 골라낼 수 있게 된다.
+
+```java
+/***
+ * 함수 기능: 토스에 승인을 보내기 전에 승인 시도를 별도 트랜잭션으로 기록한다.
+ *          FK 검사가 payment 행의 공유 락을 요구하므로, 바깥 트랜잭션이 payment를
+ *          변경(flush)하기 전에 호출해야 한다. 아니면 자기 자신의 락을 기다리게 된다.
+ * @param paymentId 승인할 결제 식별자
+ * @param paymentKey 토스가 발급한 결제 키
+ * @param amount 승인을 요청할 금액
+ * @return 승인 시도 식별자
+ */
+@Transactional(propagation = Propagation.REQUIRES_NEW)
+public Long record(Long paymentId, String paymentKey, Integer amount) {
+
+    // 바깥 트랜잭션의 엔티티를 공유하지 않도록, FK만 연결하는 참조를 새로 만든다.
+    PaymentConfirm confirm = paymentConfirmRepository.save(PaymentConfirm.builder()
+            .payment(paymentRepository.getReferenceById(paymentId))
+            .paymentKey(paymentKey)
+            .amount(amount)
+            .build());
+
+    log.info("[결제 승인 시도] paymentId={}, confirmId={}, amount={}",
+            paymentId, confirm.getId(), amount);
+
+    return confirm.getId();
+}    /***
+     * 함수 기능: 토스에 승인을 보내기 전에 승인 시도를 별도 트랜잭션으로 기록한다.
+     *          FK 검사가 payment 행의 공유 락을 요구하므로, 바깥 트랜잭션이 payment를
+     *          변경(flush)하기 전에 호출해야 한다. 아니면 자기 자신의 락을 기다리게 된다.
+     * @param paymentId 승인할 결제 식별자
+     * @param paymentKey 토스가 발급한 결제 키
+     * @param amount 승인을 요청할 금액
+     * @return 승인 시도 식별자
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public Long record(Long paymentId, String paymentKey, Integer amount) {
+
+        // 바깥 트랜잭션의 엔티티를 공유하지 않도록, FK만 연결하는 참조를 새로 만든다.
+        PaymentConfirm confirm = paymentConfirmRepository.save(PaymentConfirm.builder()
+                .payment(paymentRepository.getReferenceById(paymentId))
+                .paymentKey(paymentKey)
+                .amount(amount)
+                .build());
+
+        log.info("[결제 승인 시도] paymentId={}, confirmId={}, amount={}",
+                paymentId, confirm.getId(), amount);
+
+        return confirm.getId();
+    }
+```
+
+## 성능 최적화
+
+1. **사용한 캐시 전략**
+    - 읽기 전략: Cache-Aside이다. 캐시 조회 → 없으면 DB 조회 → 캐시 저장.
+
+      변경은 드물고, 같은 목록을 반복해서 읽고, 캐시에 문제가 생겨도 DB로 조회할 수 있다.
+
+    - 쓰기 전략: Write-Around + 캐시 무효화
+
+      영화관 하나가 바뀔 때 전체 목록을 다시 만들어 저장하는 것보다, 지우고 다음 조회에서 채우는 편이 단순하다.
+
+2. **캐싱한 데이터와 해당 데이터를 선택한 이유**
+
+   캐시에는 자주 읽히고, 잘 바뀌지 않으며, 잠시 이전 값이 보여도 괜찮은 데이터를 주로 저장한다.
+
+   그래서 전체 영화관 목록을 캐시했다. 모든 사용자에게 결과가 같고, 관리자만 변경하며, 매번 전체 조회가 발생하기 때문이다.
+
+3. **캐시 키와 만료 시간**
+    - 키: `cinemal::all`. 조건 없는 목록 하나라 고정했다.
+    - TTL: 10분. 무효화에 실패했을 때 오래된 값이 남는 시간을 제한한다.
+4. **데이터가 변경되면 무효화하는 방법**
+
+   등록, 수정, 삭제의 커밋이 성공한 뒤 키를 삭제하고, 다음 조회에서 다시 채운다.
+
+5. **일시적으로 오래된 데이터가 조회되어도 괜찮은가?**
+
+   이름과 주소는 잠시 늦게 보여도 허용할 수 있다. 조회와 변경이 겹치거나 무효화가 실패하면 저장된 시점부터 최대 10분간 이전 값이 보일 수 있다.
+
+
+### 1. 캐싱 적용하기
+
+**CacheConfig** (캐시 설정)
+
+```java
+/***
+ * 캐시 프록시가 트랜잭션 프록시를 감싸도록 순서를 앞당긴다.
+ * 히트 시 트랜잭션(DB 커넥션)을 열지 않고, 무효화는 커밋이 끝난 뒤에 일어난다.
+ */
+@Configuration
+@EnableCaching(order = Ordered.LOWEST_PRECEDENCE - 1)
+public class CacheConfig implements CachingConfigurer {
+
+    public static final String CINEMAS = "cinemas";
+
+    // 무효화에 실패하거나 조회와 변경이 겹쳐 옛 값이 저장돼도, 이 시간이 지나면 갱신된다.
+    private static final Duration CINEMAS_TTL = Duration.ofMinutes(10);
+
+    @Bean
+    public RedisCacheManager cacheManager(RedisConnectionFactory connectionFactory) {
+
+        // 커넥션 팩토리에 따라 쓰기/삭제가 비동기로 동작할 수 있어, 완료를 기다리고 실패를 감지하게 한다.
+        RedisCacheWriter cacheWriter = RedisCacheWriter.create(
+                connectionFactory, RedisCacheWriter.RedisCacheWriterConfigurer::immediateWrites);
+
+        return RedisCacheManager.builder(cacheWriter)
+                .withCacheConfiguration(CINEMAS, cinemasConfiguration())
+                .disableCreateOnMissingCache() // TTL과 타입을 정하지 않은 캐시는 만들지 않는다.
+                .build();
+    }
+  
+    private RedisCacheConfiguration cinemasConfiguration() {
+
+    JsonMapper mapper = JsonMapper.builder().build();
+    JavaType type = mapper.getTypeFactory().constructCollectionType(List.class, CinemaResponse.class);
+
+    return RedisCacheConfiguration.defaultCacheConfig()
+            .entryTtl(CINEMAS_TTL)
+            .disableCachingNullValues()
+            .serializeValuesWith(SerializationPair.fromSerializer(
+                    new JacksonJsonRedisSerializer<List<CinemaResponse>>(mapper, type)));
+}
+```
+
+- `@EnableCaching`을 통해 `@Cacheable`과 `@CacheEvict`를 동작하게 한다. `order`는 값이 작을수록 바깥쪽이므로, 캐시가 트랜잭션을 감싼다.
+
+  캐시 프록시 → 트랜잭션 프록시 → CinemaService
+
+- `cacheManager()`를 통해 Redis를 캐시 저장소로 연결한다.
+    - `immediateWrites()` - 저장•삭제가 끝날 때까지 기다린다. 비동기라면 삭제 전에 응답이 나가거나 실패를 놓칠 수 있기 때문에.
+    - `withCacheConfiguration(...)` - `cinemas` 캐시에 전용 설정을 적용한다.
+- `cinemasConfiguration()`을 통해 저장 형식을 정한다.
+
+**[조회 - 히트] 캐시 확인 → 반환**
+
+**[조회 - 미스] 캐시 확인 → TX 시작 → DB 조회 → TX 종료 → 캐시 저장 → 반환**
+
+```java
+요청 흐름
+
+사용자 요청
+  ↓
+필터 (JWT 검증, AT가 있으면 블랙리스트 조회)
+  ↓
+CinemaController.findAllCinema()          ← 항상 실행
+  ↓ cinemaService.findAllCinema() 호출
+캐시 프록시: Redis에서 cinemas::all 조회   ← 여기서 갈림
+  ├─ 있음 → 컨트롤러로 바로 반환
+  └─ 없음 → 트랜잭션 시작 → 서비스 본문 → DB 조회 → 트랜잭션 종료
+            → 캐시에 저장 → 컨트롤러로 반환
+  ↓
+컨트롤러가 ApiResponse로 감싸 응답        ← 항상 실행
+```
+
+```java
+/***
+ * 함수 기능: 전체 영화관 목록을 조회합니다.
+ * @return List<CinemaResponse> 모든 영화관 ID, 지역, 주소
+ */
+@Cacheable(cacheNames = CacheConfig.CINEMAS, key = "all")
+public List<CinemaResponse> findAllCinema() {
+
+    return cinemaRepository.findAll().stream()
+            .map(CinemaResponse::from)
+            .toList();
+}
+```
+
+- `findAllCinema()`가 호출되면 본문이 실행되기 전에 프록시가 먼저 Redis를 조회한다.
+
+  캐시 프록시가 Redis에서 `cinemas::all`로 조회하는데,
+
+  데이터가 있다면, JSON을 List<CinemaResponse>로 변환해 반환
+
+  데이터가 없다면, 본문 실행(DB 조회) → JSON으로 저장 (TTL 10분) → 반환
+
+
+**[변경 - 성공] TX 시작 → DB 변경 → 커밋 → 캐시 삭제**
+
+**[변경 - 실패] TX 시작 → 예외 → 롤백 (캐시 유지)**
+
+```java
+요청 흐름 (수정 예시)
+
+관리자: PUT /api/v1/cinemas/1
+  ↓
+필터 (JWT 검증, 블랙리스트 조회)
+  ↓
+요청 값 검증(@Valid), ADMIN 권한 확인(@PreAuthorize)   ← 실패하면 여기서 종료
+  ↓
+CinemaController.updateCinema()
+  ↓ cinemaService.updateCinema() 호출
+① 캐시 프록시: 아직 삭제하지 않고 다음으로 진행
+  ↓
+② 트랜잭션 프록시: 트랜잭션 시작
+  ↓
+③ 서비스 본문: 영화관 조회 → 중복 검사 → 엔티티 변경 → DTO 생성
+  ↓
+④ 트랜잭션 프록시: UPDATE 실행 → 커밋
+  ↓
+⑤ 캐시 프록시: DEL cinemas::all                        ← 커밋 성공 후
+  ↓
+컨트롤러가 ApiResponse로 감싸 응답
+```
+
+```java
+/***
+ * 함수 기능: 해당 영화관 정보를 업데이트한다.
+ * @param cinemaId 영화관 ID
+ * @param request 변경할 영화관 정보 (지역, 주소)
+ * @return CinemaResponse 변경된 영화관의 ID, 지역, 주소
+ */
+@Transactional
+@CacheEvict(cacheNames = CacheConfig.CINEMAS, key = "all")
+public CinemaResponse updateCinema(Long cinemaId, CinemaUpdateRequest request) {
+
+    Cinema cinema = findCinemaById(cinemaId);
+
+    // 자신 제외 같은 지역과 주소가 존재하는지 검사한다.
+    if (cinemaRepository.existsByRegionAndAddressAndIdNot(request.region(), request.address(), cinemaId)) {
+        throw new CinemaException(CinemaErrorCode.CINEMA_ALREADY_EXISTS);
+    }
+
+    cinema.update(request.name(), request.region(), request.address());
+
+    return CinemaResponse.from(cinema);
+}
+```
+
+- `@CacheEvict`: 메서드가 실행될 때 캐시에 저장된 값을 삭제하는 어노테이션.
+
+### 2. 인덱스 적용하기
+
+#### 문제
+
+먼저 실험을 위해 `Payment` 테이블에 데이터 100만개를 추가했다.
+
+그리고 나서 특정 `Payment`의 `order_id(주문번호)`를 조회하는 쿼리(`EXPLAIN ANALYZE`)를 날려보았더니 결과가 다음과 같았다.
+
+```sql
+explain analyze select * from payment
+where order_id = 'cgv_50d12cb5';
+```
+
+```java
+-> Filter: (payment.order_id = 'cgv_50d12cb5')  (cost=108348 rows=98678) (actual time=0.261..3227 rows=1 loops=1)     
+    -> Table scan on payment  (cost=108348 rows=986777) (actual time=0.242..2888 rows=1e+6 loops=1) 
+```
+
+**읽는 순서**
+
+`EXPLAIN ANALYZE`는 들여쓰기가 깊은 쪽(아래)이 먼저 실행되고, 결과를 위로 넘겨준다.
+
+→ 1. Table scan on payment  = 테이블 전체를 처음부터 끝까지 읽기
+
+→ 2. Filter: (payment.order_id = ‘cgv_50d…’) = 넘겨받은 행마다 조건 비교
+
+괄호 두 개 중 앞은 `옵티마이저의 예상`, 뒤는 `실제 실행 결과`이다.
+
+| 항목 | 의미 |
+| --- | --- |
+| `cost`  | 옵티마이저가 계산한 상대 비용(시간 단위 아님) |
+| `rows`(앞 괄호) | 예상 행 수 |
+| `actual time=A...B` | A: 첫 행을 내놓기까지 걸린 시간(ms), 
+B: 모든 행을 내놓기까지 걸린 시간(ms) |
+| `rows`(뒤 괄호) | 실제로 처리한 행수 |
+| `loops` | 이 단계가 반복 실행된 횟수 |
+
+**Table scan on payment**
+
+- 인덱스 없이 테이블 전체를 스캔했다. → 클러스터드 인덱스 리프(`pk`)를 처음부터 끝까지 순회하였다.
+- 예상 약 98만건, 실제 `100만 건`을 읽었다.
+- 마지막 행까지 읽는 데 약 2.9초가 걸렸다.
+
+**Filter**
+
+- 읽은 100만 건 각각에 `order_id = 'cgv_50d...`를 비교해서 1건만 통과했다.
+- 전체 약 3.2초. 스캔 2.9초에 100만 번의 비교 비용이 더해진 값이다.
+
+→ 결국 주문번호를 조회하는데 총 3초라는 시간이 걸리게 된다. 이를 줄이기 위해 `order_id`로 유니크 인덱스(`세컨더리 인덱스`)를 만든다.
+
+일반 세컨더리 인덱스와 다른 점은, 그 구조가 같지만 유니크라서 1건 찾으면 바로 종료 (`type: const`)된다. 일반 세컨더리 인덱스는 같은 값이 더 있을 수 있어 다음 값까지 확인한다.
+
+#### 해결
+
+```sql
+1. 유니크 인덱스(order_id) 탐색 -> id = 12획득 (payment의 pk)
+2. 클러스터드 인덱스 탐색 -> id = 12 행 전체 읽기
+```
+
+**유니크 인덱스 생성하기**
+
+```sql
+create index payment_order_id_uindex
+on payment (order_id);
+```
+
+**인덱스 생성 후 실행결과**
+
+!EXPLAIN → ref=const
+
+EXPLAIN → ref=const
+
+!EXPLAIN ANALYZE
+
+EXPLAIN ANALYZE
+
+- Rows fetched before execution: “실행 전에 이미 가져왔다”
+
+  유니크 인덱스에 상수로 일치하는 조건이면, 결과가 최대 1건임이 확실하다. 그래서 MySQL은 이 행을 실행 단계까지 기다리지 않고 `쿼리 최적화 단계에서 바로 읽어 버린다`
+
+  이것이 `EXPLAIN`의 `type:const` 접근 방식이다.
+
+
+→ 약 3.2초에서 1ms미안으로 줄일 수 있었다.
+
+**결론적으로 풀 스캔이 사라지고 유니크 인덱스로 1건만 읽는 구조가 되었다.**
+
+### 3. 쿼리 최적화하기
+
+#### 문제
+
+**PaymentService.validateSeatsNotReserved()**
+
+```java
+/***
+ * 함수 기능: 이미 점유된(RESERVED) 좌석이 포함되어 있는지 검사한다.
+ *          점유가 풀린(UNRESERVED) 좌석은 다시 판매할 수 있으므로 통과시킨다.
+ * @param seats 요청한 좌석 좌표 목록
+ * @param screeningId 상영회차 식별자
+ */
+private void validateSeatsNotReserved(List<SeatPosition> seats, Long screeningId) {
+
+    // 해당 상영 회차에서 점유 중인 좌석만 Set에 담는다.
+    Set<SeatPosition> reserved = reservationSeatRepository.findAllByScreeningId(screeningId).stream()
+            .filter(ReservationSeat::isReserved)
+            .map(seat -> new SeatPosition(seat.getSeatRow(), seat.getSeatNumber()))
+            .collect(Collectors.toSet());
+
+    // 만약, 요청한 좌석 좌표 목록이 reserved 목록에 있다면 -> 예외를 반환한다.
+    if (seats.stream().anyMatch(reserved::contains)) {
+        throw new PaymentException(PaymentErrorCode.PAYMENT_SEAT_ALREADY_TAKEN);
+    }
+}
+```
+
+결제 요청(`ready`)마다 실행되는 쿼리인데, 알고 싶은 것은 “내가 고른 2석이 팔렸는가?”뿐이다.
+
+하지만 실제로는
+
+- 예매된 모든 좌석을 가져온다.
+- 취소된(`UNRESERVED`) 좌석 행도 가져온다.
+- 좌표와 상태만 쓰는데 모든 컬럼을 엔티티로 읽게된다.
+
+#### 개선하기
+
+```java
+private void validateSeatsNotReserved(List<SeatPosition> seats, Long screeningId){
+	
+	// 현재 점유 중(active)인 좌석들만 가져온다.
+	List<String> seatKeys = seats.stream()
+				.map(seat -> ReservationSeat.activeSeatKey(screeningId, seat.seatRow(), seat.seatNumber()))
+				.toList();
+				
+	// 만약 점유 중인 좌석들을 예매하려하면 에러를 발생시킨다.
+	if (reservationSeatRepository.existsByActiveSeatKeyIn(seatKeys)){
+		throw new PaymentException(PaymentErrorCode.PAYMENT_SEAT_ALREADY_TAKEN);
+	}
+}
+```
+
+실행되는 SQL의 형태는 다음과 같이 바뀐다.
+
+```sql
+# 전
+SELECT id, age_group, price, ... FROM reservation_seat WHERE screening_id = 1;
+
+# 후
+SELECT id FROM reservation_seat WHERE active_seat_key IN ('1:3:5', '1:3:6') LIMIT 1;
+```
+
+만약 300석 회차에서 250석이 예매됐고, 취소 이력 100건이 있으며, 2석을 요청한 경우에
+
+|  | 전 | 후 |
+| --- | --- | --- |
+| DB에서 가져오는 행 | 350행 | 최대 1행 |
+| 가져오는 컬럼 | 전체 | id만 |
+</details>
+

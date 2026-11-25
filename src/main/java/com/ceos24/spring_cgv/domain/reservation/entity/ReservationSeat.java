@@ -98,7 +98,7 @@ public class ReservationSeat {
      * @param seatNumber 좌석 열
      * @return {상영회차}:{행}:{열} 형식의 키
      */
-    private static String activeSeatKey(Long screeningId, Integer seatRow, Integer seatNumber) {
+    public static String activeSeatKey(Long screeningId, Integer seatRow, Integer seatNumber) {
         return screeningId + ":" + seatRow + ":" + seatNumber;
     }
 }
