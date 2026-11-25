@@ -1,5 +1,6 @@
 package com.spring_cgv_24th.domain.screening.repository;
 
+import com.spring_cgv_24th.domain.screening.dto.response.ScreeningResDTO;
 import com.spring_cgv_24th.domain.screening.entity.Screening;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -26,6 +27,19 @@ public interface ScreeningRepository extends JpaRepository<Screening, Long> {
     @Query("select s from Screening s where s.id = :id")
     Optional<Screening> findDetailsById(@Param("id") Long id);
 
-    @EntityGraph(attributePaths = {"movie", "auditorium", "auditorium.theater", "auditorium.type"})
-    List<Screening> findAllByOrderByStartsAtAscIdAsc();
+    @Query("""
+            select new com.spring_cgv_24th.domain.screening.dto.response.ScreeningResDTO(
+                screening.id, movie.id, movie.title, theater.id, theater.name,
+                auditorium.id, auditorium.name, auditoriumType.kind,
+                screening.startsAt, screening.endsAt,
+                cast(auditoriumType.rowCount * auditoriumType.columnCount as Integer)
+            )
+            from Screening screening
+            join screening.movie movie
+            join screening.auditorium auditorium
+            join auditorium.theater theater
+            join auditorium.type auditoriumType
+            order by screening.startsAt, screening.id
+            """)
+    List<ScreeningResDTO> findAllSummaries();
 }

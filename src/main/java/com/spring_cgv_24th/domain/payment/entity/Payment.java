@@ -17,7 +17,8 @@ import org.hibernate.type.SqlTypes;
 @Entity
 @Table(name = "payment", uniqueConstraints = {
         @UniqueConstraint(name = "uk_payment_target", columnNames = {"target_type", "target_id"}),
-        @UniqueConstraint(name = "uk_payment_key", columnNames = "payment_key")})
+        @UniqueConstraint(name = "uk_payment_key", columnNames = "payment_key")},
+        indexes = @Index(name = "idx_payment_status", columnList = "status"))
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Payment {
     @Id

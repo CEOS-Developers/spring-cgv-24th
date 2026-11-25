@@ -17,6 +17,7 @@ import com.spring_cgv_24th.global.exception.ErrorCode;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Service;
@@ -36,10 +37,12 @@ public class ScreeningService {
     @Transactional
     @PreAuthorize("hasRole('ADMIN')")
     public ScreeningResDTO createScreening(ScreeningReqDTO.CreateScreeningDTO request) {
+        // 일반 조회가 스냅샷을 만들기 전에 상영관을 잠가야 앞선 등록의 커밋을 볼 수 있다.
+        Optional<Auditorium> lockedAuditorium = auditoriumRepository.findByIdForUpdate(request.auditoriumId());
         Movie movie = movieRepository.findById(request.movieId())
                 .orElseThrow(() -> new CustomException(ErrorCode.MOVIE_NOT_FOUND));
 
-        Auditorium auditorium = auditoriumRepository.findById(request.auditoriumId())
+        Auditorium auditorium = lockedAuditorium
                 .orElseThrow(() -> new CustomException(ErrorCode.AUDITORIUM_NOT_FOUND));
         AuditoriumType type = auditorium.getType();
 
@@ -95,17 +98,16 @@ public class ScreeningService {
 
     // 전체 상영 회차를 시작 시각 순으로 조회한다.
     public List<ScreeningResDTO> getScreenings() {
-        return screeningRepository.findAllByOrderByStartsAtAscIdAsc().stream()
-                .map(ScreeningResDTO::from)
-                .toList();
+        return List.copyOf(screeningRepository.findAllSummaries());
     }
 
     // 회차의 좌석별 가격과 예매 가능 여부를 조회한다.
     public List<ScreeningSeatResDTO> getSeats(Long screeningId) {
-        if (!screeningRepository.existsById(screeningId)) {
+        List<ScreeningSeat> seats = screeningSeatRepository.findAllByScreeningIdOrderByRowNoAscColumnNoAsc(screeningId);
+        if (seats.isEmpty() && !screeningRepository.existsById(screeningId)) {
             throw new CustomException(ErrorCode.SCREENING_NOT_FOUND);
         }
-        return screeningSeatRepository.findAllByScreeningIdOrderByRowNoAscColumnNoAsc(screeningId).stream()
+        return seats.stream()
                 .map(ScreeningSeatResDTO::from)
                 .toList();
     }

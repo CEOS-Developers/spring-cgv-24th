@@ -15,7 +15,9 @@ import lombok.NoArgsConstructor;
 @Getter
 @Entity
 @Table(name = "screening",
-        uniqueConstraints = {@UniqueConstraint(columnNames = {"auditorium_id", "starts_at"})})
+        uniqueConstraints = {@UniqueConstraint(columnNames = {"auditorium_id", "starts_at"})},
+        indexes = @Index(name = "idx_screening_auditorium_ends_starts",
+                columnList = "auditorium_id, ends_at, starts_at"))
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Screening {
 

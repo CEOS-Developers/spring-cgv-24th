@@ -3,6 +3,7 @@ package com.spring_cgv_24th.domain.screening.service;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -18,6 +19,7 @@ import com.spring_cgv_24th.domain.movie.entity.Movie;
 import com.spring_cgv_24th.domain.movie.repository.MovieRepository;
 import com.spring_cgv_24th.domain.screening.dto.request.ScreeningReqDTO;
 import com.spring_cgv_24th.domain.screening.dto.response.ScreeningResDTO;
+import com.spring_cgv_24th.domain.screening.dto.response.ScreeningSeatResDTO;
 import com.spring_cgv_24th.domain.screening.entity.Screening;
 import com.spring_cgv_24th.domain.screening.entity.ScreeningSeat;
 import com.spring_cgv_24th.domain.screening.repository.ScreeningRepository;
@@ -33,6 +35,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
+import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -53,7 +56,7 @@ class ScreeningServiceTest {
         Movie movie = mock(Movie.class);
         Auditorium auditorium = mock(Auditorium.class);
         when(movieRepository.findById(1L)).thenReturn(Optional.of(movie));
-        when(auditoriumRepository.findById(2L)).thenReturn(Optional.of(auditorium));
+        when(auditoriumRepository.findByIdForUpdate(2L)).thenReturn(Optional.of(auditorium));
         when(auditorium.getType()).thenReturn(mock(AuditoriumType.class));
         when(movie.getDurationMinutes()).thenReturn((short) 0);
 
@@ -78,7 +81,7 @@ class ScreeningServiceTest {
     }
 
     @Test
-    void overlappingScreeningIsRejectedBeforeSaving() {
+    void overlappingScreeningIsCheckedAfterLockingAuditoriumAndBeforeSaving() {
         Movie movie = mock(Movie.class);
         Auditorium auditorium = mock(Auditorium.class);
         AuditoriumType type = AuditoriumType.builder()
@@ -89,7 +92,7 @@ class ScreeningServiceTest {
                 .build();
         LocalDateTime startsAt = LocalDateTime.of(2026, 9, 16, 14, 0);
         when(movieRepository.findById(1L)).thenReturn(Optional.of(movie));
-        when(auditoriumRepository.findById(2L)).thenReturn(Optional.of(auditorium));
+        when(auditoriumRepository.findByIdForUpdate(2L)).thenReturn(Optional.of(auditorium));
         when(movie.getDurationMinutes()).thenReturn((short) 120);
         when(auditorium.getType()).thenReturn(type);
         when(auditorium.getId()).thenReturn(2L);
@@ -101,7 +104,10 @@ class ScreeningServiceTest {
                         new ScreeningReqDTO.CreateScreeningDTO(1L, 2L, startsAt)));
 
         assertEquals(ErrorCode.SCREENING_OVERLAP, error.getErrorCode());
-        verify(screeningRepository).existsOverlapping(2L, startsAt, startsAt.plusMinutes(120));
+        InOrder queries = inOrder(auditoriumRepository, movieRepository, screeningRepository);
+        queries.verify(auditoriumRepository).findByIdForUpdate(2L);
+        queries.verify(movieRepository).findById(1L);
+        queries.verify(screeningRepository).existsOverlapping(2L, startsAt, startsAt.plusMinutes(120));
         verify(screeningRepository, never()).save(any(Screening.class));
         verifyNoInteractions(screeningSeatRepository);
     }
@@ -119,7 +125,7 @@ class ScreeningServiceTest {
                 .build();
         LocalDateTime startsAt = LocalDateTime.of(2026, 9, 16, 14, 0);
         when(movieRepository.findById(1L)).thenReturn(Optional.of(movie));
-        when(auditoriumRepository.findById(2L)).thenReturn(Optional.of(auditorium));
+        when(auditoriumRepository.findByIdForUpdate(2L)).thenReturn(Optional.of(auditorium));
         when(movie.getDurationMinutes()).thenReturn((short) 120);
         when(auditorium.getType()).thenReturn(type);
         when(auditorium.getId()).thenReturn(2L);
@@ -152,7 +158,7 @@ class ScreeningServiceTest {
                 .basePrice(14_000)
                 .build();
         when(movieRepository.findById(1L)).thenReturn(Optional.of(movie));
-        when(auditoriumRepository.findById(2L)).thenReturn(Optional.of(auditorium));
+        when(auditoriumRepository.findByIdForUpdate(2L)).thenReturn(Optional.of(auditorium));
         when(movie.getDurationMinutes()).thenReturn((short) 120);
         when(auditorium.getType()).thenReturn(type);
         when(auditorium.getId()).thenReturn(2L);
@@ -181,7 +187,7 @@ class ScreeningServiceTest {
         Auditorium auditorium = mock(Auditorium.class);
         AuditoriumType type = mock(AuditoriumType.class);
         when(movieRepository.findById(1L)).thenReturn(Optional.of(movie));
-        when(auditoriumRepository.findById(2L)).thenReturn(Optional.of(auditorium));
+        when(auditoriumRepository.findByIdForUpdate(2L)).thenReturn(Optional.of(auditorium));
         when(movie.getDurationMinutes()).thenReturn((short) 120);
         when(auditorium.getType()).thenReturn(type);
         when(auditorium.getId()).thenReturn(2L);
@@ -198,6 +204,38 @@ class ScreeningServiceTest {
         verifyNoInteractions(screeningSeatRepository);
     }
 
+    @Test
+    void seatsAreReturnedWithoutAnExtraScreeningLookup() {
+        ScreeningSeat seat = ScreeningSeat.builder()
+                .rowNo((short) 1)
+                .columnNo((short) 2)
+                .price(14_000)
+                .build();
+        when(screeningSeatRepository.findAllByScreeningIdOrderByRowNoAscColumnNoAsc(1L)).thenReturn(List.of(seat));
+
+        assertEquals(List.of(new ScreeningSeatResDTO(null, (short) 1, (short) 2, 14_000, true)),
+                screeningService.getSeats(1L));
+        verifyNoInteractions(screeningRepository);
+    }
+
+    @Test
+    void existingScreeningWithoutSeatsReturnsAnEmptyList() {
+        when(screeningSeatRepository.findAllByScreeningIdOrderByRowNoAscColumnNoAsc(1L)).thenReturn(List.of());
+        when(screeningRepository.existsById(1L)).thenReturn(true);
+
+        assertEquals(List.of(), screeningService.getSeats(1L));
+    }
+
+    @Test
+    void missingScreeningReturnsAnError() {
+        when(screeningSeatRepository.findAllByScreeningIdOrderByRowNoAscColumnNoAsc(1L)).thenReturn(List.of());
+        when(screeningRepository.existsById(1L)).thenReturn(false);
+
+        CustomException error = assertThrows(CustomException.class, () -> screeningService.getSeats(1L));
+
+        assertEquals(ErrorCode.SCREENING_NOT_FOUND, error.getErrorCode());
+    }
+
     private void assertInvalidAuditoriumDimensions(short rowCount, short columnCount) {
         Movie movie = mock(Movie.class);
         Auditorium auditorium = mock(Auditorium.class);
@@ -208,7 +246,7 @@ class ScreeningServiceTest {
                 .basePrice(14_000)
                 .build();
         when(movieRepository.findById(1L)).thenReturn(Optional.of(movie));
-        when(auditoriumRepository.findById(2L)).thenReturn(Optional.of(auditorium));
+        when(auditoriumRepository.findByIdForUpdate(2L)).thenReturn(Optional.of(auditorium));
         when(auditorium.getType()).thenReturn(type);
         when(movie.getDurationMinutes()).thenReturn((short) 120);
 
