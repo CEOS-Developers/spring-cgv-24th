@@ -3197,3 +3197,35 @@ A안은 바로 처리한다. 원래 요청의 T2와 겹쳐도 행 잠금 + `IN_P
 | `CachedPaymentCounts`(신규), `PaymentMetricsConfig` | 게이지를 수집 요청과 분리 |
 | 테스트 | `CachedPaymentCountsTest` 4개 추가. 전체 502개 통과 |
 | `README.md` | 판정 기준, 5xx 패널 선택 이유, 게이지 설명, 부하 테스트 해석 5, 한계(인덱스 보류) |
+## 7주차 과제 2: 트랜잭션 분석 — 비밀번호 해싱 동안 커넥션을 쥐지 않게
+
+서비스의 `@Transactional`을 원자성·길이·전파·롤백 규칙 기준으로 모두 다시 봤다. 결제 T1/T2 분리, 조회 `readOnly`, `noRollbackFor`, `open-in-view: false`는 그대로 둔다. 문제는 `AuthService` 1건이었다.
+
+### 결정 1 — AuthService에서 트랜잭션을 뗀다
+
+- `signup`·`login`이 쓰기 트랜잭션이라 BCrypt(요청당 수십 ms CPU) 동안 커넥션을 쥐었다. `LoginUserDetailsService`(readOnly)는 바깥에 합류해 사용자를 읽은 뒤에도 커넥션을 놓지 않았다. 부하 테스트의 붕괴 경로(CPU 포화 → 커넥션 점유 증가 → 풀 고갈)와 같은 모양이다
+- 클래스 `@Transactional(readOnly = true)`와 메서드 어노테이션을 모두 뗐다. DB 작업은 저장소와 `RefreshTokenService`가 각자 짧은 트랜잭션으로 한다. CLAUDE.md의 "외부 호출을 사이에 두는 서비스는 @Transactional을 붙이지 않는다"와 같은 근거(DB와 무관한 긴 작업)다
+- 회원가입의 중복 확인과 INSERT가 다른 트랜잭션이 됐지만, 틈은 원래도 `login_id` 유니크 제약이 막았다. `SignupConcurrencyTest` 그대로 통과
+
+### 결정 2 — SUPPORTS로는 고치지 않는다
+
+- 실험했다. `signup`·`login`을 `SUPPORTS`로 바꾸면 회원가입은 해싱 순간 트랜잭션은 없는데 커넥션이 1개였다
+- 원인: `SUPPORTS`의 빈 트랜잭션 동기화가 `EntityManager`를 메서드 끝까지 묶는다. `existsByLoginId`처럼 인터페이스에 선언한 쿼리 메서드는 Spring Data가 트랜잭션을 걸지 않아 그 `EntityManager`로 실행되고, 잡은 커넥션을 `EntityManager`가 닫힐 때까지 쥔다
+- 로그인은 `SUPPORTS`로도 0이었다. 첫 쿼리가 `LoginUserDetailsService`의 실제 트랜잭션 안이었기 때문이다. 결과가 쿼리 순서에 달려 믿을 수 없어 어노테이션을 아예 뗐다. `reissue`에 있던 `SUPPORTS`도 함께 뗐다(바깥 트랜잭션 합류는 안쪽 REQUIRED가 그대로 한다)
+
+### 테스트
+
+- `AuthServiceTransactionTest`(신규, H2): `PasswordEncoder`를 스파이로 감싸 `encode`·`matches` 순간의 트랜잭션 여부와 Hikari 사용 중 커넥션 수를 기록한다. 변경 전 2개 모두 실패(트랜잭션 있음, 커넥션 1), 변경 후 통과
+- 로그인에서는 `DaoAuthenticationProvider`가 첫 인증 때 타이밍 공격 대비 더미 해시를 만들어 `encode`도 불린다. 그래서 "전부 RELEASED"로 단언한다
+
+### 남은 것
+
+- 로그인 부하 테스트(`login.js`)는 아직 안 돌려, 풀 대기 감소를 숫자로 확인하지 못했다
+
+### 변경 파일
+
+| 파일 | 내용 |
+|---|---|
+| `AuthService` | 트랜잭션 어노테이션 제거, 이유 주석 |
+| `AuthServiceTransactionTest`(신규) | 해싱 순간 커넥션·트랜잭션 확인. 전체 504개 통과 |
+| `README.md` | 「트랜잭션 분석」 절, 「트랜잭션 전파 속성」의 AuthService 행 수정 |
