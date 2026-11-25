@@ -4736,3 +4736,74 @@ JOIN (SELECT id FROM reservation WHERE user_id = ? ORDER BY id DESC LIMIT 100000
 | `uk_refresh_token_hash (token_hash)` | 같은 토큰 해시 하나만 | 재발급이 해시로 한 행을 찾고 잠급니다 |
 | `idx_refresh_token_family (family_id)` | **잠금 범위.** 묶음 폐기 `UPDATE`가 인덱스 없이 돌면 InnoDB가 표 전체를 훑으며 지나간 행을 모두 잠가, 한 사용자의 로그아웃이 모든 사용자의 재발급을 막습니다 | 묶음 단위 폐기 |
 | 보류: `payment (status, approval_started_at)` | 결과 불명 결제 정리·결제 게이지가 `status = ? AND approval_started_at` 범위 조건으로 표 전체를 읽습니다 | 등호(`status`) → 범위(`approval_started_at`) 순서라 복합 인덱스 순서 규칙에 맞습니다. 결제 표가 아직 작아 보류했습니다(「모니터링 — Prometheus + Grafana」 한계) |
+
+### 성능 최적화
+
+#### 측정 환경
+
+로컬 MySQL 8에 `docs/perf/seed.sql`로 실험 데이터를 넣고 MySQL Workbench에서 `EXPLAIN` / `EXPLAIN ANALYZE`로 확인했습니다. 앱 시드(회차 100개)로는 풀 스캔을 해도 빨라 차이가 드러나지 않기 때문입니다.
+
+| 표 | 행 수 |
+|---|---|
+| 회차 `screening` | 129,603 (상영관 240 × 90일 × 하루 6회) |
+| 예매 `reservation` | 518,510 |
+| 예매 좌석 `reservation_seat` | 1,037,020 |
+
+`EXPLAIN ANALYZE`는 두 번씩 돌려 두 번째 값을 씁니다(첫 번째에는 디스크에서 페이지를 읽는 시간이 섞입니다).
+
+#### 1. 인덱스 — 회차 검색에 `screening (movie_id, start_at)`
+
+**개선하려는 쿼리:** 회차 조회(`GET /api/screenings`, `ScreeningRepository.search`). 회원이 영화와 날짜를 고르면 그날 그 영화의 회차를 지점 이름·시작 시각 순으로 돌려줍니다.
+
+```sql
+WHERE s.start_at >= ? AND s.start_at < ?      -- 날짜 (필수)
+  AND (? IS NULL OR m.movie_id = ?)           -- 영화 (선택)
+  ...
+ORDER BY b.name, s.start_at
+```
+
+**문제:** `screening`에는 외래 키가 만든 `movie_id` 단일 인덱스뿐이었습니다. 그래서 **그 영화의 90일치 회차 전부**를 인덱스로 찾은 뒤, 행마다 `start_at`을 확인해 그날 것만 남깁니다.
+
+**컬럼과 순서:** `(movie_id, start_at)` — 등호 조건을 앞에, 범위 조건을 뒤에 둡니다. `movie_id`가 같은 구간 안에서 `start_at`이 정렬돼 있으므로 "그 영화의 그날"만 범위로 읽을 수 있습니다. 순서를 바꾸면(`start_at, movie_id`) 범위 조건 뒤의 `movie_id`는 탐색에 쓰이지 않습니다. 왼쪽 접두가 `movie_id`라 외래 키 인덱스 역할도 대신해, 별도 외래 키 인덱스가 생기지 않습니다(인덱스 수는 그대로).
+
+```java
+@Table(indexes = @Index(name = "idx_screening_movie_start", columnList = "movie_id, start_at"))
+```
+
+**실행 계획 (영화 + 날짜, 결과 31행)**
+
+| | 적용 전 | 적용 후 |
+|---|---|---|
+| `type` | `ref` | **`range`** |
+| `key` | `movie_id` 단일 인덱스 | `idx_screening_movie_start` |
+| `key_len` | 8 (`movie_id`만 사용) | **16** (`movie_id` + `start_at` 모두 사용) |
+| 예상 행 (`rows`) | 288 | **31** |
+| 실행 시간 (`EXPLAIN ANALYZE`) | **16.5ms** | **0.67ms** (약 25배) |
+
+적용 전
+
+![적용 전 EXPLAIN](docs/images/perf/01-before-explain.png)
+![적용 전 EXPLAIN ANALYZE — 영화 + 날짜](docs/images/perf/01-before-analyze-movie.png)
+
+적용 후
+
+![적용 후 EXPLAIN](docs/images/perf/01-after-explain.png)
+![적용 후 EXPLAIN ANALYZE — 영화 + 날짜](docs/images/perf/01-after-analyze-movie.png)
+
+`key_len`이 8에서 16으로 늘어난 것이 핵심입니다. 두 컬럼을 모두 탐색에 써서, 읽고 버리던 다른 날짜 회차를 아예 읽지 않습니다.
+
+**선택 조건이 인덱스를 막지 않았습니다.** `(? IS NULL OR m.movie_id = ?)` 같은 "선택 조건" 패턴은 인덱스를 못 탄다고 알려져 있지만, MySQL Connector/J는 기본이 클라이언트 측 바인딩이라 값이 리터럴(`100001 IS NULL OR ...`)로 서버에 갑니다. 옵티마이저가 상수를 접어 `movie_id = 100001`만 남기고, 조인 등식을 따라 `s.movie_id`의 인덱스까지 씁니다(`m`이 `const`).
+
+**영화를 고르지 않은 조회는 나아지지 않았습니다 (결과 1,443행):** 적용 전 748ms → 적용 후 738ms. 날짜만으로 찾는 조건은 `movie_id`가 앞에 있는 인덱스의 왼쪽 접두가 아니기 때문입니다.
+
+![적용 전 — 날짜만](docs/images/perf/01-before-analyze-date.png)
+![적용 후 — 날짜만](docs/images/perf/01-after-analyze-date.png)
+
+`start_at` 단일 인덱스를 하나 더 두면 이 경우도 줄일 수 있지만 넣지 않았습니다. 예매 화면은 영화를 먼저 고르는 흐름이 대부분이고, 인덱스마다 쓰기 비용과 공간이 더해지기 때문입니다. 날짜만 고르는 조회가 많아지면 추가를 검토합니다.
+
+**추가되는 비용**
+
+![인덱스 크기](docs/images/perf/01-index-size.png)
+
+- **공간:** 복합 인덱스 4.52MB. 테이블 본체(`PRIMARY`) 17.55MB의 약 26%입니다. 대신 원래 있던 `movie_id` 단일 인덱스(3.52MB)를 대체하므로 실제로 늘어나는 것은 약 1MB입니다.
+- **쓰기:** 회차 INSERT·`start_at` 수정마다 이 B-Tree도 고칩니다. 회차는 운영자가 미리 등록하고 거의 바뀌지 않아 비용이 작습니다.
