@@ -1,0 +1,37 @@
+===== [after] SHOW INDEX
+Key_name	Seq_in_index	Column_name
+PRIMARY	1	id
+idx_schedule_id	1	schedule_id
+idx_user_id	1	user_id
+idx_reservation_status_expires_at	1	status
+idx_reservation_status_expires_at	2	expires_at
+===== [after] EXPLAIN
+*************************** 1. row ***************************
+           id: 1
+  select_type: SIMPLE
+        table: r1_0
+   partitions: NULL
+         type: range
+possible_keys: idx_reservation_status_expires_at
+          key: idx_reservation_status_expires_at
+      key_len: 1031
+          ref: NULL
+         rows: 151
+     filtered: 100.00
+        Extra: Using where; Using index
+===== [after] 읽은 행 수 (Handler_read_*)
+Handler_read_first	0
+Handler_read_key	1
+Handler_read_last	0
+Handler_read_next	151
+Handler_read_prev	0
+Handler_read_rnd	0
+Handler_read_rnd_next	0
+===== [after] 결과 건수
+151
+===== [after] EXPLAIN ANALYZE (대표 1회)
+-> Filter: ((r1_0.`status` = 'PENDING_PAYMENT') and (r1_0.expires_at <= TIMESTAMP'2026-11-25 12:00:00'))  (cost=50 rows=151) (actual time=0.756..0.927 rows=151 loops=1)
+    -> Covering index range scan on r1_0 using idx_reservation_status_expires_at over (status = 'PENDING_PAYMENT' AND NULL < expires_at <= '2026-11-25 12:00:00.000000')  (cost=50 rows=151) (actual time=0.0984..0.209 rows=151 loops=1)
+
+===== [after] EXPLAIN ANALYZE 31회 최상위 actual time(ms)
+min=0.0824 median=0.235 max=0.329 (n=31)
