@@ -1,12 +1,11 @@
 package com.ceos.cgv.domain.movie.service;
 
+import com.ceos.cgv.domain.movie.dto.ScreeningSeatLayout;
 import com.ceos.cgv.domain.movie.dto.SeatAvailabilityResponse;
-import com.ceos.cgv.domain.movie.entity.Screening;
-import com.ceos.cgv.domain.movie.entity.ScreeningSeat;
+import com.ceos.cgv.domain.movie.dto.SeatOccupancy;
 import com.ceos.cgv.domain.movie.enums.MovieVisibility;
 import com.ceos.cgv.domain.movie.repository.ScreeningRepository;
 import com.ceos.cgv.domain.movie.repository.ScreeningSeatRepository;
-import com.ceos.cgv.domain.reservation.entity.Reservation;
 import com.ceos.cgv.domain.reservation.enums.ReservationStatus;
 import com.ceos.cgv.global.exception.BusinessException;
 import com.ceos.cgv.global.exception.ErrorCode;
@@ -18,6 +17,10 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
 
+/**
+ * 좌석 목록은 엔티티를 만들지 않고 필요한 컬럼만 읽는 두 번의 조회로 구성한다.
+ * 상영 정보(영화 공개 여부, 상영관 크기) 1회, 좌석과 점유 예약 상태 1회다.
+ */
 @Service
 @RequiredArgsConstructor
 public class SeatAvailabilityService {
@@ -27,34 +30,34 @@ public class SeatAvailabilityService {
 
     @Transactional(readOnly = true)
     public List<SeatAvailabilityResponse> findByScreeningId(Long screeningId) {
-        Screening screening = screeningRepository.findById(screeningId)
+        ScreeningSeatLayout layout = screeningRepository.findSeatLayoutById(screeningId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.SCREENING_NOT_FOUND));
-        if (screening.getMovie().getVisibility() != MovieVisibility.PUBLIC) {
+        if (layout.movieVisibility() != MovieVisibility.PUBLIC) {
             throw new BusinessException(ErrorCode.MOVIE_NOT_FOUND);
         }
-        List<ScreeningSeat> seats = screeningSeatRepository
-                .findAllByScreening_IdOrderBySeatRowAscSeatNumberAsc(screeningId);
-        if (seats.size() != (long) screening.getScreen().getRowCount()
-                * screening.getScreen().getSeatsPerRow()) {
+        List<SeatOccupancy> seats = screeningSeatRepository.findSeatOccupanciesByScreeningId(screeningId);
+        if (seats.size() != layout.expectedSeatCount()) {
             throw new BusinessException(ErrorCode.SCREENING_SEATS_NOT_READY);
         }
         Instant now = seatHoldClock.instant();
         return seats.stream().map(seat -> new SeatAvailabilityResponse(
-                seat.getSeatRow(), seat.getSeatNumber(), statusOf(seat, now))).toList();
+                seat.seatRow(), seat.seatNumber(), statusOf(seat, now))).toList();
     }
 
-    private static SeatAvailabilityResponse.Status statusOf(ScreeningSeat seat, Instant now) {
-        Reservation occupant = seat.getCurrentReservation();
-        if (occupant == null) {
+    /** 만료 판정은 Reservation.isExpiredAt과 같다: HELD만 만료되고 만료 시각 이후는 비어 있는 좌석이다. */
+    private static SeatAvailabilityResponse.Status statusOf(SeatOccupancy seat, Instant now) {
+        ReservationStatus occupantStatus = seat.reservationStatus();
+        if (occupantStatus == null) {
             return SeatAvailabilityResponse.Status.AVAILABLE;
         }
-        if (occupant.getStatus() == ReservationStatus.HELD
-                || occupant.getStatus() == ReservationStatus.PAYMENT_PENDING) {
-            return occupant.isExpiredAt(now)
+        if (occupantStatus == ReservationStatus.HELD || occupantStatus == ReservationStatus.PAYMENT_PENDING) {
+            boolean expired = occupantStatus == ReservationStatus.HELD
+                    && !now.isBefore(seat.reservationExpiresAt());
+            return expired
                     ? SeatAvailabilityResponse.Status.AVAILABLE
                     : SeatAvailabilityResponse.Status.HELD;
         }
-        if (occupant.getStatus() == ReservationStatus.RESERVED) {
+        if (occupantStatus == ReservationStatus.RESERVED) {
             return SeatAvailabilityResponse.Status.RESERVED;
         }
         throw new BusinessException(ErrorCode.SCREENING_SEATS_NOT_READY);
