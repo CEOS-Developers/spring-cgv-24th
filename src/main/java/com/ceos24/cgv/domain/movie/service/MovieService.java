@@ -17,8 +17,11 @@ import com.ceos24.cgv.domain.movie.repository.MovieRepository;
 import com.ceos24.cgv.domain.movie.repository.MovieStatisticsRepository;
 import com.ceos24.cgv.domain.review.repository.ReviewRepository;
 import com.ceos24.cgv.domain.schedule.repository.ScheduleRepository;
+import com.ceos24.cgv.global.config.CacheConfig;
 import com.ceos24.cgv.global.exception.GeneralException;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -79,6 +82,7 @@ public class MovieService {
                 .toList();
     }
 
+    @Cacheable(cacheNames = CacheConfig.MOVIE_DETAILS, key = "#id")
     public MovieDetailResponse findById(Long id) {
         Movie movie = getMovieOrThrow(id);
 
@@ -112,6 +116,7 @@ public class MovieService {
     }
 
     @Transactional
+    @CacheEvict(cacheNames = CacheConfig.MOVIE_DETAILS, key = "#id")
     public void update(Long id, MovieUpdateRequest request) {
         Movie movie = getMovieOrThrow(id);
         movie.update(
@@ -121,6 +126,7 @@ public class MovieService {
     }
 
     @Transactional
+    @CacheEvict(cacheNames = CacheConfig.MOVIE_DETAILS, key = "#id")
     public void delete(Long id) {
         Movie movie = getMovieOrThrow(id);
         if (scheduleRepository.existsByMovieId(id) || reviewRepository.existsByMovieId(id)) {
