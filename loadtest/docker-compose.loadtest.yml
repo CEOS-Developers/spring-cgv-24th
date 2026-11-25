@@ -1,0 +1,44 @@
+# 로컬 k6 부하 테스트. 기본 compose 위에 얹어 쓴다.
+#   docker compose -f docker-compose.yml -f loadtest/docker-compose.loadtest.yml up -d --build
+#   docker compose -f docker-compose.yml -f loadtest/docker-compose.loadtest.yml run --rm k6 run /scripts/smoke.js
+#
+# 코어를 컨테이너마다 나눠 고정한다. 앱·MySQL·k6가 같은 코어를 두고 다투면 k6 자신의 부하가 앱 지연으로 섞인다.
+# 앱 2 CPU / 2GB는 t3.small 수준을 가정한 값이다. 다른 사양을 흉내 내려면 환경변수로 바꾼다.
+services:
+  app:
+    environment:
+      SPRING_PROFILES_ACTIVE: loadtest
+      # 결제는 시나리오에 없지만 기동 시 키 접두사를 검증한다. 로컬 .env 값과 무관하게 뜨도록 더미를 넣는다.
+      TOSS_CLIENT_KEY: test_gck_loadtest-dummy
+      TOSS_SECRET_KEY: test_gsk_loadtest-dummy
+    cpuset: ${APP_CPUSET:-0-1}
+    cpus: ${APP_CPUS:-2}
+    mem_limit: ${APP_MEMORY:-2g}
+
+  db:
+    cpuset: ${DB_CPUSET:-2-3}
+
+  prometheus:
+    volumes:
+      - ./loadtest/prometheus.loadtest.yml:/etc/prometheus/prometheus.yml:ro
+    cpuset: ${MONITORING_CPUSET:-12-15}
+
+  grafana:
+    cpuset: ${MONITORING_CPUSET:-12-15}
+
+  # up에는 뜨지 않고 run으로만 실행한다.
+  k6:
+    image: grafana/k6:1.3.0
+    profiles: [k6]
+    cpuset: ${K6_CPUSET:-4-11}
+    volumes:
+      - ./loadtest/scripts:/scripts:ro
+    environment:
+      BASE_URL: http://app:8080
+      K6_OUT: experimental-prometheus-rw
+      K6_PROMETHEUS_RW_SERVER_URL: http://prometheus:9090/api/v1/write
+      K6_PROMETHEUS_RW_TREND_STATS: p(95),p(99),avg,max
+      K6_PROMETHEUS_RW_PUSH_INTERVAL: 5s
+    depends_on:
+      - app
+      - prometheus

@@ -1,0 +1,11 @@
+# 로컬 docker-compose 전용. 앱 컨테이너를 서비스 이름(app)으로 찾는다.
+global:
+  # 기본값(1분)이면 3초짜리 커넥션 타임아웃 몰림이 한 점에 묻힌다. 로컬이라 저장량 부담이 없어 짧게 둔다.
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: cgv
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["app:8080"]

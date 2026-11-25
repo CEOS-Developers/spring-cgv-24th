@@ -1,0 +1,11 @@
+# 부하 테스트 전용. monitoring/prometheus.yml과 같고 수집 주기만 짧다.
+# 1~2분짜리 부하 단계를 15초 간격으로 긁으면 단계마다 점이 4~8개뿐이라 꺾이는 시점이 뭉개진다.
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: cgv
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["app:8080"]

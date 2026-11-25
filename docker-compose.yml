@@ -38,5 +38,38 @@ services:
       db:
         condition: service_healthy
 
+  # 로컬 모니터링. 운영 EC2에는 띄우지 않는다(메모리 여유가 없고 메트릭 엔드포인트도 열지 않는다).
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    # command를 지정하면 이미지 기본 인자가 사라져 설정·저장 경로를 다시 적는다.
+    # remote write 수신은 k6 부하 테스트가 결과를 밀어 넣는 통로다(loadtest/). 수집 동작에는 영향이 없다.
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-remote-write-receiver
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    depends_on:
+      - app
+
+  grafana:
+    image: grafana/grafana:12.1.1
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      # 로컬 전용 기본값. 바꾸려면 .env에 GRAFANA_ADMIN_PASSWORD를 둔다.
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    # 앱이 쓰는 3000(프런트 개발 서버 기본 포트, CORS 기본 허용 출처)과 겹치지 않게 연다.
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus
+
 volumes:
   db-data:
+  prometheus-data:

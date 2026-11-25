@@ -1,5 +1,6 @@
 package com.ceos24.cgv.global.config;
 
+import io.micrometer.observation.ObservationRegistry;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -22,8 +23,11 @@ public class TossPaymentsConfig {
     // 우리는 실패로 처리하는 불일치가 생긴다.
     private static final Duration READ_TIMEOUT = Duration.ofSeconds(60);
 
+    // 정적 builder()로 만든 RestClient는 관측 대상이 아니다. 레지스트리를 연결해야 토스 호출의 지연·상태가
+    // http.client.requests 메트릭으로 남아, 느린 원인이 우리 서버인지 토스인지 대시보드에서 가를 수 있다.
     @Bean
-    public RestClient tossPaymentsRestClient(TossPaymentsProperties properties) {
+    public RestClient tossPaymentsRestClient(TossPaymentsProperties properties,
+                                             ObservationRegistry observationRegistry) {
         HttpClient httpClient = HttpClient.newBuilder()
                 .connectTimeout(CONNECT_TIMEOUT)
                 .build();
@@ -33,6 +37,7 @@ public class TossPaymentsConfig {
         return RestClient.builder()
                 .baseUrl(properties.baseUrl())
                 .requestFactory(requestFactory)
+                .observationRegistry(observationRegistry)
                 .defaultHeader(HttpHeaders.AUTHORIZATION, basicAuthorization(properties.secretKey()))
                 .defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
                 .build();
