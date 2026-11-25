@@ -24,6 +24,13 @@ spring:
         format_sql: true
         default_batch_fetch_size: 100
     defer-datasource-initialization: true
+  # 영화 목록(예매율 순)은 요청마다 예매 좌석 전체를 집계한다. 서버가 한 대라 로컬 캐시로 충분하다.
+  # 1분 동안은 순위·예매 수가 늦을 수 있다. 좌석 판단에 쓰는 값이 아니라 허용한다. recordStats는 적중률 지표용.
+  cache:
+    type: caffeine
+    cache-names: movies
+    caffeine:
+      spec: maximumSize=10,expireAfterWrite=60s,recordStats
 
 # 실제 값은 Git에 올리지 않는 로컬 환경변수(.env)로 주입한다.
 # JWT_SECRET: Base64 인코딩, 디코딩 후 256비트 이상 (예: openssl rand -base64 32)
