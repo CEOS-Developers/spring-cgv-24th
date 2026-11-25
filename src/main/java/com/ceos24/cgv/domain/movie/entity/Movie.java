@@ -11,7 +11,13 @@ import java.time.LocalDate;
 @Entity
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
-@Table(name = "movies")
+@Table(
+        name = "movies",
+        indexes = @Index(
+                name = "idx_movies_open_date_id",
+                columnList = "open_date DESC, movie_id DESC"
+        )
+)
 public class Movie extends BaseTimeEntity {
 
 
