@@ -323,6 +323,8 @@ SnackOrder 1 : N SnackOrderItem
 
 </details>
 
+
+
 ---
 
 <details>
@@ -1538,9 +1540,9 @@ DB가 정상화된 뒤에는 `JWT_SECRET`에 들어간 문자 하나 때문에 �
 
 대시보드에는 수집 대상의 `up`, 초당 요청 수, 초당 5xx 수, URI별 p95 응답 시간, JVM 힙 사용량, 매점·결제 작업 건수를 배치했다. **작업 카운터는 성공한 호출만 센다.** 실패는 HTTP 상태 지표에서 확인한다. 트래픽이 없으면 요청 수와 지연 시간 그래프는 비어 있을 수 있다.
 
-로컬에서 실행할 때는 `.env.example`을 `.env`로 복사해 값을 채운 뒤 `docker compose --profile monitoring up -d --build`를 사용한다. JWT 시크릿은 Base64 형식이어야 한다. Grafana는 `http://localhost:3000`에서 `admin`과 `GRAFANA_ADMIN_PASSWORD`로 접속한다. Prometheus와 관리 포트 8081은 호스트에 게시하지 않았다. EC2의 기존 배포에는 이 프로필을 적용하지 않아 모니터링 컨테이너가 추가되지 않는다.
+로컬에서 실행할 때는 Git에 올리지 않는 `.env`에 `DB_NAME`, `DB_USERNAME`, `MYSQL_PASSWORD`, `MYSQL_ROOT_PASSWORD`, `JWT_SECRET`, `TOSS_SECRET_KEY`를 설정한 뒤 `docker compose --profile monitoring up -d --build`를 사용한다. JWT 시크릿은 Base64 형식이어야 한다. Grafana 관리자 비밀번호는 `GRAFANA_ADMIN_PASSWORD`로 설정한다. Grafana는 `http://localhost:3000`에서 접속한다. Prometheus와 관리 포트 8081은 호스트에 게시하지 않았다. EC2의 기존 배포에는 이 프로필을 적용하지 않아 모니터링 컨테이너가 추가되지 않는다.
 
-`docker compose --profile monitoring --env-file .env.example config --quiet`로 Compose 설정 문법은 확인했다. 다만 현재 Docker 엔진이 실행 중이지 않아 Prometheus의 `up{job="cgv-api"} = 1`과 Grafana 패널의 실제 표시는 확인하지 못했다. 실행 후 API 요청을 보내 지표가 증가하는지, `docker compose --profile monitoring logs prometheus grafana`에 수집 오류가 없는지 확인해야 한다.
+Compose 설정 문법은 실험용 환경 값으로 확인했다. Prometheus의 `up{job="cgv-api"} = 1`과 Grafana 패널의 실제 표시는 아직 확인하지 못했다. 실행 후 API 요청을 보내 지표가 증가하는지, `docker compose --profile monitoring logs prometheus grafana`에 수집 오류가 없는지 확인해야 한다.
 
 </details>
 
@@ -1564,5 +1566,94 @@ DB가 정상화된 뒤에는 `JWT_SECRET`에 들어간 문자 하나 때문에 �
 `compose.yaml`과 Grafana 대시보드 파일을 작성하면서 설정이 존재하는 것과 실제로 관찰할 수 있는 상태가 다르다는 점을 다시 확인했다. Prometheus가 `app:8081`에 접속할 수 있어야 `up`이 1이 되고, API 요청이 있어야 요청 수와 지연 시간 그래프에 값이 생긴다. 카운터도 컨트롤러에서 서비스 호출이 성공한 뒤 증가시키므로 **실패 횟수는 작업 카운터만 보면 드러나지 않는다.** 실패 추이는 HTTP 상태 지표와 함께 봐야 한다.
 
 이번에는 Compose 설정 검사를 통과했고 매점 주문 서비스 단위 테스트도 통과했다. 하지만 현재 Docker 엔진이 실행 중이지 않아 Prometheus 수집과 Grafana 패널을 실제로 확인하지는 못했다. 다음 확인에서는 모니터링 프로필을 켠 뒤 `up{job="cgv-api"}`를 조회하고, 구매·취소 요청을 보내 작업 카운터와 HTTP 지표가 함께 증가하는지 살펴볼 예정이다. EC2에서는 5주차에 메모리 부족을 겪었으므로 컨테이너 두 개를 추가하기 전에 메모리 여유도 확인해야 한다. **대시보드가 보인다는 것보다 지표가 실제 서비스 상태를 정확히 설명하는지** 검증하는 일이 남았다.
+
+</details>
+
+# 7주차
+
+<details>
+<summary><strong>1. 트랜잭션 전파 속성과 현재 서비스 분석</strong></summary>
+
+트랜잭션 전파 속성은 **이미 실행 중인 트랜잭션이 있는 상태에서 다른 `@Transactional` 메서드를 호출하면 어떻게 할지** 정한다. Spring의 기본값은 `REQUIRED`다. 내부 메서드가 별도 트랜잭션처럼 보여도 `REQUIRED`라면 실제로는 바깥 트랜잭션에 참여한다. 내부에서 롤백 전용으로 표시한 뒤 바깥에서 커밋하려 하면 `UnexpectedRollbackException`이 날 수 있다. [Spring 전파 속성 문서](https://docs.spring.io/spring-framework/reference/data-access/transaction/declarative/tx-propagation.html)
+
+| 속성 | 기존 트랜잭션이 있을 때 | 없을 때 | 사용 판단 |
+| --- | --- | --- | --- |
+| `REQUIRED` | 참여 | 새로 시작 | 한 작업의 DB 변경을 함께 커밋·롤백할 때 사용하는 기본값 |
+| `SUPPORTS` | 참여 | 트랜잭션 없이 실행 | 읽기 작업이 호출자의 트랜잭션을 따를 수 있을 때 |
+| `MANDATORY` | 참여 | 예외 | 반드시 바깥 작업의 트랜잭션 안에서만 호출해야 할 때 |
+| `REQUIRES_NEW` | 기존 것을 보류하고 독립 트랜잭션 시작 | 새로 시작 | 바깥 작업과 독립적으로 커밋해야 할 때. 추가 DB 연결 비용을 확인해야 한다. |
+| `NOT_SUPPORTED` | 기존 것을 보류하고 트랜잭션 없이 실행 | 트랜잭션 없이 실행 | 긴 외부 API 호출을 DB 트랜잭션 밖에서 조율할 때 |
+| `NEVER` | 예외 | 트랜잭션 없이 실행 | 트랜잭션 안에서 호출되면 안 되는 작업을 강제할 때 |
+| `NESTED` | 저장점을 만들어 내부 범위만 롤백 가능 | `REQUIRED`처럼 새로 시작 | JDBC 저장점과 트랜잭션 매니저의 지원 여부를 확인해야 한다. |
+
+이 프로젝트에서 실제 사용 중인 전파 속성은 기본 `REQUIRED`와 결제 조율 메서드의 `NOT_SUPPORTED`다. `NESTED`를 JPA 서비스에 바로 도입하지 않았고, 독립 커밋이 필요한 근거 없이 `REQUIRES_NEW`를 추가하지 않았다. Spring의 프록시 방식에서는 같은 객체의 메서드를 직접 호출하면 내부 메서드의 `@Transactional`이 새로 적용되지 않는 점도 확인해야 한다. [Spring `@Transactional` 문서](https://docs.spring.io/spring-framework/reference/data-access/transaction/declarative/annotations.html)
+
+| 현재 흐름 | 분석 |
+| --- | --- |
+| 예매 생성 | `ReservationService.createReservation()`의 한 트랜잭션에서 회차 좌석 점유, 예매, 결제 준비 정보를 저장한다. 저장 실패 시 점유까지 롤백해야 하므로 경계가 적절하다. |
+| 매점 구매·취소 | 재고와 주문 상태를 같은 쓰기 트랜잭션에서 바꾼다. 취소는 주문 행을 먼저 잠그고 중복 취소를 거부한다. |
+| 결제 승인·취소 | `PaymentApprovalService`와 `PaymentCancellationService`는 `NOT_SUPPORTED`로 준비 DB 작업 → Toss 호출 → 완료 DB 작업을 조율한다. `PaymentTransactionService`의 각 DB 단계는 별도 `REQUIRED` 트랜잭션이다. 외부 응답을 기다리는 동안 예매·결제 락을 잡지 않으려는 선택이다. |
+| 조회 | 영화·영화관·예매 조회 서비스의 `readOnly = true`는 읽기 의도를 명시한다. 이것만으로 DB 조회가 자동으로 빨라지거나 쓰기가 절대 불가능해지는 것은 아니다. |
+
+이번에 추가한 캐시는 **트랜잭션과 캐시 상태의 순서**도 고려했다. 영화 생성·삭제가 끝나면 목록 캐시를 비우되, `TransactionAwareCacheManagerProxy`를 통해 커밋 후 무효화하도록 구성했다. DB 작업이 롤백됐는데 캐시만 먼저 바뀌는 상황을 줄이려는 선택이다. 캐시는 각 앱 프로세스의 로컬 메모리에 있으므로 여러 서버로 확장하면 서버 간 무효화 방식이 별도로 필요하다.
+
+</details>
+
+<details>
+<summary><strong>2. 인덱스 종류와 적용 판단</strong></summary>
+
+인덱스는 조건에 맞는 행을 찾거나 정렬할 때 읽어야 하는 범위를 줄일 수 있다. 대신 인덱스 자체의 저장 공간이 필요하고, INSERT·UPDATE·DELETE 시 인덱스도 갱신해야 한다. 따라서 컬럼에 무조건 인덱스를 추가하지 않고 실제 `WHERE`·`ORDER BY`·조회 건수와 실행 계획을 본다. [MySQL 인덱스 최적화 문서](https://dev.mysql.com/doc/refman/8.4/en/optimization-indexes.html)
+
+| 종류 | 동작과 장점 | 한계와 적합한 상황 |
+| --- | --- | --- |
+| B-Tree 계열 | 정렬된 키를 따라 탐색한다. 동등 비교, 범위 조건, 정렬에 활용할 수 있다. MySQL InnoDB의 일반적인 인덱스다. | 인덱스 유지 비용이 있고, 많은 행을 읽는 쿼리에는 전체 스캔이 더 유리할 수 있다. |
+| Hash | 키의 해시값으로 동등 비교 대상을 찾는다. | 범위 검색과 정렬에 쓸 수 없다. MySQL에서 명시적인 Hash 인덱스는 주로 `MEMORY` 엔진에 해당한다. InnoDB의 adaptive hash는 별도 내부 기능이다. |
+| 비트맵 | 값별 비트 집합을 조합한다. 구분 값이 적은 여러 조건을 결합하는 분석 조회에 유리하다. | 잦은 행 변경과 동시 쓰기에 불리하다. Oracle의 데이터 웨어하우스 사례로 조사했으며, 이 프로젝트의 MySQL InnoDB 테이블에 적용하는 인덱스는 아니다. |
+
+[MySQL B-Tree·Hash 비교](https://dev.mysql.com/doc/refman/8.4/en/index-btree-hash.html), [Oracle 비트맵 인덱스 설명](https://docs.oracle.com/en/database/oracle/oracle-database/19/cncpt/database-concepts.pdf)
+
+복합 인덱스는 **앞쪽 컬럼부터 사용하는 규칙**이 중요하다. 영화 목록 쿼리의 `ORDER BY open_date DESC, movie_id DESC`에 맞춰 `(open_date DESC, movie_id DESC)`를 선택했다. 첫 컬럼으로 개봉일 순서를 만들고, 같은 개봉일에서는 ID 순서를 유지한다. 기존 DB용 SQL은 `docs/week7/add-movie-list-index.sql`에 두었고 엔티티에도 인덱스를 선언했다. [MySQL 복합 인덱스 문서](https://dev.mysql.com/doc/refman/8.4/en/multiple-column-indexes.html)
+
+커버링 인덱스는 쿼리에 필요한 컬럼이 모두 인덱스에 있어 테이블 행을 다시 읽지 않아도 되는 경우다. 이번 목록은 제목 등 여러 필드를 반환하므로 정렬 키만 둔 인덱스는 커버링 인덱스가 아니다. 모든 응답 컬럼을 인덱스에 넣으면 읽기 이점과 인덱스 크기·쓰기 비용을 함께 비교해야 하므로 이번에는 적용하지 않았다.
+
+</details>
+
+<details>
+<summary><strong>3. 성능 최적화 실험 3건</strong></summary>
+
+로컬 Docker의 별도 MySQL 8.4 DB에 `docs/week7/seed-movies.sql`로 영화 20,000건을 넣었다. 설명은 반복 문자열로 채워 목록 조회에서 불필요한 컬럼 읽기 비용도 확인할 수 있게 했다. 아래 수치는 **한 개발 PC의 실험값**이다. 데이터 크기, 캐시 상태, JVM 준비 상태에 따라 달라지므로 실제 서비스의 보장 성능으로 해석하지 않는다.
+
+실행 계획과 개별 HTTP 측정값은 [7주차 실험 기록](docs/week7/experiment-results.md)에 남겼다.
+
+| 실험 | 변경 전 | 변경 후 | 해석 |
+| --- | --- | --- | --- |
+| 인덱스 | 첫 50건 SQL이 테이블 20,000행을 스캔하고 정렬, `EXPLAIN ANALYZE` 약 5.42ms | `idx_movies_open_date_id`를 사용해 50행을 인덱스 순서로 읽음, 약 0.18ms | 동일 SQL의 실행 계획이 전체 스캔·정렬에서 인덱스 스캔으로 바뀌었다. 단일 실행의 참고값이다. |
+| 쿼리 | 전체 목록 엔티티 조회 후 Java에서 응답 DTO 변환, HTTP 응답 약 2.68초 | 필요한 다섯 컬럼만 DTO로 조회, 캐시 미적중 HTTP 응답 약 0.83초 | 둘 다 같은 20,000건과 인덱스 조건에서 측정했다. 여러 번 반복한 정식 벤치마크는 아니므로 감소폭은 참고값이다. |
+| 캐시 | DTO 조회 캐시 미적중 약 0.83초 | 같은 전체 목록 재조회 5회에서 약 0.08~0.11초 | DB 조회를 건너뛰어도 20,000건 JSON 생성·전송 비용은 남는다. |
+
+**인덱스 실험.** 기존 `GET /api/movies`는 전체 목록을 반환해 정렬 인덱스의 이점이 가려질 수 있다. 이전 API와의 호환성을 위해 파라미터가 없을 때는 전체 목록을 유지하고, `?page=0&size=50`으로 일부만 읽는 경로를 추가했다. 페이지 크기는 최대 100으로 제한했다. 실제 페이지 API가 50건을 반환하고 HTTP 200으로 응답하는 것을 확인했다. 인덱스 전후에는 같은 SQL에 `EXPLAIN ANALYZE`를 실행했다. 인덱스는 영화 등록·삭제 시 갱신 비용이 생긴다.
+
+**쿼리 실험.** `MovieListResponse`는 ID, 제목, 상영 시간, 개봉일, 상태만 사용한다. 기존에는 `Movie` 엔티티 전체를 읽어 `description`과 응답에 필요 없는 필드까지 가져왔다. JPQL 생성자 프로젝션으로 필요한 다섯 컬럼만 선택하도록 변경했다. 전체 목록 API의 응답 형식은 그대로다. 다음 측정에서는 SQL 로그 또는 Hibernate 통계로 조회 횟수와 전송 데이터량까지 분리해 확인하는 것이 좋다.
+
+**캐시 실험.** 공개 영화 목록은 여러 사용자가 같은 결과를 반복 조회하므로 로컬 Caffeine 캐시에 보관했다. 파라미터 없는 전체 목록만 캐싱하며 키는 인자가 없는 메서드의 단일 키, 최대 엔트리 수는 1, 만료 시간은 기록 후 5분이다. 영화 생성·삭제가 커밋되면 전체 목록 캐시를 비운다. 영화 목록은 잠시 오래된 결과가 보여도 결제·재고처럼 즉시 정합성이 필요한 데이터가 아니라고 판단했다. 페이지 조회는 실험 결과를 비교할 수 있도록 캐시하지 않았다. `MovieListCacheTest`에서 연속 두 조회가 저장소를 한 번만 호출하고, 영화 생성 후 다시 조회하는 것을 확인했다.
+
+</details>
+
+<details>
+<summary><strong>💡 미션 후 새롭게 알게 된 점과 남은 검증</strong></summary>
+
+### ① 인덱스는 쿼리가 읽는 범위와 함께 설계해야 한다
+
+20,000건을 모두 반환하는 조회에 정렬 인덱스만 넣으면 결과 생성과 전송 비용은 그대로 남는다. 첫 50건처럼 읽을 범위를 줄였을 때 실행 계획이 20,000행 스캔·정렬에서 50행 인덱스 스캔으로 바뀌었다. 그래서 **인덱스의 컬럼 순서뿐 아니라 API가 몇 건을 요구하는지**도 성능 설계의 일부라는 점을 확인했다.
+
+### ② DB 조회를 줄인 뒤에는 응답 생성 비용이 보인다
+
+캐시 적중 시 DB 조회는 피하지만 20,000건의 응답을 JSON으로 만들고 보내는 시간은 남았다. 캐시 적중 결과가 0초가 되지 않은 이유다. 앞으로 목록을 실제 화면에 제공할 때는 페이지 조회를 기본으로 사용할지, 전체 목록 API를 별도로 유지할지 판단해야 한다.
+
+### ③ 트랜잭션과 캐시의 완료 시점을 함께 생각해야 한다
+
+영화 생성 메서드가 DB에 저장을 요청한 직후 캐시를 비우면, 뒤늦게 트랜잭션이 롤백될 때 목록과 DB의 시점이 어긋날 수 있다. 캐시 무효화를 커밋 후로 미루는 구성을 선택한 이유다. 결제에서 외부 호출을 DB 트랜잭션 밖으로 분리했던 것처럼, 이번에는 **DB 변경이 언제 확정되는지**를 다른 저장소인 캐시에도 적용해 보았다.
+
+이번에는 서비스 단위 테스트와 Compose 설정 검사, 로컬 API·SQL 실험을 수행했다. 호스트에서 실행한 전체 테스트는 DB 연결 설정이 없어 `contextLoads()`가 실패했지만, 실험용 MySQL과 같은 Docker 네트워크에서 `DB_HOST=db`로 다시 실행한 `./gradlew test --no-daemon`은 **27개 테스트가 모두 통과**했다. 실제 동시 취소의 락 순서, 캐시의 다중 인스턴스 무효화, 여러 번 반복한 부하 측정은 후속 검증 과제다.
 
 </details>
