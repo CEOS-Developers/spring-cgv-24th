@@ -7,6 +7,7 @@ import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.Index;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
@@ -18,7 +19,9 @@ import lombok.NoArgsConstructor;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "screenings")
+@Table(name = "screenings",
+        // where movie_id = ? order by start_at: equality column first, sort column second.
+        indexes = @Index(name = "idx_screening_movie_start_at", columnList = "movie_id, start_at"))
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Screening {
