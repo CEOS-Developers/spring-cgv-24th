@@ -1,0 +1,18 @@
+# MovieDetailCachePerformanceTest / MovieDetailCacheIntegrationTest 출력 (로컬 MySQL 8.0.44, 서비스 메서드 호출 기준)
+# 영화 100편(편당 이미지 5, 통계 1, 인물 10), 워밍업: 대상 외 99편 x 2회(라운드마다 캐시 비움), 같은 ID 순차 200회
+## Before (@Cacheable만 제거, 각 5회 실행) - 'cache=ON hits=0'은 CacheManager 빈만 있고 조회에 캐시가 쓰이지 않았다는 뜻
+[MOVIE-DETAIL] cache=ON hits=0 misses=0 hitRate=1.0000 coldMs=2.954 coldSql=4 warmRuns=200 warmSql=800 warmAvgMs=2.9450 warmMedianMs=2.8151 warmP95Ms=4.6330 warmMinMs=1.2782 warmMaxMs=5.5445
+[MOVIE-DETAIL] cache=ON hits=0 misses=0 hitRate=1.0000 coldMs=5.332 coldSql=4 warmRuns=200 warmSql=800 warmAvgMs=3.4721 warmMedianMs=3.3118 warmP95Ms=5.6922 warmMinMs=1.1309 warmMaxMs=6.4876
+[MOVIE-DETAIL] cache=ON hits=0 misses=0 hitRate=1.0000 coldMs=4.574 coldSql=4 warmRuns=200 warmSql=800 warmAvgMs=3.4628 warmMedianMs=3.4435 warmP95Ms=5.5378 warmMinMs=1.2682 warmMaxMs=6.3599
+[MOVIE-DETAIL] cache=ON hits=0 misses=0 hitRate=1.0000 coldMs=4.343 coldSql=4 warmRuns=200 warmSql=800 warmAvgMs=3.6270 warmMedianMs=3.6575 warmP95Ms=5.4402 warmMinMs=1.2643 warmMaxMs=7.2234
+[MOVIE-DETAIL] cache=ON hits=0 misses=0 hitRate=1.0000 coldMs=4.960 coldSql=4 warmRuns=200 warmSql=800 warmAvgMs=3.3291 warmMedianMs=3.2768 warmP95Ms=5.0258 warmMinMs=1.4864 warmMaxMs=5.9618
+## After (@Cacheable 적용, 각 5회 실행)
+[MOVIE-DETAIL] cache=ON hits=200 misses=1 hitRate=0.9950 coldMs=5.303 coldSql=4 warmRuns=200 warmSql=0 warmAvgMs=0.0343 warmMedianMs=0.0160 warmP95Ms=0.0798 warmMinMs=0.0123 warmMaxMs=0.7162
+[MOVIE-DETAIL] cache=ON hits=200 misses=1 hitRate=0.9950 coldMs=5.192 coldSql=4 warmRuns=200 warmSql=0 warmAvgMs=0.0249 warmMedianMs=0.0207 warmP95Ms=0.0359 warmMinMs=0.0127 warmMaxMs=0.5968
+[MOVIE-DETAIL] cache=ON hits=200 misses=1 hitRate=0.9950 coldMs=6.352 coldSql=4 warmRuns=200 warmSql=0 warmAvgMs=0.0187 warmMedianMs=0.0141 warmP95Ms=0.0242 warmMinMs=0.0124 warmMaxMs=0.5363
+[MOVIE-DETAIL] cache=ON hits=200 misses=1 hitRate=0.9950 coldMs=6.082 coldSql=4 warmRuns=200 warmSql=0 warmAvgMs=0.0306 warmMedianMs=0.0141 warmP95Ms=0.0615 warmMinMs=0.0123 warmMaxMs=0.9608
+[MOVIE-DETAIL] cache=ON hits=200 misses=1 hitRate=0.9950 coldMs=3.952 coldSql=4 warmRuns=200 warmSql=0 warmAvgMs=0.0268 warmMedianMs=0.0159 warmP95Ms=0.0576 warmMinMs=0.0121 warmMaxMs=0.5465
+## TTL 만료 후 조회 (TTL을 런타임에 1초로 줄이고 1.5초 대기, 3회 실행)
+[MOVIE-DETAIL-TTL] afterExpiryMs=8.746 sql=4 misses=1 hits=0
+[MOVIE-DETAIL-TTL] afterExpiryMs=9.340 sql=4 misses=1 hits=0
+[MOVIE-DETAIL-TTL] afterExpiryMs=13.109 sql=4 misses=1 hits=0

@@ -2394,4 +2394,135 @@ where s1_0.theater_id = ?
 
 </details>
 
+<details>
+<summary><h3>5. 캐싱: 영화 상세 조회</h3></summary>
+
+### 대상과 이유
+
+**대상**: `MovieService.findById(Long id)` → `MovieDetailResponse` (`GET /api/movies/{id}`)
+
+- 영화 1편을 만들려고 SQL 4개 (영화, 이미지, 통계, 인물 JOIN FETCH)를 실행합니다.
+- 사용자가 가장 자주 보는 화면 중 하나인데, 영화 정보는 관리자만 바꿔 읽기가 쓰기보다 훨씬 많습니다.
+- 응답에 사용자별 정보가 없어 영화 ID 하나로 모든 사용자가 같은 값을 공유할 수 있습니다.
+
+### 설계
+
+| 항목      | 결정                                                                   |
+|-----------|------------------------------------------------------------------------|
+| 캐시      | Caffeine 로컬 캐시 + Spring Cache 추상화 (`@Cacheable`, `@CacheEvict`) |
+| 캐시 이름 | `movieDetails`                                                         |
+| Key       | 영화 ID (`#id`)                                                        |
+| 저장 값   | 엔티티가 아닌 응답 DTO (`MovieDetailResponse`)                         |
+| TTL       | `expireAfterWrite` 60초                                                |
+| 최대 크기 | 1,000건                                                                |
+| 기타      | `recordStats()`로 hit/miss 기록, null은 저장하지 않음                  |
+
+- **읽기 - Look-Aside**: 캐시를 먼저 보고, 없으면 DB에서 만들어 저장합니다.
+- **쓰기 - Write Around + 무효화**: 변경은 DB에만 쓰고 해당 영화의 캐시를 지웁니다. 다음 조회가 DB에서 최신 값을 다시 채웁니다.
+
+**Caffeine을 고른 이유**: 현재는 서버 1대라 별도 인프라 없이 JVM 메모리에서 바로 읽는 로컬 캐시로 충분합니다.
+
+- 캐시는 서버마다 따로 있어서, 서버가 여러 대가 되면 한 서버에서 무효화해도 다른 서버의 캐시는 TTL까지 이전 값을 보여줍니다.
+- 그때는 Redis처럼 서버들이 공유하는 캐시로 바꾸거나, 무효화 메시지를 모든 서버에 전달하는 방식이 필요합니다.
+
+**DTO와 불변성**: Caffeine은 객체를 복사하지 않고 참조를 그대로 돌려주므로 여러 요청이 같은 객체를 공유합니다. `MovieDetailResponse`는 record이고 리스트는
+`Stream.toList()`로 만들어 수정할 수 없어 공유해도 안전합니다. 엔티티를 저장하지 않아 지연 로딩이나 영속성 컨텍스트 문제도 없습니다.
+
+```java
+
+@Bean
+public CacheManager cacheManager() {
+	CaffeineCacheManager cacheManager = new CaffeineCacheManager();
+	cacheManager.setCaffeine(Caffeine.newBuilder()
+			.expireAfterWrite(MOVIE_DETAILS_TTL)
+			.maximumSize(MOVIE_DETAILS_MAXIMUM_SIZE)
+			.recordStats());
+	cacheManager.setAllowNullValues(false);
+	cacheManager.setCacheNames(List.of(MOVIE_DETAILS));
+	return new TransactionAwareCacheManagerProxy(cacheManager);
+}
+```
+
+```java
+// Before
+public MovieDetailResponse findById(Long id) {
+
+// After: 조회 로직과 반환 타입은 그대로
+	@Cacheable(cacheNames = CacheConfig.MOVIE_DETAILS, key = "#id")
+	public MovieDetailResponse findById (Long id){
+```
+
+`findById`는 `MovieController`에서만 호출되어 Self-Invocation으로 프록시를 건너뛰는 경로가 없습니다.
+
+### 무효화
+
+`MovieDetailResponse`에 들어가는 데이터를 바꾸는 경로를 모두 찾아, 바뀐 영화의 ID만 지웁니다. (`allEntries` 사용 안 함)
+
+| 변경 메서드                             | 바뀌는 응답 필드           | 처리                            |
+|-----------------------------------------|----------------------------|---------------------------------|
+| `MovieService.update`                   | 제목, 장르, 상영 기간 등   | `@CacheEvict(key = "#id")`      |
+| `MovieService.delete`                   | 응답 전체 (조회 불가)      | `@CacheEvict(key = "#id")`      |
+| `MovieImageService.create`              | 포스터, 이미지 목록        | `@CacheEvict(key = "#movieId")` |
+| `MoviePersonService.create`             | 인물 목록                  | `@CacheEvict(key = "#movieId")` |
+| `MovieStatisticsService.createOrUpdate` | 관객 수, 예매율, 에그 지수 | `@CacheEvict(key = "#movieId")` |
+| `MovieService.create`                   | -                          | 새 ID라 캐시가 없어 처리 안 함  |
+| `MovieLikeService` 좋아요/취소          | -                          | 응답에 없는 데이터라 처리 안 함 |
+
+- 인물 수정 API는 없고, 인물은 `MoviePersonService.create` 안에서만 만들어집니다. 네이티브 쿼리나 초기화 코드로 이 테이블들을 바꾸는 곳도 없습니다.
+- 통계에서 응답에 없는 `reviewCount`만 바뀌어도 캐시를 지웁니다. 다음 조회 한 번이 DB로 가는 정도라 그대로 두었습니다.
+
+**커밋 후 무효화**: `CacheManager`를 `TransactionAwareCacheManagerProxy`로 감쌌습니다.
+
+- 트랜잭션 안에서 요청한 evict·put은 바로 실행되지 않고 커밋이 성공한 뒤에 실행되며, 롤백되면 버려집니다.
+- 커밋 전에 지우면, 그 사이 다른 요청이 아직 커밋되지 않은 이전 값을 DB에서 읽어 다시 캐시에 넣을 수 있습니다.
+- 롤백된 트랜잭션에서 조회한 미커밋 데이터도 캐시에 들어가지 않습니다.
+- 메서드가 예외로 끝나면 `@CacheEvict` 자체가 실행되지 않습니다.
+
+### 허용한 지연과 남은 위험
+
+TTL은 오래된 값이 남아 있을 수 있는 시간의 상한일 뿐, 정합성 문제를 모두 해결하지는 않습니다.
+
+- **조회와 수정이 겹칠 때**: 수정이 커밋되기 전에 캐시를 놓친 조회가 이전 값을 읽고, 무효화가 끝난 뒤에 저장하면 이전 값이 최대 60초 남습니다.
+- **서버가 여러 대일 때**: 다른 서버의 캐시는 무효화되지 않아 최대 60초 동안 서버마다 다른 값을 보여줄 수 있습니다.
+- **서비스를 거치지 않은 변경**: DB를 직접 수정하면 TTL이 지날 때까지 반영되지 않습니다.
+- 영화 정보는 관리자만 드물게 바꾸고, 관객 수·예매율이 최대 60초 늦게 보이는 것은 허용 가능한 수준으로 보고 60초로 정했습니다.
+
+### 측정
+
+**환경**
+
+- 로컬 MySQL 8.0.44 (Windows), `test` 프로필, 같은 JVM·같은 테스트 코드 (`MovieDetailCachePerformanceTest`)
+- 서비스 메서드 호출 시간 (HTTP 제외), SQL 수는 Hibernate `StatementInspector`로 기록
+- 데이터: 영화 100편, 이미지 500, 통계 100, 인물 1,000, 영화-인물 1,000 (편당 포스터 1·스틸컷 4, 감독 1·배우 9)
+- 워밍업: 대상이 아닌 99편을 2바퀴 조회 (바퀴마다 캐시를 비워 Before/After 모두 DB 경로를 같은 횟수 실행)
+- 측정: 대상 영화 첫 조회 1회 (cold) → 같은 ID 순차 200회 (warm)
+- Before는 `@Cacheable`만 빼고 같은 테스트를 실행했습니다. 각각 5회 실행해 실행별 값의 중앙값과 범위를 적었습니다.
+
+**결과**
+
+| 항목           | Before                   | After                          |
+|----------------|--------------------------|--------------------------------|
+| cold SQL       | 4                        | 4                              |
+| warm 200회 SQL | 800                      | **0**                          |
+| hit / miss     | -                        | 200 / 1 (hit rate 99.5%)       |
+| cold 시간      | 4.574ms (2.954 ~ 5.332)  | 5.303ms (3.952 ~ 6.352)        |
+| warm 평균      | 3.4628ms (2.945 ~ 3.627) | **0.0268ms** (0.0187 ~ 0.0343) |
+| warm 중앙값    | 3.3118ms (2.815 ~ 3.658) | **0.0159ms** (0.0141 ~ 0.0207) |
+| warm p95       | 5.4402ms (4.633 ~ 5.692) | **0.0576ms** (0.0242 ~ 0.0798) |
+
+- 같은 ID를 연속으로 조회해 hit rate가 높게 나오도록 만든 실험입니다. 실제 hit rate는 영화별 조회 분포와 TTL에 따라 달라집니다.
+- 캐시를 놓친 첫 조회는 빨라지지 않습니다. After cold가 조금 높지만 범위가 겹쳐 차이라고 보기 어렵습니다.
+
+**TTL 만료 후 조회** (`MovieDetailCacheIntegrationTest`, TTL을 런타임에 1초로 줄이고 1.5초 대기, 3회 실행)
+
+| 실행 | 시간     | SQL | miss / hit |
+|------|----------|-----|------------|
+| 1    | 8.746ms  | 4   | 1 / 0      |
+| 2    | 9.340ms  | 4   | 1 / 0      |
+| 3    | 13.109ms | 4   | 1 / 0      |
+
+만료되면 다시 DB를 조회합니다. 시간은 워밍업 없이 측정해 위 cold와 직접 비교하지 않습니다. (`movie-detail-cache.txt`)
+
+</details>
+
 </details>

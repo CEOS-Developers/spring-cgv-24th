@@ -6,8 +6,10 @@ import com.ceos24.cgv.domain.movie.entity.MovieImage;
 import com.ceos24.cgv.domain.movie.exception.MovieErrorStatus;
 import com.ceos24.cgv.domain.movie.repository.MovieImageRepository;
 import com.ceos24.cgv.domain.movie.repository.MovieRepository;
+import com.ceos24.cgv.global.config.CacheConfig;
 import com.ceos24.cgv.global.exception.GeneralException;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -19,6 +21,7 @@ public class MovieImageService {
     private final MovieRepository movieRepository;
 
     @Transactional
+    @CacheEvict(cacheNames = CacheConfig.MOVIE_DETAILS, key = "#movieId")
     public Long create(Long movieId, MovieImageCreateRequest request) {
         Movie movie = movieRepository.findById(movieId)
                 .orElseThrow(() -> new GeneralException(MovieErrorStatus.MOVIE_NOT_FOUND));
