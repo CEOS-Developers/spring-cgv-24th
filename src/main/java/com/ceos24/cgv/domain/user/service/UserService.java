@@ -64,6 +64,7 @@ public class UserService implements UserDetailsService {
     }
 
     // 자체 로그인 회원 정보 수정
+    @Transactional
     public Long updateUser(UserRequest request) throws AccessDeniedException {
         String sessionUsername = SecurityContextHolder.getContext().getAuthentication().getName();
 

@@ -1,0 +1,59 @@
+# Local performance experiments only. Start with scripts/perf/Start-Perf.ps1.
+spring:
+  config:
+    import: "optional:file:./.env.perf[.properties]"
+  cache:
+    type: redis
+  data:
+    redis:
+      host: 127.0.0.1
+      port: 16379
+      password: ""
+      timeout: 1s
+      connect-timeout: 1s
+  datasource:
+    url: jdbc:mysql://127.0.0.1:13306/cgv_perf?serverTimezone=Asia/Seoul&characterEncoding=UTF-8
+    username: cgv_perf
+    password: ${PERF_DB_PASSWORD}
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        generate_statistics: true
+
+server:
+  address: 127.0.0.1
+  port: 18080
+
+management:
+  health:
+    redis:
+      enabled: true
+  server:
+    address: 127.0.0.1
+    port: 19091
+
+jwt:
+  secret: ${PERF_JWT_SECRET}
+  access-token-expiration: 30m
+  refresh-token-expiration: 7d
+  issuer: cgv-perf
+
+toss:
+  payments:
+    client-key: perf-local-client
+    secret-key: perf-local-secret
+    base-url: http://127.0.0.1:1
+    connect-timeout: 1s
+    read-timeout: 1s
+
+logging:
+  file:
+    name: ./build/perf/cgv-perf.log
+  level:
+    org.hibernate.SQL: WARN
+    org.hibernate.orm.jdbc.bind: WARN
+    org.hibernate.orm.session.metrics: "OFF"
+    org.hibernate.engine.internal.StatisticalLoggingSessionEventListener: "OFF"

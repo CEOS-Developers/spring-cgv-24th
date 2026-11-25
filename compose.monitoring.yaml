@@ -1,0 +1,44 @@
+name: cgv-monitoring
+
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "127.0.0.1:19090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+
+  loki:
+    image: grafana/loki:latest
+    command:
+      - -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - loki-data:/loki
+
+  alloy:
+    image: grafana/alloy:latest
+    command:
+      - run
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    volumes:
+      - ./monitoring/config.alloy:/etc/alloy/config.alloy:ro
+      - ./logs:/var/log/cgv:ro
+      - alloy-data:/var/lib/alloy/data
+    depends_on:
+      - loki
+
+
+volumes:
+  prometheus-data:
+  grafana-data:
+  loki-data:
+  alloy-data:

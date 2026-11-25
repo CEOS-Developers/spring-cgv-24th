@@ -5,6 +5,17 @@ spring:
   config:
     import: "optional:file:./.env[.properties]"
 
+  cache:
+    type: ${CACHE_TYPE:none}
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      repositories:
+        enabled: false
+
   datasource:
     url: jdbc:mysql://localhost:3306/cgv
     username: ${DB_USERNAME}
@@ -42,3 +53,31 @@ toss:
     base-url: https://api.tosspayments.com
     connect-timeout: 5s
     read-timeout: 60s
+
+management:
+  health:
+    redis:
+      enabled: false
+  server:
+    port: 9091
+
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics,prometheus
+
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+
+logging:
+  file:
+    name: ./logs/cgv.log
+
+  structured:
+    format:
+      file: logstash
