@@ -2,6 +2,680 @@
 
 CEOS 24기 백엔드 스터디 - CGV 클론 코딩 프로젝트
 
+## 7주차 트랜잭션과 성능 최적화
+
+이번 주에는 스프링 트랜잭션 전파 속성을 조사하고, 이 서비스의 트랜잭션 경계를 점검해 고쳤습니다.
+이어서 데이터베이스 인덱스 종류를 조사하고, 캐시, 인덱스, 쿼리 최적화를 실험했습니다.
+
+학습용 프로젝트이므로 단일 서버와 단일 MySQL을 가정합니다. 실제 CGV의 내부 구현을 설명하는 글이 아닙니다.
+
+| 표기 | 의미 |
+| --- | --- |
+| 구현 완료 | 코드에 반영했습니다. |
+| 테스트 통과 | 자동 테스트로 확인했습니다. H2인지 MySQL인지 함께 적습니다. |
+| 측정 결과 | 실제로 실행해 얻은 수치입니다. 측정 환경을 함께 적습니다. |
+| 추가 개선 후보 | 이번에는 하지 않았고, 필요해지면 할 일입니다. |
+
+| 미션 | 이 절의 위치 | 결과 |
+| --- | --- | --- |
+| 1. 트랜잭션 전파 속성 조사 | [1절](#1-트랜잭션-전파-속성) | 7가지 속성 비교, 프로젝트 사용처 정리 |
+| 2. 서비스 트랜잭션 분석과 개선 | [2절](#2-cgv-서비스-트랜잭션-분석) | 서비스 전체 점검, 2건 개선 (구현 완료, 테스트 통과) |
+| 3. 인덱스 종류 조사 | [3절](#3-인덱스-종류) | B-Tree, Hash, Bitmap 등 비교, 커버링 인덱스 |
+| 4. 최적화 실험 3건 | [4절](#4-성능-최적화-실험) | 캐시, 복합 인덱스, 쿼리 수 축소의 전후 비교 |
+| 5. 새롭게 알게 된 점 | [5절](#5-새롭게-알게-된-점) | 실험 중 확인한 사실 |
+
+### 1. 트랜잭션 전파 속성
+
+한 요청 안에서 서비스 메서드가 다른 서비스 메서드를 부를 때, 두 메서드가 한 묶음으로 커밋되는지 따로 커밋되는지를 정하는 규칙이 전파 속성입니다.
+은행 창구에 비유하면, 이미 열린 거래 건에 이어서 처리할지, 새 거래 건을 따로 열지를 정하는 일입니다.
+잘못 고르면 일부만 저장되거나, 커넥션이 부족해 서버가 멈출 수 있습니다.
+
+#### 1-1. 물리 트랜잭션과 논리 트랜잭션
+
+| 구분 | 설명 |
+| --- | --- |
+| 물리 트랜잭션 | 실제 DB 커넥션 하나에서 일어나는 begin부터 commit 또는 rollback까지입니다. |
+| 논리 트랜잭션 | `@Transactional`이 붙은 메서드 하나가 만드는 경계입니다. |
+
+전파 속성이 REQUIRED이면 안쪽 메서드는 새 물리 트랜잭션을 만들지 않고 바깥 것에 참여합니다.
+그래서 논리 트랜잭션은 여러 개여도 물리 트랜잭션은 하나이고, 커밋할지는 가장 바깥 경계가 결정합니다.
+
+```mermaid
+flowchart TB
+  subgraph P["물리 트랜잭션 1개 (커넥션 1개)"]
+    A["바깥 메서드 REQUIRED"] --> B["안쪽 메서드 REQUIRED (참여)"]
+  end
+  B -- "RuntimeException이 프록시를 통과" --> M["rollback-only 표시"]
+  M --> A
+  A -- "예외를 삼키고 정상 종료" --> U["커밋 시도 후 UnexpectedRollbackException"]
+```
+
+#### 1-2. 전파 속성 7가지
+
+| 전파 속성 | 기존 트랜잭션이 있을 때 | 없을 때 | 대표 용도 |
+| --- | --- | --- | --- |
+| REQUIRED (기본) | 참여 | 새로 시작 | 일반 서비스 쓰기 |
+| REQUIRES_NEW | 기존을 중단하고 새 물리 트랜잭션 시작 | 새로 시작 | 바깥 결과와 무관하게 커밋해야 하는 작업 |
+| SUPPORTS | 참여 | 트랜잭션 없이 실행 | 있으면 쓰고 없어도 되는 조회 |
+| NOT_SUPPORTED | 기존을 중단하고 트랜잭션 없이 실행 | 트랜잭션 없이 실행 | 트랜잭션에 넣기 싫은 긴 작업 |
+| MANDATORY | 참여 | `IllegalTransactionStateException` | 호출자의 트랜잭션이 전제인 보조 로직 |
+| NEVER | `IllegalTransactionStateException` | 트랜잭션 없이 실행 | 트랜잭션 안에서 실행되면 안 되는 외부 호출 |
+| NESTED | 같은 커넥션의 세이브포인트 | 새로 시작 (REQUIRED와 동일) | 안쪽만 부분 롤백 |
+
+#### 1-3. 안쪽 롤백과 UnexpectedRollbackException
+
+REQUIRED로 참여한 안쪽 메서드에서 예외가 프록시를 통과하면 물리 트랜잭션에 rollback-only가 표시됩니다.
+바깥에서 `try/catch`로 예외를 삼켜도 표시는 지워지지 않습니다.
+바깥이 정상 종료해 커밋하려는 순간 `UnexpectedRollbackException`이 발생합니다.
+
+```java
+// 일반적인 예시이며 이 프로젝트의 코드가 아닙니다.
+@Transactional
+public void outer() {
+    try {
+        inner.run();            // inner는 REQUIRED이고 RuntimeException을 던집니다.
+    } catch (RuntimeException ignored) {
+    }
+}                               // 커밋 시도 -> UnexpectedRollbackException
+```
+
+| 해결 선택지 | 설명 |
+| --- | --- |
+| 예외를 삼키지 않음 | 바깥도 함께 롤백합니다. 가장 단순합니다. |
+| 안쪽을 REQUIRES_NEW로 분리 | 독립 트랜잭션이라 안쪽 실패가 바깥 표시에 영향을 주지 않습니다. 1-4절의 위험을 먼저 확인합니다. |
+| 안쪽을 NESTED로 둠 | 세이브포인트까지만 되돌립니다. 1-5절의 한계가 있습니다. |
+
+기본 롤백 규칙은 `RuntimeException`과 `Error`입니다. 체크 예외는 `rollbackFor`를 지정하지 않으면 커밋됩니다.
+
+#### 1-4. REQUIRES_NEW와 커넥션 풀 고갈
+
+REQUIRES_NEW는 바깥 트랜잭션을 중단할 뿐 끝내지 않습니다. 바깥은 커넥션을 쥔 채 대기하고, 안쪽은 두 번째 커넥션을 새로 요구합니다.
+스레드 N개가 동시에 바깥 트랜잭션에 들어와 커넥션을 1개씩 쥐고, 풀 크기가 N 이하이면 모두 두 번째 커넥션을 기다리며 서로를 막습니다. `connection-timeout`이 지나면 모두 실패합니다.
+
+이 프로젝트의 배포 프로필 Hikari 풀은 5개이고 `connection-timeout`은 10초입니다(`application-deploy.yml`). 동시 5요청만으로도 같은 일이 생길 수 있습니다.
+또 바깥이 잠근 행을 안쪽이 다시 잠그려 하면 자기 자신을 기다리는 락 대기도 생깁니다.
+
+그래서 REQUIRES_NEW는 호출자에 바깥 트랜잭션이 없는 곳에서만 쓰는 것이 안전합니다.
+이 설명은 원리이며 이 프로젝트에서 재현하지는 않았습니다. 대신 모든 REQUIRES_NEW 호출자가 트랜잭션 밖인지를 코드로 점검했습니다(2절).
+
+#### 1-5. NESTED와 JPA의 한계
+
+| 항목 | 내용 |
+| --- | --- |
+| 구현 방식 | JDBC 세이브포인트입니다. JTA에서는 쓸 수 없습니다. |
+| 기본 설정 | `JpaTransactionManager`는 `nestedTransactionAllowed`가 기본 false입니다. 이 프로젝트의 트랜잭션 매니저를 직접 조회해도 false였습니다. |
+| 바깥이 있을 때 호출하면 | `NestedTransactionNotSupportedException`이 납니다. 켜려면 매니저 설정을 바꿔야 합니다. |
+| 켜더라도 | 세이브포인트는 JDBC 커넥션에만 적용됩니다. 롤백해도 영속성 컨텍스트의 엔티티 상태와 1차 캐시는 되돌아가지 않습니다. |
+| 위험 | 롤백한 변경이 바깥 flush에서 다시 반영되거나 메모리 상태와 DB가 어긋날 수 있습니다. |
+| 일반적인 선택 | JPA 환경에서는 NESTED보다 REQUIRES_NEW나 메서드 분리를 씁니다. |
+
+이 프로젝트는 NESTED를 쓰지 않습니다. 설정값은 직접 확인했지만, "켜면 영속성 컨텍스트가 롤백되지 않는다"는 부분은 공식 문서 설명에 근거하며 직접 실행해 확인하지는 않았습니다.
+
+#### 1-6. 자기 호출(self-invocation) 함정
+
+`@Transactional`은 프록시가 가로채는 호출에서만 동작합니다.
+같은 클래스 안에서 `this.other()`로 부르면 프록시를 거치지 않아 애너테이션이 무시됩니다.
+
+| 항목 | 내용 |
+| --- | --- |
+| 증상 | REQUIRES_NEW가 적용되지 않고, readOnly와 격리 수준 설정도 사라집니다. |
+| 해결 | 별도 빈으로 분리하거나 `TransactionTemplate`을 씁니다. |
+| 이 프로젝트 | 빈 분리로 피했습니다. `SeatHoldService`와 `SeatHoldExpiryService`, `PaymentWorkflowService`와 `PaymentTransactionService`가 그 예입니다. |
+
+#### 1-7. readOnly와 격리 수준
+
+| 항목 | 내용 |
+| --- | --- |
+| `readOnly = true` | JPA에서는 flush 모드를 MANUAL로 바꿔 더티 체킹을 건너뛰고, JDBC 드라이버에 읽기 전용 힌트를 전달합니다. 조회 서비스의 의도가 분명해집니다. 쓰기와 섞인 흐름에 붙이면 변경이 저장되지 않으므로 주의합니다. |
+| 기본 격리 수준 | MySQL(InnoDB)은 REPEATABLE READ, H2는 READ COMMITTED입니다. |
+| 이 프로젝트의 선택 | 잠금 후 재조회 흐름은 READ_COMMITTED를 명시합니다. 잠금을 얻은 뒤의 일반 조회가 앞선 트랜잭션의 최신 커밋을 보게 하고, 갭 락 범위를 줄이기 위해서입니다. |
+| 적용 시점 | 격리 수준은 트랜잭션을 새로 시작할 때만 적용됩니다. 참여하는 REQUIRED 안쪽에 지정해도 바깥 설정이 유지됩니다. |
+
+#### 1-8. 이 프로젝트에서 쓰는 전파 속성
+
+SUPPORTS, NOT_SUPPORTED, NESTED는 쓰지 않습니다.
+
+| 전파 | 위치 | 이유 |
+| --- | --- | --- |
+| REQUIRED (기본) | `FoodCheckoutService`, `SeatHoldCreationService`, `PaymentTransactionService` 등 | 한 요청의 쓰기를 하나의 원자적 단위로 묶습니다. 격리는 READ_COMMITTED를 명시합니다. |
+| REQUIRES_NEW | `SeatHoldExpiryService.expireIfElapsed`, `FoodOrderPaymentService.expireIfElapsed` | 만료 정리는 호출한 쪽의 롤백 결과와 상관없이 독립 커밋되어야 합니다. 호출자인 `SeatHoldService`와 두 스케줄러는 모두 트랜잭션이 없어 커넥션을 이중으로 쥐지 않습니다. |
+| MANDATORY | `ScreeningSeatLockService.lockSeats`, `ReservationPaymentService`, `FoodOrderPaymentService`의 잠금 보조 메서드, `FoodOrderService.createCheckout`, `ReservationPaymentTarget.completeCancellation` | 좌석과 주문 잠금 보조 로직은 호출자의 잠금 트랜잭션 안에서만 의미가 있습니다. 트랜잭션 없이 호출되면 즉시 실패시켜 잠금 없는 실행을 막습니다. |
+| NEVER | `PaymentWorkflowService`, `ReservationPaymentApplicationService` | 토스 호출은 read-timeout 10초까지 걸립니다. DB 트랜잭션이나 커넥션을 쥔 채 호출하지 않도록 구조로 강제합니다. 대신 짧은 트랜잭션 서비스를 여러 번 호출해 중간 상태를 저장합니다. |
+
+예외 처리 설계 한 가지입니다. `SeatHoldTransitionService.release`는 만료 상태를 커밋해야 해서 예외를 던지지 않고 결과 객체(`HoldTransitionResult`)를 반환합니다.
+예외 변환은 트랜잭션 밖의 `SeatHoldService`가 합니다. 예외를 던지면 같은 트랜잭션의 만료 처리까지 롤백되기 때문입니다.
+
+### 2. CGV 서비스 트랜잭션 분석
+
+`src/main`의 모든 서비스를 대상으로 트랜잭션 선언과 선언이 없는 서비스를 점검했습니다.
+점검 질문은 여섯 가지입니다. 경계가 한 번의 확정 단위와 맞는지, 커넥션을 쥔 채 외부 호출이나 CPU 작업을 하는지(풀이 5개라 몇 건만 막혀도 다른 요청이 대기합니다), 락 순서와 격리 수준이 일관적인지, 조회에 readOnly가 있는지, 예외가 롤백 규칙대로 처리되는지, 자기 호출과 REQUIRES_NEW 호출자가 안전한지입니다.
+
+#### 2-1. 판정 요약
+
+판정은 "적절"(변경 불필요)과 "개선"(이번에 수정)으로 나눴습니다. 점검 표를 영역별로 묶었습니다.
+
+| 영역 | 대상 | 속성 | 판정과 이유 |
+| --- | --- | --- | --- |
+| 인증 | `RefreshTokenService`, `LoginService.login` | REQUIRED, 로그인은 없음 | 적절. 회원 행 `FOR UPDATE`로 토큰 회전을 직렬화하고, bcrypt 검증은 트랜잭션 밖에서 합니다. |
+| 인증 | `RegistrationService.register` | REQUIRED에서 없음으로 | 개선. bcrypt가 커넥션을 쥔 채 실행됐습니다. 2-3절 |
+| 찜 | `MovieLikeService.toggle`, `CinemaLikeService.toggle` | READ_COMMITTED와 회원 행 잠금 추가 | 개선. 동시 토글이 유니크 위반 500이 됐습니다. 2-4절 |
+| 결제 흐름 | `PaymentWorkflowService`, `ReservationPaymentApplicationService` | NEVER | 적절. PG 호출을 DB 트랜잭션 밖에 두는 핵심 장치이고 재시도의 `Thread.sleep`도 밖입니다. |
+| 결제 확정과 조회 | `PaymentTransactionService`, `PaymentQueryService` | REQUIRED와 READ_COMMITTED, readOnly | 적절. 메서드마다 한 번의 확정 단위입니다. 읽기처럼 보이는 메서드도 결제 행 `FOR UPDATE`가 목적이라 readOnly가 맞지 않습니다. |
+| 매점 | `FoodCheckoutService`, `FoodOrderService`, `FoodOrderPaymentService`, 정리 스케줄러 | READ_COMMITTED, MANDATORY, REQUIRES_NEW | 적절. 회원 잠금 뒤 재고를 상품 ID 순으로 잠그는 일관된 락 순서입니다. 만료 정리는 건별 REQUIRES_NEW라 긴 트랜잭션이 없습니다. |
+| 예매 | `ReservationService.cancel`, `ReservationPaymentOrderService`, `ReservationPaymentService`, `ScreeningSeatLockService` | READ_COMMITTED, 보조 로직은 MANDATORY | 적절. 좌석 NOWAIT 잠금 뒤 상태를 재검증하고, 잠금 보조 로직은 트랜잭션 없이는 실패합니다. |
+| 좌석 선점 | `SeatHoldCreationService`, `SeatHoldService`, `SeatHoldTransitionService`, `SeatHoldExpiryService`, 정리 스케줄러 | READ_COMMITTED, REQUIRES_NEW, 조정 계층은 없음 | 적절. 만료된 선점을 만나면 의도적으로 롤백한 뒤 조정 서비스가 만료 정리와 재시도를 합니다. |
+| 관리와 일회성 | `ScreeningService.create`, `MovieService.delete`, `InventoryService.create`, 백필, 데모 시드 | REQUIRED | 적절. 상영과 좌석 일괄 저장 등을 한 단위로 묶습니다. 백필 실행기는 상영별로 프록시를 호출해 건별 커밋합니다. |
+| 조회와 단일 저장 | 조회 서비스, `ProductService`, `CinemaService`, `ScreenService`, `UserService` | readOnly, 없음 | 적절. 단일 `save`나 단일 조회는 Spring Data 저장소 메서드의 자체 트랜잭션으로 충분합니다. |
+
+`MovieService.create`는 점검 시점에는 단일 `save`라 트랜잭션이 필요 없었습니다.
+이후 캐시 무효화를 커밋 뒤로 미루려고 `@Transactional`을 붙였습니다(4-1절).
+
+#### 2-2. 공통 점검 결과
+
+| 점검 | 결과 |
+| --- | --- |
+| 자기 호출 | 같은 클래스 안에서 `@Transactional` 메서드를 직접 부르는 곳이 없습니다. 모든 전환이 다른 빈 호출(프록시)입니다. |
+| 체크 예외 | `BusinessException`, `PaymentGatewayException`, `ExpiredHoldEncountered`는 모두 비검사 예외라 `rollbackFor`가 필요한 곳이 없습니다. |
+| PG 호출 | `TossPaymentGateway` 호출은 어떤 트랜잭션 안에서도 실행되지 않습니다. NEVER가 프록시 경계에서 보장합니다. |
+| REQUIRES_NEW 호출자 | `SeatHoldService`, `SeatHoldCleanupService`, `FoodOrderCheckoutCleanupScheduler`가 모두 트랜잭션 밖이라 커넥션을 이중으로 쥐는 경로가 없습니다. |
+| 기존 테스트 | `ReservationPaymentIntegrationTest`가 MANDATORY, `PaymentWorkflowIntegrationTest`가 NEVER의 동작을 이미 검증합니다. |
+
+#### 2-3. 개선 1: 회원가입 bcrypt를 트랜잭션 밖으로
+
+| 항목 | 내용 |
+| --- | --- |
+| 문제 | `RegistrationService.register`가 메서드 전체 `@Transactional`이라 `passwordEncoder.encode`(bcrypt)가 DB 커넥션을 쥔 채 실행됐습니다. 로그인은 bcrypt 검증을 트랜잭션 밖에서 하므로 가입만 일관성이 없었습니다. |
+| 장애 시나리오 | 배포 프로필 Hikari 풀은 5개이고 `connection-timeout`은 10초입니다. 가입이 동시에 5건만 몰려도 bcrypt가 끝날 때까지 풀이 비어, 결제 확정과 좌석 선점 같은 다른 요청이 커넥션을 기다립니다. 대기가 길어지면 10초 뒤 실패합니다. 커넥션이 DB 작업이 아니라 CPU 작업 시간 동안 잡혀 있는 것이 문제입니다. |
+| 변경 | `register`의 `@Transactional`을 제거했습니다. 중복 확인 두 번은 각자 저장소 읽기 트랜잭션, 저장은 `saveAndFlush` 하나의 쓰기 트랜잭션입니다. |
+| 동작 보존 | 중복 가입 경쟁의 최종 방어선은 원래도 유니크 제약과 `DataIntegrityViolationException` 변환(`ACCOUNT_ALREADY_EXISTS`)이었습니다. 동작은 같습니다. |
+| 상태 | 구현 완료, 테스트 통과 |
+
+```mermaid
+flowchart LR
+  subgraph B["변경 전"]
+    direction LR
+    B1["begin"] --> B2["중복 확인"] --> B3["bcrypt 해시"] --> B4["insert"] --> B5["commit"]
+  end
+  subgraph A["변경 후"]
+    direction LR
+    A1["중복 확인 (읽기)"] --> A2["bcrypt 해시 (커넥션 없음)"] --> A3["saveAndFlush (짧은 쓰기)"]
+  end
+```
+
+bcrypt 소요 시간(수십에서 수백 ms)은 일반적으로 알려진 값이며 이 환경에서 측정한 수치가 아닙니다.
+
+| 테스트 | 확인 내용 |
+| --- | --- |
+| `RegistrationTransactionIntegrationTest.비밀번호_해시는_DB_트랜잭션_밖에서_수행되어_커넥션을_점유하지_않는다` | `encode` 호출 시점에 활성 트랜잭션이 없는지 확인합니다. 변경 전 코드에서 실패하고 변경 후 통과합니다. |
+| `RegistrationConcurrencyIntegrationTest` | 동시 가입 시 1건만 성공합니다. 기존 테스트이며 통과합니다. |
+| `RegistrationIntegrityIntegrationTest`, `AuthRegistrationIntegrationTest` | 기존 테스트이며 통과합니다. |
+
+가입 관련 통합 테스트는 공용 `DatabaseIntegrationTest`를 상속하도록 바꿔 H2와 MySQL 양쪽에서 실행되게 했습니다. MySQL의 중복 키 변환 경로를 확인하기 위해서입니다.
+
+#### 2-4. 개선 2: 찜 토글 동시 요청 직렬화
+
+| 항목 | 내용 |
+| --- | --- |
+| 문제 | `MovieLikeService.toggle`과 `CinemaLikeService.toggle`이 회원을 잠금 없이 읽고(`findById`), 찜 존재 여부를 읽은 뒤 삽입 또는 삭제했습니다. 매점 주문과 좌석 선점은 회원 행을 먼저 잠그는 규칙이 있는데 찜만 빠져 있었습니다. |
+| 장애 시나리오 | 같은 회원이 더블 클릭하거나 재시도해 토글이 동시에 두 번 들어오면, 두 트랜잭션이 모두 "찜 없음"으로 읽고 삽입합니다. 한쪽이 유니크 제약(`uk_movie_like_user_movie`) 위반으로 실패하고, 일반 예외 경로라 클라이언트는 500을 받습니다. |
+| 가려진 이유 | MySQL에서는 영화 공유 잠금(`FOR SHARE`)끼리 호환되어 직렬화 효과가 없습니다. H2는 공유 잠금을 배타로 처리해 우연히 가려졌습니다. |
+| 변경 | `findById`를 `findByIdForUpdate`로 바꿔 회원 행을 먼저 잠그고, `@Transactional(isolation = READ_COMMITTED)`로 잠금 뒤 조회가 앞선 커밋을 보게 했습니다. |
+| 락 순서 | 회원, 영화 순입니다. `SeatHoldCreationService`와 같습니다. 영화 숨김은 영화 행만 잠그므로 교착이 생기지 않습니다. |
+| 상태 | 구현 완료, 테스트 통과 |
+
+| 테스트 | 변경 전 | 변경 후 |
+| --- | --- | --- |
+| `MovieLikeConcurrencyIntegrationTest.같은_회원의_동시_찜_토글은_회원_단위로_직렬화되어_모두_성공한다` | H2 통과, MySQL 실패 | H2, MySQL 통과 |
+| `CinemaLikeConcurrencyIntegrationTest` 같은 이름의 테스트 | H2, MySQL 모두 `DataIntegrityViolationException`으로 실패 | H2, MySQL 통과 |
+
+두 테스트는 8개 스레드가 동시에 토글해 전부 성공하고, 찜과 취소가 4번씩 번갈아 적용되어 최종 0건인지 확인합니다.
+기존 `MovieLikeServiceTest`의 목은 새 호출(`findByIdForUpdate`)에 맞춰 수정했습니다.
+
+#### 2-5. 의도적으로 바꾸지 않은 항목
+
+| 항목 | 이유 |
+| --- | --- |
+| `SeatHoldExpiryService`, `FoodOrderPaymentService.expireIfElapsed`의 REQUIRES_NEW | 지금은 호출자가 모두 트랜잭션 밖이라 REQUIRED와 동작이 같습니다. 그래도 독립 커밋을 코드로 보장하는 설계 의도입니다. 호출자에 `@Transactional`을 붙이면 풀 5개 환경에서 커넥션 이중 점유가 생기므로 호출자를 트랜잭션 밖에 유지해야 합니다. |
+| `FoodOrderService.create`, `InventoryService.create`, 백필의 기본 격리 | 첫 단계가 잠금 읽기이거나 단일 삽입이라 잠금 이후 읽기가 최신을 봅니다. 격리 통일은 동작 변화 위험 대비 실익이 작습니다. |
+| `InventoryService.create`의 존재 확인과 삽입 사이 경쟁 | 동시 중복 생성 시 `DUPLICATE_INVENTORY` 대신 유니크 위반 500이 날 수 있습니다. 관리자 전용 저빈도 API이고 무결성은 제약이 지킵니다. 추가 개선 후보입니다. |
+| `ScreeningService.create`의 영화 공유 잠금 유지 시간 | 삽입이 길어지면 같은 영화의 숨김 처리가 대기합니다. 현재 규모에서는 문제가 없고, 좌석 삽입의 배치 분할이 추가 개선 후보입니다. |
+
+#### 2-6. 테스트 결과
+
+| 명령 | 결과 |
+| --- | --- |
+| `./gradlew test` (H2, 트랜잭션 변경 브랜치) | 74개 스위트, 402개 테스트, 실패 0, 오류 0, 건너뜀 1 |
+| `./gradlew mysqlTest` (MySQL 8.4.8) | 8개 스위트, 90개 테스트, 실패 0, 오류 0, 건너뜀 0 |
+| 찜 토글 동시성 테스트 두 클래스를 MySQL 8.4.8로 실행 | 변경 전 2개 실패, 변경 후 2개 통과 |
+
+건너뜀 1건은 MySQL 전용인 기존 `PaymentSchemaUpgradeIntegrationTest`이며 이번 변경과 무관합니다.
+작업 당시 `mysqlTest` 작업의 대상 목록에 새 테스트가 없어서, 새 테스트는 `cgv.test.database`를 `mysql`로 바꿔 따로 실행했습니다. 로그의 `Database verification: engine=MySQL, version=8.4.8`로 실제 MySQL 사용을 확인했습니다.
+
+### 3. 인덱스 종류
+
+근거는 MySQL 8.4 Reference Manual이고, 프로젝트 DB는 MySQL 8.4(InnoDB)입니다.
+
+#### 3-1. 인덱스가 필요한 이유
+
+책의 색인과 같습니다. 색인이 없으면 단어를 찾으려고 책을 처음부터 넘겨야 합니다.
+인덱스가 없으면 MySQL도 첫 행부터 끝까지 읽는 풀 테이블 스캔을 합니다. 색인도 책의 일부라서 내용이 바뀌면 함께 고쳐야 합니다.
+
+이득은 WHERE, JOIN, ORDER BY, GROUP BY, MIN/MAX 조회가 빨라지는 것입니다. 비용은 INSERT, UPDATE, DELETE마다 인덱스도 갱신해야 하고, 디스크 공간과 버퍼 풀 메모리를 쓰며, 후보가 많아지면 옵티마이저가 고르는 시간도 늘어나는 것입니다.
+
+#### 3-2. 종류 한눈에 보기
+
+| 종류 | 자료 구조 | 잘하는 질의 | MySQL InnoDB |
+| --- | --- | --- | --- |
+| B-Tree | B+Tree | 동등, 범위, 정렬 | 기본 인덱스입니다. |
+| Hash | 해시 테이블 | 동등 비교 | 직접 만들 수 없습니다. MEMORY 엔진 전용이고 InnoDB는 내부 자동 기능만 있습니다. |
+| Bitmap | 값별 비트맵 | 낮은 카디널리티 분석 | 없습니다. Oracle 등에서 제공합니다. |
+| FULLTEXT | 역색인 | 단어 검색 | 지원합니다. |
+| SPATIAL | R-Tree | 공간 질의 | 지원합니다. |
+| 복합, 유니크, 프리픽스 | B-Tree 변형 | 조건별 | 지원합니다. |
+| 함수형, 내림차순, 보이지 않는 인덱스 | B-Tree 변형 | 조건별 | 8.0 이상에서 지원합니다. |
+
+#### 3-3. B-Tree (InnoDB에서는 B+Tree)
+
+| 항목 | 내용 |
+| --- | --- |
+| 동작 | 정렬된 키를 트리로 관리합니다. 루트에서 리프까지 보통 몇 단계만 내려가면 찾습니다. 리프 페이지가 서로 이어져 있어, 범위의 시작점을 찾은 뒤 옆으로 읽으면 됩니다. |
+| 쓸 수 있는 조건 | `=`, `>`, `<`, `BETWEEN`, `IS NULL`, 상수로 시작하는 `LIKE 'abc%'` |
+| 클러스터드 인덱스 | 행 전체를 담은 인덱스이고 보통 기본키(PK)입니다. PK가 없으면 첫 NOT NULL UNIQUE 인덱스를, 그것도 없으면 숨은 `GEN_CLUST_INDEX`를 씁니다. |
+| 보조 인덱스 | 인덱스 컬럼과 PK 값을 담습니다. 행 전체는 없어서 PK로 한 번 더 찾아갑니다. PK가 길면 모든 보조 인덱스가 커집니다. |
+| 장점 | 동등, 범위, 정렬을 모두 처리합니다. 복합 인덱스의 왼쪽 접두 컬럼을 활용합니다. |
+| 단점 | 쓰기마다 트리를 갱신하고 페이지가 분할될 수 있습니다. 선택도가 낮으면 이득이 작습니다. |
+| 쓸 때 | 특별한 이유가 없으면 B-Tree입니다. 조회 조건, 조인 키, 정렬 기준이 대상입니다. |
+
+```mermaid
+flowchart LR
+    Q["WHERE movie_id = 1"] --> S["보조 인덱스<br/>(movie_id, PK)"]
+    S -->|"PK 값 획득"| C["클러스터드 인덱스<br/>(PK, 행 전체)"]
+    C --> R["행 반환"]
+    S -. "필요한 컬럼이 모두 인덱스에 있으면 (커버링)" .-> R
+```
+
+#### 3-4. Hash
+
+| 항목 | 내용 |
+| --- | --- |
+| 동작 | 키를 해시 함수에 넣어 위치를 바로 찾습니다. 동등 비교(`=`, `<=>`)에 매우 빠릅니다. |
+| 제약 | 범위(`<`, `BETWEEN`)와 ORDER BY에 쓸 수 없습니다. 복합 키의 왼쪽 접두만으로는 찾을 수 없습니다. 두 값 사이의 행 수를 추정하지 못해 옵티마이저 판단에 불리할 수 있습니다. |
+| MySQL에서의 위치 | `USING HASH`를 쓸 수 있는 엔진은 MEMORY와 NDB입니다. InnoDB에서 지정하면 경고가 나고 B-Tree로 대체됩니다. |
+| 어댑티브 해시 인덱스 | InnoDB가 자주 읽는 페이지에 대해 자동으로 만드는 내부 구조라 사용자가 만들 수 없습니다. MySQL 8.4에서 `innodb_adaptive_hash_index` 기본값은 OFF이고, 경합이 생기면 부담이라 켜고 끈 상태를 벤치마크로 비교하라고 매뉴얼이 안내합니다. |
+| 쓸 때 | MEMORY 엔진 임시 테이블에서 키 조회만 할 때 정도입니다. 일반적인 서비스 테이블에서는 선택지가 아닙니다. |
+
+#### 3-5. Bitmap (MySQL InnoDB에서는 사용 불가)
+
+| 항목 | 내용 |
+| --- | --- |
+| 동작 | 구분되는 값마다 비트 배열을 하나 둡니다. 비트 하나가 행 하나에 대응합니다. 여러 조건을 비트 AND/OR로 합쳐 테이블 접근 없이 개수를 셉니다. |
+| 장점 | 값 종류가 적은 컬럼에서 작고 빠릅니다. 여러 조건의 조합 질의가 빠릅니다. |
+| 단점 | 한 키가 많은 행을 가리켜 DML이 많은 행을 잠급니다. 동시 쓰기가 많은 OLTP에 맞지 않습니다. |
+| 쓸 때 | 읽기 위주의 분석(DW) 환경에서 낮은 카디널리티 컬럼을 조합할 때입니다. MySQL에는 없으므로 복합 B-Tree 인덱스나 별도 집계 테이블로 대신합니다. |
+
+#### 3-6. 그 밖의 인덱스
+
+| 종류 | 동작과 제약 | 쓸 때 | 이 프로젝트 |
+| --- | --- | --- | --- |
+| FULLTEXT | 단어와 문서의 역색인입니다. `MATCH ... AGAINST`로 조회하고 한국어는 `WITH PARSER ngram`을 씁니다. 커밋 후에야 검색에 보입니다. | `LIKE '%키워드%'` 본문 검색 | 영화 제목 검색이 생기면 후보입니다. |
+| SPATIAL | R-Tree로 좌표와 도형을 인덱싱합니다. 공간 컬럼은 NOT NULL이어야 합니다. | 반경, 영역 질의 | 영화관 위치 검색이 생기면 후보입니다. |
+| 복합 | 컬럼 여러 개를 이은 B-Tree입니다(최대 16개). 컬럼 순서가 성능을 좌우합니다. | 함께 쓰는 조건과 정렬이 반복되는 질의 | `idx_reservation_status_expires_at (status, expires_at)` |
+| 유니크 | 중복을 막으면서 조회에도 쓰입니다. NULL은 여러 개 허용합니다. | 비즈니스 규칙상 유일한 값 | `uk_screening_seat_coordinate (screening_id, seat_row, seat_number)` |
+| 프리픽스 | 문자열 앞부분만 인덱싱합니다. 뒷부분을 구분하지 못해 filesort가 필요하고 커버링에 쓸 수 없습니다. | 긴 문자열의 앞부분 일치 | 없습니다. |
+| 함수형, 내림차순, 보이지 않는 인덱스 (8.0 이상) | 식의 결과를 인덱싱하고, `DESC`를 실제 저장 방향에 반영하고, 옵티마이저가 무시하는 인덱스를 둡니다. | 식 조건, 혼합 정렬, 삭제 전 영향 확인 | 없습니다. |
+
+#### 3-7. 조회 성능에 미치는 영향
+
+| 주제 | 내용 |
+| --- | --- |
+| 선택도와 카디널리티 | 카디널리티는 인덱스 값의 서로 다른 종류의 수(추정치)입니다. 성별이나 `status`처럼 값 종류가 적은 컬럼은 단독 인덱스의 효과가 작고, 대부분의 행을 읽어야 하면 옵티마이저는 풀 스캔을 고릅니다. 다만 LIMIT으로 일부만 읽는 질의는 인덱스를 쓸 수 있습니다. |
+| 왼쪽 접두 규칙 | `(col1, col2, col3)`은 `col1`, `col1, col2`, `col1, col2, col3` 조건에 쓰입니다. `col2` 단독이나 `col1 = ? OR col2 = ?`에는 일반적으로 쓰이지 않습니다. 8.0.13의 스킵 스캔은 제한된 예외입니다. |
+| 컬럼 순서 | 동등 컬럼을 앞에, 범위와 정렬 컬럼을 뒤에 둡니다. 범위 조건을 만나면 그 뒤 컬럼은 탐색 범위를 좁히지 못합니다. `WHERE a = ? AND b > ? AND c = ?`에는 `(a, b, c)`보다 `(a, c, b)`가 낫습니다. |
+| ORDER BY와 filesort | 인덱스는 이미 정렬되어 있어 순서가 맞으면 별도 정렬(filesort)을 생략합니다. 앞 컬럼을 동등 조건으로 고정하면 다음 컬럼 순서의 정렬이 유지됩니다. |
+
+인덱스를 쓰지 못하는 대표적인 경우입니다.
+
+| 원인 | 나쁜 예 | 개선 |
+| --- | --- | --- |
+| 컬럼에 함수 적용 | `WHERE DATE(start_at) = '2026-11-25'` | `start_at >= '2026-11-25' AND start_at < '2026-11-26'` |
+| 암묵적 형변환 | 문자열 컬럼 `request_key = 123` | 문자열 `'123'`으로 비교합니다. 숫자 비교로 바뀌면 `'1'`, `' 1'`, `'1a'`가 모두 1이 됩니다. |
+| 앞쪽 와일드카드 | `title LIKE '%기생%'` | 앞부분 일치 `'기생%'` 또는 FULLTEXT |
+| OR 조건 | `a = 1 OR b = 2` | 두 컬럼에 각각 인덱스가 있으면 index_merge가 가능하고, 한쪽이라도 없으면 풀 스캔입니다. |
+
+`EXPLAIN`으로 확인합니다. `type`은 const, eq_ref, ref, range가 좋은 쪽이고 ALL은 풀 스캔입니다. `key`가 NULL이면 인덱스를 쓰지 않은 것이고, `rows`와 `filtered`는 추정치입니다.
+`Extra`의 `Using index`는 커버링이라 좋은 신호이고 `Using filesort`, `Using temporary`는 점검 대상입니다.
+`EXPLAIN ANALYZE`(8.0.18 이상)는 쿼리를 실제로 실행해 실제 시간과 행 수를 보여 주며, 예상과 크게 다르면 통계 문제를 의심합니다. UPDATE와 DELETE에는 부작용이 있어 SELECT에만 씁니다.
+
+#### 3-8. 비용과 주의점
+
+| 주제 | 내용 |
+| --- | --- |
+| 쓰기 증폭 | INSERT는 모든 인덱스에 항목을 추가하고, 인덱스 컬럼을 바꾸는 UPDATE는 해당 인덱스에서 삭제와 삽입이 일어납니다. 트리 페이지가 가득 차면 분할됩니다. 쓰기가 몰리는 테이블(좌석 선점, 결제 상태)에는 신중히 추가합니다. |
+| 저장 공간과 메모리 | 인덱스도 디스크에 저장되고 버퍼 풀에서 데이터 페이지와 메모리를 경쟁합니다. 보조 인덱스에는 PK 값이 들어갑니다. |
+| 중복 인덱스 | `(a)`는 `(a, b)`가 있으면 대개 중복입니다. `(a, b)`와 `(b, a)`는 중복이 아닙니다. UNIQUE `(a)`는 제약 역할이 있어 지우면 안 됩니다. `sys.schema_redundant_indexes`로 후보를 찾고 지우기 전에 `INVISIBLE`로 먼저 확인합니다. |
+| 외래키와 인덱스 | MySQL은 외래키 컬럼에 인덱스를 요구하고, 없으면 자동으로 만듭니다. 이후 그 컬럼을 앞에 둔 다른 인덱스가 생기면 자동 생성된 인덱스가 조용히 삭제될 수 있습니다. 이 프로젝트에서 직접 확인했습니다(4-2절). |
+| 통계 | 옵티마이저는 샘플링한 카디널리티 추정치로 계획을 세웁니다. 대량 적재나 삭제 뒤 계획이 이상하면 `ANALYZE TABLE`로 통계를 다시 모읍니다. |
+| 큰 테이블에 추가 | 보조 인덱스 추가는 제자리(in place) 처리라 동시 DML을 허용하지만, 시작과 끝에 메타데이터 락이 필요해 오래 열린 트랜잭션이 있으면 대기합니다. `ALGORITHM=INPLACE, LOCK=NONE`을 명시하면 지원되지 않을 때 즉시 오류가 납니다. FULLTEXT와 SPATIAL 추가는 DML을 차단합니다. |
+
+#### 3-9. 커버링 인덱스 (선택)
+
+쿼리가 읽는 모든 컬럼(SELECT, WHERE, ORDER BY)이 인덱스 안에 있으면 테이블 행을 읽지 않고 인덱스만으로 답합니다.
+InnoDB의 보조 인덱스는 PK 컬럼을 자동으로 포함하므로 PK는 따로 넣지 않아도 됩니다. EXPLAIN의 Extra에 `Using index`가 표시됩니다.
+
+장점은 테이블 접근을 없애 읽기가 빨라지고 정렬과 범위 조회에도 유리하다는 것입니다. 단점은 인덱스가 커져 쓰기 비용이 늘고, 컬럼을 하나 더 SELECT하면 바로 깨지며, JPA 엔티티 조회는 전체 컬럼이 필요해 DTO 조회가 전제된다는 것입니다.
+
+| 프로젝트 예시 | 판단 |
+| --- | --- |
+| 영화별 상영 조회 `findAllByMovie_IdOrderByStartAt` | 엔티티 전체와 `movie`, `screen`을 함께 가져와 커버링이 아닙니다. `(movie_id, start_at, screen_id)`로 늘리면 `screenings` 컬럼을 모두 덮지만 테이블 크기와 비슷한 인덱스가 하나 더 생깁니다. 이번에는 채택하지 않았습니다(4-2절). |
+| 만료된 선점 후보 `findExpiredHoldCandidates` | `r.id`와 `r.expiresAt`만 선택하는 생성자 표현식이라, 기존 `(status, expires_at)`와 암묵 PK로 커버링과 정렬 생략이 모두 가능한 모양입니다. 조건에 OR이 섞여 있어 실제 계획은 EXPLAIN으로 확인하지 않았습니다. 추가 개선 후보입니다. |
+
+#### 3-10. 이 프로젝트의 인덱스 현황
+
+| 테이블 | 인덱스 | 용도 |
+| --- | --- | --- |
+| `screenings` | `idx_screening_movie_start_at (movie_id, start_at)` (7주차 추가), 상영관 FK용 자동 인덱스 | 영화별 상영 조회, 상영관 FK |
+| `screening_seats` | `uk_screening_seat_coordinate (screening_id, seat_row, seat_number)` | 같은 상영의 같은 좌석 중복 방지 |
+| `reservations` | `idx_reservation_status_expires_at (status, expires_at)`, `uk_reservation_user_request_key (user_id, request_key)` | 만료된 선점 조회, 요청 멱등성 |
+| `food_orders` | `idx_food_order_checkout_expiry (payment_status, hold_expires_at, order_id)`, `uk_food_order_checkout_key (user_id, checkout_request_key)` | 만료된 매점 주문 정리, 요청 멱등성 |
+
+참고 자료입니다. 모두 MySQL 8.4 Reference Manual이고, Bitmap은 Oracle 문서를 참고했습니다.
+
+- [How MySQL Uses Indexes](https://dev.mysql.com/doc/refman/8.4/en/mysql-indexes.html)
+- [Comparison of B-Tree and Hash Indexes](https://dev.mysql.com/doc/refman/8.4/en/index-btree-hash.html)
+- [Foreign Key Constraints](https://dev.mysql.com/doc/refman/8.4/en/create-table-foreign-keys.html)
+- [Online DDL Index Operations](https://dev.mysql.com/doc/refman/8.4/en/innodb-online-ddl-operations.html)
+- [Oracle Database Concepts: Indexes and Index-Organized Tables](https://docs.oracle.com/en/database/oracle/oracle-database/19/cncpt/indexes-and-index-organized-tables.html)
+
+### 4. 성능 최적화 실험
+
+6주차 부하 테스트에서 영화 목록과 좌석 조회는 앱 CPU 한도에 걸린 800 req/s 단계에서 Hikari 연결 획득 대기가 늘어 느려졌습니다([load-test/README.md](load-test/README.md)).
+그 결과가 가리킨 후보 중 반복되는 공개 목록 캐시, 좌석 조회 쿼리 축소를 적용했고, 영화별 상영 일정에는 인덱스를 추가했습니다.
+
+| 실험 | 변경 | 측정 방법 | 결과 요약 | 상태 |
+| --- | --- | --- | --- | --- |
+| 4-1 공개 영화 목록 캐시 | `GET /api/v1/movies`에 Caffeine 로컬 캐시, 커밋 뒤 무효화 | k6 부하 측정 | k6 결과는 4-1절 표에 기록합니다. 적중 시 쿼리와 세션이 0건임은 테스트로 확인했습니다. | 구현 완료, 테스트 통과(H2) |
+| 4-2 영화별 상영 일정 복합 인덱스 | `screenings (movie_id, start_at)` 추가 | EXPLAIN, 서버 측 실행 시간 | 상영 예정 조건 18.24ms에서 9.09ms, 20건 제한 14.44ms에서 1.50ms, 전체 목록 19.50ms에서 16.82ms | 구현 완료, 측정 결과 |
+| 4-3 좌석 조회 쿼리 최적화 | 엔티티 조회 대신 필요한 컬럼만 읽는 프로젝션 | Hibernate 문장 수, k6 부하 측정 | SELECT 4회에서 2회, 좌석 쿼리 컬럼 12개에서 4개 | 구현 완료, 테스트 통과(H2). k6 결과는 4-3절 표에 기록합니다. |
+
+#### 측정 환경
+
+실험마다 측정 도구가 달라 환경을 나눠 적습니다.
+
+| 구분 | 내용 |
+| --- | --- |
+| k6 부하 측정 (4-1, 4-3) | 6주차와 같은 환경입니다. k6 1.5.0의 constant-arrival-rate 실행기, 목표 25, 150, 400, 800 req/s 단계별 40초. 앱 1 vCPU, DB 1 vCPU, Hikari 풀 5개, MySQL 8.4.8, Java 21, ARM64 Docker VM. 변경 전과 변경 후 빌드를 같은 DB에서 연달아 측정했습니다. |
+| k6 픽스처 | 공개 영화 200편(전체 250편), 상영 회차 `10001`에 좌석 200석과 확정 예매 40건. 상영은 한 회차뿐이라 4-2의 인덱스 효과는 이 픽스처로 볼 수 없습니다. |
+| 인덱스 실험 (4-2) | 일회용 `mysql:8.4` 컨테이너(서버 8.4.11). `linux/amd64` 이미지를 arm64 호스트에서 에뮬레이션으로 실행했고 `innodb_buffer_pool_size`는 128 MiB, 페이지는 16 KiB입니다. |
+| 인덱스 실험 데이터 | 영화 500개, 상영관 200개, 상영 500,000건. 영화 1이 20,000건(4%), 나머지 499편이 각 961에서 962건. `start_at`은 2026년 1년 동안 마이크로초 단위 무작위입니다. |
+| 인덱스 실험 방식 | 변경마다 `ANALYZE TABLE`, 쿼리당 워밍업 3회와 측정 50회. 시간은 `performance_schema`의 서버 측 실행 시간(결과 전송 포함)입니다. |
+| 쿼리 수 측정 (4-3) | H2와 Hibernate `Statistics.getPrepareStatementCount()`로 실행한 문장 수를 셉니다. |
+
+인덱스 실험은 6주차 환경과 서버 패치 버전(8.4.8과 8.4.11)과 실행 방식이 다릅니다. 같은 머신에서 한 번씩 돌린 값이라 절대값보다 전후 비율과 실행 계획을 봐야 합니다.
+
+k6 표의 열은 6주차와 같은 방식으로 계산합니다([load-test/README.md](load-test/README.md)). 성공 RPS는 성공 응답 수를 실행 시간으로 나눈 값, 미시작 반복은 VU 부족으로 시작하지 못한 반복 수, 앱 CPU는 cgroup 사용량(100%가 1 vCPU), 요청당 SELECT는 `performance_schema`의 해당 SELECT 실행 증가분을 성공 요청 수로 나눈 값, 평균 연결 획득 시간은 Hikari `acquire` 합계와 횟수의 증가분 비율, 캐시 적중률은 `cache_gets_total`의 hit를 hit와 miss의 합으로 나눈 값입니다.
+
+#### 4-1. 공개 영화 목록 캐시
+
+| 미션 질문 | 답 |
+| --- | --- |
+| 어떤 전략인가 | cache-aside입니다. 읽기는 `@Cacheable`, 쓰기는 `@CacheEvict`이고, Spring Cache 추상화 위에 Caffeine 로컬 캐시를 씁니다. 단일 서버 가정이라 Redis는 쓰지 않습니다. |
+| 무엇을 캐시하고 왜인가 | `GET /api/v1/movies`의 공개 영화 목록(`List<MovieResponse>`)입니다. 6주차에서 이 엔드포인트가 매 요청마다 `findAllByVisibility(PUBLIC)` 쿼리와 엔티티 200건 매핑을 했고, 읽기가 압도적으로 많은 반면 변경은 관리자 작업뿐이기 때문입니다. |
+| 키와 TTL | 캐시 이름 `publicMovies`, 키는 고정 문자열 `list` 하나(목록에 파라미터가 없습니다). `expireAfterWrite` 10분, `maximumSize` 10, `recordStats` 켬입니다. |
+| 데이터가 바뀌면 | 영화 생성과 비공개 처리(`MovieService.create`, `delete`)의 커밋 뒤에 해당 키를 제거합니다. |
+| 오래된 데이터는 어디까지 허용하나 | 아래 표를 봅니다. 정상 경로는 즉시 무효화하고, 무효화를 거치지 않는 변경은 최대 10분입니다. |
+| 적중과 미스의 응답 시간, 적중률 | 아래 k6 표에 기록합니다. |
+
+캐시하는 값은 JPA 엔티티가 아니라 수정할 수 없는 DTO 목록입니다. 엔티티를 넣으면 영속성 컨텍스트가 닫힌 뒤의 지연 로딩과 가변 상태 공유 문제가 생깁니다.
+상세 조회(`findById`), 상영, 좌석, 예매, 결제는 캐시하지 않고 항상 DB를 봅니다. 목록 캐시가 오래돼도 비공개 영화를 예매하거나 찜하는 일은 DB 검증(`ensurePublic`, `findByIdAndVisibility`)에서 막힙니다.
+
+```mermaid
+sequenceDiagram
+    participant R as 읽기 요청
+    participant C as 캐시(publicMovies)
+    participant S as MovieService
+    participant D as DB
+    participant W as 쓰기 요청(관리자)
+
+    R->>C: get(list)
+    alt 적중
+        C-->>R: List of MovieResponse (DB 연결 없음)
+    else 미스
+        C->>S: 적재(sync, 키 단위 원자적)
+        S->>D: select PUBLIC 영화
+        S-->>C: DTO 목록 저장
+        C-->>R: DTO 목록
+    end
+
+    W->>S: create 또는 delete (트랜잭션)
+    S->>D: insert 또는 update, commit
+    S->>C: afterCommit evict(list)
+    Note over C: 진행 중인 적재가 있으면 끝난 뒤 제거
+```
+
+설계 결정은 세 가지입니다. 모두 `MovieCacheConfig`와 `MovieService`에 있습니다.
+
+| 결정 | 이유 | 검증 |
+| --- | --- | --- |
+| `CacheManager`를 `TransactionAwareCacheManagerProxy`로 감쌈 | evict가 `afterCommit`으로 미뤄지고, 롤백되면 실행되지 않습니다. 커밋 전에 비우면 그 사이 조회가 옛 데이터를 다시 채울 수 있습니다. | 프록시를 제거하면 "커밋 전 유지", "롤백 시 유지" 테스트 2개가 실패합니다. |
+| `@EnableCaching(order = LOWEST_PRECEDENCE - 1)`로 캐시 어드바이스를 트랜잭션 바깥에 둠 | 트랜잭션이 바깥이면 캐시 적중에도 읽기 전용 트랜잭션이 시작되고, `HibernateJpaDialect`가 연결을 즉시 획득해 적중해도 Hikari 연결을 씁니다. 그러면 최적화의 목적이 사라집니다. | 어드바이스 순서를 뒤집으면 "재조회 시 세션을 열지 않는다" 테스트가 실패합니다. |
+| `@Cacheable(sync = true)` | 캐시가 비는 순간(만료, 무효화 직후)에 동시 요청이 모두 DB로 가는 쏠림(stampede)을 막습니다. 또 읽기 스레드가 커밋 전 목록을 읽은 직후 쓰기가 커밋·evict 되어도 옛 목록이 캐시에 남는 경합을 단일 JVM 안에서 닫습니다. Caffeine이 키 단위로 적재하고, 적재 중인 키의 무효화는 적재가 끝난 뒤 제거하기 때문입니다. | `sync = true`를 지우면 `MovieListCacheInFlightLoadIntegrationTest`가 실패합니다. 경합이 실제로 있었다는 뜻입니다. |
+
+`sync = true`의 보장은 Caffeine 구현 특성에 기댑니다. 캐시 구현체를 바꾸면 다시 검증해야 합니다.
+
+| 상황 | 결과 |
+| --- | --- |
+| 커밋 직후 evict 전의 극히 짧은 구간 | 이전 목록이 적중될 수 있습니다(밀리초 단위). 허용합니다. |
+| 커밋 전 데이터를 읽는 중이던 조회 | 그 요청의 응답은 커밋 전 목록이지만 캐시에는 남지 않습니다. |
+| 쓰기 롤백, 없는 영화 비공개 시도(예외) | evict하지 않습니다. DB도 바뀌지 않았으므로 캐시가 맞습니다. |
+| DB 직접 수정(수동 SQL) | 최대 10분 오래된 목록입니다. 영화 목록 용도에서는 허용합니다. |
+| 서버가 여러 대 | 인스턴스마다 별도 캐시라 무효화가 전달되지 않아 최대 10분 어긋납니다. 이번 범위 밖입니다. |
+
+허용하는 이유는 영화 등록과 비공개를 관리자만 하고 빈도가 낮으며, 목록은 탐색 화면용이고 상태를 바꾸는 동작은 DB의 영화 상태를 검증하기 때문입니다. TTL 10분은 정합성의 주 수단이 아니라 안전 상한입니다.
+
+테스트는 H2에서 통과했습니다(구현 완료). `MovieListCacheIntegrationTest`는 재조회 시 세션과 쿼리가 늘지 않음, 생성과 비공개 뒤 반영, 예외와 롤백 때 유지를 확인하고, `MovieListCacheInFlightLoadIntegrationTest`는 커밋 전 데이터를 읽는 도중 커밋이 일어나도 옛 목록이 남지 않음을 확인합니다. 위 세 결정을 각각 되돌리면 대응하는 테스트가 실패했습니다. 이 브랜치의 H2 전체 테스트는 410개(실패 0, 건너뜀 1)이고 MySQL 대상 검증은 하지 않았습니다.
+
+적중률은 Micrometer의 `cache_gets_total`에서 hit를 hit와 miss의 합으로 나눠 관측합니다. 기동 직후 목록을 3회 호출하자 miss 1, hit 2였습니다.
+
+k6 결과입니다. 변경 전은 캐시를 적용하기 전 빌드이고, 같은 DB에서 연달아 측정합니다. 이 표는 아직 채우지 않았고 `-`는 측정 후 채울 칸입니다. 6주차 1 vCPU 800 req/s의 p95는 698.6ms였고, 비교는 재측정한 변경 전 값으로 합니다.
+
+<!-- K6_RESULTS_CACHE -->
+
+| API | 구분 | 목표 req/s | 성공 RPS | p95 | p99 | 미시작 반복 | 앱 CPU | 요청당 SELECT | 평균 연결 획득 시간 | 캐시 적중률 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 영화 목록 | 변경 전 | 25 | - | - | - | - | - | - | - | 해당 없음 |
+| 영화 목록 | 변경 후 | 25 | - | - | - | - | - | - | - | - |
+| 영화 목록 | 변경 전 | 150 | - | - | - | - | - | - | - | 해당 없음 |
+| 영화 목록 | 변경 후 | 150 | - | - | - | - | - | - | - | - |
+| 영화 목록 | 변경 전 | 400 | - | - | - | - | - | - | - | 해당 없음 |
+| 영화 목록 | 변경 후 | 400 | - | - | - | - | - | - | - | - |
+| 영화 목록 | 변경 전 | 800 | - | - | - | - | - | - | - | 해당 없음 |
+| 영화 목록 | 변경 후 | 800 | - | - | - | - | - | - | - | - |
+
+적중과 미스를 따로 본 단건 응답 시간입니다.
+
+<!-- K6_RESULTS_CACHE_LATENCY -->
+
+| 구분 | 설명 | 응답 시간 | DB 쿼리 | DB 연결 사용 |
+| --- | --- | ---: | ---: | --- |
+| 미스 | 캐시가 빈 뒤 첫 요청(적재) | - | 1회 | 사용 |
+| 적중 | 이후 요청 | - | 0회(테스트로 확인) | 사용 안 함 |
+
+적중률의 기대값은 계산으로만 말할 수 있습니다. 800 req/s 단계는 40초 동안 약 32,000건이고, 캐시가 비는 순간은 단계 시작의 첫 요청뿐이라 미스는 많아야 1회입니다. 측정값은 위 표에 기록합니다.
+
+남은 한계와 추가 개선 후보입니다. 적중해도 200건(약 40KB) 목록의 JSON 직렬화는 요청마다 일어나 CPU 비용이 남습니다(HTTP 캐시 헤더나 직렬화 결과 캐시 검토). 서버가 여러 대가 되면 공유 캐시(Redis)나 무효화 전파가 필요하고, TTL을 바꿔야 하면 `@ConfigurationProperties`로 뺄 수 있습니다. 모두 이번에는 구현하지 않았습니다.
+
+#### 4-2. 영화별 상영 일정 복합 인덱스
+
+대상은 `GET /api/v1/movies/{movieId}/screenings`의 `ScreeningRepository.findAllByMovie_IdOrderByStartAt`입니다. Hibernate가 `EntityGraph`로 `movies`와 `screens`를 조인해 만드는 SQL은 다음과 같습니다.
+
+```sql
+select s1_0.screening_id, s1_0.movie_id, m1_0.movie_id, ..., s1_0.screen_id, s2_0.screen_id, ..., s1_0.start_at
+  from screenings s1_0
+  join movies m1_0 on m1_0.movie_id = s1_0.movie_id
+  join screens s2_0 on s2_0.screen_id = s1_0.screen_id
+ where s1_0.movie_id = ?
+ order by s1_0.start_at
+```
+
+조건은 같음(`movie_id =`)이고 정렬은 `start_at`입니다. `movie_id`만 인덱스에 있으면 같은 영화의 행을 찾은 뒤 `start_at`으로 다시 정렬(filesort)해야 합니다.
+
+| 후보 | 판단 |
+| --- | --- |
+| `(movie_id, start_at)` | 채택. 같음 조건을 앞에, 정렬 컬럼을 뒤에 둬서 한 영화의 범위를 읽으면 이미 정렬되어 있습니다. `start_at >= ?` 범위 조건이 붙어도 한 구간만 읽고, `movie_id`만 쓰는 조회와 외래키 검사도 왼쪽 접두로 처리합니다. |
+| `(start_at, movie_id)` | 기각. `movie_id` 같음 조건으로 범위를 좁히지 못합니다. |
+| `(movie_id)` (기존 FK 인덱스) | 정렬을 못 합니다. 복합 인덱스가 대체하므로 중복이 됩니다. |
+| `(movie_id, start_at, screen_id)` | 기각. 커버링이 되지만 한 쿼리에만 도움이 되고 인덱스가 더 커집니다. |
+
+구현 완료 내용은 `Screening` 엔티티의 `@Table(indexes = ...)`와 수동 적용용 [week-07-indexes.sql](src/main/resources/db/manual/week-07-indexes.sql)입니다. 이름은 기존 규칙을 따라 `idx_screening_movie_start_at`입니다.
+SQL 파일은 `ADD INDEX ..., ALGORITHM=INPLACE, LOCK=NONE`이고 확인 방법, 재실행 시 오류 1061만 나고 안전하다는 점, 롤백 문장을 주석에 적었습니다. `ScreeningIndexIntegrationTest`(H2)가 인덱스의 컬럼 순서를 확인합니다.
+
+EXPLAIN 전후입니다(측정 결과). 평범한 영화 qD(962건)도 qA와 같이 `filesort`만 사라졌고 다른 항목은 같습니다. `rows`는 옵티마이저 추정치라 핫 영화의 실제 건수(20,000)보다 크게 잡히지만 계획 선택에는 영향이 없었습니다.
+
+| 쿼리 | 시점 | type | key | rows | Extra |
+| --- | --- | --- | --- | ---: | --- |
+| qA 핫 영화 (20,000건) | 전 | ref | fk_screening_movie | 39,218 | Using filesort |
+| qA 핫 영화 | 후 | ref | idx_screening_movie_start_at | 39,892 | (없음) |
+| qB Hibernate 실제 SQL | 전 | const, ref, eq_ref | fk_screening_movie | 1 / 39,218 / 1 | Using filesort |
+| qB Hibernate 실제 SQL | 후 | const, ref, eq_ref | idx_screening_movie_start_at | 1 / 39,892 / 1 | (없음) |
+| qC 상영 예정 (9,991건) | 전 | ref | fk_screening_movie | 39,218 | Using where; Using filesort |
+| qC 상영 예정 | 후 | range | idx_screening_movie_start_at | 19,006 | Using index condition |
+| qE 상영 예정 20건 | 전 | ref | fk_screening_movie | 39,218 | Using where; Using filesort |
+| qE 상영 예정 20건 | 후 | range | idx_screening_movie_start_at | 19,006 | Using index condition |
+
+`EXPLAIN ANALYZE`로 보면 qA는 전에 인덱스 조회 위에 `Sort`(actual time 21.8..22.9)가 있었고 후에는 정렬 단계가 사라졌습니다. qE는 전에 20,000행을 읽고 정렬해 20건을 냈지만, 후에는 `Index range scan` 뒤 `Limit: 20 row(s)`로 20행만 읽었습니다.
+
+서버 측 실행 시간입니다(50회, ms, 측정 결과).
+
+| 쿼리 | 시점 | 중앙값 | 평균 | p95 | 중앙값 변화 |
+| --- | --- | ---: | ---: | ---: | --- |
+| qA 핫 영화 전체 | 전 / 후 | 19.50 / 16.82 | 20.07 / 16.89 | 22.97 / 17.44 | -14% |
+| qB Hibernate SQL | 전 / 후 | 35.26 / 31.23 | 38.59 / 31.69 | 51.27 / 33.93 | -11% |
+| qC 상영 예정 9,991건 | 전 / 후 | 18.24 / 9.09 | 20.69 / 9.12 | 30.28 / 9.22 | -50% |
+| qD 평범한 영화 962건 | 전 / 후 | 1.84 / 0.98 | 2.25 / 1.00 | 3.90 / 1.10 | -47% |
+| qE 상영 예정 20건 | 전 / 후 | 14.44 / 1.50 | 15.24 / 1.50 | 21.09 / 1.57 | -90% (약 9.6배) |
+
+해석입니다.
+
+| 관찰 | 해석 |
+| --- | --- |
+| 지금 API(영화의 상영 전부 반환)는 핫 영화에서 14%만 빨라졌습니다. | 인덱스가 없앤 것은 정렬(약 2.7ms, 기본 정렬 버퍼 256 KiB를 넘겨 병합 패스 1회)뿐입니다. `screen_id`가 인덱스에 없어 20,000행을 PK로 다시 찾는 비용이 지배적이라고 해석합니다. |
+| 범위와 건수 제한에서 효과가 큽니다. | qC는 읽는 구간 자체가 절반이 되어 50%, qE는 정렬 없이 앞 20건만 읽어 약 10배입니다. |
+| 평범한 영화도 47% 줄었습니다. | 정렬이 사라졌기 때문입니다. 다만 절대값은 1ms 안팎입니다. |
+
+현재 API에는 "상영 예정만"이나 페이징이 없어서 큰 이득이 나는 조건을 아직 쓰지 않습니다. 그런 조건을 넣는 것은 추가 개선 후보입니다.
+
+추가한 비용입니다(측정 결과).
+
+| 항목 | 값 |
+| --- | --- |
+| 500,000건에서 `ADD INDEX` 소요 | 0.50초 (온라인 INPLACE) |
+| 인덱스 개수 | 변경 전 PRIMARY + FK 인덱스 2개, 변경 후 PRIMARY + 2개로 같습니다. 복합 인덱스가 FK 인덱스를 대체했습니다. |
+| 인덱스 크기 (같은 방식으로 만든 737,700건 비교) | `fk_screening_movie` 27.58 MiB에서 `idx_screening_movie_start_at` 33.61 MiB로 약 22% 증가, 보조 인덱스 합계 51,511,296B에서 57,835,520B로 +12.3% |
+| 쓰기 비용 | 500,000건 채우기 4.006초 대 4.038초, 단건 INSERT 20,000회 0.410/0.498초 대 0.407/0.450초. 순서에 따른 잡음 범위이고 측정 가능한 지연은 없었습니다. |
+
+실제 `screenings`에서는 `fk_screening_movie` 27.58 MiB가 `idx_screening_movie_start_at` 16.55 MiB로 작아졌지만 비교할 수 없습니다. 기존 FK 인덱스는 행을 하나씩 넣어 단편화됐고 새 인덱스는 `ALTER`가 정렬해 조밀하게 만들었기 때문입니다. 쓰기 비용이 늘지 않은 것도 인덱스를 더한 것이 아니라 FK 인덱스를 대체했기 때문이며, FK 인덱스가 따로 남는 환경이라면 인덱스가 하나 늘어 그만큼 쓰기 비용이 더해집니다.
+
+FK 인덱스 관찰입니다. MySQL은 외래키 컬럼에 인덱스가 없으면 자동으로 만들고(이름은 제약 이름), 그 컬럼을 앞에 둔 다른 인덱스가 생기면 자동 생성 인덱스를 조용히 삭제합니다.
+
+| 단계 | `SHOW INDEX` 결과 |
+| --- | --- |
+| 변경 전 | PRIMARY, `fk_screening_movie(movie_id)`, `fk_screening_screen(screen_id)` |
+| `ADD INDEX idx_screening_movie_start_at (movie_id, start_at)` 후 | PRIMARY, `fk_screening_screen`, `idx_screening_movie_start_at`. `fk_screening_movie`는 사라졌고 FK 제약은 남았습니다. |
+| Hibernate식 이름(`FK...`)의 FK에 SQL 파일 적용 | 같은 결과였습니다. |
+| 같은 파일 재적용 | `ERROR 1061 Duplicate key name` |
+| 복합 인덱스만 남은 상태의 `DROP INDEX` | `ERROR 1553 needed in a foreign key constraint`. 롤백 문장은 `ADD INDEX`와 `DROP INDEX`를 한 문장으로 합쳐야 성공합니다. |
+
+추가 개선 후보입니다. 이 응답은 `screenId`, `screenType`, `movieId`만 쓰는데 `movies.description`(TEXT)까지 모든 행에 싣고 옵니다. `ScreeningResponse` 생성자 프로젝션으로 바꾸면 이득이 분명하지만, 4-2에서 측정한 쿼리를 바꾸게 되어 이번에는 하지 않았습니다.
+
+#### 4-3. 좌석 조회 쿼리 최적화
+
+대상은 `GET /api/v1/screenings/{screeningId}/seats`(`SeatAvailabilityService`)입니다. 응답에 필요한 값은 좌석 행, 번호, 상태뿐인데 엔티티를 조회해 SELECT 4회와 엔티티 하이드레이션이 일어났습니다.
+
+변경 전 SQL 4회입니다(H2, `show-sql`).
+
+```sql
+select s1_0.screening_id, s1_0.movie_id, s1_0.screen_id, s1_0.start_at
+  from screenings s1_0 where s1_0.screening_id = ?
+select m1_0.movie_id, m1_0.age_rating, m1_0.description, m1_0.release_date, m1_0.running_time, m1_0.title, m1_0.visibility
+  from movies m1_0 where m1_0.movie_id = ?
+select ss1_0.screening_seat_id, cr1_0.reservation_id, cr1_0.created_at, cr1_0.expires_at, cr1_0.request_key,
+       cr1_0.screening_id, cr1_0.status, cr1_0.updated_at, cr1_0.user_id, ss1_0.screening_id, ss1_0.seat_number, ss1_0.seat_row
+  from screening_seats ss1_0 left join reservations cr1_0 on cr1_0.reservation_id = ss1_0.current_reservation_id
+ where ss1_0.screening_id = ? order by ss1_0.seat_row, ss1_0.seat_number
+select s1_0.screen_id, s1_0.cinema_id, s1_0.row_count, s1_0.screen_type, s1_0.seats_per_row
+  from screens s1_0 where s1_0.screen_id = ?
+```
+
+변경 후 SQL 2회입니다.
+
+```sql
+select m1_0.visibility, s2_0.row_count, s2_0.seats_per_row
+  from screenings s1_0 join movies m1_0 on m1_0.movie_id = s1_0.movie_id
+  join screens s2_0 on s2_0.screen_id = s1_0.screen_id where s1_0.screening_id = ?
+select ss1_0.seat_row, ss1_0.seat_number, cr1_0.status, cr1_0.expires_at
+  from screening_seats ss1_0 left join reservations cr1_0 on cr1_0.reservation_id = ss1_0.current_reservation_id
+ where ss1_0.screening_id = ? order by ss1_0.seat_row, ss1_0.seat_number
+```
+
+| 변경 | 내용 |
+| --- | --- |
+| `ScreeningRepository.findSeatLayoutById` | 영화 공개 여부, 상영관 행 수, 행당 좌석 수만 읽는 JPQL 생성자 프로젝션 1회입니다. |
+| `ScreeningSeatRepository.findSeatOccupanciesByScreeningId` | 좌석 행, 번호, 점유 예약 상태, 만료 시각만 읽는 left join 프로젝션 1회입니다. |
+| 내부 결과 타입 | `ScreeningSeatLayout`, `SeatOccupancy`를 `domain/movie/dto`에 둡니다. API 응답이 아니라 내부 조회 결과라 `*Response`로 이름 붙이지 않았습니다. |
+| 만료 판정 공유 | 좌석 상태 계산이 `Reservation.isExpiredAt(status, expiresAt, now)` 정적 메서드를 씁니다. 엔티티 메서드 `isExpiredAt(now)`도 같은 규칙에 위임해 두 구현이 어긋나지 않습니다. |
+| 제거 | 사용처가 서비스 한 곳뿐이던 `findAllByScreening_IdOrderBySeatRowAscSeatNumberAsc`를 지웠습니다. |
+
+검사 순서(없는 상영, 비공개 영화, 좌석 수 불일치, 예상 밖 예약 상태)와 오류 코드는 그대로입니다.
+
+| 시나리오 | 변경 전 | 변경 후 |
+| --- | --- | --- |
+| 정상 조회 (좌석 6개) | SELECT 4회 | SELECT 2회 |
+| 비공개 영화 (`MOVIE_NOT_FOUND`) | 2회 | 1회 |
+| 없는 상영 (`SCREENING_NOT_FOUND`) | 1회 | 1회 |
+| 좌석 쿼리가 읽는 컬럼 | 12개 | 4개 |
+| 좌석당 `Reservation`, `ScreeningSeat` 엔티티 하이드레이션 | 있음 | 없음 |
+
+문장 수는 H2에서 Hibernate 통계로 측정했습니다. 변경 전 수치는 같은 테스트를 이전 코드에서 실행해 얻었습니다. MySQL에서도 같은 매핑이라 같을 것으로 보지만 직접 측정하지는 않았습니다.
+
+테스트는 `SeatAvailabilityQueryCountIntegrationTest`(H2) 6개입니다. 문장 수 2회, 여섯 가지 좌석 상태 매핑과 정렬, 만료 시각 경계(정확히 지금이면 AVAILABLE, 1마이크로초 전이면 HELD), 없는 상영과 비공개 영화의 오류 코드와 쿼리 수, `SCREENING_SEATS_NOT_READY` 두 경우를 확인합니다. 변경 전 코드에서는 6개 중 문장 수를 확인하는 2개만 실패했습니다. 동작은 같고 쿼리 수만 줄었다는 뜻입니다. 기존 `ReservationExpiryViewIntegrationTest`도 통과하고, H2 전체 테스트는 좌석 조회 변경 시점 405건, 인덱스 추가 시점 406건(실패 0, 건너뜀 1)이었습니다.
+
+다른 GET 엔드포인트의 N+1도 점검했습니다. 영화별 상영(문장 2회), 상품, 영화관, 영화 목록과 상세, 매점 주문 상세(`findWithItemsById`)는 N+1이 없었습니다. 상품과 영화관은 페이징이 없어 데이터가 커지면 무제한 조회가 되는 점만 주의합니다. 영화별 상영 응답의 프로젝션 개선은 4-2의 추가 개선 후보입니다.
+
+k6 결과입니다. 이 표는 아직 채우지 않았고 `-`는 측정 후 채울 칸입니다. 6주차 1 vCPU 800 req/s의 좌석 조회는 p95 492.6ms, 평균 연결 획득 시간 142.33ms였고, 요청당 SELECT는 약 4회였습니다. 비교는 재측정한 변경 전 값으로 합니다.
+
+<!-- K6_RESULTS_SEATS -->
+
+| API | 구분 | 목표 req/s | 성공 RPS | p95 | p99 | 미시작 반복 | 앱 CPU | 요청당 SELECT | 평균 연결 획득 시간 | 캐시 적중률 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 좌석 조회 | 변경 전 | 25 | - | - | - | - | - | - | - | 해당 없음 |
+| 좌석 조회 | 변경 후 | 25 | - | - | - | - | - | - | - | 해당 없음 |
+| 좌석 조회 | 변경 전 | 150 | - | - | - | - | - | - | - | 해당 없음 |
+| 좌석 조회 | 변경 후 | 150 | - | - | - | - | - | - | - | 해당 없음 |
+| 좌석 조회 | 변경 전 | 400 | - | - | - | - | - | - | - | 해당 없음 |
+| 좌석 조회 | 변경 후 | 400 | - | - | - | - | - | - | - | 해당 없음 |
+| 좌석 조회 | 변경 전 | 800 | - | - | - | - | - | - | - | 해당 없음 |
+| 좌석 조회 | 변경 후 | 800 | - | - | - | - | - | - | - | 해당 없음 |
+
+추가 개선 후보입니다. 좌석 상태는 예약과 선점 만료에 따라 바뀌므로 캐시는 화면에 보이는 최신 상태와 무효화 기준을 먼저 정한 뒤에 검토합니다. 이번에는 적용하지 않았습니다.
+
+### 5. 새롭게 알게 된 점
+
+- **H2 테스트는 MySQL의 락 경쟁을 가렸습니다.** 찜 토글의 동시성 테스트가 H2에서는 통과하고 MySQL에서는 실패했습니다. H2는 `FOR SHARE`를 배타 잠금처럼 처리하지만 MySQL의 공유 잠금끼리는 서로 막지 않기 때문입니다. 동시성 테스트는 운영과 같은 DB로도 돌려야 합니다.
+- **트랜잭션 경계는 DB 작업 시간만 덮어야 합니다.** 회원가입에서 bcrypt 해시가 트랜잭션 안에 있으면 CPU 작업 시간 동안 풀 5개 중 하나가 묶입니다. 코드는 정상이어도 풀이 작으면 다른 API가 영향을 받습니다. 로그인은 이미 밖에 있어서 가입만 일관성이 없었습니다.
+- **캐시와 트랜잭션은 어드바이스 순서가 중요합니다.** 트랜잭션 어드바이스가 캐시보다 바깥이면 캐시 적중에도 읽기 전용 트랜잭션이 연결을 잡습니다. 순서를 뒤집은 변이 테스트가 실패하는 것으로 이 순서가 최적화의 전제임을 확인했습니다.
+- **`sync = true`는 stampede 방지뿐 아니라 옛 데이터 재적재 경합도 막습니다.** Caffeine은 적재 중인 키의 무효화를 적재 뒤로 미룹니다. 옵션을 지우면 테스트가 실패해 경합이 실제로 있었음을 알 수 있었고, 구현체를 바꾸면 다시 검증해야 한다는 조건도 함께 배웠습니다.
+- **인덱스는 전체 목록보다 범위와 건수 제한에서 효과가 큽니다.** 같은 인덱스가 전체 조회에서는 14%, 상영 예정 조건에서는 50%, 20건 제한에서는 90% 줄였습니다. 정렬은 없앴지만 20,000행을 PK로 다시 찾는 비용은 그대로 남기 때문입니다. 어떤 질의에 쓸지는 EXPLAIN과 실제 시간으로 확인해야 합니다.
+- **MySQL은 FK용 자동 인덱스를 조용히 삭제합니다.** 복합 인덱스를 추가하자 `fk_screening_movie`가 사라지고 제약만 남았습니다. 이를 모른 채 롤백 문장을 쓰면 `ERROR 1553`이 납니다. 인덱스를 바꾸기 전후에 `SHOW INDEX`를 확인해야 합니다.
+- **측정 데이터의 분포가 결과를 정합니다.** 6주차 픽스처는 상영이 한 회차뿐이라 영화별 상영 인덱스의 효과를 볼 수 없었습니다. 영화당 상영 건수가 다른 별도 데이터를 만들어 실험했고, 그래서 인덱스 실험은 k6 환경과 분리했습니다.
+
+#### 구분 정리와 추가 개선 후보
+
+| 구분 | 내용 |
+| --- | --- |
+| 구현 완료, 테스트 통과 | 회원가입 bcrypt 트랜잭션 분리, 찜 토글 직렬화, 공개 영화 목록 캐시, 좌석 조회 쿼리 축소, 상영 복합 인덱스 (H2 전체 테스트, 동시성은 MySQL 8.4.8로도 확인) |
+| 측정 결과 | 상영 복합 인덱스의 EXPLAIN과 서버 측 실행 시간, 쿼리 수와 컬럼 수 전후. k6 결과는 4-1, 4-3절 표의 `-` 칸에 기록합니다. |
+| 추가 개선 후보 | 영화별 상영 조회의 `ScreeningResponse` 프로젝션, 상영 예정 조건과 페이징, `InventoryService.create`의 유니크 위반 변환, `ScreeningService.create`의 좌석 삽입 배치 분할, 만료 선점 후보 쿼리의 EXPLAIN 확인, 캐시 적중 시 JSON 직렬화 비용과 HTTP 캐시 헤더, 다중 인스턴스용 공유 캐시 |
+
 ## 6주차 모니터링과 로깅
 
 Spring Boot Actuator에서 노출한 메트릭을 Prometheus가 주기적으로 수집합니다. 앱의 JSON 로그 파일은 Alloy가 읽어서 Loki에 보냅니다. Grafana는 Prometheus와 Loki를 조회해 같은 시간 범위의 지표와 로그를 보여줍니다.
