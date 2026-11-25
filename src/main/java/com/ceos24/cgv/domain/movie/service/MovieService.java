@@ -7,8 +7,13 @@ import com.ceos24.cgv.domain.movie.entity.Movie;
 import com.ceos24.cgv.domain.movie.entity.MovieStatistic;
 import com.ceos24.cgv.domain.movie.exception.MovieErrorCode;
 import com.ceos24.cgv.domain.movie.repository.MovieRepository;
+import com.ceos24.cgv.global.code.GeneralErrorCode;
 import com.ceos24.cgv.global.exception.GeneralException;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -23,6 +28,7 @@ public class MovieService {
 
     //영화 생성
     @Transactional
+    @CacheEvict(cacheNames = "movieList", allEntries = true)
     public MovieDetailResponse createMovie(MovieRequest request) {
         Movie movie = Movie.builder()
                 .title(request.title())
@@ -41,11 +47,17 @@ public class MovieService {
 
     }
     // 영화 목록 조회
+    @Cacheable(cacheNames = "movieList")
     public List<MovieListResponse> getMovies() {
-        return movieRepository.findAllByOrderByOpenDateDescIdDesc()
-                .stream()
-                .map(MovieListResponse::from)
-                .toList();
+        return movieRepository.findListResponses(Pageable.unpaged());
+    }
+
+    // 목록을 일부만 읽는 실험 및 화면의 페이지 조회
+    public List<MovieListResponse> getMoviesPage(int page, int size) {
+        if (page < 0 || size < 1 || size > 100) {
+            throw new GeneralException(GeneralErrorCode.INVALID_PARAMETER);
+        }
+        return movieRepository.findListResponses(PageRequest.of(page, size));
     }
 
     // 영화 상세 조회
@@ -57,6 +69,7 @@ public class MovieService {
 
     //영화와 연결된 통계 삭제
     @Transactional
+    @CacheEvict(cacheNames = "movieList", allEntries = true)
     public void deleteMovie(Long movieId) {
         Movie movie = findMovieWithStatistic(movieId);
 

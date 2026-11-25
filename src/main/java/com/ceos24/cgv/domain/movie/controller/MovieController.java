@@ -43,8 +43,13 @@ public class MovieController {
             description = "전체 영화 목록을 개봉일 내림차순으로 조회합니다."
     )
     @GetMapping
-    public ApiResponse<List<MovieListResponse>> getMovies() {
-        List<MovieListResponse> response = movieService.getMovies();
+    public ApiResponse<List<MovieListResponse>> getMovies(
+            @RequestParam(name = "page", required = false) Integer page,
+            @RequestParam(name = "size", required = false) Integer size
+    ) {
+        List<MovieListResponse> response = page == null && size == null
+                ? movieService.getMovies()
+                : movieService.getMoviesPage(page == null ? 0 : page, size == null ? 50 : size);
 
         return ApiResponse.onSuccess("영화 목록 조회에 성공했습니다.", response);
     }
