@@ -31,11 +31,14 @@ import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.transaction.IllegalTransactionStateException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.client.ResourceAccessException;
 import tools.jackson.databind.json.JsonMapper;
 
+import javax.sql.DataSource;
+import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneId;
@@ -54,7 +57,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @SpringBootTest(properties = {
         "spring.config.import=",
-        "spring.datasource.url=jdbc:h2:mem:store-order-payment-test;MODE=MySQL;DB_CLOSE_DELAY=-1"
+        "spring.datasource.url=jdbc:h2:mem:store-order-payment-test;MODE=MySQL;DB_CLOSE_DELAY=-1",
+        "spring.datasource.hikari.maximum-pool-size=2",
+        "spring.datasource.hikari.connection-timeout=3000"
 })
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
@@ -69,6 +74,7 @@ class StoreOrderPaymentIntegrationTest {
     @Autowired private StoreOrderRepository orders;
     @Autowired private PaymentRepository payments;
     @Autowired private JdbcTemplate jdbc;
+    @Autowired private DataSource dataSource;
     @Autowired private EntityManager entityManager;
     @Autowired private PlatformTransactionManager transactionManager;
     @Autowired private MockMvc mvc;
@@ -232,6 +238,85 @@ class StoreOrderPaymentIntegrationTest {
         assertThat(create(9).status()).isEqualTo(StoreOrderStatus.PENDING);
         assertThat(orders.findById(old.orderId()).orElseThrow().getStatus()).isEqualTo(StoreOrderStatus.EXPIRED);
         assertThat(stock(popcornId)).isEqualTo(1);
+    }
+
+    @Test
+    void inventoryCacheReusesReadsAndRefreshesAfterStockChanges() {
+        var initial = shop.getInventories(theaterId);
+        assertThat(shop.getInventories(theaterId)).isSameAs(initial);
+        var popcorn = initial.stream().filter(item -> item.menuId().equals(popcornId)).findFirst().orElseThrow();
+
+        shop.addStock(theaterId, popcorn.inventoryId(), 2);
+        assertCachedPopcornStock(12);
+        var order = create(3);
+        assertCachedPopcornStock(9);
+        shop.cancelOrder(userId, order.orderId());
+        assertCachedPopcornStock(12);
+    }
+
+    @Test
+    void stockRollbackDoesNotInvalidateTheInventoryCache() {
+        var initial = shop.getInventories(theaterId);
+        var popcorn = initial.stream().filter(item -> item.menuId().equals(popcornId)).findFirst().orElseThrow();
+        new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+            shop.addStock(theaterId, popcorn.inventoryId(), 2);
+            status.setRollbackOnly();
+        });
+        assertThat(shop.getInventories(theaterId)).isSameAs(initial);
+        assertThat(stock(popcornId)).isEqualTo(10);
+    }
+
+    private void assertCachedPopcornStock(int expected) {
+        assertThat(shop.getInventories(theaterId)).filteredOn(item -> item.menuId().equals(popcornId))
+                .singleElement().satisfies(item -> assertThat(item.stock()).isEqualTo(expected));
+    }
+
+    @Test
+    void expirationAndBusinessOperationsCompleteWithOneAvailableConnection() throws SQLException {
+        try (var reservedConnection = dataSource.getConnection()) {
+            var inventoryOrder = create(2);
+            assertCachedPopcornStock(8);
+            backdate(inventoryOrder.orderId());
+            assertCachedPopcornStock(10);
+
+            var orderToQuery = create(3);
+            preparation.prepareStoreOrder(userId, new StoreOrderPaymentPrepareRequest(orderToQuery.orderId()));
+            backdate(orderToQuery.orderId());
+            assertThat(shop.getOrder(userId, orderToQuery.orderId()).status()).isEqualTo(StoreOrderStatus.EXPIRED);
+            assertThat(stock(popcornId)).isEqualTo(10);
+        }
+    }
+
+    @Test
+    void expirationStaysCommittedWhenStorePaymentPreparationFails() {
+        var order = create(3);
+        var request = new StoreOrderPaymentPrepareRequest(order.orderId());
+        var payment = preparation.prepareStoreOrder(userId, request);
+        backdate(order.orderId());
+
+        assertError(() -> preparation.prepareStoreOrder(userId, request), ErrorCode.STORE_ORDER_EXPIRED);
+        assertThat(paymentStatus(payment.orderId())).isEqualTo(PaymentStatus.EXPIRED);
+        assertThat(orders.findById(order.orderId()).orElseThrow().getStatus()).isEqualTo(StoreOrderStatus.EXPIRED);
+        assertThat(stock(popcornId)).isEqualTo(10);
+    }
+
+    @Test
+    void expirationEntryPointsRejectAnOuterTransactionBeforeChangingStock() {
+        var order = create(3);
+        backdate(order.orderId());
+        var transaction = new TransactionTemplate(transactionManager);
+        var paymentRequest = new StoreOrderPaymentPrepareRequest(order.orderId());
+        List<Runnable> operations = List.of(
+                () -> create(1),
+                () -> shop.getOrder(userId, order.orderId()),
+                () -> shop.getInventories(theaterId),
+                () -> preparation.prepareStoreOrder(userId, paymentRequest));
+        for (Runnable operation : operations) {
+            assertThatThrownBy(() -> transaction.executeWithoutResult(ignored -> operation.run()))
+                    .isInstanceOf(IllegalTransactionStateException.class);
+        }
+        assertThat(orders.findById(order.orderId()).orElseThrow().getStatus()).isEqualTo(StoreOrderStatus.PENDING);
+        assertThat(stock(popcornId)).isEqualTo(7);
     }
 
     @Test

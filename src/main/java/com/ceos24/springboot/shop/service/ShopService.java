@@ -7,22 +7,19 @@ import com.ceos24.springboot.shop.dto.*;
 import com.ceos24.springboot.shop.repository.*;
 import com.ceos24.springboot.theater.domain.Theater;
 import com.ceos24.springboot.theater.repository.TheaterRepository;
-import com.ceos24.springboot.user.domain.User;
-import com.ceos24.springboot.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
+import java.util.SortedMap;
 import java.util.TreeMap;
 
 @Service
 @RequiredArgsConstructor
-@Transactional(readOnly = true)
 public class ShopService {
     private final Clock clock;
     private final StoreInventoryRepository storeInventoryRepository;
@@ -30,9 +27,10 @@ public class ShopService {
     private final StoreOrderRepository storeOrderRepository;
     private final OrderItemRepository orderItemRepository;
     private final TheaterRepository theaterRepository;
-    private final UserRepository userRepository;
     private final StoreOrderExpirationService expirationService;
+    private final ShopTransactionService transactions;
     private final StoreOrderLifecycleService lifecycle;
+    private final InventoryCache inventoryCache;
 
     @Transactional
     public InventoryResponse createInventory(Long theaterId, InventoryCreateRequest request) {
@@ -46,16 +44,16 @@ public class ShopService {
         if (storeInventoryRepository.existsByTheaterAndMenu(theater, menu)) {
             throw new IllegalArgumentException("이미 등록된 매점 메뉴입니다.");
         }
-        return InventoryResponse.from(storeInventoryRepository.save(StoreInventory.builder()
-                .theater(theater).menu(menu).stock(request.stock()).build()));
+        StoreInventory inventory = storeInventoryRepository.save(StoreInventory.builder()
+                .theater(theater).menu(menu).stock(request.stock()).build());
+        inventoryCache.invalidateAfterCommit(theaterId);
+        return InventoryResponse.from(inventory);
     }
 
+    @Transactional(propagation = Propagation.NEVER)
     public List<InventoryResponse> getInventories(Long theaterId) {
         expirationService.releaseExpiredForTheater(theaterId);
-        Theater theater = theaterRepository.findById(theaterId)
-                .orElseThrow(() -> new GlobalException(ErrorCode.THEATER_NOT_FOUND));
-        return storeInventoryRepository.findAllByTheater(theater).stream()
-                .map(InventoryResponse::from).toList();
+        return inventoryCache.get(theaterId, () -> transactions.getInventories(theaterId));
     }
 
     @Transactional
@@ -65,51 +63,21 @@ public class ShopService {
         StoreInventory inventory = storeInventoryRepository.findByInventoryIdAndTheater(inventoryId, theater)
                 .orElseThrow(() -> new GlobalException(ErrorCode.STORE_INVENTORY_NOT_FOUND));
         inventory.increaseStock(quantity);
+        inventoryCache.invalidateAfterCommit(theaterId);
         return InventoryResponse.from(inventory);
     }
 
-    @Transactional
+    @Transactional(propagation = Propagation.NEVER)
     public StoreOrderResponse createOrder(Long userId, StoreOrderCreateRequest request) {
-        Map<Long, Integer> quantities = validatedQuantities(request);
+        SortedMap<Long, Integer> quantities = validatedQuantities(request);
         expirationService.releaseExpiredForTheater(request.theaterId());
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new GlobalException(ErrorCode.PAYMENT_USER_REQUIRED));
-        Theater theater = theaterRepository.findById(request.theaterId())
-                .orElseThrow(() -> new GlobalException(ErrorCode.THEATER_NOT_FOUND));
-
-        List<OrderMenu> orderMenus = new ArrayList<>();
-        int totalAmount = 0;
-        try {
-            for (var entry : quantities.entrySet()) {
-                StoreInventory inventory = storeInventoryRepository
-                        .findWithLock(theater.getTheaterId(), entry.getKey())
-                        .orElseThrow(() -> new GlobalException(ErrorCode.STORE_INVENTORY_NOT_FOUND));
-                Menu menu = inventory.getMenu();
-                if (menu.getMenuPrice() == null || menu.getMenuPrice() <= 0) {
-                    throw new GlobalException(ErrorCode.INVALID_PAYMENT_AMOUNT);
-                }
-                inventory.decreaseStock(entry.getValue());
-                totalAmount = Math.addExact(totalAmount,
-                        Math.multiplyExact(menu.getMenuPrice(), entry.getValue()));
-                orderMenus.add(new OrderMenu(menu, entry.getValue()));
-            }
-        } catch (ArithmeticException e) {
-            throw new GlobalException(ErrorCode.INVALID_STORE_ORDER_REQUEST);
-        }
-
-        StoreOrder order = storeOrderRepository.save(StoreOrder.builder()
-                .user(user).theater(theater).totalAmount(totalAmount)
-                .now(LocalDateTime.now(clock)).build());
-        List<OrderItem> items = orderMenus.stream().map(item -> OrderItem.builder()
-                .order(order).menu(item.menu()).quantity(item.quantity()).build()).toList();
-        return StoreOrderResponse.from(order, orderItemRepository.saveAll(items));
+        return transactions.createOrder(userId, request.theaterId(), quantities);
     }
 
+    @Transactional(propagation = Propagation.NEVER)
     public StoreOrderResponse getOrder(Long userId, Long orderId) {
         expirationService.releaseExpiredForUser(userId);
-        StoreOrder order = storeOrderRepository.findByOrderIdAndUser_Id(orderId, userId)
-                .orElseThrow(() -> new GlobalException(ErrorCode.STORE_ORDER_NOT_FOUND));
-        return StoreOrderResponse.from(order, orderItemRepository.findAllByOrderOrderByMenu_MenuIdAsc(order));
+        return transactions.getOrder(userId, orderId);
     }
 
     @Transactional
@@ -121,12 +89,12 @@ public class ShopService {
         return StoreOrderResponse.from(order, orderItemRepository.findAllByOrderOrderByMenu_MenuIdAsc(order));
     }
 
-    private Map<Long, Integer> validatedQuantities(StoreOrderCreateRequest request) {
+    private SortedMap<Long, Integer> validatedQuantities(StoreOrderCreateRequest request) {
         if (request == null || request.theaterId() == null || request.theaterId() <= 0
                 || request.items() == null || request.items().isEmpty()) {
             throw new GlobalException(ErrorCode.INVALID_STORE_ORDER_REQUEST);
         }
-        Map<Long, Integer> quantities = new TreeMap<>();
+        SortedMap<Long, Integer> quantities = new TreeMap<>();
         try {
             for (OrderItemRequest item : request.items()) {
                 if (item == null || item.menuId() == null || item.menuId() <= 0
@@ -140,6 +108,4 @@ public class ShopService {
         }
         return quantities;
     }
-
-    private record OrderMenu(Menu menu, Integer quantity) {}
 }
