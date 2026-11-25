@@ -1,6 +1,7 @@
 package com.ceos.cgv.domain.auth.service;
 
 import com.ceos.cgv.domain.auth.dto.SignupRequest;
+import com.ceos.cgv.support.DatabaseIntegrationTest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -8,7 +9,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
@@ -20,8 +20,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 
 @SpringBootTest
-@ActiveProfiles("test")
-class RegistrationTransactionIntegrationTest {
+class RegistrationTransactionIntegrationTest extends DatabaseIntegrationTest {
     private static final String LOGIN_ID = "tx_boundary_member";
 
     @Autowired
