@@ -55,10 +55,9 @@ public class GlobalExceptionHandler {
                 .getFieldErrors()
                 .stream()
                 .map(fieldError -> String.format(
-                        "[%s] %s (입력값: %s)",
+                        "[%s] %s",
                         fieldError.getField(),
-                        fieldError.getDefaultMessage(),
-                        fieldError.getRejectedValue()
+                        fieldError.getDefaultMessage()
                 ))
                 .toList();
 
@@ -86,10 +85,9 @@ public class GlobalExceptionHandler {
         List<String> errors = e.getConstraintViolations()
                 .stream()
                 .map(violation -> String.format(
-                        "[%s] %s (입력값: %s)",
+                        "[%s] %s",
                         violation.getPropertyPath(),
-                        violation.getMessage(),
-                        violation.getInvalidValue()
+                        violation.getMessage()
                 ))
                 .toList();
 
@@ -125,7 +123,7 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResponse<Object>> handleJsonException(
             HttpMessageNotReadableException e
     ) {
-        log.warn("JSON parse error: {}", e.getMessage());
+        log.warn("JSON parse error: {}", e.getClass().getSimpleName());
 
         BaseErrorCode errorCode =
                 GeneralErrorCode.INVALID_PARAMETER;

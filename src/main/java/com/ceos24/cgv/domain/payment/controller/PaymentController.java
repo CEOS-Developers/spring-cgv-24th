@@ -16,6 +16,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
@@ -30,6 +31,7 @@ public class PaymentController {
     private final PaymentQueryService paymentQueryService;
 
     private final PaymentCancellationService paymentCancellationService;
+    private final MeterRegistry meterRegistry;
 
     @PostMapping("/confirm")
     @Operation(
@@ -44,6 +46,8 @@ public class PaymentController {
     ) {
         TossConfirmResponse response =
                 paymentApprovalService.confirm(principal.getUserId(), request);
+
+        meterRegistry.counter("cgv.payment.operations", "action", "confirm").increment();
 
         return ApiResponse.onSuccess("결제 승인에 성공했습니다.", response);
     }
@@ -78,6 +82,8 @@ public class PaymentController {
                 principal.getUserId(), orderId, request.cancelReason()
         );
 
+        meterRegistry.counter("cgv.payment.operations", "action", "cancel_full").increment();
+
         return ApiResponse.onSuccess("결제 전체 취소에 성공했습니다.", response);
     }
 
@@ -92,6 +98,8 @@ public class PaymentController {
         PaymentDetailResponse response = paymentCancellationService.cancelPartial(
                 principal.getUserId(), orderId, request
         );
+
+        meterRegistry.counter("cgv.payment.operations", "action", "cancel_partial").increment();
 
         return ApiResponse.onSuccess("선택한 좌석의 결제를 취소했습니다.", response);
     }
@@ -116,6 +124,8 @@ public class PaymentController {
                         principal.getUserId(),
                         request
                 );
+
+        meterRegistry.counter("cgv.payment.operations", "action", "recover").increment();
 
         return ApiResponse.onSuccess(
                 "결제 승인 결과를 복구했습니다.",

@@ -89,4 +89,11 @@ public class SnackOrder extends BaseTimeEntity {
     public void complete() {
         this.orderStatus = SnackOrderStatus.COMPLETED;
     }
+
+    public void cancel() {
+        if (this.orderStatus != SnackOrderStatus.COMPLETED) {
+            throw new IllegalStateException("완료된 매점 주문만 취소할 수 있습니다.");
+        }
+        this.orderStatus = SnackOrderStatus.CANCELED;
+    }
 }
