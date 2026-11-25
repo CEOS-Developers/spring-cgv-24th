@@ -81,6 +81,7 @@ public class SecurityConfig {
                                 "/api/screenings/{screeningId:[0-9]+}/seats",
                                 "/api/store/products")
                             .permitAll()
+                        .requestMatchers(HttpMethod.GET, "/actuator/prometheus").permitAll()
                         .anyRequest()
                             .authenticated())
                 .addFilterBefore(

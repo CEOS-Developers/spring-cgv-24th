@@ -32,3 +32,18 @@ toss:
 logging:
   level:
     org.hibernate.SQL: debug
+
+
+management:
+  server:
+    port: 8081
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  metrics:
+    distribution:
+      percentiles-histogram:
+        "[http.server.requests]": true
+      slo:
+        "[http.server.requests]": 500ms
