@@ -4261,7 +4261,7 @@ docker compose -f docker-compose.yml -f loadtest/docker-compose.loadtest.yml res
 # Grafana http://localhost:3001 → CGV → CGV 부하 테스트
 ```
 
-판정 기준은 `http_req_failed`가 아니라 **5xx 0건**(`server_errors`)입니다. 좌석 경쟁에서 진 409는 정상 응답이라 실패로 세면 안 됩니다.
+판정 기준은 `http_req_failed`가 아니라 **5xx 0건**(`server_errors`)과 **무응답 0건**(`no_response`)입니다. 좌석 경쟁에서 진 409는 정상 응답이라 실패로 세면 안 됩니다. 응답을 아예 못 받은 요청(연결 거부·끊김·k6 타임아웃)은 status가 0이라 5xx 조건에 걸리지 않으므로 따로 셉니다. 아래 결과는 무응답을 세기 전에 측정한 것입니다.
 
 ### 시나리오 설계
 

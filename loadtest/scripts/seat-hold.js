@@ -2,7 +2,7 @@
 // 같은 회차·인기 좌석에 선점이 몰리면 유니크 인덱스에서 락을 기다리는 요청이 커넥션을 쥔 채 최대 3초 머문다.
 // 이게 풀(20개)을 말려 무관한 API까지 끌어내리는지를 probe(GET /api/movies)로 함께 본다.
 import http from 'k6/http';
-import { COMMON_THRESHOLDS, SEAT_RESULT_THRESHOLDS, BASE_URL, loginMany, pickScreening, holdWithRetry, serverErrors } from './lib/common.js';
+import { COMMON_THRESHOLDS, SEAT_RESULT_THRESHOLDS, BASE_URL, loginMany, pickScreening, holdWithRetry, recordErrors } from './lib/common.js';
 
 const TOKEN_COUNT = 200;
 
@@ -52,5 +52,5 @@ export function hold(data) {
 
 export function probe() {
   const res = http.get(`${BASE_URL}/api/movies`, { tags: { name: 'probe GET /api/movies' } });
-  serverErrors.add(res.status >= 500);
+  recordErrors(res);
 }
