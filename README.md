@@ -2083,3 +2083,103 @@ docker run --rm -i grafana/k6:1.3.0 run -e BASE_URL=<서버 주소> - < monitori
 ```
 
 </details>
+
+<details>
+<summary><h2>⚡ 최적화 & 캐싱</h2></summary>
+
+<details>
+<summary><h3>1. 트랜잭션 전파 속성 조사</h3></summary>
+
+### 트랜잭션 전파 (Propagation)란?
+
+이미 트랜잭션이 진행 중일 때 다른 `@Transactional` 메서드를 호출하면, 기존 트랜잭션에 참여할지 새로 만들지를 정하는 속성입니다.
+
+Spring은 메서드마다 **논리 트랜잭션**을 두고, 여러 논리 트랜잭션이 실제 DB 커밋·롤백 단위인 **물리 트랜잭션** 하나를 공유할 수 있습니다. 그래서 `@Transactional`이 여러 개 있어도 물리 트랜잭션은 하나일 수 있습니다.
+
+### 전파 속성 종류
+
+| 전파 속성         | 기존 트랜잭션이 있으면             | 없으면             | 활용                                  |
+|-------------------|------------------------------------|--------------------|---------------------------------------|
+| REQUIRED (기본값) | 참여                               | 새로 생성          | 하나의 비즈니스 작업을 함께 커밋·롤백 |
+| REQUIRES_NEW      | 기존을 중단하고 새로 생성          | 새로 생성          | 바깥 결과와 무관하게 남겨야 하는 이력 |
+| SUPPORTS          | 참여                               | 트랜잭션 없이 실행 | 단순 조회                             |
+| NOT_SUPPORTED     | 기존을 중단하고 트랜잭션 없이 실행 | 트랜잭션 없이 실행 | DB 트랜잭션과 분리할 외부 작업        |
+| MANDATORY         | 참여                               | 예외 발생          | 단독으로 실행되면 안 되는 내부 작업   |
+| NEVER             | 예외 발생                          | 트랜잭션 없이 실행 | 트랜잭션 안에서 실행되면 안 되는 작업 |
+| NESTED            | Savepoint를 만들어 중첩 실행       | 새로 생성          | 내부 작업만 부분 롤백                 |
+
+### 주의사항
+
+- **rollback-only**: 참여한 내부 메서드에서 예외가 나면 공유 트랜잭션 전체가 rollback-only가 됩니다. 바깥에서 예외를 잡아도 커밋 시점에 `UnexpectedRollbackException`이 발생합니다.
+- **REQUIRES_NEW**: 커넥션을 하나 더 쓰므로 커넥션 풀 고갈과 락 경합에 주의해야 합니다. 내부 예외가 바깥으로 전파되면 바깥 트랜잭션도 롤백됩니다.
+- **NOT_SUPPORTED**: 중단된 바깥 트랜잭션의 커넥션과 락은 그대로 유지됩니다.
+- **NESTED**: 트랜잭션 매니저가 지원하는지 확인해야 하고, JPA 영속성 컨텍스트는 Savepoint 시점으로 되돌아가지 않습니다.
+- **Self-Invocation**: 프록시 기반이라 같은 클래스 안에서 직접 호출하면 `@Transactional` 설정이 적용되지 않습니다. 별도 Bean으로 분리해 프록시를 거쳐 호출해야 합니다.
+
+</details>
+
+<details>
+<summary><h3>2. 트랜잭션 분석과 개선</h3></summary>
+
+### 현재 구조 점검
+
+- 서비스는 클래스에 `@Transactional(readOnly = true)`를 두고, 변경 메서드만 `@Transactional`로 덮어씁니다.
+- 토스 API는 트랜잭션이 없는 `PaymentFacade`에서 호출하고, DB 변경은 `PaymentService`의 짧은 트랜잭션들로 나눴습니다. OSIV도 꺼져 있어 토스 응답을 기다리는 동안 커넥션을 잡지 않습니다.
+- `GeneralException`은 `RuntimeException`이라 기본 롤백 규칙이 적용됩니다. 트랜잭션 안에서 예외를 잡고 계속 진행하는 곳이 없어 `UnexpectedRollbackException` 위험도 없습니다.
+
+### 문제: 결제 후처리 메서드가 혼자서도 실행된다
+
+아래 6개 메서드는 결제 상태 변경과 반드시 같은 트랜잭션에서 실행돼야 합니다. 지금 호출부는 모두 `PaymentService`의 `@Transactional` 메서드라 항상 기존 트랜잭션에 참여합니다.
+
+하지만 REQUIRED라서 트랜잭션 없이 호출해도 새 트랜잭션을 만들어 **예외 없이** 실행됩니다. 이때 파라미터로 받은 엔티티는 영속성 컨텍스트 밖에 있어 상태 변경은 저장되지 않고, 벌크 UPDATE·DELETE만 커밋됩니다.
+
+| 메서드                                                 | 트랜잭션 없이 호출되면                                        |
+|--------------------------------------------------------|---------------------------------------------------------------|
+| `OrderService.completePaidOrder`                       | 재고는 차감되고 주문은 PENDING_PAYMENT로 남음                 |
+| `OrderService.restoreCanceledOrder`                    | 재고는 복구되고 주문은 PAID로 남아, 다시 호출하면 또 복구됨   |
+| `ReservationService.startPaying`                       | PAYING이 먼저 커밋돼, 결제 선점에 실패하면 예매가 풀리지 않음 |
+| `ReservationService.confirmPaid`                       | 아무것도 저장되지 않고 정상 종료                              |
+| `ReservationService.releaseUnpaid` / `releaseCanceled` | 좌석만 삭제되고 예매 상태는 그대로                            |
+
+### 개선 1: MANDATORY 적용
+
+```java
+// Before
+@Transactional
+public void completePaidOrder(Order order) {
+
+// After
+@Transactional(propagation = Propagation.MANDATORY)
+public void completePaidOrder(Order order) {
+```
+
+- 기존 트랜잭션에 참여하는 방식은 REQUIRED와 같아서 현재 결제 흐름의 동작은 바뀌지 않습니다.
+- 트랜잭션 없이 호출하면 실행 전에 `IllegalTransactionStateException`이 발생해, 잘못된 호출이 데이터를 어긋나게 만들기 전에 드러납니다.
+- MANDATORY는 트랜잭션이 있는지만 확인하고 readOnly 여부는 확인하지 않습니다. 현재 readOnly 트랜잭션에서 호출하는 곳은 없습니다.
+
+적용하지 않은 메서드
+
+- `PaymentService`의 `@Transactional` 메서드, `ReservationService.create`·`cancel`·`expireOverdueHolds`: 트랜잭션 없이 호출되는 진입점이라 REQUIRED를 유지합니다.
+- `ReservationService.validateCancelable`: 상태를 바꾸지 않는 검증이라 필요하지 않습니다.
+
+### 개선 2: Self-Invocation 정리
+
+`ReservationService.releaseExpiredHolds`는 public에 `@Transactional`이 붙어 있었지만 같은 클래스 안에서만 호출돼 설정이 적용되지 않았습니다. 호출하는 `create`, `expireOverdueHolds`가 이미 트랜잭션 안이라 동작에는 문제가 없었지만, 적용되는 것처럼 보여 오해를 줄 수 있어 `private`으로 바꾸고 어노테이션을 제거했습니다.
+
+### 검증
+
+`PaymentTransactionPropagationIntegrationTest`에서 실제 MySQL로 검증했습니다 (토스는 Mock). 테스트 클래스에는 `@Transactional`을 붙이지 않고, 바깥 트랜잭션은 `TransactionTemplate`으로 직접 만들었습니다.
+
+| 검증 내용                                                                         | 변경 전          | 변경 후 |
+|-----------------------------------------------------------------------------------|------------------|---------|
+| 트랜잭션 없이 호출하면 예외가 나고 DB가 그대로인가                                | 실패 (예외 없음) | 통과    |
+| 기존 트랜잭션에 참여해 함께 커밋되는가                                            | 통과             | 통과    |
+| 바깥 트랜잭션이 롤백되면 함께 롤백되는가                                          | 통과             | 통과    |
+| 여러 상품 중 하나만 재고가 부족하면 먼저 차감한 재고까지 롤백되고 보상 취소되는가 | 통과             | 통과    |
+| 승인 시작에서 결제 선점에 실패하면 PAYING 전환이 롤백되는가                       | 통과             | 통과    |
+
+변경 후 전체 테스트 220개가 통과했습니다.
+
+</details>
+
+</details>
