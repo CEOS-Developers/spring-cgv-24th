@@ -2182,4 +2182,216 @@ public void completePaidOrder(Order order) {
 
 </details>
 
+<details>
+<summary><h3>3. 인덱스 종류 조사</h3></summary>
+
+### 인덱스란?
+
+특정 컬럼 값을 기준으로 미리 구성해 둔 별도 자료 구조입니다. 테이블 전체를 읽지 않고 필요한 행만 찾을 수 있어 WHERE, JOIN, ORDER BY 성능을 높이지만, 저장 공간과 쓰기 비용이 추가됩니다.
+
+### 종류
+
+| 구분           | B-Tree / B+Tree  | Hash                                                          | Bitmap                            |
+|----------------|------------------|---------------------------------------------------------------|-----------------------------------|
+| 구조           | 정렬된 균형 트리 | 해시 테이블                                                   | 값마다 행 포함 여부를 비트 배열로 |
+| 동등 검색      | O(log N)         | 평균 O(1)                                                     | 비트 연산                         |
+| 범위 검색·정렬 | 가능             | 불가                                                          | 제한적                            |
+| 쓰기 비용      | 노드 분할·병합   | 해시 갱신, 충돌 처리                                          | 비트맵 갱신, 동시 쓰기에 불리     |
+| 적합한 곳      | 일반적인 조회    | 정확한 키 조회                                                | 값 종류가 적은 컬럼의 통계·분석   |
+| MySQL InnoDB   | 기본 인덱스      | 직접 생성 불가 (내부 Adaptive Hash Index, MEMORY 엔진은 지원) | 미지원 (Oracle 등에서 지원)       |
+
+- **B-Tree**: 노드 하나에 여러 키를 담아 트리 높이를 낮게 유지합니다. 동등·범위 검색 모두 안정적입니다.
+- **B+Tree**: 내부 노드는 탐색 경로만, 리프 노드에 데이터 (또는 PK)를 두고 리프끼리 연결합니다. 시작 위치만 찾으면 리프를 따라 순차로 읽을 수 있어 범위 검색과 ORDER BY에 유리합니다.
+  InnoDB 인덱스가 이 구조입니다.
+- **Hash**: 해시값으로 위치를 바로 찾아 `=` 조회는 빠르지만, 순서를 유지하지 않아 `<`, `BETWEEN`, 정렬에는 쓸 수 없습니다.
+- **Bitmap**: "SF 장르" `101010`과 "상영 중" `110110`을 AND하면 `100010`으로 두 조건을 모두 만족하는 행을 찾습니다. 조건 결합은 빠르지만 변경이 잦은 테이블에는 맞지
+  않습니다.
+
+### 클러스터드 인덱스와 보조 인덱스
+
+- InnoDB는 PK로 **클러스터드 인덱스**를 만들고 리프에 행 전체를 저장합니다.
+- **보조 인덱스** 리프에는 인덱스 컬럼 값과 PK가 저장됩니다. 보조 인덱스로 찾은 뒤 다른 컬럼이 필요하면 PK로 클러스터드 인덱스를 한 번 더 탐색합니다.
+
+### 커버링 인덱스
+
+쿼리에 필요한 컬럼이 모두 인덱스에 있어 테이블에 다시 가지 않는 경우입니다. 보조 인덱스에는 PK가 함께 들어 있으므로,
+`SELECT id ... WHERE status = ? AND expires_at <= ?`는 `(status, expires_at)` 인덱스만으로 끝납니다. EXPLAIN의 Extra에 `Using index`로
+나타납니다. (아래 실험 1에서 확인)
+
+### 설계 시 고려사항
+
+- 복합 인덱스는 왼쪽 컬럼부터 사용됩니다. 동등 조건 컬럼을 앞에, 범위 조건 컬럼을 뒤에 두면 읽는 구간이 좁아집니다.
+- 카디널리티만이 아니라 실제 분포를 봐야 합니다. `status`는 값 종류가 적지만 찾는 값 (`PENDING_PAYMENT`)이 드물면 선택도가 높습니다.
+- 인덱스 컬럼을 함수로 감싸거나 `LIKE '%검색어'`처럼 앞에 와일드카드를 쓰면 범위 탐색을 하지 못합니다.
+- 인덱스가 있어도 옵티마이저가 쓰지 않을 수 있으므로 EXPLAIN / EXPLAIN ANALYZE로 확인해야 합니다.
+- INSERT·DELETE와 인덱스 컬럼 UPDATE마다 인덱스도 갱신되고 저장 공간을 차지합니다. 자주 실행되는 쿼리에 맞춰 필요한 만큼만 만듭니다.
+
+</details>
+
+<details>
+<summary><h3>4. 성능 최적화: 인덱스와 쿼리</h3></summary>
+
+### 측정 환경
+
+- 로컬 MySQL 8.0.44 (Windows). 운영은 MySQL 8.4라 수치는 같은 환경 안에서의 상대 비교로만 봅니다.
+- 실험 1은 애플리케이션과 연결하지 않은 별도 DB (`cgv_index_lab`)에서 진행해 스케줄러가 데이터를 바꾸지 않게 했습니다.
+- 재현 SQL·스크립트와 원본 출력은 `docs/performance/`에 있습니다.
+
+### 실험 1. 예매 만료 조회에 (status, expires_at) 인덱스
+
+**대상**: `ReservationExpirationScheduler`가 10초마다 실행하는 `findExpiredHoldIds()`
+
+```sql
+select r1_0.id
+from reservation r1_0
+where r1_0.status = 'PENDING_PAYMENT'
+  and r1_0.expires_at <= ?
+```
+
+- 서비스가 떠 있는 동안 계속 반복되는데, `reservation`에는 PK와 FK 인덱스 (`schedule_id`, `user_id`)뿐이라 매번 테이블 전체를 읽습니다.
+- 예매는 계속 쌓이지만 결제 대기는 5분 안에 정리되어 항상 소수입니다. 테이블이 커질수록 읽는 양만 늘어납니다.
+- `status`는 동등, `expires_at`은 범위 조건이라 이 순서로 두면 한 구간만 읽고, `SELECT id`라 보조 인덱스의 PK로 커버링 인덱스가 됩니다. 기존 인덱스와 겹치지 않습니다.
+
+**더미 데이터** (`expired-hold-index-setup.sql`, 기준 시각 `2026-11-25 12:00:00` 고정)
+
+| status          | 건수    | 비고                                   |
+|-----------------|---------|----------------------------------------|
+| RESERVED        | 140,000 | 과거 180일에 고르게 분포               |
+| EXPIRED         | 40,000  |                                        |
+| CANCELLED       | 20,000  |                                        |
+| PENDING_PAYMENT | 300     | 최근 10분 안에 생성, 151건이 만료 대상 |
+| PAYING          | 50      |                                        |
+| 합계            | 200,350 | 가장 오래된 10,000건은 expires_at NULL |
+
+**결과** (같은 데이터·SQL, EXPLAIN ANALYZE 31회 반복)
+
+| 항목                    | Before                    | After                             |
+|-------------------------|---------------------------|-----------------------------------|
+| type                    | ALL                       | range                             |
+| key                     | -                         | idx_reservation_status_expires_at |
+| rows (예상)             | 198,600                   | 151                               |
+| filtered                | 3.33                      | 100.00                            |
+| Extra                   | Using where               | Using where; **Using index**      |
+| 실제 읽은 행 (Handler)  | 200,351 (`read_rnd_next`) | 151 (`read_next`)                 |
+| actual time 중앙값      | **89.8ms**                | **0.235ms**                       |
+| actual time 최소 ~ 최대 | 35.8 ~ 106ms              | 0.082 ~ 0.329ms                   |
+
+```
+-- Before
+-> Filter: ((r1_0.`status` = 'PENDING_PAYMENT') and (r1_0.expires_at <= TIMESTAMP'2026-11-25 12:00:00'))  (cost=20244 rows=6659) (actual time=85.4..85.5 rows=151 loops=1)
+    -> Table scan on r1_0  (cost=20244 rows=199791) (actual time=0.2..67.5 rows=200350 loops=1)
+
+-- After
+-> Filter: ((r1_0.`status` = 'PENDING_PAYMENT') and (r1_0.expires_at <= TIMESTAMP'2026-11-25 12:00:00'))  (cost=50 rows=151) (actual time=0.756..0.927 rows=151 loops=1)
+    -> Covering index range scan on r1_0 using idx_reservation_status_expires_at over (status = 'PENDING_PAYMENT' AND NULL < expires_at <= '2026-11-25 12:00:00.000000')  (cost=50 rows=151) (actual time=0.0984..0.209 rows=151 loops=1)
+```
+
+20만 건을 모두 읽던 쿼리가 결과 151건만 읽게 됐고, `Covering index range scan`으로 테이블에 접근하지 않았습니다. 범위가 `NULL < expires_at`라 expires_at이
+NULL인 기존 데이터도 읽지 않습니다.
+
+**적용**: 이 프로젝트는 마이그레이션 도구 없이 `ddl-auto: update`로 스키마를 관리하므로 엔티티에 선언했습니다.
+
+```java
+
+@Table(
+		indexes = @Index(
+				name = "idx_reservation_status_expires_at",
+				columnList = "status, expires_at"
+		)
+)
+public class Reservation {
+```
+
+로컬 DB 스키마만 복사한 DB에 애플리케이션을 띄워, `update`가 기존 테이블에 아래 DDL을 실행하고 `SHOW INDEX`에 인덱스가 생긴 것을 확인했습니다.
+
+```sql
+create index idx_reservation_status_expires_at on reservation (status, expires_at)
+```
+
+**비용과 주의사항**
+
+| 항목                            | 인덱스 없음 | 인덱스 있음                |
+|---------------------------------|-------------|----------------------------|
+| 인덱스 크기 (20만 건)           | -           | 약 7.5MB (7,880,704 bytes) |
+| 단건 INSERT 20,000회 (중앙값)   | 757.5ms     | 1,054.2ms                  |
+| status UPDATE 20,000회 (중앙값) | 880.0ms     | 945.7ms                    |
+
+- 쓰기 비용은 한 트랜잭션 안에서 7회씩 측정했습니다. 최소~최대 범위가 서로 겹칠 만큼 편차가 커서 경향으로만 봅니다. (`expired-hold-index-write-cost.txt`)
+- 예매가 생성될 때, 그리고 상태가 PENDING_PAYMENT → PAYING → RESERVED/EXPIRED/CANCELLED로 바뀔 때마다 인덱스 키가 바뀌어 보조 인덱스도 갱신됩니다.
+- `status`가 `varchar(255)`라 key_len이 1031바이트로 큽니다. 컬럼 길이를 줄이면 인덱스도 작아지지만 기존 컬럼 변경은 이번 범위에서 제외했습니다.
+- `ddl-auto: update`는 인덱스를 추가만 하고, 이름이 바뀌거나 필요 없어져도 지우지 않습니다. 운영도 같은 설정이라 배포 후 애플리케이션 시작 시 생성될 것으로 보지만, 운영 DB에서는 확인하지
+  않았습니다.
+
+### 실험 2. 매점 주문 생성 시 재고 일괄 조회
+
+**대상**: `OrderService.create()`는 상품을 `findAllById`로 한 번에 가져오지만, 재고는 반복문 안에서 상품마다 조회해 상품 종류 수만큼 SELECT가 나갑니다.
+
+```java
+// Before: 상품 종류마다 SELECT
+Stock stock = stockRepository.findByTheaterIdAndItemId(request.theaterId(), item.getId())
+				.orElseThrow(() -> new GeneralException(ConcessionErrorStatus.STOCK_NOT_FOUND));
+
+// After: 반복문 전에 한 번 조회해 Map으로 사용
+Map<Long, Stock> stockByItemId = stockRepository
+		.findByTheaterIdAndItemIdIn(request.theaterId(), quantityByItemId.keySet()).stream()
+		.collect(Collectors.toMap(stock -> stock.getItem().getId(), Function.identity()));
+...
+Stock stock = stockByItemId.get(item.getId());
+if(stock ==null){
+		throw new
+
+GeneralException(ConcessionErrorStatus.STOCK_NOT_FOUND);
+}
+```
+
+```sql
+-- Before (N번)
+select s1_0.id, s1_0.item_id, s1_0.quantity, s1_0.theater_id
+from stock s1_0
+where s1_0.theater_id = ?
+  and s1_0.item_id = ?
+-- After (1번)
+select s1_0.id, s1_0.item_id, s1_0.quantity, s1_0.theater_id
+from stock s1_0
+where s1_0.theater_id = ?
+  and s1_0.item_id in (?, ?, .. .)
+```
+
+- 반복문 순서, 검증 순서 (상품 없음 → 재고 없음 → 재고 부족), 오류 코드, 금액 계산은 그대로입니다.
+- 결제 확정 단계의 재고 차감 UPDATE, 락 순서, 트랜잭션 전파는 건드리지 않았습니다.
+- 기존 `uk_stock_theater_item (theater_id, item_id)`을 그대로 타므로 인덱스는 추가하지 않았습니다. (`stock-batch-lookup-explain.txt`, 영화관
+  200곳 × 상품 30종)
+
+| 쿼리                 | type  | key                   | rows |
+|----------------------|-------|-----------------------|------|
+| 단건 (`item_id = ?`) | const | uk_stock_theater_item | 1    |
+| IN 10개              | range | uk_stock_theater_item | 10   |
+| IN 1개               | const | uk_stock_theater_item | 1    |
+
+**SQL 실행 횟수** (`OrderCreateQueryCountIntegrationTest`, Hibernate `StatementInspector`로 실제 실행 SQL 기록)
+
+| 상품 종류 | 재고 SELECT (Before → After) | 전체 SQL (Before → After) |
+|-----------|------------------------------|---------------------------|
+| 1         | 1 → 1                        | 7 → 7                     |
+| 5         | 5 → **1**                    | 15 → **11**               |
+| 10        | 10 → **1**                   | 25 → **16**               |
+
+전체 SQL은 사용자·영화관·상품 조회 3 + 재고 조회 + 주문·결제 INSERT 2 + 주문 상품 INSERT N이라, Before `2N + 5`에서 After `N + 6`이 됐습니다.
+
+**실행 시간**: 같은 JVM·같은 데이터에서 두 방식을 번갈아 200회씩 실행해 재고 조회 구간 (트랜잭션 포함)만 비교했습니다. 테스트를 3번 돌린 중앙값 중 가운데 값입니다.
+
+| 상품 종류 | 상품별 단건 조회 | IN 일괄 조회 |
+|-----------|------------------|--------------|
+| 1         | 1.544ms          | 2.302ms      |
+| 5         | 3.960ms          | 2.466ms      |
+| 10        | 4.936ms          | 1.825ms      |
+
+- 단건 조회는 상품 수만큼 늘고, IN 조회는 거의 일정합니다.
+- 1종일 때는 IN 조회가 약 0.7ms 느렸습니다. DB 실행 계획은 둘 다 const로 같아 애플리케이션 쪽 처리 차이로 보이며, 원인은 더 확인하지 않았습니다. 로컬 DB라 왕복 비용이 작은 환경이고, DB가
+  네트워크 너머에 있으면 줄어든 왕복 횟수의 효과가 더 커질 수 있습니다.
+- `create()` 전체 시간도 측정했지만 SQL이 같은 1종에서도 Before/After가 약 6ms 차이 나 환경 편차가 섞여 있어 비교 근거로 쓰지 않았습니다.
+  (`order-create-query-count.txt`)
+
+</details>
+
 </details>
