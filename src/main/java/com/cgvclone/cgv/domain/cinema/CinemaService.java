@@ -11,18 +11,16 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
-@Transactional
+@Transactional(readOnly = true)
 public class CinemaService {
 
     private final CinemaRepository cinemaRepository;
 
-    @Transactional(readOnly = true)
     public Cinema getCinemaEntity(Long cinemaId) {
         return cinemaRepository.findById(cinemaId)
                 .orElseThrow(() -> new GlobalException(ErrorCode.CINEMA_NOT_FOUND));
     }
 
-    @Transactional(readOnly = true)
     public CinemaListResponse getCinemas(Long regionId) {
         List<Cinema> cinemas = regionId == null
                 ? cinemaRepository.findAll()
@@ -30,7 +28,6 @@ public class CinemaService {
         return CinemaListResponse.from(cinemas);
     }
 
-    @Transactional(readOnly = true)
     public CinemaDetailResponse getCinema(Long cinemaId) {
         Cinema cinema = getCinemaEntity(cinemaId);
         return CinemaDetailResponse.from(cinema);
