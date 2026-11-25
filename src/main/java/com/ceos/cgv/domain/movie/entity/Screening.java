@@ -20,7 +20,7 @@ import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "screenings",
-        // where movie_id = ? order by start_at: equality column first, sort column second.
+        // where movie_id = ? order by start_at: 같음 조건 컬럼을 앞에, 정렬 컬럼을 뒤에 둔다.
         indexes = @Index(name = "idx_screening_movie_start_at", columnList = "movie_id, start_at"))
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)

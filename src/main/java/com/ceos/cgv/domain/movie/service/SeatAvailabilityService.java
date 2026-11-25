@@ -6,6 +6,7 @@ import com.ceos.cgv.domain.movie.dto.SeatOccupancy;
 import com.ceos.cgv.domain.movie.enums.MovieVisibility;
 import com.ceos.cgv.domain.movie.repository.ScreeningRepository;
 import com.ceos.cgv.domain.movie.repository.ScreeningSeatRepository;
+import com.ceos.cgv.domain.reservation.entity.Reservation;
 import com.ceos.cgv.domain.reservation.enums.ReservationStatus;
 import com.ceos.cgv.global.exception.BusinessException;
 import com.ceos.cgv.global.exception.ErrorCode;
@@ -44,16 +45,13 @@ public class SeatAvailabilityService {
                 seat.seatRow(), seat.seatNumber(), statusOf(seat, now))).toList();
     }
 
-    /** 만료 판정은 Reservation.isExpiredAt과 같다: HELD만 만료되고 만료 시각 이후는 비어 있는 좌석이다. */
     private static SeatAvailabilityResponse.Status statusOf(SeatOccupancy seat, Instant now) {
         ReservationStatus occupantStatus = seat.reservationStatus();
         if (occupantStatus == null) {
             return SeatAvailabilityResponse.Status.AVAILABLE;
         }
         if (occupantStatus == ReservationStatus.HELD || occupantStatus == ReservationStatus.PAYMENT_PENDING) {
-            boolean expired = occupantStatus == ReservationStatus.HELD
-                    && !now.isBefore(seat.reservationExpiresAt());
-            return expired
+            return Reservation.isExpiredAt(occupantStatus, seat.reservationExpiresAt(), now)
                     ? SeatAvailabilityResponse.Status.AVAILABLE
                     : SeatAvailabilityResponse.Status.HELD;
         }
