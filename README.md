@@ -4822,7 +4822,20 @@ WHERE rs.screening_id = ? AND rs.release_key = 0
 
 **기대 효과:** `row_num`, `col_num`은 유니크 인덱스 `(screening_id, row_num, col_num, release_key)`에 들어 있어, 좌석 조건이 인덱스 안에서 먼저 걸러집니다(인덱스 조건 푸시다운). 예매 조인이 점유 좌석 수(220회)가 아니라 요청 좌석 수 이하로 줄고, 앱으로 보내는 행도 220행 → 0~2행이 됩니다.
 
-**측정:** `docs/perf/02-query-seat-check.sql` (220석이 찬 회차 900001에 2석 선점). 실행 계획 결과는 측정 후 추가합니다.
+**측정:** `docs/perf/02-query-seat-check.sql` — 220석이 찬 회차 900001에 빈 2석(11행 1·2열)을 선점하는 상황입니다.
+
+| | 적용 전 | 적용 후 |
+|---|---|---|
+| 인덱스 안에서 거르는 조건 | `release_key = 0` | `release_key = 0` **+ 좌석 조건** |
+| 인덱스에서 읽어 넘긴 행 | 220 | **0** |
+| `reservation` 조인 | 220회 | **실행 안 됨** (`never executed`) |
+| 앱으로 보내는 행 | 220 | 0 |
+| 실행 시간 (`EXPLAIN ANALYZE`) | **11.6ms** | **0.154ms** (약 75배) |
+
+![적용 전 EXPLAIN ANALYZE](docs/images/perf/02-before-analyze.png)
+![적용 후 EXPLAIN ANALYZE](docs/images/perf/02-after-analyze.png)
+
+예상대로 좌석 조건이 `with index condition`(인덱스 조건 푸시다운)에 들어갔습니다. 인덱스를 훑는 범위는 같지만 조건에 맞지 않는 좌석은 인덱스 단계에서 버려져, 테이블 행을 읽거나 예매를 조인하지 않습니다. 빈 좌석을 고른 요청(선점의 대부분)은 조인이 아예 일어나지 않습니다.
 
 **비용:** 인덱스·스키마 변경이 없어 추가 비용이 없습니다. 쿼리가 하나 늘어(배치도용·선점용) 같은 점유 규칙이 두 쿼리에 있습니다. 규칙은 이미 저장소 주석 한 곳에 정리돼 있습니다.
 
