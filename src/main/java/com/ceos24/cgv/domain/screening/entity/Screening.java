@@ -11,6 +11,9 @@ import lombok.NoArgsConstructor;
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @Entity
+@Table(
+        name = "screening",
+        indexes = @Index(name = "idx_screening_screen_start_time", columnList = "screen_id, startTime"))
 public class Screening {
 
     public Screening(Movie movie, Screen screen, LocalDateTime startTime, LocalDateTime endTime) {

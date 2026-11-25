@@ -9,10 +9,13 @@ import com.ceos24.cgv.domain.movie.repository.MovieRepository;
 import com.ceos24.cgv.domain.screening.entity.Screening;
 import com.ceos24.cgv.domain.screening.repository.ScreeningRepository;
 import com.ceos24.cgv.domain.theater.entity.Screen;
+import com.ceos24.cgv.global.config.CacheConfig;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -23,6 +26,8 @@ public class MovieService {
     private final MovieRepository movieRepository;
     private final ScreeningRepository screeningRepository;
 
+    // Redis 캐시 (cache-aside): 있으면 DB를 거치지 않는다. 영화가 추가되면 MovieAdminService에서 지운다
+    @Cacheable(cacheNames = CacheConfig.MOVIES, key = "'all'")
     @Transactional(readOnly = true)
     public GetMovieResponse getAllMovies() {
         return new GetMovieResponse(
@@ -72,7 +77,8 @@ public class MovieService {
     @Transactional(readOnly = true)
     public GetScreeningResponse getScreenings(Long theaterId) {
         // 1. 특정 영화관의 전체 상영 일정을 조회
-        List<Screening> screenings = screeningRepository.findAllByTheaterIdWithDetails(theaterId);
+        // 지난 상영은 제외한다 (screening은 계속 쌓이므로 기간 조건이 없으면 읽는 양이 시간에 비례해 늘어남)
+        List<Screening> screenings = screeningRepository.findAllByTheaterIdWithDetails(theaterId, LocalDateTime.now());
 
         // 2. 상영 일정 리스트를 영화'를 기준으로 그룹핑
         Map<Movie, List<Screening>> groupedByMovie =
