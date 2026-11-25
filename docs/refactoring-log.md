@@ -3156,3 +3156,44 @@ A안은 바로 처리한다. 원래 요청의 T2와 겹쳐도 행 잠금 + `IN_P
 | `ErrorCode` | `PAYMENT_KEY_ALREADY_USED` |
 | 테스트 | `ReservationServiceTest` 1, `ReservationAdminControllerTest` 2, `ReservationControllerTest` 1, `TossPaymentsClientTest` 3 추가. 전체 490개 통과 |
 | `README.md`, `docs/toss-payments-guide.md` | 분류 표 갱신 |
+
+## 6주차 PR(#50) 코드 리뷰 반영
+
+리뷰 지적 3건(9dongs 2건, kkangmen 1건)을 코드와 대조했다. 2건은 고쳤고, 1건은 앞부분(인덱스)을 보류하고 뒷부분(커넥션 대기)만 고쳤다.
+
+### 결정 1 — k6 판정에 무응답 요청을 넣는다. 5xx와는 따로 센다 (9dongs P3)
+
+- 응답을 못 받으면 k6 `res.status`가 0이라 `res.status >= 500`에 걸리지 않았다. `BASE_URL=http://127.0.0.1:1`로 재현해 보니 요청 3건이 모두 연결 거부였는데 `server_errors` 0%로 통과했고, 종료 코드도 0이었다
+- `no_response` Rate와 `rate==0` 임계값을 추가했다. 같은 실행이 이제 종료 코드 99로 실패한다. 기록은 `recordErrors(res)` 한 곳으로 모아, 세 군데에 반복되던 `serverErrors.add` 줄을 대신한다
+- `server_errors`에 섞지 않았다. 앱이 오류로 답한 것(예: 커넥션 획득 실패 500)과 답조차 못 한 것(톰캣 큐 초과·연결 거부·타임아웃)은 원인과 대처가 달라, 요약에서 따로 봐야 한다
+- 부하 테스트 대시보드의 "좌석 선점 결과" 패널에도 무응답(`status="0"`) 시리즈를 넣었다. 기존 측정 결과는 고치지 않았다. 당시 p95가 3초 안팎이라 60초 타임아웃은 없었을 가능성이 크다
+
+### 결정 2 — 5xx 비율은 요청이 없을 때 "요청 없음"으로 표시한다 (9dongs P4)
+
+- 리뷰의 전제("No data가 뜬다")와는 조금 달랐다. `noValue: "0"`이 이미 있어 "0"이 떴다. 오히려 그 때문에 요청이 전혀 없을 때(앱이 죽은 경우 포함)도 초록색 0으로 보였다
+- 분자에 `or vector(0)`, 분모에 `> 0`을 붙이고 `noValue`를 "요청 없음"으로 바꿨다. 앱을 새로 띄워 확인했다. 2xx만 있으면 새 식은 `0`, 기존 식은 빈 값이었고, 요청이 없으면 둘 다 빈 값이다
+- `or`는 PromQL에서 우선순위가 가장 낮아 분자를 괄호로 묶어야 한다. 괄호가 없으면 `A or (vector(0) / B)`가 된다
+
+### 결정 3 — 결제 게이지를 수집 요청과 떼어 낸다 (kkangmen P2 뒷부분)
+
+- 리뷰 지적("커넥션이 바닥나면 값이 빈다")이 실제로 일어났다. 11-17 좌석 선점 피크(23:24~23:25)의 Prometheus 기록을 보면 수집 시간이 3.3~5.0초였고, 5초 제한에 걸린 3번은 `up=0`이었다. 수집 하나가 통째로 빠져 커넥션·요청 지표까지 비었다. 23:24:55에는 `overdue` 게이지가 NaN이었다(커넥션 3초 대기 실패)
+- 게이지 2개가 수집 중에 각각 커넥션을 최대 3초(`connection-timeout`) 기다려, 수집 1회가 최대 6초까지 걸릴 수 있었다. 인덱스로는 해결되지 않는다
+- `CachedPaymentCounts`: 수집이 갱신을 깨우고, 갱신은 가상 스레드 하나에서 돈다(한 번에 하나). 수집 응답에는 직전에 센 값을 바로 돌려준다. 실패하면 직전 값을 유지하고, 1분 넘게 못 세면 NaN을 반환한다
+- `@Scheduled`를 쓰지 않았다. 스케줄러가 단일 스레드라 토스 호출(읽기 60초)이 있는 정리 작업 뒤에 밀리고, 테스트에서는 스케줄링이 꺼져 있다. 수집이 갱신을 깨우는 방식이라, 수집하지 않는 운영에서는 조회가 지금처럼 0번이다
+- 재측정: 같은 `seat-hold.js`를 다시 돌렸다. 풀 대기 최대 182로 11-17(약 180)과 같은 수준이었다. 수집 시간은 최대 0.98초(이전 5.0초), `up=0`은 0번(이전 3번), 게이지 NaN은 0번이었다. 수집 누락의 주원인은 게이지였고, CPU·톰캣 스레드 몫은 1초 이내였다. 관리 포트 분리는 지금은 필요 없다
+
+### 반영하지 않은 것 — `payment (status, approval_started_at)` 인덱스 (kkangmen P2 앞부분)
+
+- 지적은 맞다. 게이지 2개와 결과 불명 정리 조회 4종이 같은 조건으로 표 전체를 읽는다
+- 운영은 `/actuator/prometheus`를 열지 않아 게이지 조회가 돌지 않고, 정리 조회도 결제 표가 작아 비용이 없다. 엔티티를 바꿔야 하므로 사용자 결정으로 보류했다. 운영 수집을 붙이거나 결제가 쌓이면 추가한다(README 한계에 기록)
+
+### 변경 파일
+
+| 파일 | 내용 |
+|---|---|
+| `loadtest/scripts/lib/common.js`, `seat-hold.js` | `no_response`, `recordErrors` |
+| `monitoring/grafana/dashboards/cgv-loadtest.json` | 무응답 시리즈 |
+| `monitoring/grafana/dashboards/cgv.json` | 5xx 비율 식, `noValue` |
+| `CachedPaymentCounts`(신규), `PaymentMetricsConfig` | 게이지를 수집 요청과 분리 |
+| 테스트 | `CachedPaymentCountsTest` 4개 추가. 전체 502개 통과 |
+| `README.md` | 판정 기준, 5xx 패널 선택 이유, 게이지 설명, 부하 테스트 해석 5, 한계(인덱스 보류) |
