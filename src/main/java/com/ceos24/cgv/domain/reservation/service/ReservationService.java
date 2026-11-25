@@ -102,14 +102,14 @@ public class ReservationService {
                     expiredCount++;
                 }
             } catch (ObjectOptimisticLockingFailureException e) {
-                log.debug("예매 만료 정리 중 동시 상태 변경으로 스킵: reservationId={}", reservationId);
+                log.debug("reservation_expire_skipped reason=concurrent_update reservationId={}", reservationId);
             } catch (Exception e) {
-                log.error("단일 예매 만료 처리 중 오류 발생: reservationId={}, error={}", reservationId, e.getMessage(), e);
+                log.error("reservation_expire_failed reservationId={}", reservationId, e);
             }
         }
 
         if (expiredCount > 0) {
-            log.info("만료된 임시 좌석 점유 {}건 정리 완료", expiredCount);
+            log.info("reservations_expired count={}", expiredCount);
         }
         return expiredCount;
     }

@@ -24,6 +24,8 @@ services:
     container_name: cgv-backend
     ports:
       - "8080:8080"
+      # 관리 포트(Actuator)는 로컬에서만 접근 가능하도록 바인딩. Prometheus는 compose 네트워크로 직접 수집
+      - "127.0.0.1:8081:8081"
     environment:
       DB_HOST: db
       DB_PORT: 3306
@@ -34,14 +36,55 @@ services:
       ADMIN_TOKEN: ${ADMIN_TOKEN}
       TOSS_SECRET_KEY: ${TOSS_SECRET_KEY}
       TOSS_WEBHOOK_SECRET: ${TOSS_WEBHOOK_SECRET}
+    volumes:
+      # 컨테이너를 지워도 로그 파일이 남도록 호스트 폴더에 연결
+      - ./logs:/app/logs
     depends_on:
       db:
         condition: service_healthy
     networks:
       - cgv-net
 
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    container_name: cgv-prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      # 로컬 모니터링 용도이므로 2일만 보관
+      - --storage.tsdb.retention.time=2d
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    depends_on:
+      - backend
+    networks:
+      - cgv-net
+
+  grafana:
+    image: grafana/grafana:11.6.0
+    container_name: cgv-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports:
+      # 3000번은 프론트엔드 개발 서버가 자주 쓰므로 3001로 연결
+      - "127.0.0.1:3001:3000"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    networks:
+      - cgv-net
+
 volumes:
   db-data:
+  prometheus-data:
+  grafana-data:
 
 networks:
   cgv-net:

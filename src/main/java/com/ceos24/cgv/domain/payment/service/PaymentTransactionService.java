@@ -21,6 +21,7 @@ import com.ceos24.cgv.domain.store.entity.MenuStock;
 import com.ceos24.cgv.domain.store.repository.MenuStockRepository;
 import com.ceos24.cgv.global.exception.BusinessException;
 import com.ceos24.cgv.global.exception.ErrorCode;
+import com.ceos24.cgv.global.logging.LogMasker;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeParseException;
@@ -155,16 +156,16 @@ public class PaymentTransactionService {
             if (!payment.getTotalAmount().equals(request.amount())
                     || (payment.getPaymentKey() != null
                             && !payment.getPaymentKey().equals(request.paymentKey()))) {
-                log.error(
-                        "승인 완료된 결제에 대한 파라미터 불일치 요청: orderId={}, DB amount={}, req amount={}, DB key={}, req key={}",
+                log.warn(
+                        "confirm_param_mismatch orderId={} dbAmount={} reqAmount={} dbKey={} reqKey={}",
                         request.orderId(),
                         payment.getTotalAmount(),
                         request.amount(),
-                        payment.getPaymentKey(),
-                        request.paymentKey());
+                        LogMasker.mask(payment.getPaymentKey()),
+                        LogMasker.mask(request.paymentKey()));
                 throw new BusinessException(ErrorCode.PAYMENT_AMOUNT_MISMATCH, "이미 승인 완료된 결제의 정보와 일치하지 않습니다.");
             }
-            log.info("결제 승인 멱등 응답: 이미 승인 완료된 요청 (orderId={})", request.orderId());
+            log.info("confirm_idempotent_replay orderId={}", request.orderId());
             return ConfirmStartResult.completed(PaymentResponse.from(payment));
         }
 
@@ -180,16 +181,19 @@ public class PaymentTransactionService {
         }
 
         if (payment.getStatus() != PaymentStatus.READY) {
-            log.warn("결제 승인 거절: 승인 가능한 상태가 아님. orderId={}, status={}", request.orderId(), payment.getStatus());
+            log.warn(
+                    "confirm_rejected reason=invalid_status orderId={} status={}",
+                    request.orderId(),
+                    payment.getStatus());
             throw new BusinessException(ErrorCode.PAYMENT_ALREADY_PROCESSED);
         }
 
         if (!payment.getTotalAmount().equals(request.amount())) {
-            log.error(
-                    "결제 금액 불일치: DB 금액={}원, 요청 금액={}원 (orderId={})",
+            log.warn(
+                    "confirm_amount_mismatch orderId={} dbAmount={} reqAmount={}",
+                    request.orderId(),
                     payment.getTotalAmount(),
-                    request.amount(),
-                    request.orderId());
+                    request.amount());
             throw new BusinessException(ErrorCode.PAYMENT_AMOUNT_MISMATCH);
         }
 
@@ -220,7 +224,7 @@ public class PaymentTransactionService {
         if (payment.getStatus() == PaymentStatus.ABORTED
                 || payment.getStatus() == PaymentStatus.MANUAL_RECOVERY_REQUIRED) {
             log.warn(
-                    "이미 중단 또는 수동 확인 상태로 종료된 결제입니다. 재확정하지 않습니다. orderId={}, status={}",
+                    "confirm_skipped reason=terminal_status orderId={} status={}",
                     payment.getOrderId(),
                     payment.getStatus());
             return new CompleteResult(true, PaymentResponse.from(payment));
@@ -251,7 +255,7 @@ public class PaymentTransactionService {
         lockTarget(lookup);
         paymentRepository.findByOrderIdWithLock(orderId).ifPresent(payment -> {
             payment.abort();
-            log.info("결제 상태를 ABORTED로 기록 완료 (orderId={})", orderId);
+            log.info("payment_aborted orderId={}", orderId);
         });
     }
 
@@ -264,7 +268,8 @@ public class PaymentTransactionService {
         lockTarget(lookup);
         paymentRepository.findByOrderIdWithLock(orderId).ifPresent(payment -> {
             payment.abort(paymentKey);
-            log.info("자동 보상 취소 후 결제 상태를 ABORTED로 기록 완료 (orderId={}, paymentKey={})", orderId, paymentKey);
+            log.info(
+                    "payment_aborted_after_compensation orderId={} paymentKey={}", orderId, LogMasker.mask(paymentKey));
         });
     }
 
@@ -277,7 +282,10 @@ public class PaymentTransactionService {
         lockTarget(lookup);
         paymentRepository.findByOrderIdWithLock(orderId).ifPresent(payment -> {
             payment.markManualRecoveryRequired(paymentKey);
-            log.error("보상 취소 실패로 결제 상태를 MANUAL_RECOVERY_REQUIRED로 기록 (orderId={}, paymentKey={})", orderId, paymentKey);
+            log.error(
+                    "manual_recovery_required orderId={} paymentKey={} reason=compensating_cancel_failed",
+                    orderId,
+                    LogMasker.mask(paymentKey));
         });
     }
 
@@ -290,7 +298,7 @@ public class PaymentTransactionService {
         lockTarget(lookup);
         paymentRepository.findByOrderIdWithLock(lookup.getOrderId()).ifPresent(payment -> {
             payment.markManualRecoveryRequired(paymentKey);
-            log.error("후속 처리 실패로 결제 상태를 MANUAL_RECOVERY_REQUIRED로 기록 (paymentKey={})", paymentKey);
+            log.error("manual_recovery_required paymentKey={} reason=post_cancel_failure", LogMasker.mask(paymentKey));
         });
     }
 
@@ -313,7 +321,7 @@ public class PaymentTransactionService {
             Optional<PaymentCancelHistory> existingCancel =
                     paymentCancelHistoryRepository.findByCancelRequestId(normalizedCancelRequestId);
             if (existingCancel.isPresent()) {
-                log.info("결제 취소 멱등 응답: 이미 처리된 취소 요청 (cancelRequestId={})", normalizedCancelRequestId);
+                log.info("cancel_idempotent_replay stage=pre cancelRequestId={}", normalizedCancelRequestId);
                 return CancelPlan.alreadyCanceled(PaymentResponse.from(payment));
             }
         }
@@ -452,7 +460,7 @@ public class PaymentTransactionService {
                 && paymentCancelHistoryRepository
                         .findByCancelRequestId(plan.normalizedCancelRequestId())
                         .isPresent()) {
-            log.info("결제 취소 멱등 응답(후처리): cancelRequestId={}", plan.normalizedCancelRequestId());
+            log.info("cancel_idempotent_replay stage=post cancelRequestId={}", plan.normalizedCancelRequestId());
             return PaymentResponse.from(payment);
         }
 
@@ -461,7 +469,9 @@ public class PaymentTransactionService {
             Optional<PaymentCancelHistory> applied =
                     paymentCancelHistoryRepository.findByTransactionKey(normalizedTransactionKey);
             if (applied.isPresent()) {
-                log.info("결제 취소 멱등 응답(후처리): 이미 반영된 transactionKey={}", normalizedTransactionKey);
+                log.info(
+                        "cancel_idempotent_replay stage=post transactionKey={}",
+                        LogMasker.mask(normalizedTransactionKey));
                 // 취소 웹훅이 API 응답보다 먼저 잔액/이력만 반영한 경우(부분 취소는 좌석·품목 매핑을 알 수 없음),
                 // 이 요청이 알고 있는 좌석/품목 자원을 여기서 복구한다.
                 if (applied.get().getCancelRequestId() == null) {
@@ -527,7 +537,10 @@ public class PaymentTransactionService {
         lockTarget(lookup);
         paymentRepository.findByOrderIdWithLock(lookup.getOrderId()).ifPresent(payment -> {
             payment.abort(paymentKey);
-            log.info("웹훅 수신으로 미완료 결제를 ABORTED 처리 (orderId={}, paymentKey={})", payment.getOrderId(), paymentKey);
+            log.info(
+                    "payment_aborted_by_webhook orderId={} paymentKey={}",
+                    payment.getOrderId(),
+                    LogMasker.mask(paymentKey));
         });
     }
 
@@ -536,9 +549,9 @@ public class PaymentTransactionService {
         Payment lookup = findLookupByOrderIdOrPaymentKey(latestTossPayment.orderId(), latestTossPayment.paymentKey());
         if (lookup == null) {
             log.warn(
-                    "웹훅 취소 동기화 대상 결제를 찾을 수 없습니다. orderId={}, paymentKey={}",
+                    "webhook_cancel_target_not_found orderId={} paymentKey={}",
                     latestTossPayment.orderId(),
-                    latestTossPayment.paymentKey());
+                    LogMasker.mask(latestTossPayment.paymentKey()));
             return;
         }
 
@@ -618,11 +631,11 @@ public class PaymentTransactionService {
                     releaseRemainingTargetResourcesOnFullCancel(payment);
                 } else {
                     log.warn(
-                            "PG 콘솔 직접 부분 취소 웹훅 반영 (좌석/품목 매핑 수동 확인 필요): orderId={}, paymentKey={}, cancelAmount={}, transactionKey={}",
+                            "webhook_partial_cancel_applied orderId={} paymentKey={} cancelAmount={} transactionKey={} action=manual_check",
                             payment.getOrderId(),
-                            payment.getPaymentKey(),
+                            LogMasker.mask(payment.getPaymentKey()),
                             applyAmount,
-                            cancel.transactionKey());
+                            LogMasker.mask(cancel.transactionKey()));
                 }
 
                 payment.cancel(
@@ -654,7 +667,7 @@ public class PaymentTransactionService {
                     && reservation.getStatus() == ReservationStatus.CONFIRMED
                     && reservation.getSeatNumbers().containsAll(seats)) {
                 reservation.cancelByPayment(seats);
-                log.info("웹훅 선반영 취소에 대한 좌석 복구 완료: orderId={}, seats={}", payment.getOrderId(), seats);
+                log.info("seats_restored_by_webhook orderId={} seats={}", payment.getOrderId(), seats);
             }
             return;
         }

@@ -116,13 +116,13 @@ public class AuthService {
 
             if (storedToken.isUsed()) {
                 if (storedToken.isWithinGracePeriod(GRACE_PERIOD)) {
-                    log.info("[유예 기간 내 재발급] memberId: {} 동시 요청으로 직전 발급 토큰 반환", memberIdStr);
+                    log.info("reissue_grace_period memberId={} note=return_previous_tokens", memberIdStr);
                     return new TokenResponse(
                             storedToken.getReissuedAccessToken(), storedToken.getReissuedRefreshToken());
                 }
 
                 refreshTokenRepository.deleteAllByMemberId(Long.parseLong(memberIdStr));
-                log.error("[재사용 탐지] memberId: {} 의 토큰 탈취 의심 (유예 기간 만료)", memberIdStr);
+                log.error("refresh_token_reuse_detected memberId={} action=revoked_all_tokens", memberIdStr);
                 throw new BusinessException(ErrorCode.AUTH_HIJACK_DETECTED);
             }
 
@@ -141,7 +141,9 @@ public class AuthService {
         } catch (BusinessException e) {
             throw e;
         } catch (JwtException | IllegalArgumentException e) {
-            log.warn("[토큰 재발급 실패] 유효하지 않은 리프레시 토큰: {}", e.getMessage());
+            // 이어서 던지는 BusinessException을 GlobalExceptionHandler가 warn으로 남기므로 여기서는 debug.
+            // 예외 메시지에 토큰 내용이 섞일 수 있어 예외 종류만 기록한다
+            log.debug("reissue_rejected type={}", e.getClass().getSimpleName());
             throw new BusinessException(ErrorCode.AUTH_INVALID_TOKEN);
         }
     }
@@ -153,7 +155,10 @@ public class AuthService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.AUTH_INVALID_TOKEN));
 
         if (!storedToken.getMemberId().equals(memberId)) {
-            log.warn("[로그아웃 실패] 토큰 소유자 불일치: 요청 memberId={}, 토큰 소유 memberId={}", memberId, storedToken.getMemberId());
+            log.warn(
+                    "logout_rejected reason=token_owner_mismatch requestMemberId={} tokenMemberId={}",
+                    memberId,
+                    storedToken.getMemberId());
             throw new BusinessException(ErrorCode.AUTH_INVALID_TOKEN);
         }
 

@@ -1,9 +1,17 @@
 server:
   port: ${PORT:8080}
+  tomcat:
+    # tomcat_threads_* 지표(작업 스레드 사용량)를 노출하기 위해 필요
+    mbeanregistry:
+      enabled: true
 
 spring:
   application:
     name: cgv
+
+  profiles:
+    # 프로필을 따로 주지 않으면 dev (로컬 실행용). 도커 이미지는 Dockerfile에서 prod로 지정
+    default: dev
 
   datasource:
     url: jdbc:mysql://${DB_HOST}:${DB_PORT}/${DB_NAME}?allowPublicKeyRetrieval=true&useSSL=false&characterEncoding=UTF-8
@@ -14,14 +22,33 @@ spring:
   jpa:
     hibernate:
       ddl-auto: update
-    show-sql: true
-    properties:
-      hibernate:
-        format_sql: true
+    # SQL은 System.out으로 직접 출력되어 traceId·레벨 제어가 안 되므로 끄고, logger(org.hibernate.SQL)만 사용
+    show-sql: false
+
+management:
+  server:
+    # 지표 엔드포인트는 서비스 포트(8080)와 분리된 관리 포트로만 노출한다.
+    # 배포(Railway)는 PORT만 외부에 연결하므로 /actuator/**가 외부에 공개되지 않는다.
+    port: ${MANAGEMENT_PORT:8081}
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  metrics:
+    tags:
+      application: ${spring.application.name}
+    distribution:
+      # 히스토그램 버킷을 노출해야 Prometheus에서 p95/p99를 계산할 수 있다
+      percentiles-histogram:
+        http.server.requests: true
+      minimum-expected-value:
+        http.server.requests: 10ms
+      maximum-expected-value:
+        http.server.requests: 10s
 
 logging:
-  level:
-    org.hibernate.SQL: debug
+  # 이 시간(ms) 이상 걸린 요청은 warn + slow=true로 기록 (부하테스트 p95 측정 후 조정)
+  slow-request-threshold-ms: 500
 
 jwt:
   secret: ${JWT_SECRET}
