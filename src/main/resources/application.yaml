@@ -19,6 +19,17 @@ spring:
     password: ${DB_PASSWORD}
     driver-class-name: com.mysql.cj.jdbc.Driver
 
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      # Redis가 응답하지 않을 때 요청이 오래 붙잡히지 않도록 짧게 둔다 (실패하면 DB로 폴백)
+      timeout: 500ms
+      connect-timeout: 500ms
+
+  cache:
+    type: redis
+
   jpa:
     hibernate:
       ddl-auto: update

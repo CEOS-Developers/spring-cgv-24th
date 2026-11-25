@@ -19,6 +19,21 @@ services:
     networks:
       - cgv-net
 
+  redis:
+    image: redis:7-alpine
+    container_name: cgv-redis
+    # 캐시 전용이라 디스크에 저장하지 않는다 (재시작하면 캐시는 비워지고 DB에서 다시 채워짐)
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - cgv-net
+
   backend:
     build: .
     container_name: cgv-backend
@@ -32,6 +47,7 @@ services:
       DB_NAME: ${DB_NAME}
       DB_USERNAME: ${DB_USERNAME}
       DB_PASSWORD: ${DB_PASSWORD}
+      REDIS_HOST: redis
       JWT_SECRET: ${JWT_SECRET}
       ADMIN_TOKEN: ${ADMIN_TOKEN}
       TOSS_SECRET_KEY: ${TOSS_SECRET_KEY}
@@ -41,6 +57,8 @@ services:
       - ./logs:/app/logs
     depends_on:
       db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     networks:
       - cgv-net
