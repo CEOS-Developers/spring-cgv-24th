@@ -2,6 +2,7 @@ package com.ceos24.cgv.domain.screening.repository;
 
 import com.ceos24.cgv.domain.movie.entity.Movie;
 import com.ceos24.cgv.domain.screening.entity.Screening;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -27,8 +28,8 @@ public interface ScreeningRepository extends JpaRepository<Screening, Long> {
             FROM Screening s
             JOIN FETCH s.movie m
             JOIN FETCH s.screen sc
-            WHERE sc.theater.id = :theaterId
+            WHERE sc.theater.id = :theaterId AND s.startTime >= :now
             ORDER BY m.title, sc.name, s.startTime
         """)
-    List<Screening> findAllByTheaterIdWithDetails(@Param("theaterId") Long theaterId);
+    List<Screening> findAllByTheaterIdWithDetails(@Param("theaterId") Long theaterId, @Param("now") LocalDateTime now);
 }

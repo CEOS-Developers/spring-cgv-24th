@@ -73,13 +73,14 @@ public class ReservationService {
         return ReservationResponse.from(reservation);
     }
 
-    @Transactional
+    // 비관적 락을 잡는 메서드: 락이 안 풀려도 5초 뒤에는 대기를 끊어 커넥션을 반납한다 (기본은 MySQL 50초)
+    @Transactional(timeout = 5)
     public void cancelReservation(Long memberId, Long reservationId) {
         Reservation reservation = findReservationWithLock(reservationId, memberId);
         reservation.cancelWithoutPayment();
     }
 
-    @Transactional
+    @Transactional(timeout = 5)
     public ReservationResponse cancelReservationSeats(Long memberId, Long reservationId, List<Long> seatNumbers) {
         Reservation reservation = findReservationWithLock(reservationId, memberId);
         reservation.cancelSeatsWithoutPayment(seatNumbers, LocalDateTime.now());

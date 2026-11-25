@@ -30,7 +30,8 @@ public class OrderService {
     private final StoreRepository storeRepository;
     private final MenuStockRepository menuStockRepository;
 
-    @Transactional
+    // 재고 행에 비관적 락을 잡으므로 락 대기를 5초로 제한한다 (기본은 MySQL 50초)
+    @Transactional(timeout = 5)
     public void createOrder(Long memberId, CreateOrderRequest request) {
         Member member = findMember(memberId);
         Store store = findStore(request.storeId());

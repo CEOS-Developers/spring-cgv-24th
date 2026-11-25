@@ -7,6 +7,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.hibernate.exception.ConstraintViolationException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.PessimisticLockingFailureException;
+import org.springframework.dao.QueryTimeoutException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -115,7 +116,12 @@ public class GlobalExceptionHandler {
                 .body(ApiResponse.error(400, "요청 데이터가 데이터베이스 제약 조건을 위반했습니다."));
     }
 
-    @ExceptionHandler({ObjectOptimisticLockingFailureException.class, PessimisticLockingFailureException.class})
+    // QueryTimeoutException: @Transactional(timeout)을 넘겨 락 대기가 취소된 경우
+    @ExceptionHandler({
+        ObjectOptimisticLockingFailureException.class,
+        PessimisticLockingFailureException.class,
+        QueryTimeoutException.class
+    })
     protected ResponseEntity<ApiResponse<Void>> handleLockingFailureException(Exception e) {
         meterRegistry
                 .counter("cgv.lock.conflicts", "type", e.getClass().getSimpleName())
