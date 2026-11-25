@@ -86,17 +86,6 @@ public class ReservationService {
     }
 
     @Transactional
-    public int releaseExpiredHolds(List<Long> reservationIds, Instant now) {
-        if (reservationIds.isEmpty()) {
-            return 0;
-        }
-        int expired = reservationRepository.expireHolds(reservationIds, now);
-        reservationSeatRepository.deleteByExpiredReservationIds(reservationIds);
-        paymentRepository.expireByExpiredReservationIds(reservationIds);
-        return expired;
-    }
-
-    @Transactional
     public int expireOverdueHolds() {
         Instant now = Instant.now(clock);
         int expired = releaseExpiredHolds(reservationRepository.findExpiredHoldIds(now), now);
@@ -269,6 +258,16 @@ public class ReservationService {
             throw new GeneralException(ReservationErrorStatus.SEAT_ALREADY_RESERVED);
         }
         releaseExpiredHolds(expiredIds, now);
+    }
+
+    private int releaseExpiredHolds(List<Long> reservationIds, Instant now) {
+        if (reservationIds.isEmpty()) {
+            return 0;
+        }
+        int expired = reservationRepository.expireHolds(reservationIds, now);
+        reservationSeatRepository.deleteByExpiredReservationIds(reservationIds);
+        paymentRepository.expireByExpiredReservationIds(reservationIds);
+        return expired;
     }
 
     private Reservation saveHold(User user, Schedule schedule, List<Seat> seats, int totalPrice, String seatSummary,
