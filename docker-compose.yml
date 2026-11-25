@@ -14,6 +14,10 @@ services:
       SPRING_DATA_REDIS_HOST: redis
       SPRING_DATA_REDIS_PORT: 6379
       TZ: Asia/Seoul
+      # 운영 로그를 JSON(logstash 형식)으로 출력해 MDC 값을 필드로 남긴다.
+      LOGGING_STRUCTURED_FORMAT_CONSOLE: logstash
+      # show-sql은 System.out으로 직접 출력되어 JSON 로그를 깨뜨리므로 운영에서는 끈다.
+      SPRING_JPA_SHOW_SQL: "false"
     ports:
       - "8080:8080"
     depends_on:
@@ -40,5 +44,85 @@ services:
       retries: 5
     restart: unless-stopped
 
+  # ─────────────────────────── 모니터링 ───────────────────────────
+  # 외부에 여는 포트는 Grafana(3000) 하나뿐이고, 나머지는 내부 네트워크로만 통신한다.
+  # mem_limit으로 모니터링 컨테이너가 메모리를 과하게 써도 앱이 아닌 해당 컨테이너만 재시작되게 한다.
+
+  # 메트릭 수집/저장: 15초마다 spring-app:8081/actuator/prometheus 를 가져온다.
+  prometheus:
+    image: prom/prometheus:v3.15.1
+    container_name: prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    mem_limit: 300m
+    restart: unless-stopped
+    logging: &monitoring-logging
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # 로그 저장: Alloy가 보낸 로그를 7일간 보관한다.
+  loki:
+    image: grafana/loki:3.7.9
+    container_name: loki
+    command: ["-config.file=/etc/loki/loki-config.yml"]
+    volumes:
+      - ./monitoring/loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - loki-data:/loki
+    mem_limit: 300m
+    restart: unless-stopped
+    logging: *monitoring-logging
+
+  # 로그 수집: Docker에서 spring-app 로그를 읽어 Loki로 보낸다.
+  # docker.sock 접근은 호스트 root 권한과 같으므로, 이 컨테이너는 외부에 포트를 열지 않는다.
+  alloy:
+    image: grafana/alloy:v1.21.3
+    container_name: alloy
+    command:
+      - run
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    volumes:
+      - ./monitoring/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - loki
+    mem_limit: 200m
+    restart: unless-stopped
+    logging: *monitoring-logging
+
+  # 대시보드: 데이터소스와 대시보드는 provisioning 파일로 자동 등록된다.
+  grafana:
+    image: grafana/grafana:13.2.5
+    container_name: grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      # .env에 값이 없으면 compose 실행이 실패한다. (기본 비밀번호 admin/admin으로 뜨는 것을 막는다)
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD 가 .env 에 필요합니다}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      TZ: Asia/Seoul
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+      - loki
+    mem_limit: 250m
+    restart: unless-stopped
+    logging: *monitoring-logging
+
 volumes:
   redis-data:
+  prometheus-data:
+  loki-data:
+  grafana-data:

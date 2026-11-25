@@ -3,6 +3,8 @@ package com.ceos24.spring_cgv.domain.payment.repository;
 import com.ceos24.spring_cgv.domain.payment.dto.SeatPosition;
 import com.ceos24.spring_cgv.domain.payment.exception.PaymentException;
 import com.ceos24.spring_cgv.domain.payment.exception.code.PaymentErrorCode;
+import com.ceos24.spring_cgv.domain.payment.metrics.PaymentMetrics;
+import com.ceos24.spring_cgv.domain.payment.metrics.SeatHoldResult;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RLock;
@@ -24,6 +26,7 @@ public class SeatHoldRepository {
 
     private final StringRedisTemplate redisTemplate;
     private final RedissonClient redissonClient;
+    private final PaymentMetrics paymentMetrics;
 
     // 사용자가 결제창에서 결제를 마칠 때까지 좌석을 잡아두는 시간 -> 5분
     private static final Duration HOLD_TTL = Duration.ofMinutes(5);
@@ -53,6 +56,7 @@ public class SeatHoldRepository {
 
             if (!locked) {
                 log.info("[좌석 선점 실패] 다른 요청이 같은 좌석을 처리 중입니다. screeningId={}", screeningId);
+                paymentMetrics.seatHold(SeatHoldResult.LOCK_TIMEOUT);
                 return false;
             }
 
@@ -66,21 +70,25 @@ public class SeatHoldRepository {
             // 하나라도 값이 있으면 이미 선점된 좌석이 있다는 뜻.
             if (holders != null && holders.stream().anyMatch(Objects::nonNull)) {
                 log.info("[좌석 선점 실패] 이미 선점된 좌석이 있습니다. screeningId={}", screeningId);
+                paymentMetrics.seatHold(SeatHoldResult.ALREADY_HELD);
                 return false;
             }
 
             // 실제 선점을 진행한다.
             keys.forEach(holdKey -> redisTemplate.opsForValue().set(holdKey, orderId, HOLD_TTL));
+            paymentMetrics.seatHold(SeatHoldResult.SUCCESS);
 
             return true;
 
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             log.error("[좌석 선점 중단] 락 대기 중 인터럽트. screeningId={}", screeningId, e);
+            paymentMetrics.seatHold(SeatHoldResult.STORE_UNAVAILABLE);
             throw new PaymentException(PaymentErrorCode.PAYMENT_STORE_UNAVAILABLE);
 
         } catch (DataAccessException | RedisException e) {
             log.error("[좌석 선점 중단] Redis 장애로 결제를 진행할 수 없습니다. screeningId={}", screeningId, e);
+            paymentMetrics.seatHold(SeatHoldResult.STORE_UNAVAILABLE);
             throw new PaymentException(PaymentErrorCode.PAYMENT_STORE_UNAVAILABLE);
 
         } finally {

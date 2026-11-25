@@ -39,7 +39,9 @@ public class SecurityConfig {
             "/api/auth/reissue", // 토큰 재발급
             "/api/v1/payments/toss/success", // 결제 성공 리다이렉트
             "/api/v1/payments/toss/fail", // 결제 실패 리다이렉트
-            "/payment-test.html" // 프론트엔드 대체용 임시 결제 테스트 페이지
+            "/payment-test.html", // 프론트엔드 대체용 임시 결제 테스트 페이지
+            "/actuator/health", // 헬스체크 (관리 포트 8081, 외부 미공개)
+            "/actuator/prometheus" // Prometheus 메트릭 수집 (관리 포트 8081, 외부 미공개)
     };
 
     @Bean
