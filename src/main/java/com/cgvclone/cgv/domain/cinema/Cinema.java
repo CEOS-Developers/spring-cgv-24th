@@ -2,6 +2,7 @@ package com.cgvclone.cgv.domain.cinema;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EntityListeners;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -15,6 +16,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 @Entity
+@EntityListeners(CinemaListCacheInvalidator.class)
 @Table(name = "cinemas", uniqueConstraints = {
         @UniqueConstraint(
                 name = "uk_cinema_region_name",

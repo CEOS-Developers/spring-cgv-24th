@@ -6,6 +6,7 @@ import com.cgvclone.cgv.domain.cinema.dto.CinemaDetailResponse;
 import com.cgvclone.cgv.domain.cinema.dto.CinemaListResponse;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -21,6 +22,7 @@ public class CinemaService {
                 .orElseThrow(() -> new GlobalException(ErrorCode.CINEMA_NOT_FOUND));
     }
 
+    @Cacheable(cacheNames = "cinemas", key = "#regionId == null ? 'all' : #regionId", sync = true)
     public CinemaListResponse getCinemas(Long regionId) {
         List<Cinema> cinemas = regionId == null
                 ? cinemaRepository.findAll()
