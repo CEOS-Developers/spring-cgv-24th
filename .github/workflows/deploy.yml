@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   deploy:
-    if: github.ref == 'refs/heads/Wannys26'
+    if: github.repository == 'Wannys26/spring-cgv-24th' && github.ref == 'refs/heads/Wannys26'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:

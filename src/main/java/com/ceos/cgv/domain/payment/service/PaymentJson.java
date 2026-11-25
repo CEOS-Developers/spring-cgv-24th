@@ -25,7 +25,7 @@ public class PaymentJson {
         return json == null ? null : mapper.readValue(json, PaymentResponse.class);
     }
 
-    public List<Long> seatIds(String json) {
+    public List<Long> cancellationItemIds(String json) {
         return mapper.readValue(json, new TypeReference<List<Long>>() {});
     }
 

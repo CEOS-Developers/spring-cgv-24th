@@ -15,6 +15,7 @@ import com.ceos.cgv.domain.reservation.dto.SeatHoldCreateRequest;
 import com.ceos.cgv.domain.reservation.entity.Reservation;
 import com.ceos.cgv.domain.reservation.service.hold.SeatHoldExpiryService;
 import com.ceos.cgv.domain.reservation.service.hold.SeatHoldService;
+import com.ceos.cgv.domain.reservation.service.payment.ReservationPaymentApplicationService;
 import com.ceos.cgv.domain.reservation.service.payment.ReservationPaymentService;
 import com.ceos.cgv.support.DatabaseIntegrationTest;
 import jakarta.persistence.EntityManager;
@@ -46,6 +47,7 @@ import static org.mockito.Mockito.when;
 public abstract class PaymentIntegrationFixture extends DatabaseIntegrationTest {
     protected static final Long USER_ID = 8911L;
     @Autowired protected PaymentWorkflowService service;
+    @Autowired protected ReservationPaymentApplicationService reservationPaymentApplication;
     @Autowired protected PaymentQueryService queries;
     @Autowired protected SeatHoldService holds;
     @Autowired protected SeatHoldExpiryService expiry;
@@ -79,7 +81,8 @@ public abstract class PaymentIntegrationFixture extends DatabaseIntegrationTest 
                 .map(number -> new ReservedSeatRequest("A", number)).toList();
         Long reservationId = holds.create(userId, UUID.randomUUID(),
                 new SeatHoldCreateRequest(8915L, seats)).response().reservationId();
-        return service.createOrder(userId, new PaymentOrderCreateRequest(reservationId));
+        return reservationPaymentApplication
+                .createOrder(userId, new PaymentOrderCreateRequest(reservationId)).response();
     }
 
     protected GatewayPayment done(PaymentOrderResponse order) {

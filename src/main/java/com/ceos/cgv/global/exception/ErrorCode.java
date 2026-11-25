@@ -36,6 +36,8 @@ public enum ErrorCode {
     PRODUCT_NOT_FOUND(HttpStatus.NOT_FOUND, "매점 상품을 찾을 수 없습니다."),
     INVENTORY_NOT_FOUND(HttpStatus.NOT_FOUND, "영화관의 상품 재고를 찾을 수 없습니다."),
     FOOD_ORDER_NOT_FOUND(HttpStatus.NOT_FOUND, "매점 주문을 찾을 수 없습니다."),
+    FOOD_ORDER_CHECKOUT_CONFLICT(HttpStatus.CONFLICT, "동일 매점 주문 요청 키의 내용이 다릅니다."),
+    FOOD_ORDER_EXPIRED(HttpStatus.CONFLICT, "매점 재고 확보 시간이 만료되었습니다."),
     DUPLICATE_INVENTORY(HttpStatus.CONFLICT, "해당 영화관의 상품 재고가 이미 등록되어 있습니다."),
     INVALID_SEAT(HttpStatus.BAD_REQUEST, "상영관에 존재하지 않는 좌석입니다."),
     DUPLICATE_SEAT_IN_REQUEST(HttpStatus.BAD_REQUEST, "요청에 같은 좌석이 중복되어 있습니다."),
