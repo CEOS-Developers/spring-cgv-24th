@@ -1,5 +1,6 @@
 package com.ceos.cgv.domain.movie.controller;
 
+import com.ceos.cgv.domain.movie.config.MovieCacheConfig;
 import com.ceos.cgv.domain.user.enums.UserRole;
 import com.ceos.cgv.domain.reservation.dto.ReservedSeatRequest;
 import com.ceos.cgv.domain.reservation.support.LegacyReservationFixture;
@@ -13,6 +14,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.cache.CacheManager;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
@@ -46,6 +48,9 @@ class MovieVisibilityIntegrationTest {
 
     @Autowired
     private JwtService jwtService;
+
+    @Autowired
+    private CacheManager cacheManager;
 
     @BeforeEach
     void 테스트_데이터를_준비한다() {
@@ -223,6 +228,8 @@ class MovieVisibilityIntegrationTest {
         jdbcTemplate.update("DELETE FROM screens WHERE screen_id = ?", SCREEN_ID);
         jdbcTemplate.update("DELETE FROM cinemas WHERE cinema_id = ?", CINEMA_ID);
         jdbcTemplate.update("DELETE FROM users WHERE user_id = ?", USER_ID);
+        // JDBC로 직접 바꾼 영화는 캐시 무효화를 거치지 않으므로 공개 목록 캐시를 비운다
+        cacheManager.getCache(MovieCacheConfig.PUBLIC_MOVIES).clear();
     }
 
     private String userToken() {
