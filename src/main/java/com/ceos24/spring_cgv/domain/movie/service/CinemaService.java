@@ -7,8 +7,11 @@ import com.ceos24.spring_cgv.domain.movie.entity.Cinema;
 import com.ceos24.spring_cgv.domain.movie.exception.CinemaException;
 import com.ceos24.spring_cgv.domain.movie.exception.code.CinemaErrorCode;
 import com.ceos24.spring_cgv.domain.movie.repository.CinemaRepository;
+import com.ceos24.spring_cgv.global.config.CacheConfig;
 import lombok.RequiredArgsConstructor;
 import org.jspecify.annotations.NonNull;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -21,12 +24,16 @@ public class CinemaService {
 
     private final CinemaRepository cinemaRepository;
 
+    // 전체 목록 하나만 캐싱하므로 키가 고정이다.
+    private static final String ALL_KEY = "'all'";
+
     /***
      * 함수 기능: 새로운 영화관을 등록합니다.
      * @param request 새로운 영화관 지역, 주소
      * @return CinemaResponse 등록된 영화관 ID, 지역, 주소
      */
     @Transactional
+    @CacheEvict(cacheNames = CacheConfig.CINEMAS, key = ALL_KEY)
     public CinemaResponse createCinema(CinemaCreateRequest request) {
 
         // 같은 지역과 주소가 존재하는지 검사한다.
@@ -47,6 +54,7 @@ public class CinemaService {
      * 함수 기능: 전체 영화관 목록을 조회합니다.
      * @return List<CinemaResponse> 모든 영화관 ID, 지역, 주소
      */
+    @Cacheable(cacheNames = CacheConfig.CINEMAS, key = ALL_KEY)
     public List<CinemaResponse> findAllCinema() {
 
         return cinemaRepository.findAll().stream()
@@ -73,6 +81,7 @@ public class CinemaService {
      * @return CinemaResponse 변경된 영화관의 ID, 지역, 주소
      */
     @Transactional
+    @CacheEvict(cacheNames = CacheConfig.CINEMAS, key = ALL_KEY)
     public CinemaResponse updateCinema(Long cinemaId, CinemaUpdateRequest request) {
 
         Cinema cinema = findCinemaById(cinemaId);
@@ -92,6 +101,7 @@ public class CinemaService {
      * @param cinemaId 영화관 ID
      */
     @Transactional
+    @CacheEvict(cacheNames = CacheConfig.CINEMAS, key = ALL_KEY)
     public void deleteCinema(Long cinemaId) {
 
         Cinema cinema = findCinemaById(cinemaId);
