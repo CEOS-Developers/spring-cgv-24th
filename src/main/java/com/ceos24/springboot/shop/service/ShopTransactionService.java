@@ -34,6 +34,7 @@ public class ShopTransactionService {
     private final OrderItemRepository orderItemRepository;
     private final TheaterRepository theaterRepository;
     private final UserRepository userRepository;
+    private final InventoryCache inventoryCache;
 
     @Transactional(readOnly = true)
     public List<InventoryResponse> getInventories(Long theaterId) {
@@ -75,6 +76,7 @@ public class ShopTransactionService {
                 .now(LocalDateTime.now(clock)).build());
         List<OrderItem> items = orderMenus.stream().map(item -> OrderItem.builder()
                 .order(order).menu(item.menu()).quantity(item.quantity()).build()).toList();
+        inventoryCache.invalidateAfterCommit(theaterId);
         return StoreOrderResponse.from(order, orderItemRepository.saveAll(items));
     }
 

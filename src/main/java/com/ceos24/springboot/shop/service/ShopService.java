@@ -30,6 +30,7 @@ public class ShopService {
     private final StoreOrderExpirationService expirationService;
     private final ShopTransactionService transactions;
     private final StoreOrderLifecycleService lifecycle;
+    private final InventoryCache inventoryCache;
 
     @Transactional
     public InventoryResponse createInventory(Long theaterId, InventoryCreateRequest request) {
@@ -43,14 +44,16 @@ public class ShopService {
         if (storeInventoryRepository.existsByTheaterAndMenu(theater, menu)) {
             throw new IllegalArgumentException("이미 등록된 매점 메뉴입니다.");
         }
-        return InventoryResponse.from(storeInventoryRepository.save(StoreInventory.builder()
-                .theater(theater).menu(menu).stock(request.stock()).build()));
+        StoreInventory inventory = storeInventoryRepository.save(StoreInventory.builder()
+                .theater(theater).menu(menu).stock(request.stock()).build());
+        inventoryCache.invalidateAfterCommit(theaterId);
+        return InventoryResponse.from(inventory);
     }
 
     @Transactional(propagation = Propagation.NEVER)
     public List<InventoryResponse> getInventories(Long theaterId) {
         expirationService.releaseExpiredForTheater(theaterId);
-        return transactions.getInventories(theaterId);
+        return inventoryCache.get(theaterId, () -> transactions.getInventories(theaterId));
     }
 
     @Transactional
@@ -60,6 +63,7 @@ public class ShopService {
         StoreInventory inventory = storeInventoryRepository.findByInventoryIdAndTheater(inventoryId, theater)
                 .orElseThrow(() -> new GlobalException(ErrorCode.STORE_INVENTORY_NOT_FOUND));
         inventory.increaseStock(quantity);
+        inventoryCache.invalidateAfterCommit(theaterId);
         return InventoryResponse.from(inventory);
     }
 

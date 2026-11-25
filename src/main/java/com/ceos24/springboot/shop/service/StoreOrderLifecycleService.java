@@ -22,6 +22,7 @@ public class StoreOrderLifecycleService {
     private final OrderItemRepository items;
     private final StoreInventoryRepository inventories;
     private final PaymentRepository payments;
+    private final InventoryCache inventoryCache;
 
     public void cancelLocked(StoreOrder order) {
         if (order.cancel()) {
@@ -55,10 +56,12 @@ public class StoreOrderLifecycleService {
     }
 
     private void restoreStock(StoreOrder order) {
+        Long theaterId = order.getTheater().getTheaterId();
         for (OrderItem item : items.findAllByOrderOrderByMenu_MenuIdAsc(order)) {
-            inventories.findWithLock(order.getTheater().getTheaterId(), item.getMenu().getMenuId())
+            inventories.findWithLock(theaterId, item.getMenu().getMenuId())
                     .orElseThrow(() -> new GlobalException(ErrorCode.STORE_INVENTORY_NOT_FOUND))
                     .increaseStock(item.getQuantity());
         }
+        inventoryCache.invalidateAfterCommit(theaterId);
     }
 }

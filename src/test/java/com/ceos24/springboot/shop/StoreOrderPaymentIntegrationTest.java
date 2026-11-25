@@ -241,12 +241,43 @@ class StoreOrderPaymentIntegrationTest {
     }
 
     @Test
+    void inventoryCacheReusesReadsAndRefreshesAfterStockChanges() {
+        var initial = shop.getInventories(theaterId);
+        assertThat(shop.getInventories(theaterId)).isSameAs(initial);
+        var popcorn = initial.stream().filter(item -> item.menuId().equals(popcornId)).findFirst().orElseThrow();
+
+        shop.addStock(theaterId, popcorn.inventoryId(), 2);
+        assertCachedPopcornStock(12);
+        var order = create(3);
+        assertCachedPopcornStock(9);
+        shop.cancelOrder(userId, order.orderId());
+        assertCachedPopcornStock(12);
+    }
+
+    @Test
+    void stockRollbackDoesNotInvalidateTheInventoryCache() {
+        var initial = shop.getInventories(theaterId);
+        var popcorn = initial.stream().filter(item -> item.menuId().equals(popcornId)).findFirst().orElseThrow();
+        new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+            shop.addStock(theaterId, popcorn.inventoryId(), 2);
+            status.setRollbackOnly();
+        });
+        assertThat(shop.getInventories(theaterId)).isSameAs(initial);
+        assertThat(stock(popcornId)).isEqualTo(10);
+    }
+
+    private void assertCachedPopcornStock(int expected) {
+        assertThat(shop.getInventories(theaterId)).filteredOn(item -> item.menuId().equals(popcornId))
+                .singleElement().satisfies(item -> assertThat(item.stock()).isEqualTo(expected));
+    }
+
+    @Test
     void expirationAndBusinessOperationsCompleteWithOneAvailableConnection() throws SQLException {
         try (var reservedConnection = dataSource.getConnection()) {
             var inventoryOrder = create(2);
+            assertCachedPopcornStock(8);
             backdate(inventoryOrder.orderId());
-            assertThat(shop.getInventories(theaterId)).filteredOn(inventory -> inventory.menuId().equals(popcornId))
-                    .singleElement().satisfies(inventory -> assertThat(inventory.stock()).isEqualTo(10));
+            assertCachedPopcornStock(10);
 
             var orderToQuery = create(3);
             preparation.prepareStoreOrder(userId, new StoreOrderPaymentPrepareRequest(orderToQuery.orderId()));

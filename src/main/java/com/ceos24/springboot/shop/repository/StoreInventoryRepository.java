@@ -23,7 +23,8 @@ public interface StoreInventoryRepository
             """)
     Optional<StoreInventory> findWithLock(@Param("theaterId") Long theaterId, @Param("menuId") Long menuId);
 
-    List<StoreInventory> findAllByTheater(Theater theater);
+    @Query("select i from StoreInventory i left join fetch i.menu where i.theater = :theater")
+    List<StoreInventory> findAllByTheater(@Param("theater") Theater theater);
 
     Optional<StoreInventory> findByTheaterAndMenu(
             Theater theater,
