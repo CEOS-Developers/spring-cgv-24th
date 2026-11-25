@@ -1,0 +1,35 @@
+===== [before] SHOW INDEX
+Key_name	Seq_in_index	Column_name
+PRIMARY	1	id
+idx_schedule_id	1	schedule_id
+idx_user_id	1	user_id
+===== [before] EXPLAIN
+*************************** 1. row ***************************
+           id: 1
+  select_type: SIMPLE
+        table: r1_0
+   partitions: NULL
+         type: ALL
+possible_keys: NULL
+          key: NULL
+      key_len: NULL
+          ref: NULL
+         rows: 199791
+     filtered: 3.33
+        Extra: Using where
+===== [before] 읽은 행 수 (Handler_read_*)
+Handler_read_first	1
+Handler_read_key	1
+Handler_read_last	0
+Handler_read_next	0
+Handler_read_prev	0
+Handler_read_rnd	0
+Handler_read_rnd_next	200351
+===== [before] 결과 건수
+151
+===== [before] EXPLAIN ANALYZE (대표 1회)
+-> Filter: ((r1_0.`status` = 'PENDING_PAYMENT') and (r1_0.expires_at <= TIMESTAMP'2026-11-25 12:00:00'))  (cost=20244 rows=6659) (actual time=75.5..75.5 rows=151 loops=1)
+    -> Table scan on r1_0  (cost=20244 rows=199791) (actual time=0.0405..59.2 rows=200350 loops=1)
+
+===== [before] EXPLAIN ANALYZE 31회 최상위 actual time(ms)
+min=35.8 median=89.8 max=106 (n=31)

@@ -16,6 +16,8 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 import org.springframework.http.ResponseEntity;
 
 import java.util.LinkedHashMap;
@@ -30,7 +32,11 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(GeneralException.class)
     public ResponseEntity<ApiResponse<Object>> handleGeneralException(GeneralException e, HttpServletRequest request) {
         ErrorReasonDTO errorReason = e.getErrorReasonHttpStatus();
-        log.warn("비즈니스 예외 발생 - URI: {}, Code: {}", request.getRequestURI(), errorReason.getCode());
+        if (errorReason.getHttpStatus().is5xxServerError()) {
+            log.warn("비즈니스 예외 uri={} code={}", request.getRequestURI(), errorReason.getCode());
+        } else {
+            log.info("비즈니스 예외 uri={} code={}", request.getRequestURI(), errorReason.getCode());
+        }
 
         return ResponseEntity
                 .status(errorReason.getHttpStatus())
@@ -148,7 +154,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(DataIntegrityViolationException.class)
     public ResponseEntity<ApiResponse<Object>> handleDataIntegrityViolationException(
             DataIntegrityViolationException e, HttpServletRequest request) {
-        log.warn("데이터 무결성 제약 위반 - URI: {}", request.getRequestURI(), e);
+        log.warn("데이터 무결성 제약 위반 uri={}", request.getRequestURI(), e);
 
         ErrorReasonDTO errorReason = GlobalErrorStatus._CONFLICT.getReasonHttpStatus();
 
@@ -157,10 +163,31 @@ public class GlobalExceptionHandler {
                 .body(ApiResponse.onFailure(errorReason.getCode(), errorReason.getMessage(), null));
     }
 
-    // 8. 그 외 모든 예외
+    // 8. 없는 경로 (스캐너 요청 등이 500·error 로그로 잡히지 않도록 분리)
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<ApiResponse<Object>> handleNoResourceFoundException(NoResourceFoundException e) {
+        ErrorReasonDTO errorReason = GlobalErrorStatus._NOT_FOUND.getReasonHttpStatus();
+
+        return ResponseEntity
+                .status(errorReason.getHttpStatus())
+                .body(ApiResponse.onFailure(errorReason.getCode(), errorReason.getMessage(), null));
+    }
+
+    // 9. 지원하지 않는 HTTP 메서드
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<ApiResponse<Object>> handleHttpRequestMethodNotSupportedException(
+            HttpRequestMethodNotSupportedException e) {
+        ErrorReasonDTO errorReason = GlobalErrorStatus._METHOD_NOT_ALLOWED.getReasonHttpStatus();
+
+        return ResponseEntity
+                .status(errorReason.getHttpStatus())
+                .body(ApiResponse.onFailure(errorReason.getCode(), errorReason.getMessage(), null));
+    }
+
+    // 10. 그 외 모든 예외
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiResponse<Object>> handleException(Exception e, HttpServletRequest request) {
-        log.error("서버 내부 오류 발생 - URI: {}", request.getRequestURI(), e);
+        log.error("처리되지 않은 예외 method={} uri={}", request.getMethod(), request.getRequestURI(), e);
 
         ErrorReasonDTO errorReason = GlobalErrorStatus._INTERNAL_SERVER_ERROR.getReasonHttpStatus();
 

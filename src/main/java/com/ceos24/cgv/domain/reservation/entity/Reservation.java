@@ -16,6 +16,12 @@ import java.time.Instant;
 @Entity
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
+@Table(
+        indexes = @Index(
+                name = "idx_reservation_status_expires_at",
+                columnList = "status, expires_at"
+        )
+)
 public class Reservation {
 
     public static final Duration HOLD_DURATION = Duration.ofMinutes(5);

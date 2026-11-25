@@ -2,6 +2,7 @@ package com.ceos24.cgv.domain.payment.client;
 
 import com.ceos24.cgv.domain.payment.client.dto.TossPaymentResponse;
 import com.ceos24.cgv.domain.payment.exception.TossPaymentException;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpMethod;
@@ -18,6 +19,7 @@ class TossPaymentClientTest {
 
 	private static final String CONFIRM_URL = "https://api.tosspayments.com/v1/payments/confirm";
 
+	private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
 	private MockRestServiceServer server;
 	private TossPaymentClient tossPaymentClient;
 
@@ -25,7 +27,7 @@ class TossPaymentClientTest {
 	void setUp() {
 		RestClient.Builder builder = RestClient.builder().baseUrl("https://api.tosspayments.com");
 		server = MockRestServiceServer.bindTo(builder).build();
-		tossPaymentClient = new TossPaymentClient(builder.build());
+		tossPaymentClient = new TossPaymentClient(builder.build(), meterRegistry);
 	}
 
 	@Test
@@ -43,6 +45,7 @@ class TossPaymentClientTest {
 		assertThat(response.status()).isEqualTo("DONE");
 		assertThat(response.totalAmount()).isEqualTo(15_000);
 		assertThat(response.approvedAt()).isNotNull();
+		assertThat(requestCount("success")).isEqualTo(1);
 		server.verify();
 	}
 
@@ -56,6 +59,7 @@ class TossPaymentClientTest {
 					assertThat(e.isResultUnknown()).isFalse();
 					assertThat(e.getTossCode()).isEqualTo("REJECT_CARD_PAYMENT");
 				});
+		assertThat(requestCount("rejected")).isEqualTo(1);
 	}
 
 	@Test
@@ -66,6 +70,7 @@ class TossPaymentClientTest {
 
 		assertThatThrownBy(() -> tossPaymentClient.confirm("pk-1", "order-1", 15_000, "idem-1"))
 				.isInstanceOfSatisfying(TossPaymentException.class, e -> assertThat(e.isResultUnknown()).isTrue());
+		assertThat(requestCount("unknown")).isEqualTo(1);
 	}
 
 	@Test
@@ -74,5 +79,10 @@ class TossPaymentClientTest {
 
 		assertThatThrownBy(() -> tossPaymentClient.confirm("pk-1", "order-1", 15_000, "idem-1"))
 				.isInstanceOfSatisfying(TossPaymentException.class, e -> assertThat(e.isResultUnknown()).isTrue());
+		assertThat(requestCount("unknown")).isEqualTo(1);
+	}
+
+	private long requestCount(String outcome) {
+		return meterRegistry.get("toss.api.requests").tags("operation", "confirm", "outcome", outcome).timer().count();
 	}
 }

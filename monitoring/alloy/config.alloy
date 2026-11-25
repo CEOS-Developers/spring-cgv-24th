@@ -1,0 +1,104 @@
+// app 서버에서 실행한다. 메트릭과 로그를 모니터링 서버로 보내므로 app 서버에는 새 인바운드 포트가 필요 없다
+
+// ---------- 메트릭 ----------
+prometheus.scrape "app" {
+  job_name        = "cgv-app"
+  targets         = [{"__address__" = "app:8081"}]
+  metrics_path    = "/actuator/prometheus"
+  scrape_interval = "15s"
+  forward_to      = [prometheus.remote_write.monitoring.receiver]
+}
+
+// app 서버(t3.micro) 자체의 CPU·메모리·디스크. 메모리 여유가 가장 먼저 부족해질 자원이다
+prometheus.exporter.unix "host" {
+  procfs_path    = "/host/proc"
+  sysfs_path     = "/host/sys"
+  rootfs_path    = "/host/root"
+  set_collectors = ["cpu", "meminfo", "loadavg", "filesystem", "netdev", "pressure"]
+
+  filesystem {
+    mount_points_exclude = "^/(dev|proc|run|sys|var/lib/docker/.+)($|/)"
+  }
+}
+
+// exporter가 붙이는 기본 job(integrations/unix) 대신 대시보드에서 쓸 이름으로 바꾼다
+discovery.relabel "host" {
+  targets = prometheus.exporter.unix.host.targets
+
+  rule {
+    target_label = "job"
+    replacement  = "app-host"
+  }
+}
+
+prometheus.scrape "host" {
+  targets         = discovery.relabel.host.output
+  scrape_interval = "15s"
+  forward_to      = [prometheus.remote_write.monitoring.receiver]
+}
+
+prometheus.remote_write "monitoring" {
+  endpoint {
+    url = "http://" + sys.env("MONITORING_HOST") + ":9090/api/v1/write"
+  }
+}
+
+// ---------- 로그 ----------
+discovery.docker "compose" {
+  host = "unix:///var/run/docker.sock"
+
+  filter {
+    name   = "label"
+    values = ["com.docker.compose.project=cgv"]
+  }
+}
+
+discovery.relabel "compose" {
+  targets = []
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+}
+
+loki.source.docker "compose" {
+  host          = "unix:///var/run/docker.sock"
+  targets       = discovery.docker.compose.targets
+  relabel_rules = discovery.relabel.compose.rules
+  forward_to    = [loki.process.app.receiver]
+}
+
+// app 로그는 ECS JSON 한 줄이다. 레벨만 라벨로 두고, 값 종류가 무한한 traceId·userId는 라벨이 아닌 structured metadata로 둔다
+loki.process "app" {
+  stage.match {
+    selector = "{service=\"app\"}"
+
+    stage.json {
+      expressions = {
+        level   = "log.level",
+        traceId = "traceId",
+        userId  = "userId",
+      }
+    }
+
+    stage.labels {
+      values = {level = ""}
+    }
+
+    stage.structured_metadata {
+      values = {
+        traceId = "",
+        userId  = "",
+      }
+    }
+  }
+
+  forward_to = [loki.write.monitoring.receiver]
+}
+
+loki.write "monitoring" {
+  endpoint {
+    url = "http://" + sys.env("MONITORING_HOST") + ":3100/loki/api/v1/push"
+  }
+}

@@ -55,5 +55,9 @@ if [ -n "$stale_images" ]; then
   echo "$stale_images" | xargs docker image rm >/dev/null || echo "[deploy] 경고: 오래된 이미지 정리에 실패했습니다." >&2
 fi
 
+echo "[deploy] 모니터링 에이전트(Alloy) 갱신"
+docker compose up -d --force-recreate alloy \
+  || echo "[deploy] 경고: Alloy 갱신에 실패했습니다. 서비스 배포는 성공했습니다." >&2
+
 docker compose ps
 echo "[deploy] 성공: $image"

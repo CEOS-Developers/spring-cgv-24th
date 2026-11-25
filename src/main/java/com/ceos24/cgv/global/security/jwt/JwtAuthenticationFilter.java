@@ -1,5 +1,6 @@
 package com.ceos24.cgv.global.security.jwt;
 
+import com.ceos24.cgv.global.logging.LogContext;
 import com.ceos24.cgv.global.security.CustomUserDetails;
 import com.ceos24.cgv.global.security.SecurityPaths;
 import com.ceos24.cgv.global.security.exception.SecurityErrorCode;
@@ -11,6 +12,7 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
+import org.slf4j.MDC;
 import org.springframework.http.HttpHeaders;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -46,12 +48,13 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         }
 
         try {
-            String token = resolveToken(authorizationHeader);
-            Authentication authentication = getAuthentication(token);
+            AccessTokenInfo accessTokenInfo = jwtTokenProvider.parseAccessToken(resolveToken(authorizationHeader));
+            Authentication authentication = getAuthentication(accessTokenInfo);
 
             SecurityContext context = SecurityContextHolder.createEmptyContext();
             context.setAuthentication(authentication);
             SecurityContextHolder.setContext(context);
+            MDC.put(LogContext.USER_ID, String.valueOf(accessTokenInfo.userId()));
         } catch (ExpiredJwtException e) {
             request.setAttribute(AUTH_ERROR, SecurityErrorCode.TOKEN_EXPIRED);
             authenticationEntryPoint.commence(
@@ -88,8 +91,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         return token;
     }
 
-    private Authentication getAuthentication(String token) {
-        AccessTokenInfo accessTokenInfo = jwtTokenProvider.parseAccessToken(token);
+    private Authentication getAuthentication(AccessTokenInfo accessTokenInfo) {
         CustomUserDetails userDetails = new CustomUserDetails(accessTokenInfo.userId(), accessTokenInfo.role());
 
         return UsernamePasswordAuthenticationToken.authenticated(

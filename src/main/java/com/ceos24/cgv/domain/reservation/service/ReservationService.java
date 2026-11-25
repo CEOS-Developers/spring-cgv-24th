@@ -28,6 +28,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
@@ -85,23 +86,13 @@ public class ReservationService {
     }
 
     @Transactional
-    public int releaseExpiredHolds(List<Long> reservationIds, Instant now) {
-        if (reservationIds.isEmpty()) {
-            return 0;
-        }
-        int expired = reservationRepository.expireHolds(reservationIds, now);
-        reservationSeatRepository.deleteByExpiredReservationIds(reservationIds);
-        paymentRepository.expireByExpiredReservationIds(reservationIds);
-        return expired;
-    }
-
-    @Transactional
-    public void expireOverdueHolds() {
+    public int expireOverdueHolds() {
         Instant now = Instant.now(clock);
         int expired = releaseExpiredHolds(reservationRepository.findExpiredHoldIds(now), now);
         if (expired > 0) {
-            log.info("만료된 좌석 선점 {}건을 해제했습니다.", expired);
+            log.info("만료된 좌석 선점 해제 count={}", expired);
         }
+        return expired;
     }
 
     public PaymentReadyResponse getPaymentInfo(Long reservationId, Long userId) {
@@ -193,7 +184,7 @@ public class ReservationService {
         }
     }
 
-    @Transactional
+    @Transactional(propagation = Propagation.MANDATORY)
     public void startPaying(Long reservationId) {
         if (reservationRepository.startPaying(reservationId, Instant.now(clock)) == 0) {
             boolean alreadyPaying = reservationRepository.findById(reservationId)
@@ -204,17 +195,17 @@ public class ReservationService {
         }
     }
 
-    @Transactional
+    @Transactional(propagation = Propagation.MANDATORY)
     public void confirmPaid(Reservation reservation) {
         reservation.confirmPayment();
     }
 
-    @Transactional
+    @Transactional(propagation = Propagation.MANDATORY)
     public void releaseUnpaid(Reservation reservation) {
         release(reservation, ReservationStatus.PAYING);
     }
 
-    @Transactional
+    @Transactional(propagation = Propagation.MANDATORY)
     public void releaseCanceled(Reservation reservation) {
         release(reservation, ReservationStatus.RESERVED);
     }
@@ -267,6 +258,16 @@ public class ReservationService {
             throw new GeneralException(ReservationErrorStatus.SEAT_ALREADY_RESERVED);
         }
         releaseExpiredHolds(expiredIds, now);
+    }
+
+    private int releaseExpiredHolds(List<Long> reservationIds, Instant now) {
+        if (reservationIds.isEmpty()) {
+            return 0;
+        }
+        int expired = reservationRepository.expireHolds(reservationIds, now);
+        reservationSeatRepository.deleteByExpiredReservationIds(reservationIds);
+        paymentRepository.expireByExpiredReservationIds(reservationIds);
+        return expired;
     }
 
     private Reservation saveHold(User user, Schedule schedule, List<Seat> seats, int totalPrice, String seatSummary,
