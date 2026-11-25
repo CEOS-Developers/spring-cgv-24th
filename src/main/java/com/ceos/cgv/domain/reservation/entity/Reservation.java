@@ -89,6 +89,11 @@ public class Reservation extends BaseTimeEntity {
     }
 
     public boolean isExpiredAt(Instant now) {
+        return isExpiredAt(status, expiresAt, now);
+    }
+
+    /** 엔티티 없이 상태와 만료 시각만 가진 조회 결과에서도 같은 만료 규칙을 쓰기 위한 판정이다. */
+    public static boolean isExpiredAt(ReservationStatus status, Instant expiresAt, Instant now) {
         return status == ReservationStatus.HELD && !now.isBefore(expiresAt);
     }
 

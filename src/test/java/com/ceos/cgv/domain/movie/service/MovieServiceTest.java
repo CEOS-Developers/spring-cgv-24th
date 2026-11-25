@@ -2,6 +2,7 @@ package com.ceos.cgv.domain.movie.service;
 
 import com.ceos.cgv.domain.movie.entity.Movie;
 import com.ceos.cgv.domain.movie.dto.MovieCreateRequest;
+import com.ceos.cgv.domain.movie.dto.MovieResponse;
 import com.ceos.cgv.domain.movie.enums.AgeRating;
 import com.ceos.cgv.domain.movie.enums.MovieVisibility;
 import com.ceos.cgv.domain.movie.repository.MovieRepository;
@@ -68,9 +69,11 @@ class MovieServiceTest {
         given(movieRepository.findAllByVisibility(MovieVisibility.PUBLIC))
                 .willReturn(List.of(movie));
 
-        List<Movie> result = movieService.findAll();
+        List<MovieResponse> result = movieService.findAllPublic();
 
-        assertThat(result).containsExactly(movie);
+        assertThat(result).containsExactly(MovieResponse.from(movie));
+        assertThatThrownBy(() -> result.add(MovieResponse.from(movie)))
+                .isInstanceOf(UnsupportedOperationException.class);
     }
 
     @Test

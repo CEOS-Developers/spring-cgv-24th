@@ -1,5 +1,6 @@
 package com.ceos.cgv.domain.movie.repository;
 
+import com.ceos.cgv.domain.movie.dto.ScreeningSeatLayout;
 import com.ceos.cgv.domain.movie.entity.Screening;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.Lock;
@@ -22,6 +23,16 @@ public interface ScreeningRepository extends JpaRepository<Screening, Long> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select s from Screening s where s.id = :screeningId")
     Optional<Screening> findByIdWithLock(@Param("screeningId") Long screeningId);
+
+    @Query("""
+            select new com.ceos.cgv.domain.movie.dto.ScreeningSeatLayout(
+                m.visibility, sc.rowCount, sc.seatsPerRow)
+            from Screening s
+            join s.movie m
+            join s.screen sc
+            where s.id = :screeningId
+            """)
+    Optional<ScreeningSeatLayout> findSeatLayoutById(@Param("screeningId") Long screeningId);
 
     @EntityGraph(attributePaths = {"movie", "screen"})
     List<Screening> findAllByMovie_IdOrderByStartAt(Long movieId);

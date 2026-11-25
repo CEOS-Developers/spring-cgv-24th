@@ -15,6 +15,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -62,6 +63,44 @@ class MovieControllerIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.description").value("통합 테스트 설명"))
                 .andExpect(jsonPath("$.data.ageRating").value("ALL"));
+    }
+
+    @Test
+    void 공개_목록이_캐시된_뒤에도_생성과_비공개_처리가_다음_조회에_바로_반영된다() throws Exception {
+        String cachedBefore = mockMvc.perform(get("/api/v1/movies"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        mockMvc.perform(get("/api/v1/movies"))
+                .andExpect(status().isOk())
+                .andExpect(content().json(cachedBefore, true));
+
+        String location = mockMvc.perform(post("/api/v1/movies")
+                        .header("Authorization", adminToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "title": "캐시 반영 테스트 영화",
+                                  "description": "목록 캐시 무효화 확인",
+                                  "runningTime": 90,
+                                  "releaseDate": "2026-09-15",
+                                  "ageRating": "ALL"
+                                }
+                                """))
+                .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getHeader("Location");
+        long movieId = Long.parseLong(location.substring(location.lastIndexOf('/') + 1));
+
+        mockMvc.perform(get("/api/v1/movies"))
+                .andExpect(jsonPath("$.data[?(@.movieId == " + movieId + ")]").exists());
+
+        mockMvc.perform(delete("/api/v1/movies/{movieId}", movieId)
+                        .header("Authorization", adminToken()))
+                .andExpect(status().isNoContent());
+
+        mockMvc.perform(get("/api/v1/movies"))
+                .andExpect(jsonPath("$.data[?(@.movieId == " + movieId + ")]").doesNotExist());
     }
 
     @Test

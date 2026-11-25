@@ -21,6 +21,8 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-h2console'
 	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
 	implementation 'org.springframework.boot:spring-boot-starter-validation'
+	implementation 'org.springframework.boot:spring-boot-starter-cache'
+	implementation 'com.github.ben-manes.caffeine:caffeine'
 	implementation 'org.springframework.boot:spring-boot-starter-webmvc'
 	implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:3.1.1'
     implementation 'org.springframework.security:spring-security-crypto'
@@ -58,7 +60,7 @@ tasks.named('test') {
 }
 
 tasks.register('mysqlTest', Test) {
-	description = 'Runs reservation and payment integrity tests against disposable MySQL (requires Docker).'
+	description = 'Runs locking and integrity tests against disposable MySQL (requires Docker).'
 	group = 'verification'
 	testClassesDirs = sourceSets.test.output.classesDirs
 	classpath = sourceSets.test.runtimeClasspath
@@ -73,6 +75,10 @@ tasks.register('mysqlTest', Test) {
 		includeTestsMatching 'com.ceos.cgv.domain.payment.service.PaymentConcurrencyComparisonTest'
 		includeTestsMatching 'com.ceos.cgv.domain.payment.schema.PaymentSchemaUpgradeIntegrationTest'
 		includeTestsMatching 'com.ceos.cgv.domain.concession.service.FoodPaymentIntegrationTest'
+		includeTestsMatching 'com.ceos.cgv.domain.auth.service.RegistrationConcurrencyIntegrationTest'
+		includeTestsMatching 'com.ceos.cgv.domain.auth.service.RegistrationTransactionIntegrationTest'
+		includeTestsMatching 'com.ceos.cgv.domain.movie.service.MovieLikeConcurrencyIntegrationTest'
+		includeTestsMatching 'com.ceos.cgv.domain.cinema.service.CinemaLikeConcurrencyIntegrationTest'
 	}
 	// Every invocation verifies a fresh database rather than reuse an earlier result.
 	outputs.upToDateWhen { false }

@@ -35,7 +35,7 @@ class MovieLikeServiceTest {
     void 찜하지_않은_영화는_토글하면_찜하고_true를_반환한다() {
         User user = mock(User.class);
         Movie movie = mock(Movie.class);
-        given(userRepository.findById(1L)).willReturn(Optional.of(user));
+        given(userRepository.findByIdForUpdate(1L)).willReturn(Optional.of(user));
         given(movieRepository.findByIdForShare(2L)).willReturn(Optional.of(movie));
         given(movieLikeRepository.findByUser_IdAndMovie_Id(1L, 2L)).willReturn(Optional.empty());
 
@@ -50,7 +50,7 @@ class MovieLikeServiceTest {
         User user = mock(User.class);
         Movie movie = mock(Movie.class);
         MovieLike movieLike = mock(MovieLike.class);
-        given(userRepository.findById(1L)).willReturn(Optional.of(user));
+        given(userRepository.findByIdForUpdate(1L)).willReturn(Optional.of(user));
         given(movieRepository.findByIdForShare(2L)).willReturn(Optional.of(movie));
         given(movieLikeRepository.findByUser_IdAndMovie_Id(1L, 2L)).willReturn(Optional.of(movieLike));
 
