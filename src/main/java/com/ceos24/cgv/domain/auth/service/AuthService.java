@@ -36,6 +36,7 @@ public class AuthService {
     private final JwtProvider jwtProvider;
     private final AuthenticationManager authenticationManager;
     private final RefreshTokenRepository refreshTokenRepository;
+    private final RefreshTokenService refreshTokenService;
 
     public AuthService(
             @Value("${admin.token}") String adminToken,
@@ -43,13 +44,15 @@ public class AuthService {
             PasswordEncoder passwordEncoder,
             JwtProvider jwtProvider,
             AuthenticationManager authenticationManager,
-            RefreshTokenRepository refreshTokenRepository) {
+            RefreshTokenRepository refreshTokenRepository,
+            RefreshTokenService refreshTokenService) {
         this.adminToken = adminToken;
         this.memberRepository = memberRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtProvider = jwtProvider;
         this.authenticationManager = authenticationManager;
         this.refreshTokenRepository = refreshTokenRepository;
+        this.refreshTokenService = refreshTokenService;
     }
 
     @Transactional
@@ -81,7 +84,6 @@ public class AuthService {
         memberRepository.save(member);
     }
 
-    @Transactional
     public TokenResponse login(LoginRequest request) {
         try {
             UsernamePasswordAuthenticationToken authenticationToken =
@@ -96,8 +98,7 @@ public class AuthService {
             String refreshToken =
                     jwtProvider.createRefreshToken(userDetails.getMemberId().toString());
 
-            refreshTokenRepository.deleteByMemberId(userDetails.getMemberId());
-            refreshTokenRepository.save(new RefreshToken(refreshToken, userDetails.getMemberId()));
+            refreshTokenService.replace(userDetails.getMemberId(), refreshToken);
 
             return new TokenResponse(accessToken, refreshToken);
         } catch (AuthenticationException e) {
