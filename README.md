@@ -2600,3 +2600,405 @@ http://loki:3100
 | 영화 조회 5xx 오류율 | 요청 중 서버 오류가 얼마나 발생하는가? | 요청량이 달라도 실패 비중을 비교하기 위해 |
 | 영화 조회 p95 응답 시간 | 일부 사용자가 오래 기다리고 있는가? | 평균에서 가려질 수 있는 느린 요청을 확인하기 위해 |
 | CGV 오류 로그 | 해당 시간에 어떤 오류가 발생했는가? | 메트릭에서 발견한 이상을 상세 로그로 조사하기 위해 |
+
+
+# 7주차 미션 정리
+
+
+## 1. 성능 실험 환경 준비
+
+### 1.1. 목적과 범위
+
+쿼리 최적화, 인덱스, 캐싱의 효과를 비교하기 위해 기존 서비스와 구분되는 로컬 실험 환경을 구성한다. 우선 최적화를 적용하지 않은 코드에서 기준값을 수집한다.
+
+
+### 1.2. 실행 구조
+
+| 구성 요소 | 설정 |
+| --- | --- |
+| Java | 설치된 JDK 21을 스크립트가 선택. 시스템 기본 JAVA_HOME은 변경하지 않음 |
+| 앱 프로필 | `perf` |
+| API | `http://127.0.0.1:18080` |
+| Actuator | `http://127.0.0.1:19091` |
+| MySQL | Docker `mysql:8.4`, `127.0.0.1:13306`, DB·사용자 `cgv_perf` |
+| Redis | Docker `redis:7.4-alpine`, `127.0.0.1:16379` |
+| Compose 프로젝트 | `cgv-perf` |
+| MySQL 데이터 저장 | 전용 볼륨 `cgv-perf_mysql-data` |
+
+
+### 1.3. 더미 데이터
+
+| 테이블 | 목표 건수 | 구성 이유 |
+| --- | ---: | --- |
+| movie | 500 | 영화 목록 조회의 반복 측정 |
+| cinema | 10 | 영화관별 데이터 구분 |
+| auditorium | 50 | 영화관당 5개 상영관 |
+| screening | 1,000 | 상영관당 20회차. 1번 영화관 조회 시 100회차·서로 다른 영화 100개 |
+| users | 1,000 | 사용자별 예매 분산. 로그인 불가한 잠금 계정 |
+| reservation | 100,000 | 사용자당 100건, 예매 시각 분산 |
+
+예매 데이터는 조회·인덱스 실험용으로 종료 상태인 `EXPIRED`를 사용한다.
+결제·좌석 예매의 전체 업무 흐름을 재현한 데이터는 아니다.
+결제·동시성 검증에는 기존 테스트의 별도 fixture를 사용한다.
+
+`seed.sql`은 `cgv_perf` DB와 빈 대상 테이블을 확인하고 삽입한다. 기존 행을 삭제하거나 덮어쓰지 않으며, 데이터가 있으면 재실행을 거부한다.
+상영정보의 Hibernate 테이블 기반 ID 시퀀스(`screening_seq`)도 삽입한 ID보다 큰 값으로 조정한다.
+나머지 데이터의 AUTO_INCREMENT 값은 MySQL이 명시적으로 삽입한 ID에 맞춰 증가시킨다.
+
+### 1.4. 실행 방법
+
+프로젝트 루트에서 PowerShell로 실행한다.
+
+```powershell
+# 컨테이너 준비, 비밀값 생성, Java 21 빌드, perf 앱 실행
+.\scripts\perf\Start-Perf.ps1
+
+# 처음 한 번만 데이터 삽입
+.\scripts\perf\Seed-Perf.ps1
+
+# 최적화 전 기준값 수집
+.\scripts\perf\Measure-Perf.ps1 -Label baseline -Warmup 10 -Requests 30
+
+# 앱과 실험 컨테이너 정지. DB 데이터와 비밀값 파일 유지
+.\scripts\perf\Stop-Perf.ps1
+```
+
+
+### 1.5. 측정 조건과 해석
+
+- 대상: `GET /api/movies`, `GET /api/cinemas/1/screenings`.
+- HTTP 시간은 로컬 클라이언트가 응답 본문을 모두 받기까지의 시간이다. 평균, 중앙값, nearest-rank 방식 p95를 기록한다.
+- SQL 메트릭은 앱 전체를 집계하므로 다른 요청 없이 측정한다. 스케줄러 등 다른 DB 작업이 겹치면 다시 측정한다.
+- SQL 출력은 끄고 Hibernate 통계는 켠 동일 조건을 유지한다.
+
+## 2. 트랜잭션 전파 속성 정리와 현재 코드 분석
+
+### 2.1. 트랜잭션 전파란?
+
+트랜잭션 전파는 **호출된 메서드가 호출자의 트랜잭션에 참여할지, 새 트랜잭션을 시작할지, 트랜잭션 없이 실행할지 정하는 규칙**이다.
+
+예를 들어 주문 생성 메서드가 재고 변경 메서드를 호출할 때, 두 작업이 함께 성공하거나 실패해야 한다면 같은 트랜잭션에 참여하도록 설계한다. 반면 이미 실패한 결제의 처리 상태를 별도로 남겨야 한다면 독립적인 트랜잭션이 필요할 수 있다.
+
+- **논리적 트랜잭션 경계:** Spring이 메서드의 `@Transactional` 설정을 적용하는 범위.
+- **물리적 트랜잭션:** DB에서 실제로 커밋·롤백하는 작업 단위.
+- 여러 메서드에 `@Transactional`이 있어도 모두 `REQUIRED`로 참여하면 하나의 물리적 트랜잭션을 공유할 수 있다.
+- 아래 설명은 현재 프로젝트의 동기식 Spring MVC·JPA 호출을 기준으로 한다. 이 방식의 트랜잭션은 새 스레드에 자동 전파되지 않는다.
+
+### 2.2. 전파 속성 7가지 비교
+
+표의 “트랜잭션 없이 실행”은 **해당 경계에서 트랜잭션을 만들지 않는다**는 뜻이다. 하위 메서드에 별도의 트랜잭션 설정이 있다면 그 설정에 따라 트랜잭션이 시작될 수 있다.
+
+| 속성 | 기존 트랜잭션이 있을 때 | 없을 때 | CGV 적용·활용 판단 |
+| --- | --- | --- | --- |
+| `REQUIRED` | 기존 트랜잭션에 참여 | 새 트랜잭션 시작 | 기본값. 주문·재고·결제 대기 정보처럼 함께 반영할 DB 작업 |
+| `REQUIRES_NEW` | 기존 트랜잭션을 일시 중단하고 독립된 새 트랜잭션 시작 | 새 트랜잭션 시작 | 결제 준비, 결과 반영, 오류 상태 기록을 각각 커밋 |
+| `SUPPORTS` | 기존 트랜잭션에 참여 | 트랜잭션 없이 실행 | 현재 명시적 사용 없음. 트랜잭션이 필수가 아닌 작업에서 검토 |
+| `NOT_SUPPORTED` | 기존 트랜잭션을 일시 중단하고 트랜잭션 없이 실행 | 트랜잭션 없이 실행 | `PaymentService`의 외부 PG 통신 구간 |
+| `MANDATORY` | 기존 트랜잭션에 참여 | 예외 발생 | 예매 만료 처리가 호출자의 트랜잭션 안에서 실행됨을 강제 |
+| `NEVER` | 예외 발생 | 트랜잭션 없이 실행 | 현재 명시적 사용 없음. 트랜잭션 안에서 호출되면 안 되는 경계를 강제할 때 검토 |
+| `NESTED` | 같은 물리적 트랜잭션 안에서 savepoint 기반 중첩 범위 사용 | 새 트랜잭션 시작 | 현재 사용 없음. JPA에서 부분 롤백 목적으로 바로 적용하면 안 됨 |
+
+
+### 2.3. 어노테이션을 읽을 때 함께 확인할 설정
+
+현재 코드에서 `@Transactional`만 작성한 메서드는 기본적으로 `REQUIRED`, `readOnly=false`, `isolation=DEFAULT`를 사용한다. 별도의 롤백 규칙이 없으면 `RuntimeException`·`Error`는 롤백 대상이고, checked exception은 기본 롤백 대상이 아니다.
+
+클래스에 `@Transactional(readOnly=true)`가 있더라도 메서드에 별도의 `@Transactional`을 선언하면 그 메서드 설정이 우선한다.
+어노테이션의 속성을 클래스와 메서드에서 하나씩 합치는 것으로 이해하면 안 된다.
+예를 들어 `MovieService.createMovie()`의 `@Transactional`은 쓰기 가능한 기본 `REQUIRED` 설정이다.
+
+| 구분 | 결정하는 내용 | 현재 코드에서의 의미 |
+| --- | --- | --- |
+| `propagation` | 어떤 트랜잭션에 속할지 | `REQUIRED`, `REQUIRES_NEW`, `NOT_SUPPORTED`, `MANDATORY`를 명시적으로 활용 |
+| `isolation` | 동시 작업의 변경을 어떤 수준으로 볼지 | 예매·좌석 조회·결제 DB 단계에 `READ_COMMITTED` 사용 |
+| `readOnly` | 읽기 전용 최적화 힌트 | 일반 조회와 변경 작업의 설정 구분 |
+| 롤백 규칙 | 예외 발생 시 DB 변경을 취소할지 | `BusinessException`은 `RuntimeException`의 하위 타입 |
+
+`readOnly=true`는 쓰기 권한을 차단하는 보안 장치가 아니다.
+실제 처리 방식은 JPA·DB·드라이버에 따라 달라지며, Hibernate의 flush·변경 감지 최적화 등으로 쓰기 의도가 반영되지 않을 수 있다.
+수정 메서드에 조회용 설정을 그대로 적용해서는 안 된다.
+
+또한 `REQUIRED`로 기존 트랜잭션에 참여할 때 내부 메서드의 격리 수준이나 읽기 전용 설정이 기존 트랜잭션을 새 설정으로 바꾸지는 않는다.
+따라서 `READ_COMMITTED` 선언만 보고 모든 호출 경로에서 그 격리 수준이 새로 적용된다고 단정하면 안 된다.
+
+### 2.4. 현재 서비스에 대입한 결과
+
+아래 표는 이번에 보완한 회원정보 수정 메서드를 포함한 소스 기준이다. `DEFAULT`는 DB·트랜잭션 매니저의 기본 격리 수준을 따른다는 뜻이다.
+
+| 대상 코드 | 적용되는 설정 | 분석 결과 |
+| --- | --- | --- |
+| `MovieService`, `CinemaService`의 조회 | `REQUIRED`, 읽기 전용 | 목록·상세 DTO를 만드는 조회 경계로 적절 |
+| 위 서비스의 생성·삭제 | `REQUIRED`, 읽기·쓰기 | 메서드 선언으로 클래스의 읽기 전용 기본값을 재정의 |
+| `AuditoriumService.createAuditorium()` | `REQUIRED`, 읽기·쓰기 | 상영관과 해당 좌석들을 한 단위로 저장 |
+| `MovieFavoriteService`, `CinemaFavoriteService` | 조회는 읽기 전용, 등록·해제는 쓰기 `REQUIRED` | 찜 변경 메서드에 쓰기 경계가 명시되어 있음 |
+| `UserService` | 조회는 읽기 전용, 가입·수정은 쓰기 `REQUIRED` | 수정 메서드의 쓰기 설정 누락을 발견해 보완. 2.8절 참고 |
+| `RefreshTokenService` | 조회는 읽기 전용, 토큰 저장·삭제·만료 정리는 쓰기 `REQUIRED` | 변경 작업에 메서드별 쓰기 경계가 있음 |
+| `PurchaseService.createPurchase()` | `REQUIRED`, 읽기·쓰기, 기본 격리 수준 | 주문·주문 항목·재고 차감·결제 대기 정보를 함께 저장 |
+| `ReservationService.createReservation()` | `REQUIRED`, 읽기·쓰기, `READ_COMMITTED` | 만료 정리 후 예매·좌석 점유·결제 대기 정보를 함께 저장 |
+| `ReservationService.cancelReservation()` | `REQUIRED`, 읽기·쓰기, `READ_COMMITTED` | 미결제 예매와 관련 결제 상태를 같은 경계에서 종료 |
+| `ScreeningService.getSeatsByScreening()` | `REQUIRED`, 읽기·쓰기, `READ_COMMITTED` | 좌석 조회 전에 만료 상태를 변경하므로 읽기 전용으로 바꾸면 안 됨 |
+| `PaymentService`의 공개 메서드 | `NOT_SUPPORTED` | 결제 조율·PG 통신을 자체 DB 트랜잭션 없이 수행 |
+| `PaymentTransactionService.prepareConfirm()`, `prepareCancel()`, `complete()`, `recordError()` | `REQUIRES_NEW`, 읽기·쓰기, `READ_COMMITTED` | 클래스 설정을 적용해 DB 처리 단계별로 독립 커밋 |
+| `PaymentTransactionService.getPayment()` | `REQUIRES_NEW`, 읽기 전용, `READ_COMMITTED` | 메서드 설정으로 결제 이력 조회를 읽기 전용으로 구분 |
+| `PaymentTransactionService.expireUnprocessedReservation()` | `REQUIRED`, 읽기·쓰기, `READ_COMMITTED` | 클래스의 `REQUIRES_NEW` 대신 호출자의 좌석·예매 트랜잭션에 참여 |
+| `ReservationHoldService.expireForScreening()` | `MANDATORY` | 호출자 트랜잭션 없이 만료 작업이 실행되는 것을 방지 |
+| `PurchasePaymentHandler`, `ReservationPaymentHandler` | 자체 선언 없음 | 현재는 `PaymentTransactionService`가 연 트랜잭션 안에서 상태를 변경 |
+| 두 데이터 초기화 클래스의 `run()` | 쓰기 `REQUIRED` | 초기 데이터 삽입을 트랜잭션 경계로 묶음 |
+
+
+
+### 2.5. 결제 승인: NOT_SUPPORTED와 REQUIRES_NEW
+
+```mermaid
+flowchart TD
+    A["PaymentService.confirm / NOT_SUPPORTED"] --> B["prepareConfirm / REQUIRES_NEW<br/>검증·잠금·PROCESSING 저장 후 커밋"]
+    B --> C["토스 승인 요청<br/>활성 DB 트랜잭션 없음"]
+    C -->|정상 응답| D["complete / REQUIRES_NEW<br/>결제·주문 또는 예매·작업 결과 반영 후 커밋"]
+    D --> E["응답 반환"]
+    C -->|오류·결과 불명확| F["recordError / REQUIRES_NEW<br/>실패 또는 UNKNOWN 상태 기록 후 커밋"]
+    D -->|DB 반영 실패| F
+    F --> G["트랜잭션 밖에서 비즈니스 예외 반환"]
+```
+
+핵심 코드는 `PaymentService.confirm()`의 다음 호출이다.
+
+```java
+return execute(transactions.prepareConfirm(username, request, idempotencyKey));
+```
+
+`transactions`는 별도 Spring Bean이므로 프록시를 통과한다. `prepareConfirm()` 호출의 커밋이 성공해 반환된 다음 `execute()`가 PG 통신을 수행한다. 결과 반영도 별도 Bean의 `complete()`를 호출하므로 새로운 트랜잭션 경계가 적용된다.
+
+이 구조에서는 PG 응답을 기다리는 동안 앞선 결제 준비 트랜잭션의 DB 잠금을 유지하지 않는다. 대신 `PROCESSING` 작업 기록을 먼저 커밋해 중복 승인·취소를 통제한다. 단순히 잠금만 풀고 아무 기록도 남기지 않는 구조가 아니다.
+
+현재처럼 `NOT_SUPPORTED` 구간에서 DB 메서드를 호출하면 `REQUIRED`도 새 트랜잭션을 만들 수 있다. 여기의 `REQUIRES_NEW`는 다른 호출 경로가 생겨도 결제 단계가 호출자 트랜잭션에 합쳐지지 않도록 독립성을 명시하는 의미가 있다.
+
+다만 호출자가 이미 트랜잭션을 연 상태라면 `NOT_SUPPORTED`는 그것을 **중단할 뿐 종료하지 않는다.** 외부 트랜잭션이 잡은 연결·잠금은 남아 있을 수 있다. 따라서 외부 주문 트랜잭션을 열어 둔 채 PG 통신까지 감싸는 방식은 피하고, 커밋된 주문을 기준으로 결제 단계를 호출해야 한다. `REQUIRES_NEW`가 중첩되는 경로에서는 추가 연결과 풀 크기도 고려해야 한다. [Spring 전파·연결 풀 설명](https://docs.spring.io/spring-framework/reference/data-access/transaction/declarative/tx-propagation.html)
+
+### 2.6. 예매 만료: REQUIRED와 MANDATORY
+
+```mermaid
+flowchart TD
+    subgraph TX["하나의 물리적 DB 트랜잭션"]
+        A["예매 생성 또는 좌석 조회<br/>REQUIRED · 읽기/쓰기 · READ_COMMITTED"]
+        B["ReservationHoldService.expireForScreening<br/>MANDATORY"]
+        C["PaymentTransactionService.expireUnprocessedReservation<br/>REQUIRED"]
+        D["예매·결제 만료 상태 반영"]
+        E["호출한 서비스로 복귀<br/>새 예매 저장 또는 좌석 응답 구성"]
+        A --> B --> C --> D --> E
+    end
+```
+
+`ReservationHoldService`는 독립적으로 커밋하는 서비스가 아니라, 좌석 조회·예매 생성의 선행 작업이다. 따라서 `MANDATORY`로 기존 트랜잭션을 요구하는 것이 호출 의도를 드러낸다.
+
+그 안에서 호출하는 `expireUnprocessedReservation()`도 메서드에 `REQUIRED`가 명시되어 있다. 클래스 기본값인 `REQUIRES_NEW`로 실행되지 않도록 한 예외 설정이다. 이 메서드의 설정을 제거하면 새 트랜잭션과 별도 연결이 필요해지고, 만료 처리만 독립 커밋되는 등 현재 작업 단위가 달라진다.
+
+현재 구조에서 이후 예매 생성이 실패해 외부 트랜잭션이 롤백되면 같은 경계에서 수행한 만료 변경도 함께 롤백된다. 만료 정리는 다음 요청에서 다시 수행할 수 있다. 반면 좌석 조회가 성공하면 만료 변경도 커밋된다. 따라서 HTTP GET 메서드여도 현재 구현은 쓰기 트랜잭션이 필요하다.
+
+
+
+### 2.7. Self-invocation은 현재 구조에서 어떻게 판단했는가?
+
+기본 프록시 방식에서 같은 객체의 메서드를 직접 호출하면 호출 대상의 `@Transactional` 설정이 새로 적용되지 않는다.
+
+현재 코드는 다음과 같이 구분할 수 있다.
+
+| 호출 | 판단 |
+| --- | --- |
+| `PaymentService` → 주입된 `PaymentTransactionService` | 별도 Bean의 프록시를 통과하므로 단계별 설정 적용 |
+| `ReservationService` 또는 `ScreeningService` → `ReservationHoldService` → `PaymentTransactionService` | 각각 별도 Bean 호출. `MANDATORY`와 메서드의 `REQUIRED` 적용 |
+| `PaymentService` 내부의 `execute()`, `finish()`, `uncertain()` | 별도 트랜잭션 경계를 선언한 메서드가 아님. 필요한 DB 작업은 `transactions.*`로 위임 |
+| 서비스 내부의 `findActiveLocalUser()`, `validateScreeningTime()`, `creatSeats()` 등 | 이미 시작한 서비스 트랜잭션 안의 보조 로직. 현재 별도 전파 속성을 기대하지 않음 |
+
+따라서 **같은 클래스의 메서드를 호출한다는 사실만으로 문제가 되는 것은 아니다.** 내부 메서드의 어노테이션으로 새로운 경계를 만들려고 하는데 프록시를 거치지 않는 경우가 문제다. 결제 DB 처리를 조율 서비스와 별도 Bean으로 둔 현재 분리는 유지한다.
+
+## 3. 최적화 실험 1: 상영정보 조회의 N+1 개선
+
+### 3.1. 대상과 기존 문제
+
+대상은 `GET /api/cinemas/{cinemaId}/screenings`이다. 활성 영화관의 상영정보를 시작 시간 오름차순으로 반환하고, 영화명·영화관명·상영관명을 함께 제공한다.
+
+기존 [ScreeningRepository](src/main/java/com/ceos24/cgv/domain/screening/repository/ScreeningRepository.java)는 `Screening` 목록을 조회했다.
+이후 [ScreeningResponse.from()](src/main/java/com/ceos24/cgv/domain/screening/dto/response/ScreeningResponse.java)이 지연 로딩된 `movie`, `auditorium`, `auditorium.cinema`의 이름을 읽으면서 추가 SQL이 실행됐다.
+
+변경 전 MySQL이 수집한 정규화 SQL에서는 조건을 처리하기 위한 `auditorium`, `cinema` 조인은 있었지만, SELECT 목록에는 상영정보 컬럼만 있었다.
+
+실험 데이터에서 1번 영화관의 응답은 상영정보 100개, 서로 다른 영화 100개, 상영관 5개, 영화관 1개였다. 실제 HTTP 요청당 SQL 준비 횟수는 108회였다.
+코드와 데이터 구성으로 보면 존재 확인 1회 + 상영정보 목록 1회 + 영화 100개 + 상영관 5개 + 영화관 1개의 조회와 일치한다. 같은 연관 엔티티를 반복 참조하면 1차 캐시가 재사용되므로 항상 `1 + 결과 행 수`로만 계산되는 것은 아니다.
+
+### 3.2. 적용한 방법과 선택 이유
+
+상영정보 조회 메서드에 필요한 연관 엔티티를 함께 가져오는 fetch join 쿼리를 지정했다.
+
+```java
+@Query("""
+        select s
+        from Screening s
+        join fetch s.movie
+        join fetch s.auditorium a
+        join fetch a.cinema c
+        where c.id = :cinemaId
+        order by s.startsAt asc
+        """)
+List<Screening> findAllByAuditorium_Cinema_IdOrderByStartsAtAsc(
+        @Param("cinemaId") Long cinemaId);
+```
+
+`s.movie`, `s.auditorium`, `a.cinema`를 fetch join하면 해당 조회에서 연관 엔티티도 함께 로딩한다.
+DTO 변환 때 이름을 읽어도 추가 SELECT가 필요하지 않도록 하는 방식이다.
+
+영화·상영관·영화관 연결은 DB에서 NOT NULL FK로 보장하므로 inner fetch join을 사용했다.
+
+`@EntityGraph(attributePaths={"movie", "auditorium.cinema"})`도 검토하고 실행했다. SQL은 2회로 줄었지만 이 파생 쿼리와 현재 Hibernate 조합에서는 `auditorium`, `cinema`에 조건용 조인과 로딩용 조인이 중복 생성됐다. 최종 구현은 **영화·상영관·영화관을 각각 한 번 조인하는 명시적 fetch join**으로 정리했다. 이는 EntityGraph가 항상 중복 조인을 만든다는 뜻이 아니라 이번에 수집한 SQL에 따른 선택이다.
+
+
+### 3.3. 회귀 테스트
+
+[ScreeningServiceQueryIntegrationTest](src/test/java/com/ceos24/cgv/domain/screening/service/ScreeningServiceQueryIntegrationTest.java)를 추가했다.
+실제 Spring 서비스 프록시·Spring Data JPA Repository·Hibernate·H2를 사용하고, fixture 저장 트랜잭션이 끝난 뒤 새 서비스 트랜잭션에서 조회한다.
+
+| 검증 | 내용 |
+| --- | --- |
+| 회차 수 1·10·100개 | 각 회차에 다른 영화·상영관을 연결해 결과 수가 증가해도 조회 SQL이 일정한지 확인 |
+| 응답 내용·정렬 | DTO의 모든 필드가 예상값과 일치하고, 역순으로 넣은 회차가 시작 시간 오름차순으로 나오는지 확인 |
+| 영화관 조건 | 다른 영화관의 회차를 함께 저장한 상태에서 대상 영화관 데이터만 반환하는지 확인 |
+| 빈 목록 | 활성 영화관에 회차가 없으면 빈 목록 반환 |
+| 기존 오류 | 존재하지 않는 영화관·비활성 영화관은 `CINEMA_NOT_FOUND` 유지 |
+
+개선 전 회차 수 1·10·100개에서 각각 **5·23·203회**의 SQL이 발생해 2회 조건을 만족하지 못했다.
+
+### 3.4. 변경 전후 측정 방법
+
+기존 `cgv_perf` 데이터를 그대로 사용하고, 양쪽 모두 앱·MySQL을 재시작한 뒤 동일한 스크립트로 측정한다. 빌드·테스트가 끝난 상태에서 엔드포인트마다 준비 요청 10회 후 순차 요청 30회를 실행한다.
+
+```powershell
+# 변경 전 코드에서
+.\scripts\perf\Measure-Perf.ps1 -Label query-before -Warmup 10 -Requests 30
+
+# 코드 변경·테스트·재빌드·재시작 후
+.\scripts\perf\Measure-Perf.ps1 -Label query-after -Warmup 10 -Requests 30
+```
+
+SQL 수는 앱의 `cgv.perf.sql.prepared` 메트릭 차이로 확인하고, 실제 생성된 목록 SQL의 형태는 MySQL `performance_schema.events_statements_summary_by_digest`에서 수집한다.
+SQL digest의 `COUNT_STAR`는 DB 시작 이후 누적값이며 HTTP 요청당 SQL 수와 구분한다. 응답 JSON도 별도로 저장해 값과 정렬을 비교한다.
+
+### 3.5. 최종 실측 결과
+
+
+| 상영정보 조회 지표 | 변경 전 | 최종 fetch join 적용 후 | 변화 |
+| --- | ---: | ---: | --- |
+| 평균 응답 시간 | 153.620 ms | 14.091 ms | 약 90.83% 감소 |
+| 중앙값 | 152.187 ms | 12.603 ms | 감소 |
+| p95 | 203.570 ms | 18.495 ms | 약 90.91% 감소 |
+| 요청당 SQL 준비 횟수 | 108 | 2 | 약 98.15% 감소 |
+| 측정 요청 30건의 SQL 준비 횟수 합 | 3,240 | 60 | 감소 |
+| 응답 건수 | 100 | 100 | 동일 |
+| 응답 본문 크기 | 21,642 bytes | 21,642 bytes | 동일 |
+
+최종 SQL digest에는 `movie`, `auditorium`, `cinema`가 각각 한 번 조인되고, 응답을 만드는 데 필요한 연관 컬럼이 SELECT 목록에 포함되어 있었다. 영화관 조건과 `ORDER BY starts_at`도 확인했다. 연관 데이터를 읽는 추가 SELECT가 줄어 전체 요청은 존재 확인 1회와 목록 조회 1회로 처리됐다.
+
+응답 검증에서는 다음이 모두 일치했다.
+
+- 응답 상태 코드·메시지와 상영정보 100건의 모든 필드.
+- 상영정보 ID 100개의 중복 없는 반환과 시작 시간 오름차순.
+- 변경 전후 전체 응답 본문의 SHA-256. 이번 실험 데이터에서는 동일 시각 회차를 포함한 순서도 일치했다.
+- 이번에 수정하지 않은 서비스·응답 DTO·seed 스크립트의 파일 해시. Repository 쿼리와 빌드된 JAR의 해시는 달라졌다.
+
+## 4. 최적화 실험 2: 영화 목록 Redis 캐시
+
+### 4.1. 캐싱할 데이터와 선택 이유
+
+대상은 `GET /api/movies`가 반환하는 전체 영화 목록이다. 사용자별로 다른 정보가 없고, 영화명·개봉일은 좌석 점유나 결제 상태보다 변경 빈도가 낮다. 따라서 여러 사용자가 동일한 목록을 반복 조회할 때 DB 조회와 DTO 변환을 줄일 수 있는 대상으로 선택했다.
+
+### 4.2. 캐시 전략과 키·TTL
+
+| 항목 | 적용한 정책 |
+| --- | --- |
+| 읽기 전략 | Look-Aside: Redis 조회 → 미스이면 DB 조회 → 결과를 Redis에 저장 |
+| 쓰기 전략 | DB 변경 후 커밋이 성공하면 목록 캐시 삭제. 다음 읽기에서 다시 채움 |
+| 캐시 이름 | `movies:list` |
+| 메서드 키 | `all` — 현재 목록 API에는 검색·페이지·사용자별 조건이 없음 |
+| 실제 Redis 키 | `cgv:v1:movies:list::all` |
+| TTL | 기본 300초, 즉 5분. `cgv.cache.movie-list-ttl-seconds`로 조정 가능 |
+| 키 접두사 | `cgv:v1:`. `cgv.cache.key-prefix`로 조정 가능 |
+| 값 | ID 오름차순으로 정렬한 영화 응답 DTO 목록 |
+| 빈 목록·null | 빈 목록도 캐싱하고 null 값은 저장하지 않음 |
+| 갱신·무효화 | `createMovie()`, `deleteMovie()` 성공 커밋 후 같은 목록 키 삭제 |
+
+캐시 히트 때 TTL을 연장하는 방식은 사용하지 않는다.
+5분은 이번 영화 기본정보 실험의 초기값이며, 변경 빈도와 오래된 목록 허용 범위에 따라 조정할 수 있다.
+영화 정보의 일시적인 지연은 허용하는 대상으로 잡고, 좌석·재고·결제 상태는 이번 캐시 대상에 포함하지 않았다.
+
+### 4.3. 구현 내용
+
+- [MovieService](src/main/java/com/ceos24/cgv/domain/movie/service/MovieService.java)의 `getMovies()`에 `@Cacheable` 적용.
+- 영화 생성·삭제에는 동일 키의 `@CacheEvict` 적용.
+- [MovieCacheConfig](src/main/java/com/ceos24/cgv/global/config/MovieCacheConfig.java)에 JSON 직렬화·TTL·트랜잭션 연동·통계 설정.
+- [CacheNames](src/main/java/com/ceos24/cgv/global/cache/CacheNames.java)에 캐시 이름 정의.
+- `cgv.cache.hits`, `cgv.cache.misses` 메트릭으로 해당 앱의 적중·미적중 횟수 제공.
+
+```mermaid
+flowchart LR
+    A["영화 목록 요청"] --> B["Redis 조회"]
+    B -->|Hit| F["DTO 목록 반환"]
+    B -->|Miss| C["DB 조회 및 DTO 변환"]
+    C --> D["조회 트랜잭션 종료"]
+    D --> E["Redis에 JSON 저장 / TTL 5분"]
+    E --> F
+```
+
+Spring의 캐시 advice를 서비스 트랜잭션 advice보다 먼저 실행하도록 순서를 지정했다. 따라서 캐시 적중 시에는 서비스 메서드를 실행하지 않고 캐시에서 응답한다. 미스이면 기존 ID 오름차순 조회와 DTO 변환을 실행한다.
+
+`RedisCacheManager.transactionAware()`로 외부 트랜잭션에 참여한 경우에도 실제 커밋 후 캐시 변경을 수행하도록 했다.
+메서드가 정상 반환했더라도 외부 트랜잭션이 나중에 롤백되거나 커밋에 실패하면 기존 캐시를 유지한다.
+
+### 4.4. 실행 환경과 재현 방법
+
+`perf` 프로필은 실험용 Redis `127.0.0.1:16379`에 연결하고 캐시를 활성화한다. 일반 프로필의 기본 `spring.cache.type`은 `none`으로 두었으며, Redis 연결을 준비한 환경에서는 `CACHE_TYPE=redis`로 활성화할 수 있다. 이번 실험에 새 외부 API 키는 필요하지 않다.
+
+캐시 비활성·미스·히트를 같은 JAR과 영화 500개 데이터로 비교한다. 실행 중인 앱을 정지한 뒤 다음과 같이 모드를 선택해 시작할 수 있다.
+
+```powershell
+# 같은 빌드에서 캐시를 끄고 실행
+.\scripts\perf\Stop-Perf.ps1
+.\scripts\perf\Start-Perf.ps1 -SkipBuild -CacheType None
+.\scripts\perf\Measure-MovieCache.ps1 -Mode Disabled -Warmup 10 -Requests 30
+
+# 캐시를 켜고 실행
+.\scripts\perf\Stop-Perf.ps1
+.\scripts\perf\Start-Perf.ps1 -SkipBuild -CacheType Redis
+.\scripts\perf\Measure-MovieCache.ps1 -Mode Miss -Warmup 10 -Requests 30
+.\scripts\perf\Measure-MovieCache.ps1 -Mode Hit -Warmup 10 -Requests 30
+.\scripts\perf\Measure-MovieCache.ps1 -Mode Mixed -Warmup 10 -Requests 30
+```
+
+`Miss`는 요청마다 전용 영화 목록 키만 삭제하고 조회한다. 삭제 명령의 시간은 HTTP 응답 시간에 포함하지 않는다. `Hit`는 사전 적재 후 측정하고, `Mixed`는 준비 요청 뒤 키를 한 번 삭제해 첫 요청 미스와 나머지 히트를 확인한다. 다른 사용자의 요청이 섞이지 않은 순차 요청 기준이다.
+
+### 4.5. 실제 측정 결과
+
+
+먼저 준비 요청 10회 뒤 순차 요청 30회로 비교했다.
+
+| 모드 | 평균 응답 시간 | p95 | 측정 구간 SQL 합 | 요청당 SQL | 적중 / 미적중 | 적중률 |
+| --- | ---: | ---: | ---: | ---: | --- | --- |
+| 캐시 비활성 | 15.243 ms | 20.405 ms | 30 | 1 | 해당 없음 | 해당 없음 |
+| 매번 캐시 미스 | 30.273 ms | 42.045 ms | 30 | 1 | 0 / 30 | 0% |
+| 캐시 히트 | 22.307 ms | 42.708 ms | 0 | 0 | 30 / 0 | 100% |
+| 첫 요청 미스 후 반복 조회 | 10.206 ms | 12.195 ms | 1 | 약 0.033 | 29 / 1 | 96.67% |
+
+초기 측정에서는 히트와 혼합 모드의 시간 차이가 컸고, 히트 평균도 비활성보다 느리게 나왔다.
+따라서 초기 결과를 그대로 남기고, 예열·로컬 실행 환경의 영향을 더 확인하기 위해 준비 요청을 50회로 늘려 순차 요청 100회를 추가 비교했다.
+
+| 추가 검증: 준비 50회·측정 100회 | 캐시 비활성 | 캐시 히트 |
+| --- | ---: | ---: |
+| 평균 응답 시간 | 18.949 ms | 10.031 ms |
+| 중앙값 | 18.275 ms | 9.795 ms |
+| p95 | 23.743 ms | 12.550 ms |
+| 요청당 SQL | 1 | 0 |
+| 측정 구간 SQL 합 | 100 | 0 |
+| 측정 구간 적중·미적중 | 해당 없음 | 100 / 0 |
+| 적중률 | 해당 없음 | 100% |
+
+추가 검증의 동일 조건 두 행을 기준으로 평균 시간은 약 **47.06%**, p95는 약 **47.14%** 줄었다. SQL 수 감소는 두 측정 모두에서 확인됐지만, 절대 응답 시간과 감소율은 이번 로컬 환경의 결과이다. 특히 미스는 DB 조회에 Redis 확인·JSON 저장 비용까지 추가되므로, 캐시 적중률과 추가 비용을 함께 봐야 한다.
+
+혼합 모드의 96.67%는 “같은 키를 30번 읽고 처음 한 번만 미스”인 반복 조회 시나리오의 값이다. 실제 사용자 트래픽의 적중률을 측정한 값으로 해석하지 않는다. 적중·미적중 메트릭도 Redis 서버 전체가 아닌 해당 앱의 캐시 통계이다.
+
