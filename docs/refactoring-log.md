@@ -3229,3 +3229,45 @@ A안은 바로 처리한다. 원래 요청의 T2와 겹쳐도 행 잠금 + `IN_P
 | `AuthService` | 트랜잭션 어노테이션 제거, 이유 주석 |
 | `AuthServiceTransactionTest`(신규) | 해싱 순간 커넥션·트랜잭션 확인. 전체 504개 통과 |
 | `README.md` | 「트랜잭션 분석」 절, 「트랜잭션 전파 속성」의 AuthService 행 수정 |
+
+## 7주차 과제 4: 성능 최적화 — 인덱스 · 쿼리 · 캐시
+
+실험 데이터(`docs/perf/seed.sql`: 회차 약 13만, 예매 약 52만, 예매 좌석 약 104만 행)를 넣고 건마다 전후를 쟀다. 인덱스·쿼리는 사용자가 MySQL Workbench에서 `EXPLAIN ANALYZE`로, 캐시는 k6로 측정했다.
+
+### 결정 1 — 회차 검색에 `screening (movie_id, start_at)` 인덱스 (엔티티 변경, 사용자 승인)
+
+- 외래 키 인덱스(`movie_id`)만으로는 그 영화의 90일치 회차를 읽고 날짜를 거른다. 등호 → 범위 순서로 복합 인덱스를 둔다
+- 영화+날짜: `ref` → `range`, `key_len` 8 → 16, 16.5ms → 0.67ms. 날짜만: 748 → 738ms로 변화 없음(왼쪽 접두가 아님). `start_at` 단일 인덱스는 영화를 먼저 고르는 흐름이 대부분이라 넣지 않았다
+- `(? IS NULL OR m.movie_id = ?)` 선택 조건은 Connector/J의 클라이언트 측 바인딩으로 리터럴이 되어 상수 접힘 → 인덱스 사용에 문제 없음을 확인
+- 비용: 4.52MB. 기존 `movie_id` 단일 인덱스(3.52MB)를 대신해 실제 증가분은 약 1MB
+
+### 결정 2 — 좌석 선점의 점유 확인을 요청 좌석으로 좁힌다
+
+- 2석 확인에 회차 점유 좌석 전부(최대 264행)를 읽고 행마다 예매를 조인했다. 부하 테스트에서 CPU 병목이던 경로다
+- `findOccupiedPositionsAmong`: `row_num * 100 + col_num IN (...)` 조건이 유니크 인덱스 안에서 걸러진다(인덱스 조건 푸시다운). 220석이 찬 회차에 빈 2석: 인덱스에서 넘긴 행 220 → 0, 예매 조인 220회 → 실행 안 됨, 11.6ms → 0.154ms
+- 배치도 조회는 회차 전체가 필요해 기존 쿼리를 둔다. `ReservationConcurrencyTest`의 게이트 대상 메서드도 새 메서드로 바꿨다
+
+### 결정 3 — 영화 목록에 Caffeine 로컬 캐시 (1분, sync)
+
+- 요청마다 예매 좌석 전체를 집계한다(실험 데이터에서 약 8.4초). 서버 1대라 로컬 캐시, Redis는 범위 밖
+- 키 하나, `expireAfterWrite` 60초, `sync = true`. 예매 확정 때 지우지 않는다(몰리는 순간 적중률 0). 좌석 판단 값은 캐시하지 않는다
+- 테스트 설정은 `spring.cache.type: none`(테스트끼리 캐시 공유 방지), `MovieServiceCacheTest`만 켠다
+- 측정: 적중 14~89ms / 미적중 6.2~7.9초. k6 초당 1 → 10 → 50건: 캐시 없음은 26초 만에 풀 고갈로 중단(정상 응답 0), 캐시 적용은 5xx 0·중앙값 3.44ms·적중률 99.9%
+- 남은 문제: p95 7.12초. 만료 순간 한 요청이 8초 집계하는 동안 나머지가 모두 기다린다. 해법 후보는 `refreshAfterWrite`(미리 갱신, 그동안 이전 값). 이번에는 구현하지 않음
+
+### 측정 중 실수
+
+- 첫 k6 실행에서 `docker compose run`이 `CACHE_TYPE` 없이 앱을 기본 설정(캐시 켜짐)으로 다시 만들어, 실험 데이터도 지워진 상태로 쟀다. 결과를 버리고 `--no-deps`로 다시 쟀다. 매 측정 전 앱의 `SPRING_CACHE_TYPE`과 행 수를 확인했다
+- Workbench는 30초 넘는 쿼리를 끊는다. 좌석 100만 행 INSERT를 4번으로 나눴다
+
+### 변경 파일
+
+| 파일 | 내용 |
+|---|---|
+| `Screening` | 복합 인덱스 |
+| `ReservationSeatRepository`, `ReservationService` | 요청 좌석만 보는 점유 확인 |
+| `build.gradle`, `application.yaml`, `CacheConfig`(신규), `MovieService` | 캐시 |
+| 테스트 | `MovieServiceCacheTest`(신규), `ReservationServiceTest`·`ReservationConcurrencyTest` 수정, 테스트 설정 캐시 끔. 전체 506개 통과 |
+| `docs/perf/` | 실험 데이터·측정 SQL |
+| `loadtest/scripts/movies.js`, `docker-compose.loadtest.yml` | 캐시 측정 시나리오, `CACHE_TYPE` |
+| `README.md` | 「성능 최적화」 절, 측정 스크린샷(`docs/images/perf/`) |
