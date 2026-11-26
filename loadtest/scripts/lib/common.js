@@ -17,13 +17,22 @@ http.setResponseCallback(http.expectedStatuses({ min: 200, max: 399 }, 409));
 
 const JSON_HEADERS = { 'Content-Type': 'application/json' };
 
-export const serverErrors = new Rate('server_errors');
+const serverErrors = new Rate('server_errors');
+// 응답을 못 받은 요청(연결 거부·끊김·k6 타임아웃)은 status가 0이라 5xx 조건에 걸리지 않는다.
+// 5xx와 섞지 않는 이유: 앱이 오류로 답한 것과 답조차 못 한 것은 원인이 달라 요약에서 갈라 봐야 한다.
+const noResponses = new Rate('no_response');
 export const seatHoldResult = new Counter('seat_hold_result');
 
-// 판정 기준은 5xx 0건. 409·401은 업무상 정상일 수 있어 http_req_failed로는 판정하지 않는다.
+// 판정 기준은 5xx 0건, 무응답 0건. 409·401은 업무상 정상일 수 있어 http_req_failed로는 판정하지 않는다.
 export const COMMON_THRESHOLDS = {
   server_errors: ['rate==0'],
+  no_response: ['rate==0'],
 };
+
+export function recordErrors(res) {
+  serverErrors.add(res.status >= 500);
+  noResponses.add(res.status === 0);
+}
 
 export function loginId(n) {
   return `loadtest${String(n).padStart(4, '0')}`;
@@ -32,7 +41,7 @@ export function loginId(n) {
 export function login(id, tags = { name: 'POST /api/auth/login' }) {
   const res = http.post(`${BASE_URL}/api/auth/login`,
     JSON.stringify({ loginId: id, password: PASSWORD }), { headers: JSON_HEADERS, tags });
-  serverErrors.add(res.status >= 500);
+  recordErrors(res);
   return res.status === 200 ? res.json('data.accessToken') : null;
 }
 
@@ -96,7 +105,7 @@ export function pickScreening() {
 export function viewSeatMap(screeningId) {
   const res = http.get(`${BASE_URL}/api/screenings/${screeningId}/seats`,
     { tags: { name: 'GET /api/screenings/{id}/seats' } });
-  serverErrors.add(res.status >= 500);
+  recordErrors(res);
   return res;
 }
 
@@ -105,7 +114,7 @@ export function holdSeats(token, screeningId, seats) {
   const res = http.post(`${BASE_URL}/api/reservations`,
     JSON.stringify({ screeningId, seats }),
     { headers: auth(token), tags: { name: 'POST /api/reservations' } });
-  serverErrors.add(res.status >= 500);
+  recordErrors(res);
   let result = 'other';
   if (res.status === 201) {
     result = 'created';

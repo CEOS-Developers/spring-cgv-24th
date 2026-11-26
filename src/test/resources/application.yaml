@@ -4,6 +4,9 @@ spring:
     username: sa
     password:
     driver-class-name: org.h2.Driver
+  # 테스트끼리 캐시된 영화 목록을 나눠 보면 앞 테스트의 데이터가 남는다. 캐시 동작은 MovieServiceCacheTest만 켜서 본다.
+  cache:
+    type: none
   jpa:
     hibernate:
       ddl-auto: create-drop

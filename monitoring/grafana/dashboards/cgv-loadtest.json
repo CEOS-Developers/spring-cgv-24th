@@ -208,8 +208,8 @@
     },
     {
       "type": "timeseries",
-      "title": "좌석 선점 결과 / 5xx",
-      "description": "created=선점 성공, already_reserved=경쟁에서 짐(정상 409), conflict=락 대기 3초 초과(409), other=그 밖. 5xx는 0이어야 한다.",
+      "title": "좌석 선점 결과 / 5xx·무응답",
+      "description": "created=선점 성공, already_reserved=경쟁에서 짐(정상 409), conflict=락 대기 3초 초과(409), other=그 밖. 5xx와 무응답(연결 거부·끊김·타임아웃, k6 status 0)은 0이어야 한다.",
       "id": 6,
       "datasource": {
         "type": "prometheus",
@@ -241,6 +241,16 @@
           "legendFormat": "5xx",
           "refId": "B",
           "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(rate(k6_http_reqs_total{status=\"0\",phase!=\"setup\"}[$__rate_interval]))",
+          "legendFormat": "무응답",
+          "refId": "C",
+          "range": true
         }
       ],
       "fieldConfig": {
@@ -267,6 +277,21 @@
                 "value": {
                   "mode": "fixed",
                   "fixedColor": "red"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "무응답"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
                 }
               }
             ]

@@ -13,6 +13,9 @@ import java.time.LocalDateTime;
 
 @Getter
 @Entity
+// 회차 검색은 "이 영화의 이 날짜"를 찾는다. 외래 키 인덱스(movie_id)만으로는 그 영화의 모든 날짜를 읽고 거른다.
+// 등호 조건을 앞에, 범위 조건을 뒤에 둔다. 왼쪽 접두가 movie_id라 외래 키 인덱스 역할도 대신한다.
+@Table(indexes = @Index(name = "idx_screening_movie_start", columnList = "movie_id, start_at"))
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Screening extends BaseTimeEntity {
 

@@ -45,6 +45,22 @@ public interface ReservationSeatRepository extends JpaRepository<ReservationSeat
                                                                     @Param("pending") ReservationStatus pending,
                                                                     @Param("now") LocalDateTime now);
 
+    // 좌석 선점의 점유 확인용. 배치도처럼 회차 전체가 필요하지 않다. 좌석 조건이 인덱스 안에서 먼저 걸러져
+    // 예매 조인이 회차의 점유 좌석 수만큼이 아니라 요청한 좌석 수만큼만 일어난다.
+    @Query("""
+            SELECT rs.rowNum AS rowNum, rs.colNum AS colNum
+            FROM ReservationSeat rs
+            JOIN rs.reservation r
+            WHERE rs.screening.id = :screeningId
+              AND rs.releaseKey = 0
+              AND rs.rowNum * 100 + rs.colNum IN :seatKeys
+              AND (r.status <> :pending OR r.expiresAt > :now)
+            """)
+    List<SeatPositionProjection> findOccupiedPositionsAmong(@Param("screeningId") Long screeningId,
+                                                            @Param("seatKeys") List<Integer> seatKeys,
+                                                            @Param("pending") ReservationStatus pending,
+                                                            @Param("now") LocalDateTime now);
+
     interface SeatPositionProjection {
         int getRowNum();
         int getColNum();

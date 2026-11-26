@@ -23,13 +23,14 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Propagation;
-import org.springframework.transaction.annotation.Transactional;
 
+// 트랜잭션을 열지 않는다(readOnly 포함). 비밀번호 해싱·비교(BCrypt)는 요청마다 CPU를 수십 ms 쓰는데,
+// 트랜잭션 안에서 하면 그동안 DB 커넥션을 쥐어 CPU가 바쁠 때 풀이 먼저 마른다. DB 작업은 저장소와
+// RefreshTokenService가 각자 짧은 트랜잭션으로 한다. SUPPORTS도 안 된다. 빈 트랜잭션 범위가 EntityManager를
+// 메서드 끝까지 묶어, 트랜잭션 없이 실행된 쿼리(existsByLoginId)가 잡은 커넥션을 해싱 동안 놓지 않는다.
 @Slf4j
 @Service
 @RequiredArgsConstructor
-@Transactional(readOnly = true)
 public class AuthService {
 
     private final UserRepository userRepository;
@@ -39,7 +40,6 @@ public class AuthService {
     private final RefreshTokenProvider refreshTokenProvider;
     private final RefreshTokenService refreshTokenService;
 
-    @Transactional
     public SignupResponse signup(SignupRequest req) {
         if (userRepository.existsByLoginId(req.loginId())) {
             throw new CustomException(ErrorCode.DUPLICATE_LOGIN_ID);
@@ -66,7 +66,6 @@ public class AuthService {
         return SignupResponse.from(user);
     }
 
-    @Transactional
     public TokenResponse login(LoginRequest req) {
         Authentication authentication;
         try {
@@ -87,8 +86,6 @@ public class AuthService {
 
     // 잠금 대기 초과는 트랜잭션이 끝난 뒤에 바꾼다. 안에서 잡으면 트랜잭션이 이미 롤백 전용인지가 저장소 메서드의
     // 트랜잭션 설정과 DB 오류 분류에 달려 있고, 롤백 전용이면 커밋 시점에 UnexpectedRollbackException(500)이 된다.
-    // SUPPORTS인 이유: 스스로 트랜잭션을 열지 않되, 바깥 트랜잭션이 있으면(시나리오 테스트) 합류해 미커밋 데이터를 본다.
-    @Transactional(propagation = Propagation.SUPPORTS)
     public TokenResponse reissue(TokenReissueRequest req) {
         try {
             return refreshTokenService.reissue(req.refreshToken());
@@ -101,7 +98,6 @@ public class AuthService {
 
     // 없는 토큰이어도 실패로 알리지 않는다. 클라이언트는 어차피 가진 토큰을 버리므로 알려도 할 일이 없다.
     // 이 토큰으로 발급된 액세스 토큰은 만료 전까지 계속 유효하다. 막으려면 액세스 토큰 차단 목록이 필요하다.
-    @Transactional
     public void logout(LogoutRequest req) {
         refreshTokenService.revokeFamilyOf(req.refreshToken());
     }

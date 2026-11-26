@@ -3156,3 +3156,118 @@ A안은 바로 처리한다. 원래 요청의 T2와 겹쳐도 행 잠금 + `IN_P
 | `ErrorCode` | `PAYMENT_KEY_ALREADY_USED` |
 | 테스트 | `ReservationServiceTest` 1, `ReservationAdminControllerTest` 2, `ReservationControllerTest` 1, `TossPaymentsClientTest` 3 추가. 전체 490개 통과 |
 | `README.md`, `docs/toss-payments-guide.md` | 분류 표 갱신 |
+
+## 6주차 PR(#50) 코드 리뷰 반영
+
+리뷰 지적 3건(9dongs 2건, kkangmen 1건)을 코드와 대조했다. 2건은 고쳤고, 1건은 앞부분(인덱스)을 보류하고 뒷부분(커넥션 대기)만 고쳤다.
+
+### 결정 1 — k6 판정에 무응답 요청을 넣는다. 5xx와는 따로 센다 (9dongs P3)
+
+- 응답을 못 받으면 k6 `res.status`가 0이라 `res.status >= 500`에 걸리지 않았다. `BASE_URL=http://127.0.0.1:1`로 재현해 보니 요청 3건이 모두 연결 거부였는데 `server_errors` 0%로 통과했고, 종료 코드도 0이었다
+- `no_response` Rate와 `rate==0` 임계값을 추가했다. 같은 실행이 이제 종료 코드 99로 실패한다. 기록은 `recordErrors(res)` 한 곳으로 모아, 세 군데에 반복되던 `serverErrors.add` 줄을 대신한다
+- `server_errors`에 섞지 않았다. 앱이 오류로 답한 것(예: 커넥션 획득 실패 500)과 답조차 못 한 것(톰캣 큐 초과·연결 거부·타임아웃)은 원인과 대처가 달라, 요약에서 따로 봐야 한다
+- 부하 테스트 대시보드의 "좌석 선점 결과" 패널에도 무응답(`status="0"`) 시리즈를 넣었다. 기존 측정 결과는 고치지 않았다. 당시 p95가 3초 안팎이라 60초 타임아웃은 없었을 가능성이 크다
+
+### 결정 2 — 5xx 비율은 요청이 없을 때 "요청 없음"으로 표시한다 (9dongs P4)
+
+- 리뷰의 전제("No data가 뜬다")와는 조금 달랐다. `noValue: "0"`이 이미 있어 "0"이 떴다. 오히려 그 때문에 요청이 전혀 없을 때(앱이 죽은 경우 포함)도 초록색 0으로 보였다
+- 분자에 `or vector(0)`, 분모에 `> 0`을 붙이고 `noValue`를 "요청 없음"으로 바꿨다. 앱을 새로 띄워 확인했다. 2xx만 있으면 새 식은 `0`, 기존 식은 빈 값이었고, 요청이 없으면 둘 다 빈 값이다
+- `or`는 PromQL에서 우선순위가 가장 낮아 분자를 괄호로 묶어야 한다. 괄호가 없으면 `A or (vector(0) / B)`가 된다
+
+### 결정 3 — 결제 게이지를 수집 요청과 떼어 낸다 (kkangmen P2 뒷부분)
+
+- 리뷰 지적("커넥션이 바닥나면 값이 빈다")이 실제로 일어났다. 11-17 좌석 선점 피크(23:24~23:25)의 Prometheus 기록을 보면 수집 시간이 3.3~5.0초였고, 5초 제한에 걸린 3번은 `up=0`이었다. 수집 하나가 통째로 빠져 커넥션·요청 지표까지 비었다. 23:24:55에는 `overdue` 게이지가 NaN이었다(커넥션 3초 대기 실패)
+- 게이지 2개가 수집 중에 각각 커넥션을 최대 3초(`connection-timeout`) 기다려, 수집 1회가 최대 6초까지 걸릴 수 있었다. 인덱스로는 해결되지 않는다
+- `CachedPaymentCounts`: 수집이 갱신을 깨우고, 갱신은 가상 스레드 하나에서 돈다(한 번에 하나). 수집 응답에는 직전에 센 값을 바로 돌려준다. 실패하면 직전 값을 유지하고, 1분 넘게 못 세면 NaN을 반환한다
+- `@Scheduled`를 쓰지 않았다. 스케줄러가 단일 스레드라 토스 호출(읽기 60초)이 있는 정리 작업 뒤에 밀리고, 테스트에서는 스케줄링이 꺼져 있다. 수집이 갱신을 깨우는 방식이라, 수집하지 않는 운영에서는 조회가 지금처럼 0번이다
+- 재측정: 같은 `seat-hold.js`를 다시 돌렸다. 풀 대기 최대 182로 11-17(약 180)과 같은 수준이었다. 수집 시간은 최대 0.98초(이전 5.0초), `up=0`은 0번(이전 3번), 게이지 NaN은 0번이었다. 수집 누락의 주원인은 게이지였고, CPU·톰캣 스레드 몫은 1초 이내였다. 관리 포트 분리는 지금은 필요 없다
+
+### 반영하지 않은 것 — `payment (status, approval_started_at)` 인덱스 (kkangmen P2 앞부분)
+
+- 지적은 맞다. 게이지 2개와 결과 불명 정리 조회 4종이 같은 조건으로 표 전체를 읽는다
+- 운영은 `/actuator/prometheus`를 열지 않아 게이지 조회가 돌지 않고, 정리 조회도 결제 표가 작아 비용이 없다. 엔티티를 바꿔야 하므로 사용자 결정으로 보류했다. 운영 수집을 붙이거나 결제가 쌓이면 추가한다(README 한계에 기록)
+
+### 변경 파일
+
+| 파일 | 내용 |
+|---|---|
+| `loadtest/scripts/lib/common.js`, `seat-hold.js` | `no_response`, `recordErrors` |
+| `monitoring/grafana/dashboards/cgv-loadtest.json` | 무응답 시리즈 |
+| `monitoring/grafana/dashboards/cgv.json` | 5xx 비율 식, `noValue` |
+| `CachedPaymentCounts`(신규), `PaymentMetricsConfig` | 게이지를 수집 요청과 분리 |
+| 테스트 | `CachedPaymentCountsTest` 4개 추가. 전체 502개 통과 |
+| `README.md` | 판정 기준, 5xx 패널 선택 이유, 게이지 설명, 부하 테스트 해석 5, 한계(인덱스 보류) |
+## 7주차 과제 2: 트랜잭션 분석 — 비밀번호 해싱 동안 커넥션을 쥐지 않게
+
+서비스의 `@Transactional`을 원자성·길이·전파·롤백 규칙 기준으로 모두 다시 봤다. 결제 T1/T2 분리, 조회 `readOnly`, `noRollbackFor`, `open-in-view: false`는 그대로 둔다. 문제는 `AuthService` 1건이었다.
+
+### 결정 1 — AuthService에서 트랜잭션을 뗀다
+
+- `signup`·`login`이 쓰기 트랜잭션이라 BCrypt(요청당 수십 ms CPU) 동안 커넥션을 쥐었다. `LoginUserDetailsService`(readOnly)는 바깥에 합류해 사용자를 읽은 뒤에도 커넥션을 놓지 않았다. 부하 테스트의 붕괴 경로(CPU 포화 → 커넥션 점유 증가 → 풀 고갈)와 같은 모양이다
+- 클래스 `@Transactional(readOnly = true)`와 메서드 어노테이션을 모두 뗐다. DB 작업은 저장소와 `RefreshTokenService`가 각자 짧은 트랜잭션으로 한다. CLAUDE.md의 "외부 호출을 사이에 두는 서비스는 @Transactional을 붙이지 않는다"와 같은 근거(DB와 무관한 긴 작업)다
+- 회원가입의 중복 확인과 INSERT가 다른 트랜잭션이 됐지만, 틈은 원래도 `login_id` 유니크 제약이 막았다. `SignupConcurrencyTest` 그대로 통과
+
+### 결정 2 — SUPPORTS로는 고치지 않는다
+
+- 실험했다. `signup`·`login`을 `SUPPORTS`로 바꾸면 회원가입은 해싱 순간 트랜잭션은 없는데 커넥션이 1개였다
+- 원인: `SUPPORTS`의 빈 트랜잭션 동기화가 `EntityManager`를 메서드 끝까지 묶는다. `existsByLoginId`처럼 인터페이스에 선언한 쿼리 메서드는 Spring Data가 트랜잭션을 걸지 않아 그 `EntityManager`로 실행되고, 잡은 커넥션을 `EntityManager`가 닫힐 때까지 쥔다
+- 로그인은 `SUPPORTS`로도 0이었다. 첫 쿼리가 `LoginUserDetailsService`의 실제 트랜잭션 안이었기 때문이다. 결과가 쿼리 순서에 달려 믿을 수 없어 어노테이션을 아예 뗐다. `reissue`에 있던 `SUPPORTS`도 함께 뗐다(바깥 트랜잭션 합류는 안쪽 REQUIRED가 그대로 한다)
+
+### 테스트
+
+- `AuthServiceTransactionTest`(신규, H2): `PasswordEncoder`를 스파이로 감싸 `encode`·`matches` 순간의 트랜잭션 여부와 Hikari 사용 중 커넥션 수를 기록한다. 변경 전 2개 모두 실패(트랜잭션 있음, 커넥션 1), 변경 후 통과
+- 로그인에서는 `DaoAuthenticationProvider`가 첫 인증 때 타이밍 공격 대비 더미 해시를 만들어 `encode`도 불린다. 그래서 "전부 RELEASED"로 단언한다
+
+### 남은 것
+
+- 로그인 부하 테스트(`login.js`)는 아직 안 돌려, 풀 대기 감소를 숫자로 확인하지 못했다
+
+### 변경 파일
+
+| 파일 | 내용 |
+|---|---|
+| `AuthService` | 트랜잭션 어노테이션 제거, 이유 주석 |
+| `AuthServiceTransactionTest`(신규) | 해싱 순간 커넥션·트랜잭션 확인. 전체 504개 통과 |
+| `README.md` | 「트랜잭션 분석」 절, 「트랜잭션 전파 속성」의 AuthService 행 수정 |
+
+## 7주차 과제 4: 성능 최적화 — 인덱스 · 쿼리 · 캐시
+
+실험 데이터(`docs/perf/seed.sql`: 회차 약 13만, 예매 약 52만, 예매 좌석 약 104만 행)를 넣고 건마다 전후를 쟀다. 인덱스·쿼리는 사용자가 MySQL Workbench에서 `EXPLAIN ANALYZE`로, 캐시는 k6로 측정했다.
+
+### 결정 1 — 회차 검색에 `screening (movie_id, start_at)` 인덱스 (엔티티 변경, 사용자 승인)
+
+- 외래 키 인덱스(`movie_id`)만으로는 그 영화의 90일치 회차를 읽고 날짜를 거른다. 등호 → 범위 순서로 복합 인덱스를 둔다
+- 영화+날짜: `ref` → `range`, `key_len` 8 → 16, 16.5ms → 0.67ms. 날짜만: 748 → 738ms로 변화 없음(왼쪽 접두가 아님). `start_at` 단일 인덱스는 영화를 먼저 고르는 흐름이 대부분이라 넣지 않았다
+- `(? IS NULL OR m.movie_id = ?)` 선택 조건은 Connector/J의 클라이언트 측 바인딩으로 리터럴이 되어 상수 접힘 → 인덱스 사용에 문제 없음을 확인
+- 비용: 4.52MB. 기존 `movie_id` 단일 인덱스(3.52MB)를 대신해 실제 증가분은 약 1MB
+
+### 결정 2 — 좌석 선점의 점유 확인을 요청 좌석으로 좁힌다
+
+- 2석 확인에 회차 점유 좌석 전부(최대 264행)를 읽고 행마다 예매를 조인했다. 부하 테스트에서 CPU 병목이던 경로다
+- `findOccupiedPositionsAmong`: `row_num * 100 + col_num IN (...)` 조건이 유니크 인덱스 안에서 걸러진다(인덱스 조건 푸시다운). 220석이 찬 회차에 빈 2석: 인덱스에서 넘긴 행 220 → 0, 예매 조인 220회 → 실행 안 됨, 11.6ms → 0.154ms
+- 배치도 조회는 회차 전체가 필요해 기존 쿼리를 둔다. `ReservationConcurrencyTest`의 게이트 대상 메서드도 새 메서드로 바꿨다
+
+### 결정 3 — 영화 목록에 Caffeine 로컬 캐시 (1분, sync)
+
+- 요청마다 예매 좌석 전체를 집계한다(실험 데이터에서 약 8.4초). 서버 1대라 로컬 캐시, Redis는 범위 밖
+- 키 하나, `expireAfterWrite` 60초, `sync = true`. 예매 확정 때 지우지 않는다(몰리는 순간 적중률 0). 좌석 판단 값은 캐시하지 않는다
+- 테스트 설정은 `spring.cache.type: none`(테스트끼리 캐시 공유 방지), `MovieServiceCacheTest`만 켠다
+- 측정: 적중 14~89ms / 미적중 6.2~7.9초. k6 초당 1 → 10 → 50건: 캐시 없음은 26초 만에 풀 고갈로 중단(정상 응답 0), 캐시 적용은 5xx 0·중앙값 3.44ms·적중률 99.9%
+- 남은 문제: p95 7.12초. 만료 순간 한 요청이 8초 집계하는 동안 나머지가 모두 기다린다. 해법 후보는 `refreshAfterWrite`(미리 갱신, 그동안 이전 값). 이번에는 구현하지 않음
+
+### 측정 중 실수
+
+- 첫 k6 실행에서 `docker compose run`이 `CACHE_TYPE` 없이 앱을 기본 설정(캐시 켜짐)으로 다시 만들어, 실험 데이터도 지워진 상태로 쟀다. 결과를 버리고 `--no-deps`로 다시 쟀다. 매 측정 전 앱의 `SPRING_CACHE_TYPE`과 행 수를 확인했다
+- Workbench는 30초 넘는 쿼리를 끊는다. 좌석 100만 행 INSERT를 4번으로 나눴다
+
+### 변경 파일
+
+| 파일 | 내용 |
+|---|---|
+| `Screening` | 복합 인덱스 |
+| `ReservationSeatRepository`, `ReservationService` | 요청 좌석만 보는 점유 확인 |
+| `build.gradle`, `application.yaml`, `CacheConfig`(신규), `MovieService` | 캐시 |
+| 테스트 | `MovieServiceCacheTest`(신규), `ReservationServiceTest`·`ReservationConcurrencyTest` 수정, 테스트 설정 캐시 끔. 전체 506개 통과 |
+| `docs/perf/` | 실험 데이터·측정 SQL |
+| `loadtest/scripts/movies.js`, `docker-compose.loadtest.yml` | 캐시 측정 시나리오, `CACHE_TYPE` |
+| `README.md` | 「성능 최적화」 절, 측정 스크린샷(`docs/images/perf/`) |

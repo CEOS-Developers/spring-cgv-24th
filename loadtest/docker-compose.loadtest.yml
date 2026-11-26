@@ -11,6 +11,8 @@ services:
       # 결제는 시나리오에 없지만 기동 시 키 접두사를 검증한다. 로컬 .env 값과 무관하게 뜨도록 더미를 넣는다.
       TOSS_CLIENT_KEY: test_gck_loadtest-dummy
       TOSS_SECRET_KEY: test_gsk_loadtest-dummy
+      # 캐시 적용 전후 비교용. CACHE_TYPE=none으로 띄우면 영화 목록 캐시가 꺼진다.
+      SPRING_CACHE_TYPE: ${CACHE_TYPE:-caffeine}
     cpuset: ${APP_CPUSET:-0-1}
     cpus: ${APP_CPUS:-2}
     mem_limit: ${APP_MEMORY:-2g}
