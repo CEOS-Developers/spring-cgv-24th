@@ -135,6 +135,12 @@ JWT 추출
   - `USER`가 관리자 API에 접근하거나 다른 사용자의 예매를 취소하려는 경우 등이 해당
 - 정리하면 **401은 “누구인지 확인할 수 없음”, 403은 “누구인지는 알지만 권한이 없음”으로 구분**
 
+## 찜한 영화 목록 조회
+
+`GET /movies/keep`에 `Authorization: Bearer {accessToken}` 헤더를 보내면 로그인한 회원이 찜한 영화를 최근 찜한 순서로 반환한다.
+`200 OK` 응답의 `movies` 배열에는 영화별로 `movieId`, `title`, `contentRatingCode`, `posterUrl`이 들어간다.
+찜한 영화가 없으면 `{"movies":[]}`를 반환하고, 토큰이 없으면 `401 Unauthorized`를 반환한다.
+
 ## 정상·실패 상황 테스트 결과
 
 | 테스트 상황 | 요청·확인 대상 | 기대 결과 | 실행 결과 |
@@ -494,6 +500,7 @@ docker compose -f compose.prod.yaml -f compose.monitoring.yaml up -d
 | 극장별 상품 재고 인덱스 | 재고 1만 건에서 극장과 상품 ID로 수량 1건 조회. 기존 모델의 유니크 인덱스 `(cinema_id, goods_id)` 유무 비교 | H2 `EXPLAIN ANALYZE`의 `scanCount` **10,001 → 2** (테이블 스캔 → 인덱스 탐색) |
 | 지역별 극장 목록 인덱스 | 극장 2만 건·지역 20개에서 한 지역의 극장 1,000건 조회 | MySQL `EXPLAIN ANALYZE`에서 **Index lookup → Covering index lookup** |
 | 주문 상품 일괄 조회 | 한 극장에서 상품 5개의 판매 정보를 개별 조회한 결과와 `goods_id IN (…)` 한 번으로 조회한 결과 비교 | SELECT **5회 → 1회**, 같은 상품 5건 반환 |
+| 극장별 상품 목록 조회 | 상품을 먼저 조회하고 결과가 비었을 때만 극장 존재 여부 확인 | 상품이 등록된 극장에서 SELECT **2회 → 1회** |
 
 ### 지역별 극장 목록 캐싱
 
@@ -513,3 +520,17 @@ docker compose -f compose.prod.yaml -f compose.monitoring.yaml up -d
 - **추가 비용** — 지역 내 극장명 중복을 막는 기존 유니크 인덱스도 유지한다. 주소와 이름을 새 인덱스에도 저장하므로 디스크와 버퍼 풀을 더 사용하고, 극장 등록·삭제나 주소 변경 시 인덱스 갱신 비용이 든다. 이 조회에서 얻는 이득은 캐시 미스 때 발생한다.
 - **인덱스 순서** — 재고 조회에는 정렬 조건이 없다. 극장 ID를 앞에 두면 극장 단위 조회에도 쓸 수 있고, 두 키를 함께 주면 해당 상품까지 좁힌다. 이 인덱스는 이미 유일성도 보장하므로 같은 인덱스를 추가할 필요가 없다.
 - **주문 상품 일괄 조회 적용** — `createPurchase()`에서 요청 상품마다 실행하던 판매 상품 SELECT를 극장 ID와 `goods_id IN (…)` 조건으로 한 번만 실행하도록 변경했다. 조회된 상품은 ID로 주문 수량과 연결한다. 해당 극장에서 판매하지 않는 상품이 하나라도 있으면 재고 차감 전에 `STOCK_NOT_FOUND`를 반환한다. 재고는 상품 ID 순서대로 조건부 UPDATE하며, 수량이 부족하면 주문 전체를 롤백한다.
+
+### 극장별 상품 목록의 조회 순서 개선
+
+`GET /cinemas/{cinemaId}/goods`는 기존에 극장 엔티티를 먼저 읽고 상품 목록을 조회했다. 재고 행은 외래 키로 극장을 참조하므로 상품이 한 건이라도 조회되면 극장의 존재도 확인된다. 이를 이용해 재고와 상품을 먼저 조인 조회하고, 결과가 비었을 때만 `existsById`로 극장 등록 여부를 확인한다. [조회 코드](src/main/java/com/cgvclone/cgv/domain/cinema/CinemaService.java)
+
+H2의 동일한 데이터로 변경 전후에 MockMvc 요청을 실행했다. 각 요청 직전에 Hibernate 통계를 초기화하고 `getPrepareStatementCount()`로 SELECT 횟수를 확인했다.
+
+| 요청 조건 | 응답 | 변경 전 | 변경 후 |
+| --- | --- | ---: | ---: |
+| 상품 2개가 등록된 극장 (품절 1개 포함) | 200, 상품 2개 | 2회 | 1회 |
+| 등록된 상품이 없는 극장 | 200, 빈 목록 | 2회 | 2회 |
+| 존재하지 않는 극장 ID | 404 | 1회 | 2회 |
+
+상품이 등록된 극장을 조회하면 DB 왕복을 한 번 줄이고, 존재하지 않는 ID를 조회하면 한 번 더 사용한다. 따라서 전자의 요청 수가 후자보다 많을 때 전체 SELECT 횟수가 줄어든다. [요청별 응답 및 SQL 횟수 검증](src/test/java/com/cgvclone/cgv/domain/cinema/CinemaGoodsApiTests.java)
