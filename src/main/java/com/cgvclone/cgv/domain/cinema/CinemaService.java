@@ -5,6 +5,7 @@ import com.cgvclone.cgv.common.exception.GlobalException;
 import com.cgvclone.cgv.domain.cinema.dto.CinemaDetailResponse;
 import com.cgvclone.cgv.domain.cinema.dto.CinemaGoodsListResponse;
 import com.cgvclone.cgv.domain.cinema.dto.CinemaListResponse;
+import com.cgvclone.cgv.domain.stock.Stock;
 import com.cgvclone.cgv.domain.stock.StockRepository;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
@@ -39,7 +40,10 @@ public class CinemaService {
     }
 
     public CinemaGoodsListResponse getCinemaGoods(Long cinemaId) {
-        getCinemaEntity(cinemaId);
-        return CinemaGoodsListResponse.from(stockRepository.findStocksWithGoodsByCinemaId(cinemaId));
+        List<Stock> stocks = stockRepository.findStocksWithGoodsByCinemaId(cinemaId);
+        if (stocks.isEmpty() && !cinemaRepository.existsById(cinemaId)) {
+            throw new GlobalException(ErrorCode.CINEMA_NOT_FOUND);
+        }
+        return CinemaGoodsListResponse.from(stocks);
     }
 }
