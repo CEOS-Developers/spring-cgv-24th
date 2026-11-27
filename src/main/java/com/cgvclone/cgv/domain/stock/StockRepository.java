@@ -1,7 +1,8 @@
 package com.cgvclone.cgv.domain.stock;
 
 import com.cgvclone.cgv.domain.goods.Goods;
-import java.util.Optional;
+import java.util.Collection;
+import java.util.List;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -9,8 +10,15 @@ import org.springframework.data.repository.query.Param;
 
 public interface StockRepository extends JpaRepository<Stock, Long> {
 
-    @Query("select s.goods from Stock s where s.cinema.cinemaId = :cinemaId and s.goods.goodsId = :goodsId")
-    Optional<Goods> findGoodsForSale(@Param("cinemaId") Long cinemaId, @Param("goodsId") Long goodsId);
+    @Query("""
+            select s from Stock s join fetch s.goods
+            where s.cinema.cinemaId = :cinemaId
+            order by s.goods.goodsId
+            """)
+    List<Stock> findStocksWithGoodsByCinemaId(@Param("cinemaId") Long cinemaId);
+
+    @Query("select s.goods from Stock s where s.cinema.cinemaId = :cinemaId and s.goods.goodsId in :goodsIds")
+    List<Goods> findGoodsForSale(@Param("cinemaId") Long cinemaId, @Param("goodsIds") Collection<Long> goodsIds);
 
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("""

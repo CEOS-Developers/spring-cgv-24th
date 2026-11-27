@@ -42,6 +42,11 @@ public class MovieController {
                 .body(movieDetailResponse);
     }
 
+    @GetMapping("/keep")
+    public ResponseEntity<MovieListResponse> getKeptMovies(@AuthenticationPrincipal CustomUserDetails user) {
+        return ResponseEntity.ok(movieKeepingService.getKeptMovies(user.getUserId()));
+    }
+
     @PostMapping("/{movieId}/keep")
     public ResponseEntity<Void> keepMovie(@PathVariable Long movieId,
             @AuthenticationPrincipal CustomUserDetails user) {

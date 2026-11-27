@@ -1,6 +1,11 @@
 spring:
   application:
     name: cgv
+  cache:
+    type: caffeine
+    cache-names: cinemas
+    caffeine:
+      spec: maximumSize=256,expireAfterWrite=5m
   datasource:
     url: jdbc:mysql://localhost:3306/cgv_db?allowPublicKeyRetrieval=true&useSSL=false&characterEncoding=UTF-8
     username: root

@@ -8,12 +8,11 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
-@Transactional
+@Transactional(readOnly = true)
 public class ShowtimeService {
 
     private final ShowtimeRepository showtimeRepository;
 
-    @Transactional(readOnly = true)
     public Showtime getShowtime(Long showtimeId) {
         return showtimeRepository.findById(showtimeId)
                 .orElseThrow(() -> new GlobalException(ErrorCode.SHOWTIME_NOT_FOUND));

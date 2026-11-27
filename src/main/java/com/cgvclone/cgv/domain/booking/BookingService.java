@@ -50,7 +50,8 @@ public class BookingService {
     }
 
     public void cancelBooking(Long currentUserId, Long bookingId) {
-        Booking booking = getBooking(bookingId);
+        Booking booking = bookingRepository.findByIdForUpdate(bookingId)
+                .orElseThrow(() -> new GlobalException(ErrorCode.BOOKING_NOT_FOUND));
         if (!booking.getUser().getUserId().equals(currentUserId)) {
             throw new GlobalException(ErrorCode.ACCESS_DENIED);
         }

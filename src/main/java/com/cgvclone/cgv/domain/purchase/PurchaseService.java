@@ -12,6 +12,7 @@ import com.cgvclone.cgv.domain.stock.StockRepository;
 import com.cgvclone.cgv.domain.user.User;
 import com.cgvclone.cgv.domain.user.UserService;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 import lombok.RequiredArgsConstructor;
@@ -33,12 +34,14 @@ public class PurchaseService {
         Map<Long, Integer> quantities = validate(request);
         User user = userService.getUser(userId);
         Cinema cinema = cinemaService.getCinemaEntity(request.cinemaId());
+        List<Goods> goodsForSale = stockRepository.findGoodsForSale(request.cinemaId(), quantities.keySet());
+        if (goodsForSale.size() != quantities.size()) {
+            throw new GlobalException(ErrorCode.STOCK_NOT_FOUND);
+        }
         Map<Goods, Integer> goodsQuantities = new HashMap<>();
-        quantities.forEach((goodsId, quantity) -> {
-            Goods goods = stockRepository.findGoodsForSale(request.cinemaId(), goodsId)
-                    .orElseThrow(() -> new GlobalException(ErrorCode.STOCK_NOT_FOUND));
-            goodsQuantities.put(goods, quantity);
-        });
+        for (Goods goods : goodsForSale) {
+            goodsQuantities.put(goods, quantities.get(goods.getGoodsId()));
+        }
 
         Purchase purchase;
         try {

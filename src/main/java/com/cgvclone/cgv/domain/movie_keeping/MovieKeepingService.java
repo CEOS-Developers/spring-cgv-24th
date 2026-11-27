@@ -4,6 +4,7 @@ import com.cgvclone.cgv.common.exception.ErrorCode;
 import com.cgvclone.cgv.common.exception.GlobalException;
 import com.cgvclone.cgv.domain.movie.Movie;
 import com.cgvclone.cgv.domain.movie.MovieService;
+import com.cgvclone.cgv.domain.movie.dto.MovieListResponse;
 import com.cgvclone.cgv.domain.user.User;
 import com.cgvclone.cgv.domain.user.UserService;
 import lombok.RequiredArgsConstructor;
@@ -18,6 +19,11 @@ public class MovieKeepingService {
     private final MovieKeepingRepository movieKeepingRepository;
     private final UserService userService;
     private final MovieService movieService;
+
+    @Transactional(readOnly = true)
+    public MovieListResponse getKeptMovies(Long currentUserId) {
+        return MovieListResponse.from(movieKeepingRepository.findKeptMovies(currentUserId));
+    }
 
     @Transactional(readOnly = true)
     public MovieKeeping getMovieKeeping(User user, Movie movie) {

@@ -3,26 +3,30 @@ package com.cgvclone.cgv.domain.cinema;
 import com.cgvclone.cgv.common.exception.ErrorCode;
 import com.cgvclone.cgv.common.exception.GlobalException;
 import com.cgvclone.cgv.domain.cinema.dto.CinemaDetailResponse;
+import com.cgvclone.cgv.domain.cinema.dto.CinemaGoodsListResponse;
 import com.cgvclone.cgv.domain.cinema.dto.CinemaListResponse;
+import com.cgvclone.cgv.domain.stock.Stock;
+import com.cgvclone.cgv.domain.stock.StockRepository;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
-@Transactional
+@Transactional(readOnly = true)
 public class CinemaService {
 
     private final CinemaRepository cinemaRepository;
+    private final StockRepository stockRepository;
 
-    @Transactional(readOnly = true)
     public Cinema getCinemaEntity(Long cinemaId) {
         return cinemaRepository.findById(cinemaId)
                 .orElseThrow(() -> new GlobalException(ErrorCode.CINEMA_NOT_FOUND));
     }
 
-    @Transactional(readOnly = true)
+    @Cacheable(cacheNames = "cinemas", key = "#regionId == null ? 'all' : #regionId", sync = true)
     public CinemaListResponse getCinemas(Long regionId) {
         List<Cinema> cinemas = regionId == null
                 ? cinemaRepository.findAll()
@@ -30,9 +34,16 @@ public class CinemaService {
         return CinemaListResponse.from(cinemas);
     }
 
-    @Transactional(readOnly = true)
     public CinemaDetailResponse getCinema(Long cinemaId) {
         Cinema cinema = getCinemaEntity(cinemaId);
         return CinemaDetailResponse.from(cinema);
+    }
+
+    public CinemaGoodsListResponse getCinemaGoods(Long cinemaId) {
+        List<Stock> stocks = stockRepository.findStocksWithGoodsByCinemaId(cinemaId);
+        if (stocks.isEmpty() && !cinemaRepository.existsById(cinemaId)) {
+            throw new GlobalException(ErrorCode.CINEMA_NOT_FOUND);
+        }
+        return CinemaGoodsListResponse.from(stocks);
     }
 }

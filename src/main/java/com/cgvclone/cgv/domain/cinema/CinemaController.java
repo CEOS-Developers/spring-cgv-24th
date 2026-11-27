@@ -5,6 +5,7 @@ import static org.springframework.http.HttpStatus.NO_CONTENT;
 import static org.springframework.http.HttpStatus.OK;
 
 import com.cgvclone.cgv.domain.cinema.dto.CinemaDetailResponse;
+import com.cgvclone.cgv.domain.cinema.dto.CinemaGoodsListResponse;
 import com.cgvclone.cgv.domain.cinema.dto.CinemaListResponse;
 import com.cgvclone.cgv.domain.cinema_keeping.CinemaKeepingService;
 import com.cgvclone.cgv.domain.auth.CustomUserDetails;
@@ -41,6 +42,11 @@ public class CinemaController {
         return ResponseEntity
                 .status(OK)
                 .body(cinemaDetailResponse);
+    }
+
+    @GetMapping("/{cinemaId}/goods")
+    public ResponseEntity<CinemaGoodsListResponse> getCinemaGoods(@PathVariable Long cinemaId) {
+        return ResponseEntity.ok(cinemaService.getCinemaGoods(cinemaId));
     }
 
     @PostMapping("/{cinemaId}/keep")
