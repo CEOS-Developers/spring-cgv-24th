@@ -10,6 +10,13 @@ import org.springframework.data.repository.query.Param;
 
 public interface StockRepository extends JpaRepository<Stock, Long> {
 
+    @Query("""
+            select s from Stock s join fetch s.goods
+            where s.cinema.cinemaId = :cinemaId
+            order by s.goods.goodsId
+            """)
+    List<Stock> findStocksWithGoodsByCinemaId(@Param("cinemaId") Long cinemaId);
+
     @Query("select s.goods from Stock s where s.cinema.cinemaId = :cinemaId and s.goods.goodsId in :goodsIds")
     List<Goods> findGoodsForSale(@Param("cinemaId") Long cinemaId, @Param("goodsIds") Collection<Long> goodsIds);
 

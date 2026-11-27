@@ -43,7 +43,7 @@ public class SecurityConfig {
                         .requestMatchers("/api/admin/**").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.GET, "/movies/keep").hasAnyRole("USER", "ADMIN")
                         .requestMatchers(HttpMethod.GET, "/movies", "/movies/{movieId}",
-                                "/cinemas", "/cinemas/{cinemaId}").permitAll()
+                                "/cinemas", "/cinemas/{cinemaId}", "/cinemas/{cinemaId}/goods").permitAll()
                         .requestMatchers(HttpMethod.GET, "/swagger-ui.html", "/swagger-ui/**", "/v3/api-docs",
                                 "/v3/api-docs/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/purchases", "/bookings", "/bookings/{bookingId}/cancel",

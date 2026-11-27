@@ -3,7 +3,9 @@ package com.cgvclone.cgv.domain.cinema;
 import com.cgvclone.cgv.common.exception.ErrorCode;
 import com.cgvclone.cgv.common.exception.GlobalException;
 import com.cgvclone.cgv.domain.cinema.dto.CinemaDetailResponse;
+import com.cgvclone.cgv.domain.cinema.dto.CinemaGoodsListResponse;
 import com.cgvclone.cgv.domain.cinema.dto.CinemaListResponse;
+import com.cgvclone.cgv.domain.stock.StockRepository;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.cache.annotation.Cacheable;
@@ -16,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class CinemaService {
 
     private final CinemaRepository cinemaRepository;
+    private final StockRepository stockRepository;
 
     public Cinema getCinemaEntity(Long cinemaId) {
         return cinemaRepository.findById(cinemaId)
@@ -33,5 +36,10 @@ public class CinemaService {
     public CinemaDetailResponse getCinema(Long cinemaId) {
         Cinema cinema = getCinemaEntity(cinemaId);
         return CinemaDetailResponse.from(cinema);
+    }
+
+    public CinemaGoodsListResponse getCinemaGoods(Long cinemaId) {
+        getCinemaEntity(cinemaId);
+        return CinemaGoodsListResponse.from(stockRepository.findStocksWithGoodsByCinemaId(cinemaId));
     }
 }
